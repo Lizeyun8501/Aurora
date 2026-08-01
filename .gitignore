@@ -1,13 +1,15 @@
 # Ignore everything by default
 *
 
-# Allow the three V15 deliverable document folders
-!aurora-v15-architecture/
-!aurora-v15-architecture/**
-!aurora-note-detailed-design/
-!aurora-note-detailed-design/**
-!aurora-v15-ui-spec/
-!aurora-v15-ui-spec/**
+# Allow the three V15 deliverable document folders (organized under doc/)
+!doc/
+!doc/**
+!doc/aurora-v15-architecture/
+!doc/aurora-v15-architecture/**
+!doc/aurora-note-detailed-design/
+!doc/aurora-note-detailed-design/**
+!doc/aurora-v15-ui-spec/
+!doc/aurora-v15-ui-spec/**
 
 # Allow gitignore itself
 !.gitignore
