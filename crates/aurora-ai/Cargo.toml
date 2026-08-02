@@ -5,3 +5,31 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Core traits (AgentProtocol, Error)
+aurora-core = { path = "../aurora-core" }
+
+# Cryptography (sandbox challenge tokens)
+ring = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# Async runtime (orchestration gather)
+tokio = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
+
+# UUID
+uuid = { workspace = true }
+
+# Concurrency
+parking_lot = { workspace = true }

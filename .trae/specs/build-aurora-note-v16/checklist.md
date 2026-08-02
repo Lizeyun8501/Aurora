@@ -89,20 +89,20 @@
 - [x] OCR：批量 tokio 线程池 + EventBus 进度
 
 ## Phase 4: P2 领域服务模块
-- [ ] AgentGateway：MCP 协议 JSON-RPC 2.0 + stdio/SSE 传输
-- [ ] AgentGateway：工具注册 AgentProtocol + ToolRegistry + 动态发现
-- [ ] AgentGateway：编排 Sequential/Parallel/Hierarchical + LLM 生成计划 + 可视化
-- [ ] AgentGateway：上下文 SQLite 持久化 + 会话恢复 + 窗口压缩
-- [ ] AgentGateway：安全沙箱权限校验 + 审计日志 + 只读模式
-- [ ] ExternalSyncHub：SyncConnector Trait + 注册表 + 状态管理
-- [ ] ExternalSyncHub：日历 CalDAV + GTD 映射 + CTag/ETag 增量
-- [ ] ExternalSyncHub：邮件 IMAP + 捕获为文档 + 附件提取
-- [ ] ExternalSyncHub：云盘 WebDAV + 厂商 API + 选择性双向同步
-- [ ] ExternalSyncHub：Webhook HMAC-SHA256 签名验证
-- [ ] CaptureMatrix：网页剪藏 Readability + Markdown + Message Passing
-- [ ] CaptureMatrix：截图 OCR 全局快捷键 + 悬浮窗 + 截图即笔记
-- [ ] CaptureMatrix：语音速记 Whisper.cpp + WebRTC + 实时转写
-- [ ] CaptureMatrix：RSS feed-rs + 15 分钟轮询 + 全文抓取
+- [x] AgentGateway：MCP 协议 JSON-RPC 2.0 + stdio/SSE 传输
+- [x] AgentGateway：工具注册 AgentProtocol + ToolRegistry + 动态发现
+- [x] AgentGateway：编排 Sequential/Parallel/Hierarchical + LLM 生成计划 + 可视化
+- [x] AgentGateway：上下文 SQLite 持久化 + 会话恢复 + 窗口压缩
+- [x] AgentGateway：安全沙箱权限校验 + 审计日志 + 只读模式
+- [x] ExternalSyncHub：SyncConnector Trait + 注册表 + 状态管理
+- [x] ExternalSyncHub：日历 CalDAV + GTD 映射 + CTag/ETag 增量
+- [x] ExternalSyncHub：邮件 IMAP + 捕获为文档 + 附件提取
+- [x] ExternalSyncHub：云盘 WebDAV + 厂商 API + 选择性双向同步
+- [x] ExternalSyncHub：Webhook HMAC-SHA256 签名验证
+- [x] CaptureMatrix：网页剪藏 Readability + Markdown + Message Passing
+- [x] CaptureMatrix：截图 OCR 全局快捷键 + 悬浮窗 + 截图即笔记
+- [x] CaptureMatrix：语音速记 Whisper.cpp + WebRTC + 实时转写
+- [x] CaptureMatrix：RSS feed-rs + 15 分钟轮询 + 全文抓取
 
 ## Phase 5: 视图层与适配层
 - [ ] React 18 + TypeScript ≥5.0 严格模式 + TipTap v2 + Zustand v4 + TanStack Query v5

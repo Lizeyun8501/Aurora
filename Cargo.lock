@@ -232,6 +232,19 @@ dependencies = [
 [[package]]
 name = "aurora-ai"
 version = "0.1.0"
+dependencies = [
+ "aurora-core",
+ "bincode",
+ "chrono",
+ "parking_lot 0.12.5",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "aurora-core"
@@ -308,6 +321,7 @@ dependencies = [
  "iroh",
  "loro",
  "parking_lot 0.12.5",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",

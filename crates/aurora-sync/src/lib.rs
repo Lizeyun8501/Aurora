@@ -11,10 +11,12 @@
 //! - [`incremental`]: 增量同步 (CRDT ops 增量 + rsync 块级增量 + zstd 压缩)
 //! - [`offline_queue`]: 离线队列 (SQLite 持久化 + 优先级 + 幂等键 + 批量压缩)
 //! - [`device`]: 多设备管理 (Ed25519 设备 ID + QR 授权 + 远程吊销 + DEK 失效)
+//! - [`external`]: 外部同步中心 (CalDAV 日历 + IMAP 邮件 + 云盘 + Webhook 接收)
 
 pub mod cloud;
 pub mod conflict;
 pub mod device;
+pub mod external;
 pub mod incremental;
 pub mod lan;
 pub mod offline_queue;
@@ -52,6 +54,10 @@ pub enum Error {
     Unauthorized(String),
     #[error("Internal error: {0}")]
     Internal(String),
+    #[error("External sync error: {0}")]
+    ExternalSync(String),
+    #[error("HMAC signature verification failed")]
+    HmacVerificationFailed,
 }
 
 /// 同步服务 Result 别名。
@@ -76,6 +82,14 @@ impl From<Error> for aurora_core::Error {
 pub use cloud::{CloudConfig, CloudSyncEngine, SyncBatch};
 pub use conflict::{Branch, ConflictResolution, ConflictResolver, SemanticConflict};
 pub use device::{Device, DeviceId, DeviceManager, DeviceStatus, QrAuthorization};
+pub use external::{
+    CalDavConfig, CalDavConnector, CalendarEvent, CalendarSync, CloudDriveConnector,
+    ConnectorRegistry, ConnectorState, DropboxConnector, DriveFile, DriveProvider,
+    EmailAttachment, EmailDocument, EmailFilter, EmailMessage, EmailSync, GoogleDriveConnector,
+    HmacVerifier, ImapConfig, ImapConnector, OneDriveConnector, SelectiveSyncConfig,
+    SyncConnector, SyncSession, SyncSessionStatus, WebDavConnector, WebhookConfig, WebhookEvent,
+    WebhookReceiver, WebhookSource,
+};
 pub use incremental::{BlockDelta, BlockSignature, IncrementalSync, RollingHash};
 pub use lan::{LanPeer, LanSyncEngine, MdnsDiscovery, SyncRoute};
 pub use offline_queue::{OfflineQueue, Priority, QueueItem};

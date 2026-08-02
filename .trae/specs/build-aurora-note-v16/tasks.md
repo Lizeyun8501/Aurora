@@ -172,25 +172,25 @@
 
 ## Phase 4: L3 领域服务层 — P2 模块
 
-- [ ] Task 4.1: 实现 AgentGateway 智能体网关
-  - [ ] SubTask 4.1.1: 实现 MCP 协议（JSON-RPC 2.0 + initialize/tools.list/tools.call/resources.list + stdio/SSE 传输）
-  - [ ] SubTask 4.1.2: 实现工具注册与发现（AgentProtocol Trait + ToolRegistry 聚合 + 动态发现）
-  - [ ] SubTask 4.1.3: 实现 Agent 编排（Sequential/Parallel/Hierarchical 三种模式 + LLM 生成执行计划 + 可视化）
-  - [ ] SubTask 4.1.4: 实现上下文持久化（Context 对象 + SQLite 存储 + 会话恢复 + 窗口压缩）
-  - [ ] SubTask 4.1.5: 实现安全沙箱（权限引擎校验 + 审计日志 + 只读模式）
+- [x] Task 4.1: 实现 AgentGateway 智能体网关
+  - [x] SubTask 4.1.1: 实现 MCP 协议（JSON-RPC 2.0 + initialize/tools.list/tools.call/resources.list + stdio/SSE 传输）
+  - [x] SubTask 4.1.2: 实现工具注册与发现（AgentProtocol Trait + ToolRegistry 聚合 + 动态发现）
+  - [x] SubTask 4.1.3: 实现 Agent 编排（Sequential/Parallel/Hierarchical 三种模式 + LLM 生成执行计划 + 可视化）
+  - [x] SubTask 4.1.4: 实现上下文持久化（Context 对象 + SQLite 存储 + 会话恢复 + 窗口压缩）
+  - [x] SubTask 4.1.5: 实现安全沙箱（权限引擎校验 + 审计日志 + 只读模式）
 
-- [ ] Task 4.2: 实现 ExternalSyncHub 外部同步中心
-  - [ ] SubTask 4.2.1: 实现连接器架构（SyncConnector Trait + 连接器注册表 + 状态管理）
-  - [ ] SubTask 4.2.2: 实现日历同步（CalDAV RFC 4791 + GTD 任务截止日期映射 + 增量 CTag/ETag + 冲突处理）
-  - [ ] SubTask 4.2.3: 实现邮件同步（IMAP + 邮件捕获为文档 + 附件提取至素材库 + 过滤规则）
-  - [ ] SubTask 4.2.4: 实现云盘同步（WebDAV + Google Drive/Dropbox/OneDrive API + 选择性同步 + 双向同步）
-  - [ ] SubTask 4.2.5: 实现 Webhook 接收（本地 HTTP 服务器 + GitHub/Jira/Slack 来源 + HMAC-SHA256 签名验证）
+- [x] Task 4.2: 实现 ExternalSyncHub 外部同步中心
+  - [x] SubTask 4.2.1: 实现连接器架构（SyncConnector Trait + 连接器注册表 + 状态管理）
+  - [x] SubTask 4.2.2: 实现日历同步（CalDAV RFC 4791 + GTD 任务截止日期映射 + 增量 CTag/ETag + 冲突处理）
+  - [x] SubTask 4.2.3: 实现邮件同步（IMAP + 邮件捕获为文档 + 附件提取至素材库 + 过滤规则）
+  - [x] SubTask 4.2.4: 实现云盘同步（WebDAV + Google Drive/Dropbox/OneDrive API + 选择性同步 + 双向同步）
+  - [x] SubTask 4.2.5: 实现 Webhook 接收（本地 HTTP 服务器 + GitHub/Jira/Slack 来源 + HMAC-SHA256 签名验证）
 
-- [ ] Task 4.3: 实现 CaptureMatrix 捕获矩阵
-  - [ ] SubTask 4.3.1: 实现网页剪藏（浏览器扩展 + Readability 算法提取正文 + Markdown 转换 + Message Passing）
-  - [ ] SubTask 4.3.2: 实现截图 OCR（全局快捷键 + 系统截图 API + OCR 识别 + 悬浮窗 + 截图即笔记工作流）
-  - [ ] SubTask 4.3.3: 实现语音速记（Whisper.cpp 本地 STT / 云端 API + WebRTC getUserMedia + 实时转写插入文档）
-  - [ ] SubTask 4.3.4: 实现 RSS 订阅（feed-rs 解析 + 15 分钟轮询 + 新文章转文档 + 全文抓取）
+- [x] Task 4.3: 实现 CaptureMatrix 捕获矩阵
+  - [x] SubTask 4.3.1: 实现网页剪藏（浏览器扩展 + Readability 算法提取正文 + Markdown 转换 + Message Passing）
+  - [x] SubTask 4.3.2: 实现截图 OCR（全局快捷键 + 系统截图 API + OCR 识别 + 悬浮窗 + 截图即笔记工作流）
+  - [x] SubTask 4.3.3: 实现语音速记（Whisper.cpp 本地 STT / 云端 API + WebRTC getUserMedia + 实时转写插入文档）
+  - [x] SubTask 4.3.4: 实现 RSS 订阅（feed-rs 解析 + 15 分钟轮询 + 新文章转文档 + 全文抓取）
 
 ## Phase 5: 视图层与适配层
 

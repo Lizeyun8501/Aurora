@@ -13,3 +13,4 @@ pub mod asset_library;
 pub mod system_settings;
 pub mod today_view;
 pub mod ocr_service;
+pub mod capture_matrix;
