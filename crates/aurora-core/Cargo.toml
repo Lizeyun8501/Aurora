@@ -1,0 +1,54 @@
+[package]
+name = "aurora-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# CRDT engine
+loro = { workspace = true }
+
+# P2P sync
+iroh = { workspace = true }
+
+# Full-text search
+tantivy = { workspace = true }
+
+# Vector database
+lancedb = { workspace = true }
+
+# SQLite (including sqlite-vec for vector search)
+rusqlite = { workspace = true }
+# Note: sqlite-vec is a loadable extension, not a direct crate dependency
+
+# WASM runtime
+wasmtime = { workspace = true }
+
+# Cryptography
+ring = { workspace = true }
+argon2 = { workspace = true }
+aes-gcm = { workspace = true }
+sha3 = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
+
+# UUID
+uuid = { workspace = true }
+
+# Concurrency
+parking_lot = { workspace = true }
