@@ -105,18 +105,18 @@
 - [x] CaptureMatrix：RSS feed-rs + 15 分钟轮询 + 全文抓取
 
 ## Phase 5: 视图层与适配层
-- [ ] React 18 + TypeScript ≥5.0 严格模式 + TipTap v2 + Zustand v4 + TanStack Query v5
-- [ ] 视图层目录结构完整（components/blocks/editors/layouts/views/hooks/stores/adapters）
-- [ ] 块级渲染器 9 种核心块类型实现
-- [ ] 编辑器外壳 DocumentEditor/CanvasEditor 实现
-- [ ] 布局组件 Sidebar/SplitPane/Modal 实现
-- [ ] 页面级视图 TodayView/GraphView/SettingsView 实现
-- [ ] 自定义 Hooks useBlock/useSync/useAI 实现
-- [ ] PlatformAPI 统一接口定义完整（存储/网络/系统/加密/生物识别）
-- [ ] Tauri v2 Desktop 适配（系统托盘/全局快捷键/文件系统/原生菜单 + IPC）
-- [ ] Capacitor v8 Mobile 适配（推送/相机/生物识别/离线存储 + Bridge）
-- [ ] WASM Web 适配（WASM32 编译 + PWA + IndexedDB + OPFS）
-- [ ] 模块间数据交互视图全部实现（编辑↔知识网络、GTD↔编辑、AI↔编辑↔知识网络、同步横切）
+- [x] React 18 + TypeScript ≥5.0 严格模式 + TipTap v2 + Zustand v4 + TanStack Query v5
+- [x] 视图层目录结构完整（components/blocks/editors/layouts/views/hooks/stores/adapters）
+- [x] 块级渲染器 9 种核心块类型实现
+- [x] 编辑器外壳 DocumentEditor/CanvasEditor 实现
+- [x] 布局组件 Sidebar/SplitPane/Modal 实现
+- [x] 页面级视图 TodayView/GraphView/SettingsView 实现
+- [x] 自定义 Hooks useBlock/useSync/useAI 实现
+- [x] PlatformAPI 统一接口定义完整（存储/网络/系统/加密/生物识别）
+- [x] Tauri v2 Desktop 适配（系统托盘/全局快捷键/文件系统/原生菜单 + IPC）
+- [x] Capacitor v8 Mobile 适配（推送/相机/生物识别/离线存储 + Bridge）
+- [x] WASM Web 适配（WASM32 编译 + PWA + IndexedDB + OPFS）
+- [x] 模块间数据交互视图全部实现（编辑↔知识网络、GTD↔编辑、AI↔编辑↔知识网络、同步横切）
 
 ## Phase 6: 运维可观测性体系
 - [ ] 日志系统 tracing 结构化 + span 上下文 + 5 级 + JSON 旋转 + 采样 + 脱敏

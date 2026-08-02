@@ -1,5 +1,20 @@
 {
   "name": "aurora-mobile",
   "version": "0.1.0",
-  "private": true
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aurora/shared-types": "*",
+    "@capacitor/core": "^6.0.0"
+  },
+  "optionalDependencies": {
+    "@capacitor-community/biometric-auth": "^6.0.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.0",
+    "@capacitor/cli": "^6.0.0"
+  }
 }

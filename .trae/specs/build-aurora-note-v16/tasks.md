@@ -194,32 +194,32 @@
 
 ## Phase 5: 视图层与适配层
 
-- [ ] Task 5.1: 搭建视图层基础架构
-  - [ ] SubTask 5.1.1: 初始化 React 18 + TypeScript 项目（严格模式 ≥5.0）
-  - [ ] SubTask 5.1.2: 集成 TipTap/ProseMirror v2+ 富文本编辑器
-  - [ ] SubTask 5.1.3: 集成 Zustand v4+ 状态管理 + TanStack Query v5+ 服务端状态
-  - [ ] SubTask 5.4.4: 集成 React DnD v16+ 拖拽 + Framer Motion v10+ 动画
-  - [ ] SubTask 5.1.5: 创建目录结构（components/blocks/editors/layouts/views/hooks/stores/adapters）
+- [x] Task 5.1: 搭建视图层基础架构
+  - [x] SubTask 5.1.1: 初始化 React 18 + TypeScript 项目（严格模式 ≥5.0）
+  - [x] SubTask 5.1.2: 集成 TipTap/ProseMirror v2+ 富文本编辑器
+  - [x] SubTask 5.1.3: 集成 Zustand v4+ 状态管理 + TanStack Query v5+ 服务端状态
+  - [x] SubTask 5.4.4: 集成 React DnD v16+ 拖拽 + Framer Motion v10+ 动画
+  - [x] SubTask 5.1.5: 创建目录结构（components/blocks/editors/layouts/views/hooks/stores/adapters）
 
-- [ ] Task 5.2: 实现视图层核心组件
-  - [ ] SubTask 5.2.1: 实现块级渲染器（TextBlock/CodeBlock/ImageBlock/TableBlock 等）
-  - [ ] SubTask 5.2.2: 实现编辑器外壳（DocumentEditor/CanvasEditor）
-  - [ ] SubTask 5.2.3: 实现布局组件（Sidebar/SplitPane/Modal）
-  - [ ] SubTask 5.2.4: 实现页面级视图（TodayView/GraphView/SettingsView）
-  - [ ] SubTask 5.2.5: 实现自定义 Hooks（useBlock/useSync/useAI）
-  - [ ] SubTask 5.2.6: 实现 Zustand 状态定义（stores/）
+- [x] Task 5.2: 实现视图层核心组件
+  - [x] SubTask 5.2.1: 实现块级渲染器（TextBlock/CodeBlock/ImageBlock/TableBlock 等）
+  - [x] SubTask 5.2.2: 实现编辑器外壳（DocumentEditor/CanvasEditor）
+  - [x] SubTask 5.2.3: 实现布局组件（Sidebar/SplitPane/Modal）
+  - [x] SubTask 5.2.4: 实现页面级视图（TodayView/GraphView/SettingsView）
+  - [x] SubTask 5.2.5: 实现自定义 Hooks（useBlock/useSync/useAI）
+  - [x] SubTask 5.2.6: 实现 Zustand 状态定义（stores/）
 
-- [ ] Task 5.3: 实现适配层
-  - [ ] SubTask 5.3.1: 定义 PlatformAPI 统一接口（readFile/writeFile/httpRequest/showNotification/generateKey/encrypt/authenticateBiometric）
-  - [ ] SubTask 5.3.2: 实现 Tauri v2 适配（Desktop：系统托盘、全局快捷键、文件系统、原生菜单 + IPC）
-  - [ ] SubTask 5.3.3: 实现 Capacitor v8 适配（Mobile：推送通知、相机、生物识别、离线存储 + Bridge Call）
-  - [ ] SubTask 5.3.4: 实现 WASM 适配（Web：Rust 编译 WASM32 + PWA Service Worker + IndexedDB + OPFS）
+- [x] Task 5.3: 实现适配层
+  - [x] SubTask 5.3.1: 定义 PlatformAPI 统一接口（readFile/writeFile/httpRequest/showNotification/generateKey/encrypt/authenticateBiometric）
+  - [x] SubTask 5.3.2: 实现 Tauri v2 适配（Desktop：系统托盘、全局快捷键、文件系统、原生菜单 + IPC）
+  - [x] SubTask 5.3.3: 实现 Capacitor v8 适配（Mobile：推送通知、相机、生物识别、离线存储 + Bridge Call）
+  - [x] SubTask 5.3.4: 实现 WASM 适配（Web：Rust 编译 WASM32 + PWA Service Worker + IndexedDB + OPFS）
 
-- [ ] Task 5.4: 实现模块间数据交互视图
-  - [ ] SubTask 5.4.1: 实现内容编辑 ↔ 知识网络交互（BlockChanged → 链接解析 → BacklinksUpdated → UI 更新）
-  - [ ] SubTask 5.4.2: 实现 GTD ↔ 内容编辑交互（CreateTask → TaskBlock 嵌入 → TaskUpdated → 计数更新）
-  - [ ] SubTask 5.4.3: 实现 AI ↔ 内容编辑 ↔ 知识网络交互（AIComplete 流式 + SemanticSearch 图谱高亮）
-  - [ ] SubTask 5.4.4: 实现同步服务横切关注点（监听所有模块 EventBus → 本地队列 → P2P/云端/局域网同步）
+- [x] Task 5.4: 实现模块间数据交互视图
+  - [x] SubTask 5.4.1: 实现内容编辑 ↔ 知识网络交互（BlockChanged → 链接解析 → BacklinksUpdated → UI 更新）
+  - [x] SubTask 5.4.2: 实现 GTD ↔ 内容编辑交互（CreateTask → TaskBlock 嵌入 → TaskUpdated → 计数更新）
+  - [x] SubTask 5.4.3: 实现 AI ↔ 内容编辑 ↔ 知识网络交互（AIComplete 流式 + SemanticSearch 图谱高亮）
+  - [x] SubTask 5.4.4: 实现同步服务横切关注点（监听所有模块 EventBus → 本地队列 → P2P/云端/局域网同步）
 
 ## Phase 6: 运维可观测性体系（PART VI）
 
