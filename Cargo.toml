@@ -25,7 +25,8 @@ iroh = "0.34"
 tantivy = "0.22"
 
 # Vector database
-lancedb = "0.15"
+# Note: lancedb temporarily removed due to Rust toolchain compatibility.
+# lancedb = "0.13"
 
 # SQLite (including sqlite-vec for vector search)
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -62,3 +63,6 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # Concurrency
 parking_lot = "0.12"
+
+# Embedded KV store
+sled = "0.34"

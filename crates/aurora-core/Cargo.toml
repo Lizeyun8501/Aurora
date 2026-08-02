@@ -15,7 +15,7 @@ iroh = { workspace = true }
 tantivy = { workspace = true }
 
 # Vector database
-lancedb = { workspace = true }
+# lancedb = { workspace = true }
 
 # SQLite (including sqlite-vec for vector search)
 rusqlite = { workspace = true }
@@ -52,3 +52,6 @@ uuid = { workspace = true }
 
 # Concurrency
 parking_lot = { workspace = true }
+
+# Embedded KV store
+sled = { workspace = true }

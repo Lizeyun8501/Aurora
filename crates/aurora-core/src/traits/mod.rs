@@ -10,3 +10,4 @@ pub mod ai_provider;
 pub mod storage;
 pub mod plugin_runtime;
 pub mod agent_protocol;
+pub mod ocr_provider;

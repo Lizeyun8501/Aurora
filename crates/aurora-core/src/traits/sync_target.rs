@@ -8,13 +8,14 @@ pub struct Endpoint {
     pub protocol: SyncProtocol,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SyncProtocol {
     Iroh,
     WebSocket,
     Quic,
 }
 
+#[derive(Debug, Clone)]
 pub struct Connection {
     pub id: String,
     pub endpoint: Endpoint,

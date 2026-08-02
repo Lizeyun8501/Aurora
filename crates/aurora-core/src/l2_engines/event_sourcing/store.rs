@@ -199,6 +199,7 @@ mod tests {
         let store = EventStore::new(":memory:").unwrap();
         let e1 = Event::new("block-1", OpType::Create, serde_json::json!({"v": 1}), "u", "d");
         store.append_event(&e1).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
         let e2 = Event::new("block-1", OpType::Update, serde_json::json!({"v": 2}), "u", "d");
         store.append_event(&e2).unwrap();
 
@@ -233,6 +234,7 @@ mod tests {
         let store = EventStore::new(":memory:").unwrap();
         let e1 = Event::new("agg-1", OpType::Create, serde_json::json!({"v": 1}), "u", "d");
         store.append_event(&e1).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
 
         // 快照版本等于 e1.timestamp，增量查询应排除 e1
         let snapshot = Snapshot {

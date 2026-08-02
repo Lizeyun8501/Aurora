@@ -17,7 +17,7 @@ pub struct PluginManifest {
     pub config_schema: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RuntimeType {
     Wasm,
     Iframe,
