@@ -5,3 +5,34 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Core traits (PluginRuntime, Error, PluginManifest)
+aurora-core = { path = "../aurora-core" }
+
+# WASM runtime
+wasmtime = { workspace = true }
+
+# Cryptography (Ed25519 code signing)
+ring = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# Async runtime (background preload for hot update)
+tokio = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
+
+# UUID
+uuid = { workspace = true }
+
+# Concurrency
+parking_lot = { workspace = true }

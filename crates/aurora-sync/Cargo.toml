@@ -5,3 +5,37 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# 本 crate 依赖核心层，复用 SyncTarget trait 与统一错误类型
+aurora-core = { path = "../aurora-core" }
+
+# CRDT engine (Loro Sync Protocol 语义参考)
+loro = { workspace = true }
+
+# P2P sync (真实部署时替换 mock 传输层)
+iroh = { workspace = true }
+
+# SQLite (sync_queue 持久化)
+rusqlite = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
+
+# UUID
+uuid = { workspace = true }
+
+# Concurrency
+parking_lot = { workspace = true }

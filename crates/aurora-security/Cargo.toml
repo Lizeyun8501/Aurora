@@ -5,3 +5,36 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Cryptography
+ring = { workspace = true }
+argon2 = { workspace = true }
+aes-gcm = { workspace = true }
+sha3 = { workspace = true }
+hkdf = { workspace = true }
+
+# Random number generation
+rand = { workspace = true }
+rand_core = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
+
+# UUID
+uuid = { workspace = true }
+
+# Concurrency
+parking_lot = { workspace = true }

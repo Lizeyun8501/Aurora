@@ -261,14 +261,61 @@ dependencies = [
 [[package]]
 name = "aurora-plugin"
 version = "0.1.0"
+dependencies = [
+ "aurora-core",
+ "bincode",
+ "chrono",
+ "parking_lot 0.12.5",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wasmtime",
+]
 
 [[package]]
 name = "aurora-security"
 version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "argon2",
+ "bincode",
+ "chrono",
+ "hkdf",
+ "parking_lot 0.12.5",
+ "rand 0.8.7",
+ "rand_core 0.6.4",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha3",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "aurora-sync"
 version = "0.1.0"
+dependencies = [
+ "aurora-core",
+ "bincode",
+ "chrono",
+ "iroh",
+ "loro",
+ "parking_lot 0.12.5",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "autocfg"
@@ -1690,6 +1737,15 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "hkdf"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
+dependencies = [
+ "hmac",
 ]
 
 [[package]]
