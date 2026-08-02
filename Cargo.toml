@@ -6,6 +6,7 @@ members = [
     "crates/aurora-ai",
     "crates/aurora-security",
     "crates/aurora-plugin",
+    "crates/aurora-observability",
 ]
 
 [workspace.package]
@@ -71,3 +72,7 @@ parking_lot = "0.12"
 
 # Embedded KV store
 sled = "0.34"
+
+# Property-based testing & enum ergonomics (Task 6.3 test quality assurance)
+proptest = "1"
+strum = { version = "0.26", features = ["derive"] }

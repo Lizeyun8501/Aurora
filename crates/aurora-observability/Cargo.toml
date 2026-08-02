@@ -1,0 +1,44 @@
+[package]
+name = "aurora-observability"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = "0.3"
+
+# Metrics (prometheus-style)
+# Note: prometheus crate pulled in directly here
+prometheus = "0.13"
+
+# Date/time
+chrono = { workspace = true }
+
+# UUID
+uuid = { workspace = true }
+
+# Concurrency
+parking_lot = { workspace = true }
+
+# Cryptography (for diagnostic package encryption)
+ring = { workspace = true }
+sha3 = { workspace = true }
+
+# Compression (for diagnostic packages)
+flate2 = "1"
+
+# Aurora core for shared error types
+aurora-core = { path = "../aurora-core" }
