@@ -509,12 +509,13 @@ impl Logger {
         };
         let json = serde_json::to_string(&log)?;
         self.rotator.write(&json)?;
+        // tracing 宏的 target 需要是编译时常量，因此将 target 信息包含在消息中
         match level {
-            LogLevel::Trace => trace!(target: target, "{}", redacted_message),
-            LogLevel::Debug => debug!(target: target, "{}", redacted_message),
-            LogLevel::Info => info!(target: target, "{}", redacted_message),
-            LogLevel::Warn => warn!(target: target, "{}", redacted_message),
-            LogLevel::Error => error!(target: target, "{}", redacted_message),
+            LogLevel::Trace => trace!("[{}] {}", target, redacted_message),
+            LogLevel::Debug => debug!("[{}] {}", target, redacted_message),
+            LogLevel::Info => info!("[{}] {}", target, redacted_message),
+            LogLevel::Warn => warn!("[{}] {}", target, redacted_message),
+            LogLevel::Error => error!("[{}] {}", target, redacted_message),
         }
         Ok(())
     }
@@ -613,28 +614,31 @@ pub struct BusinessMetrics {
 }
 
 impl BusinessMetrics {
+    fn map_prom_err<T>(r: std::result::Result<T, prometheus::Error>) -> Result<T> {
+        r.map_err(|e| Error::Metrics(e.to_string()))
+    }
     pub fn register(registry: &Registry) -> Result<Self> {
-        let notes_created = Counter::with_opts(Opts::new(
+        let notes_created = Self::map_prom_err(Counter::with_opts(Opts::new(
             "business_notes_created_total",
             "Total notes created",
-        ));
-        let notes_deleted = Counter::with_opts(Opts::new(
+        )))?;
+        let notes_deleted = Self::map_prom_err(Counter::with_opts(Opts::new(
             "business_notes_deleted_total",
             "Total notes deleted",
-        ));
-        let sync_operations = Counter::with_opts(Opts::new(
+        )))?;
+        let sync_operations = Self::map_prom_err(Counter::with_opts(Opts::new(
             "business_sync_operations_total",
             "Total sync operations",
-        ));
-        let active_users = Gauge::with_opts(Opts::new(
+        )))?;
+        let active_users = Self::map_prom_err(Gauge::with_opts(Opts::new(
             "business_active_users",
             "Current active users",
-        ));
-        for m in [&notes_created, &notes_deleted, &sync_operations, &active_users] {
-            registry
-                .register(Box::new(m.clone()))
-                .map_err(|e| Error::Metrics(e.to_string()))?;
-        }
+        )))?;
+        // 分别注册不同类型的指标
+        registry.register(Box::new(notes_created.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
+        registry.register(Box::new(notes_deleted.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
+        registry.register(Box::new(sync_operations.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
+        registry.register(Box::new(active_users.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
         Ok(Self {
             notes_created,
             notes_deleted,
@@ -667,20 +671,20 @@ pub struct PerformanceMetrics {
 }
 
 impl PerformanceMetrics {
+    fn map_prom_err<T>(r: std::result::Result<T, prometheus::Error>) -> Result<T> {
+        r.map_err(|e| Error::Metrics(e.to_string()))
+    }
     pub fn register(registry: &Registry) -> Result<Self> {
-        let request_duration = Histogram::with_opts(
+        let request_duration = Self::map_prom_err(Histogram::with_opts(
             HistogramOpts::new("perf_request_duration_seconds", "Request duration in seconds")
                 .buckets(vec![0.01, 0.05, 0.1, 0.5, 1.0, 5.0]),
-        );
-        let db_query_duration = Histogram::with_opts(
+        ))?;
+        let db_query_duration = Self::map_prom_err(Histogram::with_opts(
             HistogramOpts::new("perf_db_query_seconds", "DB query duration in seconds")
                 .buckets(vec![0.001, 0.01, 0.1, 0.5, 1.0]),
-        );
-        for m in [&request_duration, &db_query_duration] {
-            registry
-                .register(Box::new(m.clone()))
-                .map_err(|e| Error::Metrics(e.to_string()))?;
-        }
+        ))?;
+        registry.register(Box::new(request_duration.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
+        registry.register(Box::new(db_query_duration.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
         Ok(Self {
             request_duration,
             db_query_duration,
@@ -704,16 +708,17 @@ pub struct ResourceMetrics {
 }
 
 impl ResourceMetrics {
+    fn map_prom_err<T>(r: std::result::Result<T, prometheus::Error>) -> Result<T> {
+        r.map_err(|e| Error::Metrics(e.to_string()))
+    }
     pub fn register(registry: &Registry) -> Result<Self> {
-        let cpu_usage = Gauge::with_opts(Opts::new("resource_cpu_usage", "CPU usage ratio"));
+        let cpu_usage = Self::map_prom_err(Gauge::with_opts(Opts::new("resource_cpu_usage", "CPU usage ratio")))?;
         let memory_bytes =
-            Gauge::with_opts(Opts::new("resource_memory_bytes", "Memory usage in bytes"));
-        let disk_usage = Gauge::with_opts(Opts::new("resource_disk_usage", "Disk usage ratio"));
-        for m in [&cpu_usage, &memory_bytes, &disk_usage] {
-            registry
-                .register(Box::new(m.clone()))
-                .map_err(|e| Error::Metrics(e.to_string()))?;
-        }
+            Self::map_prom_err(Gauge::with_opts(Opts::new("resource_memory_bytes", "Memory usage in bytes")))?;
+        let disk_usage = Self::map_prom_err(Gauge::with_opts(Opts::new("resource_disk_usage", "Disk usage ratio")))?;
+        registry.register(Box::new(cpu_usage.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
+        registry.register(Box::new(memory_bytes.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
+        registry.register(Box::new(disk_usage.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
         Ok(Self {
             cpu_usage,
             memory_bytes,
@@ -741,17 +746,21 @@ pub struct QualityMetrics {
 }
 
 impl QualityMetrics {
+    fn map_prom_err<T>(r: std::result::Result<T, prometheus::Error>) -> Result<T> {
+        r.map_err(|e| Error::Metrics(e.to_string()))
+    }
     pub fn register(registry: &Registry) -> Result<Self> {
-        let error_rate = Gauge::with_opts(Opts::new("quality_error_rate", "Error rate ratio"));
-        let crash_count = Counter::with_opts(Opts::new(
+        let error_rate = Self::map_prom_err(Gauge::with_opts(Opts::new("quality_error_rate", "Error rate ratio")))?;
+        let crash_count = Self::map_prom_err(Counter::with_opts(Opts::new(
             "quality_crash_count_total",
             "Total crash count",
-        ));
-        for m in [&error_rate, &crash_count] {
-            registry
-                .register(Box::new(m.clone()))
-                .map_err(|e| Error::Metrics(e.to_string()))?;
-        }
+        )))?;
+        registry
+            .register(Box::new(error_rate.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
+        registry
+            .register(Box::new(crash_count.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         Ok(Self {
             error_rate,
             crash_count,
@@ -828,7 +837,8 @@ impl MetricsCollector {
     }
 
     pub fn register_counter(&self, name: &str, help: &str) -> Result<()> {
-        let c = Counter::with_opts(Opts::new(name, help));
+        let c = Counter::with_opts(Opts::new(name, help))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         self.registry
             .inner()
             .register(Box::new(c.clone()))
@@ -838,7 +848,8 @@ impl MetricsCollector {
     }
 
     pub fn register_gauge(&self, name: &str, help: &str) -> Result<()> {
-        let g = Gauge::with_opts(Opts::new(name, help));
+        let g = Gauge::with_opts(Opts::new(name, help))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         self.registry
             .inner()
             .register(Box::new(g.clone()))
@@ -850,7 +861,8 @@ impl MetricsCollector {
     pub fn register_histogram(&self, name: &str, help: &str, buckets: &[f64]) -> Result<()> {
         let mut opts = HistogramOpts::new(name, help);
         opts = opts.buckets(buckets.to_vec());
-        let h = Histogram::with_opts(opts);
+        let h = Histogram::with_opts(opts)
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         self.registry
             .inner()
             .register(Box::new(h.clone()))

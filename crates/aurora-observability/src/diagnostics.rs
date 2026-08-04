@@ -28,7 +28,7 @@ use parking_lot::RwLock;
 use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Sha3_256};
+use sha3::Sha3_256;
 use tracing::{debug, info, warn};
 
 use crate::{Error, Result};
@@ -995,8 +995,9 @@ impl LogAnalyzer {
         for p in patterns.iter() {
             if combined.contains(&p.keyword.to_lowercase()) {
                 let entry = self.knowledge.get(&p.issue_id);
-                let entries = entry.into_iter().collect();
-                let confidence = if entry.is_some() { 0.9 } else { 0.5 };
+                let has_entry = entry.is_some();
+                let entries: Vec<KnowledgeEntry> = entry.into_iter().collect();
+                let confidence: f32 = if has_entry { 0.9 } else { 0.5 };
                 return TroubleshootingRecommendation {
                     issue: p.issue.clone(),
                     entries,

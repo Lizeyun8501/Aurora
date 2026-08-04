@@ -40,5 +40,8 @@ sha3 = { workspace = true }
 # Compression (for diagnostic packages)
 flate2 = "1"
 
+# HTTP client (for webhook push in monitoring)
+reqwest = { version = "0.11", features = ["json"] }
+
 # Aurora core for shared error types
 aurora-core = { path = "../aurora-core" }

@@ -9,6 +9,7 @@ pub mod observability;
 pub mod monitoring;
 pub mod release;
 pub mod diagnostics;
+pub mod testing;
 
 use thiserror::Error;
 
