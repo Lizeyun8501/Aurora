@@ -14,3 +14,7 @@ pub mod system_settings;
 pub mod today_view;
 pub mod ocr_service;
 pub mod capture_matrix;
+
+/// V19 DEF-003 五子层架构视图（core_data / knowledge / intelligence /
+/// productivity / integration），含依赖方向约束说明。
+pub mod sublayers;

@@ -1,10 +1,17 @@
 //! 事件总线与层间通信 (Event Bus & Inter-Layer Communication)
 //!
-//! 基于 tokio::sync::broadcast 实现异步事件总线，支持多消费者。
+//! 两代实现并存：
+//! - [`event_bus`]：V16 单通道广播总线（兼容保留）。
+//! - [`layered`]：V19 DEF-002 分层事件总线（High/Medium/Low 三通道 +
+//!   背压策略 + Medium 通道持久化，对应 §32 事件定义与 ARCH-003 崩溃恢复）。
 
 pub mod event;
 pub mod event_bus;
+pub mod layered;
 pub mod serialization;
 
 pub use event::CoreEvent;
 pub use event_bus::EventBus;
+pub use layered::{
+    AppEvent, EventChannel, EventQueueStore, InMemoryEventQueue, LayeredEventBus, SequencedEvent,
+};
