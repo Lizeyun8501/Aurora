@@ -6,11 +6,12 @@
 //! - 最终密钥 = KDF(X25519_shared || ML-KEM_shared)
 //!
 //! # 实现说明
-//! 由于真实 ML-KEM-768 crate 在当前工具链下未必可用，本模块定义了
-//! [`PostQuantumKem`] trait 与 [`HybridKeyExchange`] 编排器，并提供
-//! [`MockKem`] 占位实现：两条轨道均使用 X25519（来自 `ring`）完成密钥协商。
-//! 真实部署应在后量子轨道上替换为 `MlKemKem`（ML-KEM-768）实现，
-//! 并通过 [`KemAlgorithm`] 标记支持算法迁移。
+//! 本模块提供 [`PostQuantumKem`] trait 与 [`HybridKeyExchange`] 编排器。
+//! - 经典轨道：[`MockKem`]（基于 `ring` 的 X25519 ECDH）
+//! - 后量子轨道：[`MlKem768Kem`]（基于 `libcrux-ml-kem`，FIPS 203 标准化）
+//!
+//! 生产环境使用 [`HybridKeyExchange::with_real_ml_kem`] 或 [`Default::default()`]，
+//! 测试环境使用 [`HybridKeyExchange::with_mock`]（双 X25519 占位）。
 //!
 //! 混合共享秘密的 KDF 使用 HKDF-SHA3-256（基于 `hkdf` + `sha3`）；
 //! 如需严格 HKDF-SHA256，可将 digest 切换为 `sha2::Sha256`。
@@ -335,11 +336,31 @@ impl HybridKeyExchange {
         }
     }
 
-    /// 使用 [`MockKem`]（双 X25519 占位）构造
+    /// 使用 [`MockKem`]（双 X25519 占位）构造 — 仅用于测试
     pub fn with_mock() -> Self {
         Self::new(Box::new(MockKem::new()), Box::new(MockKem::new()))
     }
 
+    /// 使用真实 ML-KEM-768 后量子轨道 + X25519 经典轨道构造（生产默认）。
+    ///
+    /// 对应 V19 §12 安全与加密模块设计：ML-KEM-768 + X25519 双轨并行混合密钥交换。
+    /// 后量子轨道使用 `libcrux-ml-kem`（FIPS 203 标准化），经典轨道使用 X25519。
+    pub fn with_real_ml_kem() -> Self {
+        Self::new(
+            Box::new(MockKem::new()),
+            Box::new(MlKem768Kem::new()),
+        )
+    }
+}
+
+impl Default for HybridKeyExchange {
+    /// 生产默认：使用真实 ML-KEM-768 + X25519。
+    fn default() -> Self {
+        Self::with_real_ml_kem()
+    }
+}
+
+impl HybridKeyExchange {
     /// 经典轨道算法
     pub fn classical_algorithm(&self) -> KemAlgorithm {
         self.classical_kem.algorithm()

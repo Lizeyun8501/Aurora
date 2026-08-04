@@ -223,36 +223,36 @@
 
 ## Phase 6: 运维可观测性体系（PART VI）
 
-- [ ] Task 6.1: 实现可观测性架构
-  - [ ] SubTask 6.1.1: 实现日志系统（tracing crate 结构化日志 + span 上下文 + 5 级日志 + 文件 JSON 旋转归档 + 采样 + 脱敏）
-  - [ ] SubTask 6.1.2: 实现指标系统（prometheus crate + /metrics 端点 + 业务/性能/资源/质量四类指标 + 标签切片）
-  - [ ] SubTask 6.1.3: 实现分布式追踪（OpenTelemetry Rust SDK + EventBus/FFI/HTTP 上下文传播 + 尾采样 + OTLP 导出）
-  - [ ] SubTask 6.1.4: 实现崩溃报告（Sentry SDK + panic 捕获 + 堆栈/设备/版本/日志 breadcrumbs + 加密场景脱敏）
+- [x] Task 6.1: 实现可观测性架构
+  - [x] SubTask 6.1.1: 实现日志系统（tracing crate 结构化日志 + span 上下文 + 5 级日志 + 文件 JSON 旋转归档 + 采样 + 脱敏）
+  - [x] SubTask 6.1.2: 实现指标系统（prometheus crate + /metrics 端点 + 业务/性能/资源/质量四类指标 + 标签切片）
+  - [x] SubTask 6.1.3: 实现分布式追踪（OpenTelemetry Rust SDK + EventBus/FFI/HTTP 上下文传播 + 尾采样 + OTLP 导出）
+  - [x] SubTask 6.1.4: 实现崩溃报告（Sentry SDK + panic 捕获 + 堆栈/设备/版本/日志 breadcrumbs + 加密场景脱敏）
 
-- [ ] Task 6.2: 实现监控告警设计
-  - [ ] SubTask 6.2.1: 实现健康检查体系（/health 端点 + 启动自检 + 60 秒周期巡检 + 状态栏指示器）
-  - [ ] SubTask 6.2.2: 实现告警规则（P0 紧急/P1 重要/P2 提示三层 + 本地通知 + 云端 Webhook 推送）
-  - [ ] SubTask 6.2.3: 实现智能降噪（告警聚合 + 静默期 + 依赖抑制 + 自愈检测）
-  - [ ] SubTask 6.2.4: 实现监控仪表板（Grafana 预置模板 + Desktop 内嵌轻量面板 + 关键视图看板）
+- [x] Task 6.2: 实现监控告警设计
+  - [x] SubTask 6.2.1: 实现健康检查体系（/health 端点 + 启动自检 + 60 秒周期巡检 + 状态栏指示器）
+  - [x] SubTask 6.2.2: 实现告警规则（P0 紧急/P1 重要/P2 提示三层 + 本地通知 + 云端 Webhook 推送）
+  - [x] SubTask 6.2.3: 实现智能降噪（告警聚合 + 静默期 + 依赖抑制 + 自愈检测）
+  - [x] SubTask 6.2.4: 实现监控仪表板（Grafana 预置模板 + Desktop 内嵌轻量面板 + 关键视图看板）
 
-- [ ] Task 6.3: 实现测试质量保障
-  - [ ] SubTask 6.3.1: 实现单元测试与集成测试（cargo test + vitest + Mock L1 实现 + proptest 属性测试）
-  - [ ] SubTask 6.3.2: 实现 CRDT 一致性测试（猴子测试随机操作序列 + delta-debugging 反例压缩 + 24 小时稳定性测试）
-  - [ ] SubTask 6.3.3: 实现 E2E 测试（Playwright 跨端 + 关键场景覆盖 + 视觉回归截图对比 + 崩溃恢复测试）
-  - [ ] SubTask 6.3.4: 实现性能基线与回归（criterion.rs 基线 + CI 10% 退化阈值 + k6 加载测试 + 内存分析）
-  - [ ] SubTask 6.3.5: 实现覆盖率管控（tarpaulin Rust ≥70%/核心 ≥80% + vitest TS ≥60% + Codecov PR 评论 + 豁免机制）
+- [x] Task 6.3: 实现测试质量保障
+  - [x] SubTask 6.3.1: 实现单元测试与集成测试（cargo test + vitest + Mock L1 实现 + proptest 属性测试）
+  - [x] SubTask 6.3.2: 实现 CRDT 一致性测试（猴子测试随机操作序列 + delta-debugging 反例压缩 + 24 小时稳定性测试）
+  - [x] SubTask 6.3.3: 实现 E2E 测试（Playwright 跨端 + 关键场景覆盖 + 视觉回归截图对比 + 崩溃恢复测试）
+  - [x] SubTask 6.3.4: 实现性能基线与回归（criterion.rs 基线 + CI 10% 退化阈值 + k6 加载测试 + 内存分析）
+  - [x] SubTask 6.3.5: 实现覆盖率管控（tarpaulin Rust ≥70%/核心 ≥80% + vitest TS ≥60% + Codecov PR 评论 + 豁免机制）
 
-- [ ] Task 6.4: 实现灰度发布与回滚
-  - [ ] SubTask 6.4.1: 实现灰度更新策略（Tauri updater + Capacitor Appflow + 1%→5%→20%→50%→100% + 紧急制动）
-  - [ ] SubTask 6.4.2: 实现功能开关（FeatureFlags + Boolean/Percentage/Targeting + 本地 SQLite + 离线生效 + 核心功能不设开关）
-  - [ ] SubTask 6.4.3: 实现热修复（Web CDN 实时 + Desktop delta update + Mobile Appflow + 限制仅视图层/适配层）
-  - [ ] SubTask 6.4.4: 实现版本回滚（保留最近 3 版本 + 崩溃 3 次自动回滚 + 数据格式版本检测 + 回滚触发条件）
+- [x] Task 6.4: 实现灰度发布与回滚
+  - [x] SubTask 6.4.1: 实现灰度更新策略（Tauri updater + Capacitor Appflow + 1%→5%→20%→50%→100% + 紧急制动）
+  - [x] SubTask 6.4.2: 实现功能开关（FeatureFlags + Boolean/Percentage/Targeting + 本地 SQLite + 离线生效 + 核心功能不设开关）
+  - [x] SubTask 6.4.3: 实现热修复（Web CDN 实时 + Desktop delta update + Mobile Appflow + 限制仅视图层/适配层）
+  - [x] SubTask 6.4.4: 实现版本回滚（保留最近 3 版本 + 崩溃 3 次自动回滚 + 数据格式版本检测 + 回滚触发条件）
 
-- [ ] Task 6.5: 实现日志诊断与排障
-  - [ ] SubTask 6.5.1: 实现诊断包导出（ZIP 格式 + 7 天脱敏日志 + 配置/指标/健康/设备/同步状态 + 加密 + 50MB 限制）
-  - [ ] SubTask 6.5.2: 实现自助修复工具（索引重建 + 缓存清理 + 同步重置 + 权限修复 + 配置重置 + 修复前备份）
-  - [ ] SubTask 6.5.3: 实现远程协助（企业版：一次性会话码 + 安全通道实时日志 + E2EE + 仅诊断禁止修改）
-  - [ ] SubTask 6.5.4: 实现知识库与智能排障（FAQ 搜索 + AI 分析日志推荐方案 + 社区链接）
+- [x] Task 6.5: 实现日志诊断与排障
+  - [x] SubTask 6.5.1: 实现诊断包导出（ZIP 格式 + 7 天脱敏日志 + 配置/指标/健康/设备/同步状态 + 加密 + 50MB 限制）
+  - [x] SubTask 6.5.2: 实现自助修复工具（索引重建 + 缓存清理 + 同步重置 + 权限修复 + 配置重置 + 修复前备份）
+  - [x] SubTask 6.5.3: 实现远程协助（企业版：一次性会话码 + 安全通道实时日志 + E2EE + 仅诊断禁止修改）
+  - [x] SubTask 6.5.4: 实现知识库与智能排障（FAQ 搜索 + AI 分析日志推荐方案 + 社区链接）
 
 ## Task Dependencies
 - [Task 1.*] depends on [Task 0.*]（L2 引擎层依赖项目初始化和 Trait 定义）

@@ -5,6 +5,7 @@
 //!
 //! # 模块组织
 //! - [`p2p`]: P2P 同步 (iroh + QUIC + NAT 穿透)
+//! - [`iroh_transport`]: iroh 真实传输层 (V19 §31 DEV-005，生产替代 MockTransport)
 //! - [`cloud`]: 云端同步 (WebSocket 实时推送 + HTTPS 批量，零知识密文中转)
 //! - [`lan`]: 局域网同步 (mDNS 自动发现 + LAN 直连 QUIC，优先于云端)
 //! - [`conflict`]: 冲突解决 (CRDT 自动合并 + 语义冲突手动选择 + 分支模式)
@@ -18,6 +19,7 @@ pub mod conflict;
 pub mod device;
 pub mod external;
 pub mod incremental;
+pub mod iroh_transport;
 pub mod lan;
 pub mod offline_queue;
 pub mod p2p;
@@ -94,3 +96,4 @@ pub use incremental::{BlockDelta, BlockSignature, IncrementalSync, RollingHash};
 pub use lan::{LanPeer, LanSyncEngine, MdnsDiscovery, SyncRoute};
 pub use offline_queue::{OfflineQueue, Priority, QueueItem};
 pub use p2p::{P2pSyncEngine, PeerId, SyncMessage, VersionVector};
+pub use iroh_transport::{IrohTransport, SyncReport, run_accept_loop, AURORA_ALPN, MAX_SYNC_MESSAGE_SIZE};

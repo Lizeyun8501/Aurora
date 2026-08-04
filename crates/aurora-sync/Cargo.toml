@@ -11,8 +11,11 @@ aurora-core = { path = "../aurora-core" }
 # CRDT engine (Loro Sync Protocol 语义参考)
 loro = { workspace = true }
 
-# P2P sync (真实部署时替换 mock 传输层)
+# P2P sync (iroh 1.0 — V19 §31 真实传输层)
 iroh = { workspace = true }
+
+# Async traits
+async-trait = { workspace = true }
 
 # SQLite (sync_queue 持久化)
 rusqlite = { workspace = true }

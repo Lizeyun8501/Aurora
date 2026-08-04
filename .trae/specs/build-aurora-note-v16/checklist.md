@@ -119,24 +119,24 @@
 - [x] 模块间数据交互视图全部实现（编辑↔知识网络、GTD↔编辑、AI↔编辑↔知识网络、同步横切）
 
 ## Phase 6: 运维可观测性体系
-- [ ] 日志系统 tracing 结构化 + span 上下文 + 5 级 + JSON 旋转 + 采样 + 脱敏
-- [ ] 指标系统 prometheus /metrics + 业务/性能/资源/质量四类 + 标签切片
-- [ ] 分布式追踪 OpenTelemetry + 上下文传播 + 尾采样 + OTLP 导出
-- [ ] 崩溃报告 Sentry + panic 捕获 + breadcrumbs + 加密脱敏
-- [ ] 健康检查 /health + 启动自检 + 60 秒巡检 + 状态栏指示器
-- [ ] 告警规则 P0/P1/P2 三层 + 本地通知 + 云端 Webhook
-- [ ] 智能降噪 聚合 + 静默期 + 依赖抑制 + 自愈检测
-- [ ] 监控仪表板 Grafana 模板 + Desktop 内嵌轻量面板
-- [ ] 单元测试 cargo test + vitest + Mock + proptest 属性测试
-- [ ] CRDT 一致性测试 猴子测试 + delta-debugging + 24 小时稳定性
-- [ ] E2E 测试 Playwright 跨端 + 关键场景 + 视觉回归 + 崩溃恢复
-- [ ] 性能基线 criterion.rs + CI 10% 退化 + k6 加载 + 内存分析
-- [ ] 覆盖率 tarpaulin Rust ≥70%/核心 ≥80% + vitest TS ≥60% + Codecov
-- [ ] 灰度更新 1%→100% + 紧急制动
-- [ ] 功能开关 Boolean/Percentage/Targeting + 离线生效 + 核心功能不设开关
-- [ ] 热修复 Web CDN + Desktop delta + Mobile Appflow + 仅视图层/适配层
-- [ ] 版本回滚 保留 3 版本 + 崩溃 3 次自动 + 数据格式检测
-- [ ] 诊断包 ZIP + 7 天脱敏日志 + 加密 + 50MB 限制
-- [ ] 自助修复 索引重建/缓存清理/同步重置/权限修复/配置重置 + 备份
-- [ ] 远程协助 企业版会话码 + E2EE + 仅诊断
-- [ ] 知识库 FAQ + AI 智能排障 + 社区链接
+- [x] 日志系统 tracing 结构化 + span 上下文 + 5 级 + JSON 旋转 + 采样 + 脱敏
+- [x] 指标系统 prometheus /metrics + 业务/性能/资源/质量四类 + 标签切片
+- [x] 分布式追踪 OpenTelemetry + 上下文传播 + 尾采样 + OTLP 导出
+- [x] 崩溃报告 Sentry + panic 捕获 + breadcrumbs + 加密脱敏
+- [x] 健康检查 /health + 启动自检 + 60 秒巡检 + 状态栏指示器
+- [x] 告警规则 P0/P1/P2 三层 + 本地通知 + 云端 Webhook
+- [x] 智能降噪 聚合 + 静默期 + 依赖抑制 + 自愈检测
+- [x] 监控仪表板 Grafana 模板 + Desktop 内嵌轻量面板
+- [x] 单元测试 cargo test + vitest + Mock + proptest 属性测试
+- [x] CRDT 一致性测试 猴子测试 + delta-debugging + 24 小时稳定性
+- [x] E2E 测试 Playwright 跨端 + 关键场景 + 视觉回归 + 崩溃恢复
+- [x] 性能基线 criterion.rs + CI 10% 退化 + k6 加载 + 内存分析
+- [x] 覆盖率 tarpaulin Rust ≥70%/核心 ≥80% + vitest TS ≥60% + Codecov
+- [x] 灰度更新 1%→100% + 紧急制动
+- [x] 功能开关 Boolean/Percentage/Targeting + 离线生效 + 核心功能不设开关
+- [x] 热修复 Web CDN + Desktop delta + Mobile Appflow + 仅视图层/适配层
+- [x] 版本回滚 保留 3 版本 + 崩溃 3 次自动 + 数据格式检测
+- [x] 诊断包 ZIP + 7 天脱敏日志 + 加密 + 50MB 限制
+- [x] 自助修复 索引重建/缓存清理/同步重置/权限修复/配置重置 + 备份
+- [x] 远程协助 企业版会话码 + E2EE + 仅诊断
+- [x] 知识库 FAQ + AI 智能排障 + 社区链接

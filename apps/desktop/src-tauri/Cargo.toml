@@ -15,8 +15,16 @@ tracing = { workspace = true }
 tracing-subscriber = "0.3"
 tokio = { workspace = true }
 uuid = { workspace = true }
+chrono = { workspace = true }
 
 aurora-core = { path = "../../../crates/aurora-core" }
+aurora-security = { path = "../../../crates/aurora-security" }
+aurora-ai = { path = "../../../crates/aurora-ai" }
+aurora-plugin = { path = "../../../crates/aurora-plugin" }
+aurora-sync = { path = "../../../crates/aurora-sync" }
+migration = { path = "../../../crates/migration" }
+
+dirs-next = "2.0"
 
 [features]
 default = []
