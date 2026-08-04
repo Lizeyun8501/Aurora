@@ -59,3 +59,5 @@ sled = { workspace = true }
 [dev-dependencies]
 # Property-based testing harness (Task 6.3 test quality assurance)
 proptest = { workspace = true }
+# Temporary directories for atomic_transaction tests (ARCH-002)
+tempfile = "3"

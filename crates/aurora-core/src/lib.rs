@@ -2,7 +2,13 @@
 //!
 //! Provides L1 infrastructure, L2 engines, L3 domain services, shared traits,
 //! and the event bus that wires them together.
+//!
+//! # 入口点
+//!
+//! [`AppCore`] 是 V19 §36.1 定义的聚合根，通过 [`AppCoreBuilder`] 注入各 Trait
+//! 实现后作为平台适配层的依赖容器。
 
+pub mod app_core;
 pub mod event_bus;
 pub mod l1_infrastructure;
 pub mod l2_engines;
