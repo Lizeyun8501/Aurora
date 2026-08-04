@@ -9,6 +9,9 @@ pub mod l2_engines;
 pub mod l3_domain;
 pub mod traits;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 use thiserror::Error;
 
 /// Aurora Note 核心层统一错误类型。

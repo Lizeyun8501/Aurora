@@ -56,6 +56,9 @@ parking_lot = { workspace = true }
 # Embedded KV store
 sled = { workspace = true }
 
+[features]
+test-utils = []
+
 [dev-dependencies]
 # Property-based testing harness (Task 6.3 test quality assurance)
 proptest = { workspace = true }

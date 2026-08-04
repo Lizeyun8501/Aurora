@@ -617,19 +617,19 @@ impl BusinessMetrics {
         let notes_created = Counter::with_opts(Opts::new(
             "business_notes_created_total",
             "Total notes created",
-        ));
+        )).map_err(|e| Error::Metrics(e.to_string()))?;
         let notes_deleted = Counter::with_opts(Opts::new(
             "business_notes_deleted_total",
             "Total notes deleted",
-        ));
+        )).map_err(|e| Error::Metrics(e.to_string()))?;
         let sync_operations = Counter::with_opts(Opts::new(
             "business_sync_operations_total",
             "Total sync operations",
-        ));
+        )).map_err(|e| Error::Metrics(e.to_string()))?;
         let active_users = Gauge::with_opts(Opts::new(
             "business_active_users",
             "Current active users",
-        ));
+        )).map_err(|e| Error::Metrics(e.to_string()))?;
         for m in [&notes_created, &notes_deleted, &sync_operations, &active_users] {
             registry
                 .register(Box::new(m.clone()))
@@ -671,11 +671,11 @@ impl PerformanceMetrics {
         let request_duration = Histogram::with_opts(
             HistogramOpts::new("perf_request_duration_seconds", "Request duration in seconds")
                 .buckets(vec![0.01, 0.05, 0.1, 0.5, 1.0, 5.0]),
-        );
+        ).map_err(|e| Error::Metrics(e.to_string()))?;
         let db_query_duration = Histogram::with_opts(
             HistogramOpts::new("perf_db_query_seconds", "DB query duration in seconds")
                 .buckets(vec![0.001, 0.01, 0.1, 0.5, 1.0]),
-        );
+        ).map_err(|e| Error::Metrics(e.to_string()))?;
         for m in [&request_duration, &db_query_duration] {
             registry
                 .register(Box::new(m.clone()))
@@ -705,10 +705,13 @@ pub struct ResourceMetrics {
 
 impl ResourceMetrics {
     pub fn register(registry: &Registry) -> Result<Self> {
-        let cpu_usage = Gauge::with_opts(Opts::new("resource_cpu_usage", "CPU usage ratio"));
+        let cpu_usage = Gauge::with_opts(Opts::new("resource_cpu_usage", "CPU usage ratio"))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         let memory_bytes =
-            Gauge::with_opts(Opts::new("resource_memory_bytes", "Memory usage in bytes"));
-        let disk_usage = Gauge::with_opts(Opts::new("resource_disk_usage", "Disk usage ratio"));
+            Gauge::with_opts(Opts::new("resource_memory_bytes", "Memory usage in bytes"))
+                .map_err(|e| Error::Metrics(e.to_string()))?;
+        let disk_usage = Gauge::with_opts(Opts::new("resource_disk_usage", "Disk usage ratio"))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         for m in [&cpu_usage, &memory_bytes, &disk_usage] {
             registry
                 .register(Box::new(m.clone()))
@@ -742,16 +745,18 @@ pub struct QualityMetrics {
 
 impl QualityMetrics {
     pub fn register(registry: &Registry) -> Result<Self> {
-        let error_rate = Gauge::with_opts(Opts::new("quality_error_rate", "Error rate ratio"));
+        let error_rate = Gauge::with_opts(Opts::new("quality_error_rate", "Error rate ratio"))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         let crash_count = Counter::with_opts(Opts::new(
             "quality_crash_count_total",
             "Total crash count",
-        ));
-        for m in [&error_rate, &crash_count] {
-            registry
-                .register(Box::new(m.clone()))
-                .map_err(|e| Error::Metrics(e.to_string()))?;
-        }
+        )).map_err(|e| Error::Metrics(e.to_string()))?;
+        registry
+            .register(Box::new(error_rate.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
+        registry
+            .register(Box::new(crash_count.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         Ok(Self {
             error_rate,
             crash_count,
@@ -828,7 +833,8 @@ impl MetricsCollector {
     }
 
     pub fn register_counter(&self, name: &str, help: &str) -> Result<()> {
-        let c = Counter::with_opts(Opts::new(name, help));
+        let c = Counter::with_opts(Opts::new(name, help))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         self.registry
             .inner()
             .register(Box::new(c.clone()))
@@ -838,7 +844,8 @@ impl MetricsCollector {
     }
 
     pub fn register_gauge(&self, name: &str, help: &str) -> Result<()> {
-        let g = Gauge::with_opts(Opts::new(name, help));
+        let g = Gauge::with_opts(Opts::new(name, help))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         self.registry
             .inner()
             .register(Box::new(g.clone()))
@@ -850,7 +857,8 @@ impl MetricsCollector {
     pub fn register_histogram(&self, name: &str, help: &str, buckets: &[f64]) -> Result<()> {
         let mut opts = HistogramOpts::new(name, help);
         opts = opts.buckets(buckets.to_vec());
-        let h = Histogram::with_opts(opts);
+        let h = Histogram::with_opts(opts)
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         self.registry
             .inner()
             .register(Box::new(h.clone()))
