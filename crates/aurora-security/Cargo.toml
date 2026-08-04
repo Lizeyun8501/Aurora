@@ -13,6 +13,7 @@ sha2 = { workspace = true }
 sha3 = { workspace = true }
 hkdf = { workspace = true }
 hmac = { workspace = true }
+libcrux-ml-kem = { workspace = true }
 
 aurora-core = { path = "../aurora-core" }
 

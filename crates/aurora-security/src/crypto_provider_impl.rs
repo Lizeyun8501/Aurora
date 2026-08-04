@@ -123,36 +123,41 @@ impl CryptoProvider for SecurityCryptoProvider {
     }
 
     fn kem_keypair(&self) -> Result<(KemPublicKey, KemSecretKey), aurora_core::Error> {
-        // ML-KEM-768 占位：返回随机字节（生产环境应接入 pqc_kyber）
-        use rand::RngCore;
-        let mut pk = vec![0u8; 1184];
-        let mut sk = vec![0u8; 2400];
-        rand::thread_rng().fill_bytes(&mut pk);
-        rand::thread_rng().fill_bytes(&mut sk);
-        Ok((KemPublicKey(pk), KemSecretKey(sk)))
+        use crate::post_quantum::PostQuantumKem;
+        let kem = crate::post_quantum::MlKem768Kem::new();
+        let kp = kem.generate_keypair().map_err(|e| {
+            aurora_core::Error::Crypto(format!("ML-KEM-768 keygen failed: {}", e))
+        })?;
+        Ok((KemPublicKey(kp.public), KemSecretKey(kp.private)))
     }
 
     fn kem_encapsulate(
         &self,
-        _pk: &KemPublicKey,
+        pk: &KemPublicKey,
     ) -> Result<(KemSharedSecret, KemCiphertext), aurora_core::Error> {
-        use rand::RngCore;
+        use crate::post_quantum::PostQuantumKem;
+        let kem = crate::post_quantum::MlKem768Kem::new();
+        let enc = kem.encapsulate(&pk.0).map_err(|e| {
+            aurora_core::Error::Crypto(format!("ML-KEM-768 encapsulate failed: {}", e))
+        })?;
         let mut ss = [0u8; 32];
-        let mut ct = vec![0u8; 1088];
-        rand::thread_rng().fill_bytes(&mut ss);
-        rand::thread_rng().fill_bytes(&mut ct);
-        Ok((KemSharedSecret(ss), KemCiphertext(ct)))
+        ss.copy_from_slice(&enc.shared_secret[..32]);
+        Ok((KemSharedSecret(ss), KemCiphertext(enc.ciphertext)))
     }
 
     fn kem_decapsulate(
         &self,
-        _sk: &KemSecretKey,
-        _ct: &KemCiphertext,
+        sk: &KemSecretKey,
+        ct: &KemCiphertext,
     ) -> Result<KemSharedSecret, aurora_core::Error> {
-        use rand::RngCore;
-        let mut ss = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut ss);
-        Ok(KemSharedSecret(ss))
+        use crate::post_quantum::PostQuantumKem;
+        let kem = crate::post_quantum::MlKem768Kem::new();
+        let ss = kem.decapsulate(&sk.0, &ct.0).map_err(|e| {
+            aurora_core::Error::Crypto(format!("ML-KEM-768 decapsulate failed: {}", e))
+        })?;
+        let mut shared = [0u8; 32];
+        shared.copy_from_slice(&ss[..32]);
+        Ok(KemSharedSecret(shared))
     }
 
     fn random_bytes(&self, len: usize) -> Vec<u8> {
@@ -222,9 +227,8 @@ mod tests {
         let (pk, sk) = provider.kem_keypair().unwrap();
         let (ss1, ct) = provider.kem_encapsulate(&pk).unwrap();
         let ss2 = provider.kem_decapsulate(&sk, &ct).unwrap();
-        // 当前为占位实现，随机生成；生产环境应保证 ss1 == ss2
-        assert_eq!(ss1.0.len(), 32);
-        assert_eq!(ss2.0.len(), 32);
+        // ML-KEM-768 真实实现：共享秘密应完全一致
+        assert_eq!(ss1.0, ss2.0, "ML-KEM-768 encapsulate/decapsulate shared secret mismatch");
     }
 
     #[test]

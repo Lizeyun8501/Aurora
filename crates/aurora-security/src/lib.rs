@@ -56,8 +56,8 @@ pub use biometric::{
 pub use e2ee::{encrypt, decrypt, AesGcmCipher, Ciphertext, Plaintext};
 pub use key_hierarchy::{KeyHierarchy, MasterKey, WorkspaceDek};
 pub use post_quantum::{
-    HybridEncapsulation, HybridKeyExchange, HybridKeyPair, KemAlgorithm, KemKeyPair, MockKem,
-    PostQuantumKem,
+    HybridEncapsulation, HybridKeyExchange, HybridKeyPair, KemAlgorithm, KemKeyPair, MlKem768Kem,
+    MockKem, PostQuantumKem,
 };
 pub use recovery::{DeviceAuthorizationQr, Mnemonic, ShamirSecretSharing, ShamirShare};
 
