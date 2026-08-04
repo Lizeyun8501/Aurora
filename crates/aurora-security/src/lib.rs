@@ -10,6 +10,7 @@
 //! - [`recovery`]：BIP39 助记词 + Shamir 秘密分享 + 设备授权二维码
 
 pub mod biometric;
+pub mod crypto_provider_impl;
 pub mod e2ee;
 pub mod key_hierarchy;
 pub mod post_quantum;

@@ -54,6 +54,7 @@ pub struct AppCoreBuilder {
     search: Option<Arc<dyn search_backend::SearchBackend>>,
     ocr: Option<Arc<dyn ocr_provider::OcrProvider>>,
     plugin: Option<Arc<dyn plugin_runtime::PluginRuntime>>,
+    event_bus_store: Option<Arc<dyn crate::event_bus::layered::EventQueueStore>>,
 }
 
 impl AppCoreBuilder {
@@ -67,6 +68,7 @@ impl AppCoreBuilder {
             search: None,
             ocr: None,
             plugin: None,
+            event_bus_store: None,
         }
     }
 
@@ -105,13 +107,21 @@ impl AppCoreBuilder {
         self
     }
 
+    pub fn event_bus_store(
+        mut self,
+        v: Arc<dyn crate::event_bus::layered::EventQueueStore>,
+    ) -> Self {
+        self.event_bus_store = Some(v);
+        self
+    }
+
     /// 构建 `AppCore`。
     ///
     /// # Panics
     ///
     /// 任一必需 Trait 未注入时 panic（启动期校验，早失败）。
     pub fn build(self) -> AppCore {
-        let event_bus = Arc::new(LayeredEventBus::new(None));
+        let event_bus = Arc::new(LayeredEventBus::new(self.event_bus_store));
 
         AppCore {
             sync_target: self

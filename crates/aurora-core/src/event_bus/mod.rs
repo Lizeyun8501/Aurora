@@ -9,9 +9,11 @@ pub mod event;
 pub mod event_bus;
 pub mod layered;
 pub mod serialization;
+pub mod sqlite_queue;
 
 pub use event::CoreEvent;
 pub use event_bus::EventBus;
 pub use layered::{
     AppEvent, EventChannel, EventQueueStore, InMemoryEventQueue, LayeredEventBus, SequencedEvent,
 };
+pub use sqlite_queue::SqliteEventQueue;

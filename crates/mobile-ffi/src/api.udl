@@ -1,0 +1,37 @@
+namespace aurora_mobile_ffi {
+};
+
+[Error]
+enum MobileError {
+    "InitFailed",
+    "OperationFailed",
+    "NotFound",
+};
+
+dictionary NoteSummary {
+    string id;
+    string title;
+    string updated_at;
+};
+
+dictionary SearchResult {
+    string note_id;
+    string title;
+    string snippet;
+    double score;
+};
+
+interface UniffiAppCore {
+    [Name=new, Throws=MobileError]
+    constructor(string data_dir);
+
+    [Throws=MobileError]
+    string create_note(string title);
+
+    sequence<NoteSummary> list_notes();
+
+    sequence<SearchResult> search_notes(string query);
+
+    [Throws=MobileError]
+    void delete_note(string note_id);
+};
