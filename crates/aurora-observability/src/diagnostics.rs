@@ -12,7 +12,7 @@
 //! - **6.5.4 知识库与智能排障**：FAQ 检索 + 日志模式匹配推荐方案 + 社区链接。
 //!
 //! # 实现说明
-//! - 压缩使用 `flate2` (GZip)；加密使用 `ring::aead` 的 AES-256-GCM。
+//! - 压缩使用 `flate2` (GZip)；加密通过 `CryptoProvider` Trait 的 AES-256-GCM。
 //! - 所有 IO / 加密 / 压缩错误统一映射为 [`crate::Error::Diagnostics`]。
 //! - 远程会话与安全通道为内存实现，便于测试与上层接入。
 
@@ -25,11 +25,11 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use parking_lot::RwLock;
-use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
-use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use sha3::Sha3_256;
 use tracing::{debug, info, warn};
+
+use aurora_core::traits::crypto_provider::{Ciphertext, CryptoProvider};
 
 use crate::{Error, Result};
 
@@ -174,29 +174,39 @@ pub struct DiagnosticPackage {
 }
 
 /// 诊断包导出器：收集 → 脱敏 → 压缩 → 加密 → 大小校验。
+///
+/// V19 §28.6 要求所有密码学操作通过 CryptoProvider Trait 执行。
 pub struct DiagnosticExporter {
     redaction: RedactionConfig,
     key: [u8; AES_KEY_LEN],
     /// 最终包大小上限，默认 [`MAX_PACKAGE_SIZE`]（50MB）。
     max_size: usize,
+    /// 注入的密码学提供者。
+    crypto: Arc<dyn CryptoProvider>,
 }
 
 impl DiagnosticExporter {
-    /// 使用给定 AES-256 密钥构造（默认脱敏配置 + 50MB 上限）。
-    pub fn new(key: [u8; AES_KEY_LEN]) -> Self {
+    /// 使用给定 AES-256 密钥和 CryptoProvider 构造（默认脱敏配置 + 50MB 上限）。
+    pub fn new(key: [u8; AES_KEY_LEN], crypto: Arc<dyn CryptoProvider>) -> Self {
         Self {
             redaction: RedactionConfig::default(),
             key,
             max_size: MAX_PACKAGE_SIZE,
+            crypto,
         }
     }
 
     /// 自定义脱敏配置。
-    pub fn with_redaction(key: [u8; AES_KEY_LEN], redaction: RedactionConfig) -> Self {
+    pub fn with_redaction(
+        key: [u8; AES_KEY_LEN],
+        redaction: RedactionConfig,
+        crypto: Arc<dyn CryptoProvider>,
+    ) -> Self {
         Self {
             redaction,
             key,
             max_size: MAX_PACKAGE_SIZE,
+            crypto,
         }
     }
 
@@ -205,11 +215,13 @@ impl DiagnosticExporter {
         key: [u8; AES_KEY_LEN],
         redaction: RedactionConfig,
         max_size: usize,
+        crypto: Arc<dyn CryptoProvider>,
     ) -> Self {
         Self {
             redaction,
             key,
             max_size,
+            crypto,
         }
     }
 
@@ -272,24 +284,16 @@ impl DiagnosticExporter {
         Ok(bundle)
     }
 
-    fn key(&self) -> Result<LessSafeKey> {
-        let unbound = UnboundKey::new(&AES_256_GCM, &self.key)
-            .map_err(|e| Error::Diagnostics(format!("invalid aes key: {e}")))?;
-        Ok(LessSafeKey::new(unbound))
-    }
-
     fn encrypt(&self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-        let rng = SystemRandom::new();
-        let mut nonce_bytes = [0u8; NONCE_LEN];
-        rng.fill(&mut nonce_bytes)
-            .map_err(|_| Error::Diagnostics("rng failure".into()))?;
-        let nonce = Nonce::assume_unique_for_key(nonce_bytes);
-        let nonce_vec = nonce.as_ref().to_vec();
-        let key = self.key()?;
-        let mut buf = plaintext.to_vec();
-        key.seal_in_place_append_tag(nonce, Aad::empty(), &mut buf)
-            .map_err(|_| Error::Diagnostics("aes-gcm seal failed".into()))?;
-        Ok((buf, nonce_vec))
+        // CryptoProvider 返回 Ciphertext{ nonce, data, tag }，
+        // 诊断包格式需 data+tag 合并存储 + nonce 独立存储。
+        let ct = self
+            .crypto
+            .encrypt(plaintext, &self.key)
+            .map_err(|e| Error::Diagnostics(format!("aes-gcm encrypt: {e}")))?;
+        let mut combined = ct.data;
+        combined.extend_from_slice(&ct.tag);
+        Ok((combined, ct.nonce.to_vec()))
     }
 
     fn decrypt_bytes(&self, ciphertext: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
@@ -300,15 +304,28 @@ impl DiagnosticExporter {
                 NONCE_LEN
             )));
         }
+        if ciphertext.len() < TAG_LEN {
+            return Err(Error::Diagnostics(
+                "ciphertext too short (missing tag)".into(),
+            ));
+        }
         let mut nb = [0u8; NONCE_LEN];
         nb.copy_from_slice(nonce);
-        let n = Nonce::assume_unique_for_key(nb);
-        let key = self.key()?;
-        let mut buf = ciphertext.to_vec();
-        let plaintext = key
-            .open_in_place(n, Aad::empty(), &mut buf)
-            .map_err(|_| Error::Diagnostics("aes-gcm open failed (auth/integrity)".into()))?;
-        Ok(plaintext.to_vec())
+        // 拆分 data + tag
+        let data_len = ciphertext.len() - TAG_LEN;
+        let mut data = ciphertext[..data_len].to_vec();
+        let mut tag = [0u8; TAG_LEN];
+        tag.copy_from_slice(&ciphertext[data_len..]);
+        let ct = Ciphertext {
+            nonce: nb,
+            data,
+            tag,
+        };
+        let plaintext = self
+            .crypto
+            .decrypt(&ct, &self.key)
+            .map_err(|e| Error::Diagnostics(format!("aes-gcm decrypt: {e}")))?;
+        Ok(plaintext)
     }
 }
 
@@ -603,31 +620,26 @@ impl RemoteSession {
     }
 }
 
-/// 端到端加密通道（AES-256-GCM）。
+/// 端到端加密通道（AES-256-GCM，通过 CryptoProvider）。
 pub struct SecureChannel {
     key: [u8; AES_KEY_LEN],
+    crypto: Arc<dyn CryptoProvider>,
 }
 
 impl SecureChannel {
-    pub fn new(key: [u8; AES_KEY_LEN]) -> Self {
-        Self { key }
+    pub fn new(key: [u8; AES_KEY_LEN], crypto: Arc<dyn CryptoProvider>) -> Self {
+        Self { key, crypto }
     }
 
     /// 加密：返回 (密文+tag, nonce)。
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-        let rng = SystemRandom::new();
-        let mut nonce_bytes = [0u8; NONCE_LEN];
-        rng.fill(&mut nonce_bytes)
-            .map_err(|_| Error::Diagnostics("rng failure".into()))?;
-        let nonce = Nonce::assume_unique_for_key(nonce_bytes);
-        let nonce_vec = nonce.as_ref().to_vec();
-        let unbound = UnboundKey::new(&AES_256_GCM, &self.key)
-            .map_err(|e| Error::Diagnostics(format!("invalid aes key: {e}")))?;
-        let key = LessSafeKey::new(unbound);
-        let mut buf = plaintext.to_vec();
-        key.seal_in_place_append_tag(nonce, Aad::empty(), &mut buf)
-            .map_err(|_| Error::Diagnostics("aes-gcm seal failed".into()))?;
-        Ok((buf, nonce_vec))
+        let ct = self
+            .crypto
+            .encrypt(plaintext, &self.key)
+            .map_err(|e| Error::Diagnostics(format!("aes-gcm encrypt: {e}")))?;
+        let mut combined = ct.data;
+        combined.extend_from_slice(&ct.tag);
+        Ok((combined, ct.nonce.to_vec()))
     }
 
     /// 解密。
@@ -638,17 +650,25 @@ impl SecureChannel {
                 nonce.len()
             )));
         }
+        if ciphertext.len() < TAG_LEN {
+            return Err(Error::Diagnostics("ciphertext too short".into()));
+        }
         let mut nb = [0u8; NONCE_LEN];
         nb.copy_from_slice(nonce);
-        let n = Nonce::assume_unique_for_key(nb);
-        let unbound = UnboundKey::new(&AES_256_GCM, &self.key)
-            .map_err(|e| Error::Diagnostics(format!("invalid aes key: {e}")))?;
-        let key = LessSafeKey::new(unbound);
-        let mut buf = ciphertext.to_vec();
-        let plaintext = key
-            .open_in_place(n, Aad::empty(), &mut buf)
-            .map_err(|_| Error::Diagnostics("aes-gcm open failed".into()))?;
-        Ok(plaintext.to_vec())
+        let data_len = ciphertext.len() - TAG_LEN;
+        let mut data = ciphertext[..data_len].to_vec();
+        let mut tag = [0u8; TAG_LEN];
+        tag.copy_from_slice(&ciphertext[data_len..]);
+        let ct = Ciphertext {
+            nonce: nb,
+            data,
+            tag,
+        };
+        let plaintext = self
+            .crypto
+            .decrypt(&ct, &self.key)
+            .map_err(|e| Error::Diagnostics(format!("aes-gcm decrypt: {e}")))?;
+        Ok(plaintext)
     }
 }
 
@@ -693,7 +713,7 @@ impl RemoteAssistServer {
             permissions
         };
         let session = RemoteSession {
-            session_code: gen_session_code(),
+            session_code: gen_session_code(self.channel.crypto.as_ref()),
             created_at: now,
             expires_at: now + Duration::seconds(self.session_duration_secs),
             permissions: perms,
@@ -761,16 +781,10 @@ impl RemoteAssistServer {
     }
 }
 
-/// 生成 6 位一次性会话码。
-fn gen_session_code() -> String {
-    let rng = SystemRandom::new();
-    let mut buf = [0u8; 4];
-    // SystemRandom 在合理平台不会失败；失败时退化为时间戳派生
-    if rng.fill(&mut buf).is_err() {
-        let n = Utc::now().timestamp() as u32;
-        return format!("{:06}", n % 1_000_000);
-    }
-    let n = u32::from_be_bytes(buf) % 1_000_000;
+/// 生成 6 位一次性会话码（通过 CryptoProvider 的安全随机数）。
+fn gen_session_code(crypto: &dyn CryptoProvider) -> String {
+    let buf = crypto.random_bytes(4);
+    let n = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) % 1_000_000;
     format!("{:06}", n)
 }
 
@@ -1057,6 +1071,7 @@ impl LogAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aurora_security::SecurityCryptoProvider;
 
     fn test_key() -> [u8; AES_KEY_LEN] {
         // 32 字节固定测试密钥
@@ -1065,6 +1080,10 @@ mod tests {
             *b = (i as u8).wrapping_mul(7);
         }
         k
+    }
+
+    fn test_crypto() -> Arc<dyn CryptoProvider> {
+        Arc::new(SecurityCryptoProvider::new())
     }
 
     // ---- Redaction ----
@@ -1107,7 +1126,7 @@ mod tests {
 
     #[test]
     fn diagnostic_exporter_compress_encrypt_size_cap_round_trip() {
-        let exporter = DiagnosticExporter::new(test_key());
+        let exporter = DiagnosticExporter::new(test_key(), test_crypto());
         let mut bundle = DiagnosticBundle::minimal();
         bundle.logs.push(LogEntry::new("INFO", "app started token=abc"));
         bundle.config = serde_json::json!({"theme": "dark"});
@@ -1127,7 +1146,7 @@ mod tests {
 
     #[test]
     fn diagnostic_exporter_decrypt_bytes_round_trip() {
-        let exporter = DiagnosticExporter::new(test_key());
+        let exporter = DiagnosticExporter::new(test_key(), test_crypto());
         let pkg = exporter
             .export(DiagnosticBundle::minimal())
             .unwrap();
@@ -1139,7 +1158,7 @@ mod tests {
 
     #[test]
     fn diagnostic_exporter_log_retention_filters_old() {
-        let exporter = DiagnosticExporter::new(test_key());
+        let exporter = DiagnosticExporter::new(test_key(), test_crypto());
         let mut bundle = DiagnosticBundle::minimal();
         // 10 天前的日志应被过滤
         let old = LogEntry {
@@ -1155,7 +1174,7 @@ mod tests {
 
     #[test]
     fn diagnostic_exporter_size_cap_exceeded() {
-        let exporter = DiagnosticExporter::new(test_key());
+        let exporter = DiagnosticExporter::new(test_key(), test_crypto());
         let mut bundle = DiagnosticBundle::minimal();
         // 制造超大日志使其超过 50MB（压缩后仍超）
         let big = "A".repeat(MAX_PACKAGE_SIZE + 1024);
@@ -1167,18 +1186,18 @@ mod tests {
 
     #[test]
     fn diagnostic_exporter_wrong_key_fails_decrypt() {
-        let exporter = DiagnosticExporter::new(test_key());
+        let exporter = DiagnosticExporter::new(test_key(), test_crypto());
         let pkg = exporter.export(DiagnosticBundle::minimal()).unwrap();
         let mut other_key = test_key();
         other_key[0] = other_key[0].wrapping_add(1);
-        let other = DiagnosticExporter::new(other_key);
+        let other = DiagnosticExporter::new(other_key, test_crypto());
         let err = other.decrypt_bundle(&pkg).unwrap_err();
         assert!(matches!(err, Error::Diagnostics(_)));
     }
 
     #[test]
     fn diagnostic_exporter_bad_nonce_length() {
-        let exporter = DiagnosticExporter::new(test_key());
+        let exporter = DiagnosticExporter::new(test_key(), test_crypto());
         let pkg = exporter.export(DiagnosticBundle::minimal()).unwrap();
         let mut bad = pkg.clone();
         bad.nonce = vec![0u8; 5];
@@ -1295,7 +1314,7 @@ mod tests {
 
     #[test]
     fn secure_channel_encrypt_decrypt_round_trip() {
-        let ch = SecureChannel::new(test_key());
+        let ch = SecureChannel::new(test_key(), test_crypto());
         let (ct, nonce) = ch.encrypt(b"secret logs").unwrap();
         assert_ne!(ct, b"secret logs");
         let pt = ch.decrypt(&ct, &nonce).unwrap();
@@ -1304,7 +1323,7 @@ mod tests {
 
     #[test]
     fn secure_channel_tamper_fails() {
-        let ch = SecureChannel::new(test_key());
+        let ch = SecureChannel::new(test_key(), test_crypto());
         let (mut ct, nonce) = ch.encrypt(b"secret").unwrap();
         ct[0] ^= 0xff;
         assert!(ch.decrypt(&ct, &nonce).is_err());
@@ -1312,7 +1331,7 @@ mod tests {
 
     #[test]
     fn secure_channel_bad_nonce() {
-        let ch = SecureChannel::new(test_key());
+        let ch = SecureChannel::new(test_key(), test_crypto());
         let (ct, _) = ch.encrypt(b"secret").unwrap();
         assert!(ch.decrypt(&ct, &[0u8; 4]).is_err());
     }
@@ -1321,7 +1340,7 @@ mod tests {
 
     #[test]
     fn remote_session_create_and_validate() {
-        let srv = RemoteAssistServer::new(SecureChannel::new(test_key()), 3600);
+        let srv = RemoteAssistServer::new(SecureChannel::new(test_key(), test_crypto()), 3600);
         assert!(srv.is_enterprise());
         let s = srv.create_session(RemoteSessionPermission::ReadModify).unwrap();
         // 企业模式强制 DiagnoseOnly
@@ -1334,7 +1353,7 @@ mod tests {
 
     #[test]
     fn remote_session_non_enterprise_allows_read_modify() {
-        let srv = RemoteAssistServer::non_enterprise(SecureChannel::new(test_key()), 3600);
+        let srv = RemoteAssistServer::non_enterprise(SecureChannel::new(test_key(), test_crypto()), 3600);
         assert!(!srv.is_enterprise());
         let s = srv.create_session(RemoteSessionPermission::ReadModify).unwrap();
         assert_eq!(s.permissions, RemoteSessionPermission::ReadModify);
@@ -1342,7 +1361,7 @@ mod tests {
 
     #[test]
     fn remote_session_expiry() {
-        let srv = RemoteAssistServer::new(SecureChannel::new(test_key()), 0);
+        let srv = RemoteAssistServer::new(SecureChannel::new(test_key(), test_crypto()), 0);
         let s = srv.create_session(RemoteSessionPermission::DiagnoseOnly).unwrap();
         // duration=0 → 立即过期
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1352,7 +1371,7 @@ mod tests {
 
     #[test]
     fn remote_session_close() {
-        let srv = RemoteAssistServer::new(SecureChannel::new(test_key()), 3600);
+        let srv = RemoteAssistServer::new(SecureChannel::new(test_key(), test_crypto()), 3600);
         let s = srv.create_session(RemoteSessionPermission::DiagnoseOnly).unwrap();
         srv.close_session(&s.session_code).unwrap();
         assert!(srv.validate(&s.session_code).is_err());
@@ -1362,7 +1381,7 @@ mod tests {
 
     #[test]
     fn remote_session_stream_logs_e2ee() {
-        let srv = RemoteAssistServer::new(SecureChannel::new(test_key()), 3600);
+        let srv = RemoteAssistServer::new(SecureChannel::new(test_key(), test_crypto()), 3600);
         let s = srv.create_session(RemoteSessionPermission::DiagnoseOnly).unwrap();
         let (ct, nonce) = srv.stream_logs(&s.session_code, b"some log line").unwrap();
         // 接收端解密
@@ -1378,7 +1397,7 @@ mod tests {
 
     #[test]
     fn session_code_is_six_digits() {
-        let code = gen_session_code();
+        let code = gen_session_code(test_crypto().as_ref());
         assert_eq!(code.len(), 6);
         assert!(code.chars().all(|c| c.is_ascii_digit()));
     }
@@ -1493,12 +1512,17 @@ mod tests {
         assert_eq!(back, meta);
     }
 
-    // 引用 aead 模块以避免未使用警告
+    // 验证加密常量一致性（通过 CryptoProvider 实际加解密验证）
     #[test]
-    fn aead_constants_sane() {
-        assert_eq!(aead::AES_256_GCM.key_len(), AES_KEY_LEN);
-        assert_eq!(aead::AES_256_GCM.nonce_len(), NONCE_LEN);
-        assert_eq!(aead::AES_256_GCM.tag_len(), TAG_LEN);
+    fn crypto_constants_sane() {
+        let crypto = test_crypto();
+        let key = test_key();
+        let pt = b"constant check";
+        let ct = crypto.encrypt(pt, &key).unwrap();
+        assert_eq!(ct.nonce.len(), NONCE_LEN);
+        assert_eq!(ct.tag.len(), TAG_LEN);
+        let recovered = crypto.decrypt(&ct, &key).unwrap();
+        assert_eq!(recovered, pt);
     }
 
     // 引用 sha3 以验证可用

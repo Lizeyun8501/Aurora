@@ -8,6 +8,7 @@
 //! - AES-256-GCM 对称加解密
 //! - Argon2id 密钥派生
 //! - ML-KEM-768 后量子密钥封装（与 X25519 双轨并行，见 aurora-security）
+//! - Ed25519 签名验证（插件市场签名校验）
 //! - 安全随机数、SHA-256、HMAC-SHA256
 //! - 算法版本号（前向兼容：密文格式升级时可识别旧版本）
 
@@ -39,6 +40,14 @@ pub struct KemSharedSecret(pub [u8; 32]);
 /// KEM 封装密文（ML-KEM-768，1088 字节）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KemCiphertext(pub Vec<u8>);
+
+/// Ed25519 公钥（32 字节）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Ed25519PublicKey(pub [u8; 32]);
+
+/// Ed25519 签名（64 字节）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Ed25519Signature(pub [u8; 64]);
 
 /// 密码学能力抽象接口（跨层服务）。
 pub trait CryptoProvider: Send + Sync {
@@ -78,6 +87,16 @@ pub trait CryptoProvider: Send + Sync {
 
     /// HMAC-SHA256 验证（常数时间比较）。
     fn hmac_verify(&self, key: &[u8], data: &[u8], signature: &[u8]) -> bool;
+
+    /// Ed25519 签名验证（插件市场签名校验等场景）。
+    ///
+    /// 返回 `true` 表示签名有效，`false` 表示签名不匹配或格式错误。
+    fn ed25519_verify(
+        &self,
+        public_key: &Ed25519PublicKey,
+        message: &[u8],
+        signature: &Ed25519Signature,
+    ) -> bool;
 
     /// 算法版本号（用于密文前向兼容与迁移）。
     ///

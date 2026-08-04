@@ -45,3 +45,7 @@ reqwest = { version = "0.11", features = ["json"] }
 
 # Aurora core for shared error types
 aurora-core = { path = "../aurora-core" }
+
+[dev-dependencies]
+# Real CryptoProvider implementation for diagnostics encryption tests
+aurora-security = { path = "../aurora-security" }

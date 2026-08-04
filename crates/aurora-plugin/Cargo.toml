@@ -36,3 +36,7 @@ uuid = { workspace = true }
 
 # Concurrency
 parking_lot = { workspace = true }
+
+[dev-dependencies]
+# Real CryptoProvider implementation for signature verification tests
+aurora-security = { path = "../aurora-security" }

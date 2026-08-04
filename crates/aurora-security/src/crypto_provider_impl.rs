@@ -7,7 +7,8 @@
 //! - `1`：当前默认，使用 `ring` + `AES-256-GCM` + `Argon2id` + `ML-KEM-768`
 
 use aurora_core::traits::crypto_provider::{
-    Ciphertext, CryptoProvider, KemCiphertext, KemPublicKey, KemSecretKey, KemSharedSecret,
+    Ciphertext, CryptoProvider, Ed25519PublicKey, Ed25519Signature, KemCiphertext, KemPublicKey,
+    KemSecretKey, KemSharedSecret,
 };
 
 /// 生产级密码学提供者实现。
@@ -192,6 +193,17 @@ impl CryptoProvider for SecurityCryptoProvider {
         mac.verify_slice(signature).is_ok()
     }
 
+    fn ed25519_verify(
+        &self,
+        public_key: &Ed25519PublicKey,
+        message: &[u8],
+        signature: &Ed25519Signature,
+    ) -> bool {
+        use ring::signature::{UnparsedPublicKey, ED25519};
+        let ring_pk = UnparsedPublicKey::new(&ED25519, public_key.0);
+        ring_pk.verify(message, &signature.0).is_ok()
+    }
+
     fn algorithm_version(&self) -> u16 {
         self.algorithm_version
     }
@@ -245,5 +257,32 @@ mod tests {
     fn algorithm_version() {
         let provider = SecurityCryptoProvider::with_version(2);
         assert_eq!(provider.algorithm_version(), 2);
+    }
+
+    #[test]
+    fn ed25519_verify_real_signature() {
+        let provider = SecurityCryptoProvider::new();
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+        let rng = ring::rand::SystemRandom::new();
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let keypair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let peer_pk_bytes = keypair.public_key().as_ref().to_vec();
+        let mut pk_arr = [0u8; 32];
+        pk_arr.copy_from_slice(&peer_pk_bytes);
+        let msg = b"plugin manifest payload";
+        let sig = keypair.sign(msg);
+        let mut sig_arr = [0u8; 64];
+        sig_arr.copy_from_slice(sig.as_ref());
+        assert!(provider.ed25519_verify(
+            &Ed25519PublicKey(pk_arr),
+            msg,
+            &Ed25519Signature(sig_arr)
+        ));
+        // 篡改消息应验证失败
+        assert!(!provider.ed25519_verify(
+            &Ed25519PublicKey(pk_arr),
+            b"tampered",
+            &Ed25519Signature(sig_arr)
+        ));
     }
 }

@@ -23,8 +23,8 @@ repository = "https://github.com/aurora-note/aurora-note"
 # CRDT engine
 loro = "1"
 
-# P2P sync
-iroh = "0.34"
+# P2P sync (V19 §31 要求 iroh 1.0+，IrohTransport 代码按 1.0 API 编写)
+iroh = "1.0"
 
 # Full-text search
 tantivy = "0.22"

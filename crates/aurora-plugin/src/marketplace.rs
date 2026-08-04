@@ -13,9 +13,11 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use ring::rand::SystemRandom;
-use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
+use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+
+use aurora_core::traits::crypto_provider::{CryptoProvider, Ed25519PublicKey, Ed25519Signature};
 
 /// 插件来源分类。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -103,17 +105,42 @@ impl PluginSignature {
         })
     }
 
-    /// 校验签名是否匹配消息。
-    pub fn verify(&self, message: &[u8]) -> Result<(), crate::Error> {
+    /// 通过 CryptoProvider 校验签名是否匹配消息。
+    ///
+    /// V19 §28.6 要求所有密码学操作通过 CryptoProvider Trait，
+    /// 禁止直接依赖 ring 等实现 crate（签名生成端除外，签名生成需要私钥）。
+    pub fn verify_with_provider(
+        &self,
+        message: &[u8],
+        crypto: &dyn CryptoProvider,
+    ) -> Result<(), crate::Error> {
         if self.algorithm != Self::ALGORITHM {
             return Err(crate::Error::SignatureInvalid(format!(
                 "unsupported algorithm: {}",
                 self.algorithm
             )));
         }
-        let pk = UnparsedPublicKey::new(&ED25519, &self.public_key);
-        pk.verify(message, &self.signature)
-            .map_err(|_| crate::Error::SignatureInvalid("signature verification failed".into()))
+        if self.public_key.len() != 32 || self.signature.len() != 64 {
+            return Err(crate::Error::SignatureInvalid(
+                "invalid Ed25519 key or signature length".into(),
+            ));
+        }
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(&self.public_key);
+        let mut sig = [0u8; 64];
+        sig.copy_from_slice(&self.signature);
+        let ok = crypto.ed25519_verify(
+            &Ed25519PublicKey(pk),
+            message,
+            &Ed25519Signature(sig),
+        );
+        if ok {
+            Ok(())
+        } else {
+            Err(crate::Error::SignatureInvalid(
+                "signature verification failed".into(),
+            ))
+        }
     }
 
     /// 公钥是否与受信任集合匹配。
@@ -141,23 +168,29 @@ pub struct UpdateCheck {
 }
 
 /// 插件市场：管理条目、信任公钥、签名校验与更新检测。
+///
+/// V19 §28.6 要求所有密码学操作通过 CryptoProvider Trait 执行。
+/// Marketplace 持有 `crypto_provider` 引用，签名校验全部走 CryptoProvider，
+/// 不再直接依赖 ring 实现细节。
 pub struct Marketplace {
     listings: Arc<RwLock<HashMap<String, PluginListing>>>,
     trusted_keys: Arc<RwLock<Vec<Vec<u8>>>>,
-}
-
-impl Default for Marketplace {
-    fn default() -> Self {
-        Self::new()
-    }
+    crypto_provider: Arc<dyn CryptoProvider>,
 }
 
 impl Marketplace {
-    pub fn new() -> Self {
+    /// 创建市场实例，注入 CryptoProvider。
+    pub fn new(crypto: Arc<dyn CryptoProvider>) -> Self {
         Self {
             listings: Arc::new(RwLock::new(HashMap::new())),
             trusted_keys: Arc::new(RwLock::new(Vec::new())),
+            crypto_provider: crypto,
         }
+    }
+
+    /// 获取注入的 CryptoProvider 引用（供内部调用）。
+    fn crypto(&self) -> &dyn CryptoProvider {
+        self.crypto_provider.as_ref()
     }
 
     /// 发布一个条目到市场。
@@ -247,7 +280,7 @@ impl Marketplace {
                 "signing key not in trusted set".into(),
             ));
         }
-        sig.verify(message)?;
+        sig.verify_with_provider(message, self.crypto())?;
         // 校验通过后将条目标记为已验证
         if let Some(l) = self.listings.write().get_mut(listing_id) {
             l.verified = true;
@@ -283,6 +316,13 @@ impl Marketplace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aurora_security::SecurityCryptoProvider;
+
+    /// 构造测试用 Marketplace（注入真实 SecurityCryptoProvider）。
+    fn make_marketplace() -> Marketplace {
+        let crypto: Arc<dyn CryptoProvider> = Arc::new(SecurityCryptoProvider::new());
+        Marketplace::new(crypto)
+    }
 
     fn make_listing(id: &str, version: &str, source: PluginSource) -> PluginListing {
         PluginListing {
@@ -318,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_marketplace_publish_get_remove() {
-        let m = Marketplace::new();
+        let m = make_marketplace();
         m.publish(make_listing("p1", "1.0.0", PluginSource::Official));
         assert!(m.get("p1").is_some());
         assert!(m.get("missing").is_none());
@@ -329,7 +369,7 @@ mod tests {
 
     #[test]
     fn test_marketplace_register_local() {
-        let m = Marketplace::new();
+        let m = make_marketplace();
         m.register_local(make_listing("p1", "1.0.0", PluginSource::Official));
         let l = m.get("p1").unwrap();
         assert_eq!(l.source, PluginSource::Local);
@@ -337,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_marketplace_list_by_source() {
-        let m = Marketplace::new();
+        let m = make_marketplace();
         m.publish(make_listing("p1", "1.0.0", PluginSource::Official));
         m.publish(make_listing("p2", "1.0.0", PluginSource::ThirdParty));
         m.publish(make_listing("p3", "1.0.0", PluginSource::Official));
@@ -350,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_marketplace_search() {
-        let m = Marketplace::new();
+        let m = make_marketplace();
         m.publish(make_listing("calendar", "1.0.0", PluginSource::Official));
         let mut pdf = make_listing("pdf-export", "1.0.0", PluginSource::ThirdParty);
         pdf.author = "Acme Corp".to_string();
@@ -367,6 +407,7 @@ mod tests {
 
     #[test]
     fn test_ed25519_sign_verify_roundtrip() {
+        let m = make_marketplace();
         let pkcs8 = generate_keypair().unwrap();
         let message = b"hello aurora plugin";
         let sig = PluginSignature::sign(message, &pkcs8).unwrap();
@@ -374,34 +415,35 @@ mod tests {
         assert_eq!(sig.public_key.len(), 32);
         assert_eq!(sig.signature.len(), 64);
 
-        // 校验通过
-        assert!(sig.verify(message).is_ok());
+        // 通过 CryptoProvider 校验通过
+        assert!(sig.verify_with_provider(message, m.crypto()).is_ok());
     }
 
     #[test]
     fn test_ed25519_verify_tampered_fails() {
+        let m = make_marketplace();
         let pkcs8 = generate_keypair().unwrap();
         let message = b"original content";
         let sig = PluginSignature::sign(message, &pkcs8).unwrap();
 
         // 篡改消息
-        let err = sig.verify(b"tampered content").unwrap_err();
+        let err = sig.verify_with_provider(b"tampered content", m.crypto()).unwrap_err();
         assert!(matches!(err, crate::Error::SignatureInvalid(_)));
 
         // 篡改签名
         let mut bad_sig = sig.clone();
         bad_sig.signature[0] ^= 0xff;
-        assert!(bad_sig.verify(message).is_err());
+        assert!(bad_sig.verify_with_provider(message, m.crypto()).is_err());
 
         // 错误算法
         let mut bad_algo = sig.clone();
         bad_algo.algorithm = "rsa".to_string();
-        assert!(bad_algo.verify(message).is_err());
+        assert!(bad_algo.verify_with_provider(message, m.crypto()).is_err());
     }
 
     #[test]
     fn test_marketplace_verify_listing() {
-        let m = Marketplace::new();
+        let m = make_marketplace();
         let listing = make_listing("p1", "1.0.0", PluginSource::Official);
         m.publish(listing.clone());
 
@@ -420,7 +462,7 @@ mod tests {
 
     #[test]
     fn test_marketplace_verify_listing_untrusted_key() {
-        let m = Marketplace::new();
+        let m = make_marketplace();
         m.publish(make_listing("p1", "1.0.0", PluginSource::Official));
         m.add_trusted_key(vec![0u8; 32]); // 信任一个无关公钥
 
@@ -435,7 +477,7 @@ mod tests {
     #[test]
     fn test_marketplace_verify_listing_no_trust_check() {
         // 未注册任何受信任公钥时，只要签名本身有效即通过
-        let m = Marketplace::new();
+        let m = make_marketplace();
         m.publish(make_listing("p1", "1.0.0", PluginSource::ThirdParty));
         let pkcs8 = generate_keypair().unwrap();
         let message = b"msg";
@@ -445,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_marketplace_check_update_available() {
-        let m = Marketplace::new();
+        let m = make_marketplace();
         m.publish(make_listing("p1", "2.0.0", PluginSource::Official));
         let check = m.check_update("p1", "1.0.0").unwrap();
         assert!(check.has_update);
@@ -455,7 +497,7 @@ mod tests {
 
     #[test]
     fn test_marketplace_check_update_none() {
-        let m = Marketplace::new();
+        let m = make_marketplace();
         m.publish(make_listing("p1", "1.2.3", PluginSource::Official));
         let check = m.check_update("p1", "1.2.3").unwrap();
         assert!(!check.has_update);
@@ -467,13 +509,13 @@ mod tests {
 
     #[test]
     fn test_marketplace_check_update_missing_listing() {
-        let m = Marketplace::new();
+        let m = make_marketplace();
         assert!(m.check_update("ghost", "1.0.0").is_err());
     }
 
     #[test]
     fn test_trusted_key_count() {
-        let m = Marketplace::new();
+        let m = make_marketplace();
         assert_eq!(m.trusted_key_count(), 0);
         m.add_trusted_key(vec![1u8; 32]);
         m.add_trusted_key(vec![2u8; 32]);
