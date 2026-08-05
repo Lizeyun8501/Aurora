@@ -1,5 +1,9 @@
-//! Trait 4: AIProvider — AI 模型推理服务的统一接口，支持本地与云端模型
+//! Trait: AIProvider — AI 模型推理服务的统一接口，支持本地与云端模型
+//!
+//! V19 §28 原始指定 `async_trait`，本批次 PR 推进异步化迁移。
+//! 流式回调 `stream_complete` 与纯查询 `is_available` 保持同步签名。
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,11 +39,14 @@ pub struct ToolCall {
     pub arguments: serde_json::Value,
 }
 
+#[async_trait]
 pub trait AIProvider: Send + Sync {
-    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, crate::Error>;
-    fn complete(&self, prompt: &str, opts: &CompletionOptions) -> Result<String, crate::Error>;
+    async fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, crate::Error>;
+    async fn complete(&self, prompt: &str, opts: &CompletionOptions) -> Result<String, crate::Error>;
+    /// 流式回调（fire-and-forget，保持同步签名）。
     fn stream_complete(&self, prompt: &str, opts: &CompletionOptions, callback: Box<dyn Fn(String) + Send + Sync>);
-    fn chat(&self, messages: &[Message], opts: &ChatOptions) -> Result<String, crate::Error>;
-    fn function_call(&self, prompt: &str, tools: &[Tool]) -> Result<ToolCall, crate::Error>;
+    async fn chat(&self, messages: &[Message], opts: &ChatOptions) -> Result<String, crate::Error>;
+    async fn function_call(&self, prompt: &str, tools: &[Tool]) -> Result<ToolCall, crate::Error>;
+    /// 纯查询方法，保持同步签名。
     fn is_available(&self) -> bool;
 }

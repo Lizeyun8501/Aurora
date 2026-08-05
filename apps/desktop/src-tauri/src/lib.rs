@@ -150,118 +150,109 @@ fn build_app_core(data_dir: &std::path::Path, db_path: &std::path::Path) -> AppC
         .build()
 }
 
-/// 获取当前 AppCore 实例（用于 command handler 内部）。
-fn with_core<F, R>(f: F) -> Result<R, String>
-where
-    F: FnOnce(&Arc<AppCore>) -> Result<R, String>,
-{
+/// 获取 AppCore 实例的 Arc 引用（不持有锁，可安全跨 .await）。
+fn get_core() -> Result<Arc<AppCore>, String> {
     let guard = APP_STATE.lock().map_err(|e| format!("mutex poisoned: {}", e))?;
-    match guard.as_ref() {
-        Some(core) => f(core),
-        None => Err("AppCore not initialized".into()),
-    }
+    guard.as_ref().cloned().ok_or_else(|| "AppCore not initialized".into())
 }
 
 // ── Tauri Commands (§30 平台适配) ─────────────────────────────
 
 /// 创建新笔记。
 #[tauri::command]
-pub fn cmd_create_note(title: String) -> Result<String, String> {
-    with_core(|core| {
-        let id = uuid::Uuid::new_v4().to_string();
-        info!(note_id = %id, title, "note created via desktop command");
-        // 通过 KVStore 持久化笔记元数据
-        let note_json = serde_json::json!({
-            "id": id,
-            "title": title,
-            "content": "",
-            "content_type": "markdown",
-            "created_at": chrono::Utc::now().to_rfc3339(),
-        });
-        let key = format!("note:{}", id);
-        let payload = serde_json::to_vec(&note_json).map_err(|e| e.to_string())?;
-        core.kv_store.set(&key, &payload);
-        Ok(id)
-    })
+pub async fn cmd_create_note(title: String) -> Result<String, String> {
+    let core = get_core()?;
+    let id = uuid::Uuid::new_v4().to_string();
+    info!(note_id = %id, title, "note created via desktop command");
+    let note_json = serde_json::json!({
+        "id": id,
+        "title": title,
+        "content": "",
+        "content_type": "markdown",
+        "created_at": chrono::Utc::now().to_rfc3339(),
+    });
+    let key = format!("note:{}", id);
+    let payload = serde_json::to_vec(&note_json).map_err(|e| e.to_string())?;
+    core.kv_store.set(&key, &payload).await.map_err(|e| e.to_string())?;
+    Ok(id)
 }
 
 /// 获取笔记内容。
 #[tauri::command]
-pub fn cmd_get_note(note_id: String) -> Result<serde_json::Value, String> {
-    with_core(|core| {
-        let key = format!("note:{}", note_id);
-        let payload = core.kv_store.get(&key)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("note not found: {}", note_id))?;
-        let note: serde_json::Value = serde_json::from_slice(&payload).map_err(|e| e.to_string())?;
-        Ok(note)
-    })
+pub async fn cmd_get_note(note_id: String) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let key = format!("note:{}", note_id);
+    let payload = core.kv_store.get(&key)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("note not found: {}", note_id))?;
+    let note: serde_json::Value = serde_json::from_slice(&payload).map_err(|e| e.to_string())?;
+    Ok(note)
 }
 
 /// 更新笔记。
 #[tauri::command]
-pub fn cmd_update_note(
+pub async fn cmd_update_note(
     note_id: String,
     title: Option<String>,
     content: Option<String>,
 ) -> Result<(), String> {
-    with_core(|core| {
-        let key = format!("note:{}", note_id);
-        let existing = core.kv_store.get(&key).map_err(|e| e.to_string())?;
-        let mut note: serde_json::Value = match existing {
-            Some(data) => serde_json::from_slice(&data).map_err(|e| e.to_string())?,
-            None => serde_json::json!({"id": note_id, "content_type": "markdown"}),
-        };
-        if let Some(t) = title {
-            note["title"] = serde_json::Value::String(t);
-        }
-        if let Some(c) = content {
-            note["content"] = serde_json::Value::String(c);
-        }
-        note["updated_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
-        let payload = serde_json::to_vec(&note).map_err(|e| e.to_string())?;
-        core.kv_store.set(&key, &payload);
-        info!(note_id = %note_id, "note updated via desktop command");
-        Ok(())
-    })
+    let core = get_core()?;
+    let key = format!("note:{}", note_id);
+    let existing = core.kv_store.get(&key).await.map_err(|e| e.to_string())?;
+    let mut note: serde_json::Value = match existing {
+        Some(data) => serde_json::from_slice(&data).map_err(|e| e.to_string())?,
+        None => serde_json::json!({"id": note_id, "content_type": "markdown"}),
+    };
+    if let Some(t) = title {
+        note["title"] = serde_json::Value::String(t);
+    }
+    if let Some(c) = content {
+        note["content"] = serde_json::Value::String(c);
+    }
+    note["updated_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+    let payload = serde_json::to_vec(&note).map_err(|e| e.to_string())?;
+    core.kv_store.set(&key, &payload).await.map_err(|e| e.to_string())?;
+    info!(note_id = %note_id, "note updated via desktop command");
+    Ok(())
 }
 
 /// 删除笔记。
 #[tauri::command]
-pub fn cmd_delete_note(note_id: String) -> Result<(), String> {
-    with_core(|core| {
-        let key = format!("note:{}", note_id);
-        core.kv_store.delete(&key).map_err(|e| e.to_string())?;
-        info!(note_id = %note_id, "note deleted via desktop command");
-        Ok(())
-    })
+pub async fn cmd_delete_note(note_id: String) -> Result<(), String> {
+    let core = get_core()?;
+    let key = format!("note:{}", note_id);
+    core.kv_store.delete(&key).await.map_err(|e| e.to_string())?;
+    info!(note_id = %note_id, "note deleted via desktop command");
+    Ok(())
 }
 
 /// 搜索笔记。
 #[tauri::command]
-pub fn cmd_search_notes(query: String) -> Result<Vec<serde_json::Value>, String> {
-    with_core(|core| {
-        info!(query, "search notes via desktop command");
-        let hits = core.search.search(&query).map_err(|e| e.to_string())?;
-        let results: Vec<serde_json::Value> = hits
-            .into_iter()
-            .map(|hit| serde_json::json!({"doc_id": hit.doc_id, "score": hit.score, "snippet": hit.snippet}))
-            .collect();
-        Ok(results)
-    })
+pub async fn cmd_search_notes(query: String) -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    info!(query, "search notes via desktop command");
+    // 注意：SearchBackend::search 签名为 async fn search(&self, query: &str, opts: &SearchOptions)
+    // V19 §28 异步化迁移后需 .await
+    let opts = aurora_core::traits::search_backend::SearchOptions::default();
+    let result = core.search.search(&query, &opts).await.map_err(|e| e.to_string())?;
+    let results: Vec<serde_json::Value> = result.hits
+        .into_iter()
+        .map(|hit| serde_json::json!({"doc_id": hit.note_id, "score": hit.score, "snippet": hit.snippet}))
+        .collect();
+    Ok(results)
 }
 
 /// 获取应用状态摘要（健康检查）。
 #[tauri::command]
 pub fn cmd_app_status() -> Result<serde_json::Value, String> {
-    with_core(|core| {
-        let crypto_version = core.crypto.algorithm_version();
-        Ok(serde_json::json!({
-            "status": "healthy",
-            "platform": "desktop",
-            "crypto_version": crypto_version,
-        }))
-    })
+    let core = get_core()?;
+    let crypto_version = core.crypto.algorithm_version();
+    Ok(serde_json::json!({
+        "status": "healthy",
+        "platform": "desktop",
+        "crypto_version": crypto_version,
+    }))
 }
 
 // ── DesktopPlatform Trait (§30) ───────────────────────────────

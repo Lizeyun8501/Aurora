@@ -9,6 +9,7 @@
 //! dependency-light: it relies only on types already exported by `aurora_core`
 //! plus `proptest` strategies for generation.
 
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -57,8 +58,9 @@ impl Default for MockStorage {
     }
 }
 
+#[async_trait]
 impl Storage for MockStorage {
-    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, aurora_core::Error> {
+    async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, aurora_core::Error> {
         Ok(self.inner.lock().unwrap().get(key).cloned())
     }
 

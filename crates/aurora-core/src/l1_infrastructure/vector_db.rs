@@ -3,6 +3,7 @@
 //! 提供向量存储与相似度检索能力，支撑语义搜索与 RAG 检索增强生成。
 //! 底层使用 [LanceDB](https://lancedb.github.io/lancedb/) 与 SQLite vec 扩展实现。
 
+use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 
 use crate::traits::vector_store::{QueryFilter, SearchResult, VectorStore};
@@ -33,8 +34,9 @@ impl LanceDbStore {
     }
 }
 
+#[async_trait]
 impl VectorStore for LanceDbStore {
-    fn add(&self, id: &str, vector: &[f32], metadata: &serde_json::Value) -> Result<(), crate::Error> {
+    async fn add(&self, id: &str, vector: &[f32], metadata: &serde_json::Value) -> Result<(), crate::Error> {
         tracing::debug!(
             "lancedb add: id={}, vector_len={}, metadata={}",
             id,
@@ -119,8 +121,9 @@ impl SqliteVecStore {
     }
 }
 
+#[async_trait]
 impl VectorStore for SqliteVecStore {
-    fn add(&self, id: &str, vector: &[f32], metadata: &serde_json::Value) -> Result<(), crate::Error> {
+    async fn add(&self, id: &str, vector: &[f32], metadata: &serde_json::Value) -> Result<(), crate::Error> {
         if vector.len() != self.dimension {
             return Err(crate::Error::InvalidInput(format!(
                 "vector dimension mismatch: expected {}, got {}",

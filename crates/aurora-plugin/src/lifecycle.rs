@@ -12,6 +12,7 @@
 //!   对外暴露 `load / invoke / unload / list_hooks`，内部按模式分派到
 //!   `WasmRuntime` 或 `IframeRuntime`。
 
+use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -453,8 +454,9 @@ impl PluginManager {
     }
 }
 
+#[async_trait]
 impl PluginRuntime for PluginManager {
-    fn load(&mut self, manifest: &PluginManifest) -> Result<PluginHandle, aurora_core::Error> {
+    async fn load(&mut self, manifest: &PluginManifest) -> Result<PluginHandle, aurora_core::Error> {
         let mode = PluginMode::from(manifest.runtime.clone());
         let plugin = Plugin::new(manifest.clone(), mode);
         let handle = PluginHandle {

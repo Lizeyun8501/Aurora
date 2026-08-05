@@ -11,6 +11,7 @@
 //!   路由映射，支持 `list_all` / `find_by_name` / `find_by_capability`。
 //! - `MockAgent`：`AgentProtocol` 的内存实现，用于测试与本地编排。
 
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -440,8 +441,9 @@ impl MockAgent {
     }
 }
 
+#[async_trait]
 impl AgentProtocol for MockAgent {
-    fn register_tool(&self, tool: &ToolDefinition) -> Result<(), aurora_core::Error> {
+    async fn register_tool(&self, tool: &ToolDefinition) -> Result<(), aurora_core::Error> {
         debug!(
             "mock agent {}: register tool {}",
             self.agent_id, tool.name

@@ -3,6 +3,7 @@
 //! 提供点对点 (P2P) 数据同步与节点发现能力，支持去中心化的多端同步。
 //! 底层使用 [iroh](https://iroh.computer) 实现。
 
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -30,8 +31,9 @@ impl Default for IrohSyncTarget {
     }
 }
 
+#[async_trait]
 impl SyncTarget for IrohSyncTarget {
-    fn connect(&mut self, endpoint: &Endpoint) -> Result<Connection, crate::Error> {
+    async fn connect(&mut self, endpoint: &Endpoint) -> Result<Connection, crate::Error> {
         if !matches!(endpoint.protocol, SyncProtocol::Iroh | SyncProtocol::Quic) {
             return Err(crate::Error::InvalidInput(format!(
                 "IrohSyncTarget does not support protocol {:?}",
@@ -125,8 +127,9 @@ impl Default for WebSocketSyncTarget {
     }
 }
 
+#[async_trait]
 impl SyncTarget for WebSocketSyncTarget {
-    fn connect(&mut self, endpoint: &Endpoint) -> Result<Connection, crate::Error> {
+    async fn connect(&mut self, endpoint: &Endpoint) -> Result<Connection, crate::Error> {
         if endpoint.protocol != SyncProtocol::WebSocket {
             return Err(crate::Error::InvalidInput(format!(
                 "WebSocketSyncTarget does not support protocol {:?}",
@@ -222,8 +225,9 @@ impl Default for LanSyncTarget {
     }
 }
 
+#[async_trait]
 impl SyncTarget for LanSyncTarget {
-    fn connect(&mut self, endpoint: &Endpoint) -> Result<Connection, crate::Error> {
+    async fn connect(&mut self, endpoint: &Endpoint) -> Result<Connection, crate::Error> {
         let conn = Connection {
             id: uuid::Uuid::new_v4().to_string(),
             endpoint: endpoint.clone(),

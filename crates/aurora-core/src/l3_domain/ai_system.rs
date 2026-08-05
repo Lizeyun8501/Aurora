@@ -2,6 +2,7 @@
 //!
 //! 实现混合推理架构、智能续写、内容摘要、问答对话、混合搜索、语义搜索、自动标签、任务分解。
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -125,8 +126,9 @@ impl MockAIProvider {
     }
 }
 
+#[async_trait]
 impl AIProvider for MockAIProvider {
-    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, crate::Error> {
+    async fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, crate::Error> {
         let embeddings = self.embeddings.read();
         let mut result = Vec::new();
         for text in texts {

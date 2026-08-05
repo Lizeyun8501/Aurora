@@ -62,6 +62,9 @@ bincode = "1"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
+# Async trait macro (V19 §28 — Trait 异步化迁移)
+async-trait = "0.1"
+
 # Error handling
 thiserror = "1"
 

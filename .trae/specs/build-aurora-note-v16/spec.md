@@ -2,7 +2,7 @@
 
 ## Why
 
-Aurora Note 是一个本地优先、端到端加密的跨平台知识管理与笔记系统。当前需要从零构建完整的 V16 优化版，涵盖 6 层架构、7 大 Trait 抽象、19 大功能模块、3 端部署（Desktop/Mobile/Web），以及完整的运维可观测性体系，为研发团队提供完整的技术实现指南。
+Aurora Note 是一个本地优先、端到端加密的跨平台知识管理与笔记系统。当前需要从零构建完整的 V16 优化版，涵盖 6 层架构、11 大 Trait 抽象、19 大功能模块、3 端部署（Desktop/Mobile/Web），以及完整的运维可观测性体系，为研发团队提供完整的技术实现指南。
 
 ## What Changes
 
@@ -10,7 +10,7 @@ Aurora Note 是一个本地优先、端到端加密的跨平台知识管理与�
 - 搭建「主三层分离 + 核心层内三子层」的双层架构体系
   - 外层主三层：视图层（React 18 + TypeScript）/ 适配层（Tauri v2 / Capacitor v8 / WASM）/ 核心层（Rust）
   - 内层子三层：L1 基础设施层 / L2 核心引擎层 / L3 领域服务层
-- 实现 7 大 Trait 抽象接口：CrdtEngine、SyncTarget、VectorStore、AIProvider、Storage、PluginRuntime、AgentProtocol
+- 实现 11 大 Trait 抽象接口：CrdtEngine、SyncTarget、VectorStore、AIProvider、Storage、PluginRuntime、AgentProtocol、CryptoProvider、KVStore、OcrProvider、SearchBackend
 - 搭建事件总线（tokio::sync::broadcast）实现层间通信
 - **BREAKING**：从 V15.1 经典加密升级为 V16 后量子加密（ML-KEM-768）双轨并行
 
@@ -65,8 +65,8 @@ Aurora Note 是一个本地优先、端到端加密的跨平台知识管理与�
 - **WHEN** 在不同平台编译核心层
 - **THEN** 核心层代码 100% 复用，视图层 94% 复用，适配层按平台差异化实现
 
-### Requirement: 七大 Trait 抽象
-系统 SHALL 定义 7 个核心 Trait 接口，所有 L3 领域服务通过 Trait 与 L2 引擎通信。
+### Requirement: 十一大 Trait 抽象
+系统 SHALL 定义 11 个核心 Trait 接口（V19 §28 原始 7 个 + V16 扩展 4 个），所有 L3 领域服务通过 Trait 与 L2 引擎通信。V19 §28 原始指定 `async_trait`，本批次 PR 推进异步化迁移。
 
 #### Scenario: Trait 实现
 - **WHEN** L3 领域服务需要 CRDT 操作能力

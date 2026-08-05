@@ -11,6 +11,12 @@
 //! - Ed25519 签名验证（插件市场签名校验）
 //! - 安全随机数、SHA-256、HMAC-SHA256
 //! - 算法版本号（前向兼容：密文格式升级时可识别旧版本）
+//!
+//! # 异步化设计决策
+//! V19 §28 原始指定 `async_trait`，但 CryptoProvider 的所有方法均为 CPU 密集型
+//! 纯计算（无 IO），async 化会引入不必要的 `Pin<Box<Future>>` 堆分配开销。
+//! 经架构审阅决定：**CryptoProvider 保持同步签名**，与其余 10 个 Trait 的 async
+//! 签名并存。未来如需接入远程 HSM 或 KMS 服务，可派生 `AsyncCryptoProvider` 子 Trait。
 
 use serde::{Deserialize, Serialize};
 

@@ -8,6 +8,9 @@ license.workspace = true
 # Core traits (PluginRuntime, Error, PluginManifest)
 aurora-core = { path = "../aurora-core" }
 
+# Async trait macro (V19 §28 — Trait 异步化迁移)
+async-trait = { workspace = true }
+
 # WASM runtime
 wasmtime = { workspace = true }
 

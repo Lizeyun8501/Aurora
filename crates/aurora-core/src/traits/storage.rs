@@ -1,5 +1,8 @@
-//! Trait 5: Storage — 持久化存储接口，支持 KV、关系型、对象存储多种模式
+//! Trait: Storage — 持久化存储接口，支持 KV、关系型、对象存储多种模式
+//!
+//! V19 §28 原始指定 `async_trait`，本批次 PR 推进异步化迁移。
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,10 +31,11 @@ pub enum StorageOp {
     Delete { key: String },
 }
 
+#[async_trait]
 pub trait Storage: Send + Sync {
-    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, crate::Error>;
-    fn put(&self, key: &str, value: &[u8]) -> Result<(), crate::Error>;
-    fn delete(&self, key: &str) -> Result<(), crate::Error>;
-    fn query(&self, q: &StorageQuery) -> Result<Vec<Record>, crate::Error>;
-    fn transaction(&self, ops: &[StorageOp]) -> Result<(), crate::Error>;
+    async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, crate::Error>;
+    async fn put(&self, key: &str, value: &[u8]) -> Result<(), crate::Error>;
+    async fn delete(&self, key: &str) -> Result<(), crate::Error>;
+    async fn query(&self, q: &StorageQuery) -> Result<Vec<Record>, crate::Error>;
+    async fn transaction(&self, ops: &[StorageOp]) -> Result<(), crate::Error>;
 }

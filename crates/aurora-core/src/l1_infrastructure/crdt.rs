@@ -3,6 +3,7 @@
 //! 提供无冲突复制数据类型 (CRDT) 能力，支持多端协同编辑与离线合并。
 //! 底层使用 [Loro](https://loro.dev) 实现，确保协议长期稳定。
 
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -34,8 +35,9 @@ impl Default for LoroCrdtEngine {
     }
 }
 
+#[async_trait]
 impl CrdtEngine for LoroCrdtEngine {
-    fn create_document(&self, doc_id: &str) -> Result<LoroDoc, crate::Error> {
+    async fn create_document(&self, doc_id: &str) -> Result<LoroDoc, crate::Error> {
         let mut docs = self
             .docs
             .lock()

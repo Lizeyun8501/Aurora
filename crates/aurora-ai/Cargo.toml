@@ -8,6 +8,9 @@ license.workspace = true
 # Core traits (AgentProtocol, Error)
 aurora-core = { path = "../aurora-core" }
 
+# Async trait macro (V19 §28 — Trait 异步化迁移)
+async-trait = { workspace = true }
+
 # Cryptography (sandbox challenge tokens)
 ring = { workspace = true }
 

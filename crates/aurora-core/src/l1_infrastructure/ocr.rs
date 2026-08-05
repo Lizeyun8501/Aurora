@@ -3,6 +3,7 @@
 //! 提供图片文字识别 (OCR) 能力，用于从图片中提取文本内容。
 //! 底层可选 PaddleOCR 或 Tesseract 作为识别引擎。
 
+use async_trait::async_trait;
 use crate::traits::ocr_provider::{OcrProvider, OcrResult};
 
 /// PaddleOCR 引擎实现。
@@ -23,8 +24,9 @@ impl Default for PaddleOcrEngine {
     }
 }
 
+#[async_trait]
 impl OcrProvider for PaddleOcrEngine {
-    fn recognize(&self, _image_bytes: &[u8]) -> Result<OcrResult, crate::Error> {
+    async fn recognize(&self, _image_bytes: &[u8]) -> Result<OcrResult, crate::Error> {
         tracing::warn!("PaddleOcrEngine::recognize is not yet implemented");
         Err(crate::Error::Internal(
             "PaddleOCR backend not linked".to_string(),
@@ -61,8 +63,9 @@ impl Default for TesseractEngine {
     }
 }
 
+#[async_trait]
 impl OcrProvider for TesseractEngine {
-    fn recognize(&self, _image_bytes: &[u8]) -> Result<OcrResult, crate::Error> {
+    async fn recognize(&self, _image_bytes: &[u8]) -> Result<OcrResult, crate::Error> {
         tracing::warn!("TesseractEngine::recognize is not yet implemented");
         Err(crate::Error::Internal(
             "Tesseract backend not linked".to_string(),

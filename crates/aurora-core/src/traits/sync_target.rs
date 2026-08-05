@@ -1,6 +1,9 @@
-//! Trait 2: SyncTarget — 同步目标的抽象，支持 P2P、云端、局域网多种同步模式
+//! Trait: SyncTarget — 同步目标的抽象，支持 P2P、云端、局域网多种同步模式
+//!
+//! V19 §28 原始指定 `async_trait`，本批次 PR 推进异步化迁移。
+//! 回调注册方法 `watch` 保持同步签名（fire-and-forget）。
 
-use std::sync::Arc;
+use async_trait::async_trait;
 
 #[derive(Debug, Clone)]
 pub struct Endpoint {
@@ -41,9 +44,11 @@ pub enum SyncEvent {
     Error { message: String },
 }
 
+#[async_trait]
 pub trait SyncTarget: Send + Sync {
-    fn connect(&mut self, endpoint: &Endpoint) -> Result<Connection, crate::Error>;
-    fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error>;
+    async fn connect(&mut self, endpoint: &Endpoint) -> Result<Connection, crate::Error>;
+    async fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error>;
+    /// 注册同步事件回调（fire-and-forget，保持同步签名）。
     fn watch(&self, callback: Box<dyn Fn(SyncEvent) + Send + Sync>);
-    fn disconnect(&self, conn: &Connection) -> Result<(), crate::Error>;
+    async fn disconnect(&self, conn: &Connection) -> Result<(), crate::Error>;
 }

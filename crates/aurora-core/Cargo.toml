@@ -37,6 +37,8 @@ bincode = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
+# Async trait macro (V19 §28 — Trait 异步化迁移)
+async-trait = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

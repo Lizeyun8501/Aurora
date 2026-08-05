@@ -3,8 +3,10 @@
 //! 对应架构设计报告 V19 七大 Trait 之一。全文检索后端（Tantivy / SQLite FTS5）
 //! 通过本 Trait 与领域服务层解耦，支持中文分词（jieba）与工作区/标签/日期过滤。
 //!
-//! V19 原始定义为 `async_trait`，本实现与现有 Trait 层保持同步签名风格。
+//! V19 原始指定 `async_trait`，本批次 PR 推进异步化迁移。
+//! 纯计算方法 `tokenize` 保持同步签名。
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -72,12 +74,13 @@ pub struct IndexEntry {
 }
 
 /// 搜索后端抽象接口。
+#[async_trait]
 pub trait SearchBackend: Send + Sync {
     /// 全文搜索。
-    fn search(&self, query: &str, opts: &SearchOptions) -> Result<SearchResult, crate::Error>;
+    async fn search(&self, query: &str, opts: &SearchOptions) -> Result<SearchResult, crate::Error>;
 
     /// 索引单篇笔记（存在则更新）。
-    fn index_note(
+    async fn index_note(
         &self,
         note_id: &str,
         content: &str,
@@ -85,14 +88,15 @@ pub trait SearchBackend: Send + Sync {
     ) -> Result<(), crate::Error>;
 
     /// 批量索引（同一提交批次，提升吞吐）。
-    fn batch_index(&self, notes: &[IndexEntry]) -> Result<(), crate::Error>;
+    async fn batch_index(&self, notes: &[IndexEntry]) -> Result<(), crate::Error>;
 
     /// 删除指定笔记的索引。
-    fn remove_index(&self, note_id: &str) -> Result<(), crate::Error>;
+    async fn remove_index(&self, note_id: &str) -> Result<(), crate::Error>;
 
     /// 全量重建索引（崩溃恢复 / 定期校验，对应 V19 ARCH-003 低频通道补偿）。
-    fn rebuild_index(&self, all_notes: &[IndexEntry]) -> Result<(), crate::Error>;
+    async fn rebuild_index(&self, all_notes: &[IndexEntry]) -> Result<(), crate::Error>;
 
     /// 中文分词（jieba），供查询解析与高亮使用。
+    /// 纯计算方法，保持同步签名。
     fn tokenize(&self, text: &str) -> Vec<String>;
 }

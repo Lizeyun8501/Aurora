@@ -1,5 +1,9 @@
-//! Trait 7: AgentProtocol — AI Agent 通信协议接口，MCP 兼容
+//! Trait: AgentProtocol — AI Agent 通信协议接口，MCP 兼容
+//!
+//! V19 §28 原始指定 `async_trait`，本批次 PR 推进异步化迁移。
+//! 事件订阅 `subscribe` 保持同步签名（fire-and-forget）。
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,9 +40,11 @@ pub struct Context {
     pub user_preferences: serde_json::Value,
 }
 
+#[async_trait]
 pub trait AgentProtocol: Send + Sync {
-    fn register_tool(&self, tool: &ToolDefinition) -> Result<(), crate::Error>;
-    fn execute(&self, request: &AgentRequest) -> Result<AgentResponse, crate::Error>;
+    async fn register_tool(&self, tool: &ToolDefinition) -> Result<(), crate::Error>;
+    async fn execute(&self, request: &AgentRequest) -> Result<AgentResponse, crate::Error>;
+    /// 事件订阅（fire-and-forget，保持同步签名）。
     fn subscribe(&self, event_type: &str, callback: Box<dyn Fn(AgentEvent) + Send + Sync>);
-    fn get_context(&self, session_id: &str) -> Result<Context, crate::Error>;
+    async fn get_context(&self, session_id: &str) -> Result<Context, crate::Error>;
 }

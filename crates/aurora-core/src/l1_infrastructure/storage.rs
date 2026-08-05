@@ -5,6 +5,7 @@
 
 use std::sync::Mutex;
 
+use async_trait::async_trait;
 use crate::traits::storage::{Record, Storage, StorageOp, StorageQuery};
 use rusqlite::OptionalExtension;
 
@@ -70,8 +71,9 @@ impl SqliteStorage {
     }
 }
 
+#[async_trait]
 impl Storage for SqliteStorage {
-    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, crate::Error> {
+    async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, crate::Error> {
         let conn = self
             .conn
             .lock()
@@ -86,7 +88,7 @@ impl Storage for SqliteStorage {
         Ok(result)
     }
 
-    fn put(&self, key: &str, value: &[u8]) -> Result<(), crate::Error> {
+    async fn put(&self, key: &str, value: &[u8]) -> Result<(), crate::Error> {
         let mut conn = self
             .conn
             .lock()
@@ -99,7 +101,7 @@ impl Storage for SqliteStorage {
         Ok(())
     }
 
-    fn delete(&self, key: &str) -> Result<(), crate::Error> {
+    async fn delete(&self, key: &str) -> Result<(), crate::Error> {
         let mut conn = self
             .conn
             .lock()
@@ -112,7 +114,7 @@ impl Storage for SqliteStorage {
         Ok(())
     }
 
-    fn query(&self, q: &StorageQuery) -> Result<Vec<Record>, crate::Error> {
+    async fn query(&self, q: &StorageQuery) -> Result<Vec<Record>, crate::Error> {
         let conn = self
             .conn
             .lock()
@@ -197,7 +199,7 @@ impl Storage for SqliteStorage {
         Ok(records)
     }
 
-    fn transaction(&self, ops: &[StorageOp]) -> Result<(), crate::Error> {
+    async fn transaction(&self, ops: &[StorageOp]) -> Result<(), crate::Error> {
         let mut conn = self
             .conn
             .lock()
@@ -246,8 +248,9 @@ impl SledStorage {
     }
 }
 
+#[async_trait]
 impl Storage for SledStorage {
-    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, crate::Error> {
+    async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, crate::Error> {
         let result = self
             .db
             .get(key)
@@ -255,7 +258,7 @@ impl Storage for SledStorage {
         Ok(result.map(|ivec| ivec.to_vec()))
     }
 
-    fn put(&self, key: &str, value: &[u8]) -> Result<(), crate::Error> {
+    async fn put(&self, key: &str, value: &[u8]) -> Result<(), crate::Error> {
         self.db
             .insert(key, value)
             .map_err(|e| crate::Error::Database(format!("sled put failed: {}", e)))?;
@@ -265,7 +268,7 @@ impl Storage for SledStorage {
         Ok(())
     }
 
-    fn delete(&self, key: &str) -> Result<(), crate::Error> {
+    async fn delete(&self, key: &str) -> Result<(), crate::Error> {
         self.db
             .remove(key)
             .map_err(|e| crate::Error::Database(format!("sled delete failed: {}", e)))?;
@@ -275,7 +278,7 @@ impl Storage for SledStorage {
         Ok(())
     }
 
-    fn query(&self, q: &StorageQuery) -> Result<Vec<Record>, crate::Error> {
+    async fn query(&self, q: &StorageQuery) -> Result<Vec<Record>, crate::Error> {
         // Sled 是纯 KV 存储，不支持关系型查询。
         // 回退到遍历所有键值对并在内存中过滤。
         let mut records = vec![];
@@ -299,7 +302,7 @@ impl Storage for SledStorage {
         Ok(records)
     }
 
-    fn transaction(&self, ops: &[StorageOp]) -> Result<(), crate::Error> {
+    async fn transaction(&self, ops: &[StorageOp]) -> Result<(), crate::Error> {
         // sled 的单个 insert/remove 是原子性的，但批量操作需要应用层保证。
         // 先顺序执行，最后统一 flush。
         for op in ops {

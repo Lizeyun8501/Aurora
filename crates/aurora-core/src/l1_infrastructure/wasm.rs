@@ -3,6 +3,7 @@
 //! 提供安全沙箱化的 WebAssembly 运行时能力，用于隔离执行插件代码。
 //! 底层使用 [Wasmtime](https://wasmtime.dev/) 实现。
 
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -33,8 +34,9 @@ impl Default for WasmtimeRuntime {
     }
 }
 
+#[async_trait]
 impl PluginRuntime for WasmtimeRuntime {
-    fn load(&mut self, manifest: &PluginManifest) -> Result<PluginHandle, crate::Error> {
+    async fn load(&mut self, manifest: &PluginManifest) -> Result<PluginHandle, crate::Error> {
         if manifest.runtime != RuntimeType::Wasm {
             return Err(crate::Error::InvalidInput(format!(
                 "WasmtimeRuntime expects Wasm runtime, got {:?}",
@@ -119,8 +121,9 @@ impl Default for IframeRuntime {
     }
 }
 
+#[async_trait]
 impl PluginRuntime for IframeRuntime {
-    fn load(&mut self, manifest: &PluginManifest) -> Result<PluginHandle, crate::Error> {
+    async fn load(&mut self, manifest: &PluginManifest) -> Result<PluginHandle, crate::Error> {
         if manifest.runtime != RuntimeType::Iframe {
             return Err(crate::Error::InvalidInput(format!(
                 "IframeRuntime expects Iframe runtime, got {:?}",
