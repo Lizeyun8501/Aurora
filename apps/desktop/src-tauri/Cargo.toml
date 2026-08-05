@@ -22,7 +22,7 @@ aurora-security = { path = "../../../crates/aurora-security" }
 aurora-ai = { path = "../../../crates/aurora-ai" }
 aurora-plugin = { path = "../../../crates/aurora-plugin" }
 aurora-sync = { path = "../../../crates/aurora-sync" }
-migration = { path = "../../../crates/migration" }
+aurora-migration = { path = "../../../crates/migration" }
 
 dirs-next = "2.0"
 

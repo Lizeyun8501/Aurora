@@ -33,7 +33,7 @@ impl OcrProvider for PaddleOcrEngine {
         ))
     }
 
-    fn recognize_batch(&self, _image_bytes_list: &[&[u8]]) -> Result<Vec<OcrResult>, crate::Error> {
+    async fn recognize_batch(&self, _image_bytes_list: &[&[u8]]) -> Result<Vec<OcrResult>, crate::Error> {
         tracing::warn!("PaddleOcrEngine::recognize_batch is not yet implemented");
         Err(crate::Error::Internal(
             "PaddleOCR backend not linked".to_string(),
@@ -72,7 +72,7 @@ impl OcrProvider for TesseractEngine {
         ))
     }
 
-    fn recognize_batch(&self, _image_bytes_list: &[&[u8]]) -> Result<Vec<OcrResult>, crate::Error> {
+    async fn recognize_batch(&self, _image_bytes_list: &[&[u8]]) -> Result<Vec<OcrResult>, crate::Error> {
         tracing::warn!("TesseractEngine::recognize_batch is not yet implemented");
         Err(crate::Error::Internal(
             "Tesseract backend not linked".to_string(),

@@ -9,8 +9,6 @@ members = [
     "crates/aurora-observability",
     "crates/entity",
     "crates/migration",
-    "crates/mobile-ffi",
-    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]

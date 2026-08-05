@@ -52,8 +52,39 @@ pub struct KemCiphertext(pub Vec<u8>);
 pub struct Ed25519PublicKey(pub [u8; 32]);
 
 /// Ed25519 签名（64 字节）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Ed25519Signature(pub [u8; 64]);
+
+impl Serialize for Ed25519Signature {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeTuple;
+        let mut t = s.serialize_tuple(64)?;
+        for b in &self.0 {
+            t.serialize_element(b)?;
+        }
+        t.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Ed25519Signature {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Ed25519Signature;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a tuple of 64 bytes")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let mut arr = [0u8; 64];
+                for (i, b) in arr.iter_mut().enumerate() {
+                    *b = seq.next_element()?.ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
+                }
+                Ok(Ed25519Signature(arr))
+            }
+        }
+        d.deserialize_tuple(64, Visitor)
+    }
+}
 
 /// 密码学能力抽象接口（跨层服务）。
 pub trait CryptoProvider: Send + Sync {

@@ -158,7 +158,7 @@ pub fn verify_ecdsa_p256(data: &[u8], public_key: &[u8], signature: &[u8]) -> Re
 /// base64 编码辅助模块（简化实现，避免额外依赖）。
 mod base64 {
     pub fn encode(input: &[u8]) -> String {
-        use std::fmt::Write;
+        
         const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
         for chunk in input.chunks(3) {

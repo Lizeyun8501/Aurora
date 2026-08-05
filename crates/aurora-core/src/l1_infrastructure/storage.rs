@@ -6,11 +6,12 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use crate::traits::kv_store::KVStore;
 use crate::traits::storage::{Record, Storage, StorageOp, StorageQuery};
 use rusqlite::OptionalExtension;
 
 fn base64_encode(input: &[u8]) -> String {
-    use std::fmt::Write;
+    
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
     for chunk in input.chunks(3) {
@@ -89,7 +90,7 @@ impl Storage for SqliteStorage {
     }
 
     async fn put(&self, key: &str, value: &[u8]) -> Result<(), crate::Error> {
-        let mut conn = self
+        let conn = self
             .conn
             .lock()
             .map_err(|_| crate::Error::Internal("sqlite storage mutex poisoned".to_string()))?;
@@ -102,7 +103,7 @@ impl Storage for SqliteStorage {
     }
 
     async fn delete(&self, key: &str) -> Result<(), crate::Error> {
-        let mut conn = self
+        let conn = self
             .conn
             .lock()
             .map_err(|_| crate::Error::Internal("sqlite storage mutex poisoned".to_string()))?;
@@ -228,6 +229,117 @@ impl Storage for SqliteStorage {
         tx.commit()
             .map_err(|e| crate::Error::Database(format!("sqlite transaction commit failed: {}", e)))?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl KVStore for SqliteStorage {
+    async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, crate::Error> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite storage mutex poisoned".to_string()))?;
+        let mut stmt = conn
+            .prepare("SELECT value FROM kv_store WHERE key = ?1")
+            .map_err(|e| crate::Error::Database(format!("sqlite prepare failed: {}", e)))?;
+        let result = stmt
+            .query_row(rusqlite::params![key], |row| row.get::<_, Vec<u8>>(0))
+            .optional()
+            .map_err(|e| crate::Error::Database(format!("sqlite get failed: {}", e)))?;
+        Ok(result)
+    }
+
+    async fn set(&self, key: &str, value: &[u8]) -> Result<(), crate::Error> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite storage mutex poisoned".to_string()))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value],
+        )
+        .map_err(|e| crate::Error::Database(format!("sqlite set failed: {}", e)))?;
+        Ok(())
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), crate::Error> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite storage mutex poisoned".to_string()))?;
+        conn.execute(
+            "DELETE FROM kv_store WHERE key = ?1",
+            rusqlite::params![key],
+        )
+        .map_err(|e| crate::Error::Database(format!("sqlite delete failed: {}", e)))?;
+        Ok(())
+    }
+
+    async fn exists(&self, key: &str) -> Result<bool, crate::Error> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite storage mutex poisoned".to_string()))?;
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM kv_store WHERE key = ?1")
+            .map_err(|e| crate::Error::Database(format!("sqlite prepare failed: {}", e)))?;
+        let count: i64 = stmt
+            .query_row(rusqlite::params![key], |row| row.get(0))
+            .map_err(|e| crate::Error::Database(format!("sqlite exists failed: {}", e)))?;
+        Ok(count > 0)
+    }
+
+    async fn batch_get(&self, keys: &[&str]) -> Result<Vec<Option<Vec<u8>>>, crate::Error> {
+        let mut results = Vec::with_capacity(keys.len());
+        for key in keys {
+            results.push(KVStore::get(self, key).await?);
+        }
+        Ok(results)
+    }
+
+    async fn batch_set(&self, items: &[(&str, &[u8])]) -> Result<(), crate::Error> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite storage mutex poisoned".to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| crate::Error::Database(format!("sqlite transaction begin failed: {}", e)))?;
+        for (key, value) in items {
+            tx.execute(
+                "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?1, ?2)",
+                rusqlite::params![key, value],
+            )
+            .map_err(|e| crate::Error::Database(format!("sqlite batch_set failed: {}", e)))?;
+        }
+        tx.commit()
+            .map_err(|e| crate::Error::Database(format!("sqlite transaction commit failed: {}", e)))?;
+        Ok(())
+    }
+
+    async fn scan_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, crate::Error> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite storage mutex poisoned".to_string()))?;
+        let mut stmt = conn
+            .prepare("SELECT key, value FROM kv_store WHERE key LIKE ?1 ORDER BY key")
+            .map_err(|e| crate::Error::Database(format!("sqlite prepare failed: {}", e)))?;
+        let pattern = format!("{}%", prefix);
+        let rows = stmt
+            .query_map(rusqlite::params![pattern], |row| {
+                let key: String = row.get(0)?;
+                let value: Vec<u8> = row.get(1)?;
+                Ok((key, value))
+            })
+            .map_err(|e| crate::Error::Database(format!("sqlite scan_prefix failed: {}", e)))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| {
+                crate::Error::Database(format!("sqlite scan_prefix row failed: {}", e))
+            })?);
+        }
+        Ok(results)
     }
 }
 

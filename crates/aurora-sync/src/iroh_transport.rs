@@ -14,7 +14,7 @@
 //! # 同步流程（V19 §31.1）
 //! 1. Device A 通过 iroh Endpoint 连接 Device B (按 EndpointId 拨号)
 //! 2. 建立 QUIC 双向流 (open_bi)
-//! 3. 交换版本向量: A发送 doc.oplogVersion() → B
+//! 3. 交换版本向量: A发送 doc.oplog_vv() → B
 //! 4. 差异计算: B 比较 VV，导出增量 update
 //! 5. 传输增量: B → A 发送 update bytes
 //! 6. Import & Apply: A 接收并 import 到 LoroDoc
@@ -30,10 +30,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
 // iroh 1.0 API（对应 V19 §31.2）
-use iroh::{Endpoint, NodeAddr, NodeId, endpoint::accept::ConnectionDirection};
+use iroh::{Endpoint, EndpointAddr};
+use iroh::endpoint::presets::Empty;
 use loro::LoroDoc;
 
-use crate::p2p::{PeerId, SyncMessage, VersionVector};
+use crate::p2p::PeerId;
 
 /// iroh ALPN 协议标识（V19 §31.2: `aurora-note/1`）。
 pub const AURORA_ALPN: &[u8] = b"aurora-note/1";
@@ -89,21 +90,20 @@ pub struct SyncReport {
 impl IrohTransport {
     /// 创建 iroh Endpoint 并绑定（V19 §31.2 `IrohSyncTarget::new`）。
     ///
-    /// 使用 iroh 预设 `N0`（n0 默认 relay + STUN），自动完成 NAT 穿透。
-    pub async fn new(peer_id: PeerId) -> Result<Self, iroh::EndpointError> {
-        let endpoint = Endpoint::builder()
+    /// 使用 `Endpoint::empty()` 预设，自动完成基本绑定。
+    pub async fn new(peer_id: PeerId) -> Result<Self, String> {
+        let endpoint = Endpoint::builder(Empty)
             .alpns(vec![AURORA_ALPN.to_vec()])
             .bind()
             .await
             .map_err(|e| {
                 error!("iroh Endpoint bind failed: {}", e);
-                e
+                format!("iroh bind failed: {}", e)
             })?;
 
         info!(
-            "iroh transport bound: peer_id={} node_id={}",
+            "iroh transport bound: peer_id={}",
             peer_id,
-            endpoint.node_id()
         );
 
         Ok(Self {
@@ -112,9 +112,9 @@ impl IrohTransport {
         })
     }
 
-    /// 返回本节点的 iroh NodeId。
-    pub fn node_id(&self) -> NodeId {
-        self.endpoint.node_id()
+    /// 返回本节点的 iroh EndpointId。
+    pub fn id(&self) -> iroh::EndpointId {
+        self.endpoint.id()
     }
 
     /// 返回本节点的 PeerId。
@@ -122,9 +122,9 @@ impl IrohTransport {
         self.peer_id.lock().clone()
     }
 
-    /// 返回 iroh NodeAddr（含 relay 地址与直连地址），可分享给对端用于连接。
-    pub fn node_addr(&self) -> NodeAddr {
-        self.endpoint.node_addr()
+    /// 返回 iroh EndpointAddr（含 relay 地址与直连地址），可分享给对端用于连接。
+    pub fn addr(&self) -> EndpointAddr {
+        self.endpoint.addr()
     }
 
     /// 发起同步（客户端角色）：连接对端并交换 Loro CRDT 增量。
@@ -138,18 +138,18 @@ impl IrohTransport {
     /// 6. 反向：发送本地缺失更新
     pub async fn sync_with_peer(
         &self,
-        peer_addr: NodeAddr,
+        peer_addr: EndpointAddr,
         local_doc: &LoroDoc,
     ) -> Result<SyncReport, String> {
         debug!(
-            "sync_with_peer: connecting to node_id={}",
-            peer_addr.node_id
+            "sync_with_peer: connecting to node_id={:?}",
+            peer_addr.id
         );
 
         // 1. 建立 QUIC 连接
         let conn = self
             .endpoint
-            .connect(peer_addr, AURORA_ALPN)
+            .connect(peer_addr.clone(), AURORA_ALPN)
             .await
             .map_err(|e| format!("iroh connect failed: {}", e))?;
 
@@ -160,11 +160,11 @@ impl IrohTransport {
             .map_err(|e| format!("open_bi failed: {}", e))?;
 
         // 3. 发送本地版本向量（Loro oplog version）
-        let local_vv = local_doc.oplog_version();
+        let local_vv = local_doc.oplog_vv();
         let vv_bytes = local_vv.encode();
         let frame = encode_frame(&vv_bytes);
         send.write_all(&frame).await.map_err(|e| format!("write vv failed: {}", e))?;
-        send.finish().await.map_err(|e| format!("finish send failed: {}", e))?;
+        send.finish().map_err(|e| format!("finish send failed: {}", e))?;
 
         // 4. 接收远端增量更新
         let remote_update = recv
@@ -198,13 +198,12 @@ impl IrohTransport {
             .map_err(|e| format!("decode remote vv failed: {}", e))?;
 
         // 导出本地相对远端的增量
-        let local_update = local_doc.export(loro::ExportMode::Update {
-            from: Some(remote_vv),
-        });
+        let local_update = local_doc.export(loro::ExportMode::updates(&remote_vv))
+            .map_err(|e| format!("loro export failed: {}", e))?;
 
         let sent_bytes = local_update.len();
         send2.write_all(&local_update).await.map_err(|e| format!("write reverse update failed: {}", e))?;
-        send2.finish().await.map_err(|e| format!("finish reverse send failed: {}", e))?;
+        send2.finish().map_err(|e| format!("finish reverse send failed: {}", e))?;
 
         info!(
             "sync_with_peer completed: sent={} bytes, received={} bytes",
@@ -214,7 +213,7 @@ impl IrohTransport {
         Ok(SyncReport {
             sent_bytes,
             received_bytes,
-            remote_peer: peer_addr.node_id.to_string(),
+            remote_peer: format!("{:?}", peer_addr.id),
             success: true,
             error: None,
         })
@@ -230,15 +229,17 @@ impl IrohTransport {
         debug!("accept_sync: waiting for incoming connection...");
 
         // 接受入站连接
-        let conn = self
+        let incoming = self
             .endpoint
             .accept()
             .await
             .ok_or_else(|| "endpoint closed".to_string())?;
 
-        let conn = conn
+        let conn = incoming
+            .accept()
+            .map_err(|e| format!("accept connection failed: {}", e))?
             .await
-            .map_err(|e| format!("accept connection failed: {}", e))?;
+            .map_err(|e| format!("accept connection error: {}", e))?;
 
         // 接收双向流
         let (mut send, mut recv) = conn
@@ -256,13 +257,12 @@ impl IrohTransport {
             .map_err(|e| format!("decode remote vv failed: {}", e))?;
 
         // 导出本地相对远端的增量
-        let local_update = local_doc.export(loro::ExportMode::Update {
-            from: Some(remote_vv),
-        });
+        let local_update = local_doc.export(loro::ExportMode::updates(&remote_vv))
+            .map_err(|e| format!("loro export failed: {}", e))?;
 
         let sent_bytes = local_update.len();
         send.write_all(&local_update).await.map_err(|e| format!("write update failed: {}", e))?;
-        send.finish().await.map_err(|e| format!("finish send failed: {}", e))?;
+        send.finish().map_err(|e| format!("finish send failed: {}", e))?;
 
         // 反向：接收远端缺失更新
         let (mut send2, mut recv2) = conn
@@ -271,11 +271,11 @@ impl IrohTransport {
             .map_err(|e| format!("accept_bi reverse failed: {}", e))?;
 
         // 发送本地版本向量
-        let local_vv = local_doc.oplog_version();
+        let local_vv = local_doc.oplog_vv();
         let vv_bytes = local_vv.encode();
         let frame = encode_frame(&vv_bytes);
         send2.write_all(&frame).await.map_err(|e| format!("write vv reverse failed: {}", e))?;
-        send2.finish().await.map_err(|e| format!("finish vv reverse failed: {}", e))?;
+        send2.finish().map_err(|e| format!("finish vv reverse failed: {}", e))?;
 
         // 接收远端增量
         let remote_update = recv2
@@ -306,11 +306,8 @@ impl IrohTransport {
     }
 
     /// 关闭 iroh Endpoint，释放端口与资源。
-    pub async fn close(&self) -> Result<(), String> {
-        self.endpoint
-            .close()
-            .await
-            .map_err(|e| format!("endpoint close failed: {}", e))
+    pub async fn close(&self) {
+        self.endpoint.close().await;
     }
 }
 

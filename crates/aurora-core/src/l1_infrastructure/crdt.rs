@@ -47,7 +47,7 @@ impl CrdtEngine for LoroCrdtEngine {
         Ok(doc)
     }
 
-    fn apply_ops(&self, doc_id: &str, ops: &[u8]) -> Result<ChangeSummary, crate::Error> {
+    async fn apply_ops(&self, doc_id: &str, ops: &[u8]) -> Result<ChangeSummary, crate::Error> {
         let mut docs = self
             .docs
             .lock()
@@ -63,7 +63,7 @@ impl CrdtEngine for LoroCrdtEngine {
         })
     }
 
-    fn get_snapshot(&self, doc_id: &str) -> Result<Vec<u8>, crate::Error> {
+    async fn get_snapshot(&self, doc_id: &str) -> Result<Vec<u8>, crate::Error> {
         let docs = self
             .docs
             .lock()
@@ -88,7 +88,7 @@ impl CrdtEngine for LoroCrdtEngine {
         vec![]
     }
 
-    fn merge_branch(&self, doc_id: &str, _branch_id: &str) -> Result<MergeResult, crate::Error> {
+    async fn merge_branch(&self, doc_id: &str, _branch_id: &str) -> Result<MergeResult, crate::Error> {
         let docs = self
             .docs
             .lock()

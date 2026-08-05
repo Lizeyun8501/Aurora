@@ -16,9 +16,9 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
-use crate::traits::storage::{QueryFilter as StorageFilter, Record, Storage, StorageQuery};
+use crate::traits::storage::{QueryFilter as StorageFilter, Storage, StorageQuery};
 use crate::traits::vector_store::{
-    QueryFilter as VectorFilter, SearchResult as VectorSearchResult, VectorStore,
+    QueryFilter as VectorFilter, VectorStore,
 };
 
 // ==================== Query DSL ====================
@@ -291,6 +291,7 @@ fn filter_contains_vector(filter: &Filter) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn has_only_fulltext(query: &Query) -> bool {
     match &query.filter {
         Some(f) => filter_is_only_fulltext(f),
@@ -298,6 +299,7 @@ fn has_only_fulltext(query: &Query) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn filter_is_only_fulltext(filter: &Filter) -> bool {
     match filter {
         Filter::FullText { .. } => true,
@@ -308,6 +310,7 @@ fn filter_is_only_fulltext(filter: &Filter) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn has_only_vector(query: &Query) -> bool {
     match &query.filter {
         Some(f) => filter_is_only_vector(f),
@@ -315,6 +318,7 @@ fn has_only_vector(query: &Query) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn filter_is_only_vector(filter: &Filter) -> bool {
     match filter {
         Filter::Vector { .. } => true,
@@ -717,7 +721,7 @@ impl QueryEngine {
     }
 
     /// 执行查询（自动优化、缓存）
-    pub fn execute(&self, query: &Query) -> Result<QueryResult, crate::Error> {
+    pub async fn execute(&self, query: &Query) -> Result<QueryResult, crate::Error> {
         let plan = self.optimizer.optimize(query);
 
         let cache_key = match serde_json::to_string(query) {
@@ -742,10 +746,10 @@ impl QueryEngine {
         );
 
         let mut result = match plan.path {
-            ExecutionPath::Sqlite => self.execute_sqlite(query)?,
-            ExecutionPath::Tantivy => self.execute_tantivy(query)?,
-            ExecutionPath::LanceDb => self.execute_lancedb(query)?,
-            ExecutionPath::Hybrid => self.execute_hybrid(query)?,
+            ExecutionPath::Sqlite => self.execute_sqlite(query).await?,
+            ExecutionPath::Tantivy => self.execute_tantivy(query).await?,
+            ExecutionPath::LanceDb => self.execute_lancedb(query).await?,
+            ExecutionPath::Hybrid => self.execute_hybrid(query).await?,
         };
 
         // 应用投影
@@ -776,13 +780,13 @@ impl QueryEngine {
         self.cache.stats()
     }
 
-    fn execute_sqlite(&self, query: &Query) -> Result<QueryResult, crate::Error> {
+    async fn execute_sqlite(&self, query: &Query) -> Result<QueryResult, crate::Error> {
         let storage = self.storage.as_ref().ok_or_else(|| {
             crate::Error::InvalidInput("SQLite storage backend not configured".to_string())
         })?;
 
         let storage_query = convert_to_storage_query(query)?;
-        let records = storage.query(&storage_query)?;
+        let records = storage.query(&storage_query).await?;
 
         let mut items: Vec<serde_json::Value> = records.into_iter().map(|r| r.data).collect();
 
@@ -808,7 +812,7 @@ impl QueryEngine {
         })
     }
 
-    fn execute_tantivy(&self, query: &Query) -> Result<QueryResult, crate::Error> {
+    async fn execute_tantivy(&self, query: &Query) -> Result<QueryResult, crate::Error> {
         let fulltext = self.fulltext_search.as_ref().ok_or_else(|| {
             crate::Error::InvalidInput("Tantivy fulltext backend not configured".to_string())
         })?;
@@ -845,7 +849,7 @@ impl QueryEngine {
         })
     }
 
-    fn execute_lancedb(&self, query: &Query) -> Result<QueryResult, crate::Error> {
+    async fn execute_lancedb(&self, query: &Query) -> Result<QueryResult, crate::Error> {
         let vector_store = self.vector_store.as_ref().ok_or_else(|| {
             crate::Error::InvalidInput("LanceDB vector backend not configured".to_string())
         })?;
@@ -860,7 +864,7 @@ impl QueryEngine {
             .map(|p| p.offset + top_k)
             .unwrap_or(top_k);
 
-        let results = vector_store.search(&vector, adjusted_top_k, filter.as_ref())?;
+        let results = vector_store.search(&vector, adjusted_top_k, filter.as_ref()).await?;
 
         let mut items: Vec<serde_json::Value> = results
             .into_iter()
@@ -889,9 +893,9 @@ impl QueryEngine {
         })
     }
 
-    fn execute_hybrid(&self, query: &Query) -> Result<QueryResult, crate::Error> {
-        let mut tantivy_items = self.execute_tantivy(query)?.items;
-        let mut lancedb_items = self.execute_lancedb(query)?.items;
+    async fn execute_hybrid(&self, query: &Query) -> Result<QueryResult, crate::Error> {
+        let mut tantivy_items = self.execute_tantivy(query).await?.items;
+        let mut lancedb_items = self.execute_lancedb(query).await?.items;
 
         // 使用简化 RRF (Reciprocal Rank Fusion) 合并结果
         let mut scores: HashMap<String, (serde_json::Value, f64)> = HashMap::new();

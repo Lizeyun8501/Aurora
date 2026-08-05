@@ -11,6 +11,7 @@ use crate::traits::vector_store::{QueryFilter, SearchResult, VectorStore};
 /// 基于 LanceDB 的向量存储实现。
 ///
 /// 使用 `tokio::runtime::Runtime` 在同步接口中驱动 LanceDB 的异步 API。
+#[allow(dead_code)]
 pub struct LanceDbStore {
     uri: String,
     table_name: String,
@@ -47,7 +48,7 @@ impl VectorStore for LanceDbStore {
         Ok(())
     }
 
-    fn search(
+    async fn search(
         &self,
         query: &[f32],
         top_k: usize,
@@ -58,13 +59,13 @@ impl VectorStore for LanceDbStore {
         Ok(vec![])
     }
 
-    fn delete(&self, id: &str) -> Result<(), crate::Error> {
+    async fn delete(&self, id: &str) -> Result<(), crate::Error> {
         tracing::debug!("lancedb delete: id={}", id);
         // TODO: 接入 lancedb 真实删除 API。
         Ok(())
     }
 
-    fn hybrid_search(
+    async fn hybrid_search(
         &self,
         text_query: &str,
         vector: &[f32],
@@ -131,7 +132,7 @@ impl VectorStore for SqliteVecStore {
                 vector.len()
             )));
         }
-        let mut conn = self
+        let conn = self
             .conn
             .lock()
             .map_err(|_| crate::Error::Internal("sqlite vec mutex poisoned".to_string()))?;
@@ -148,7 +149,7 @@ impl VectorStore for SqliteVecStore {
         Ok(())
     }
 
-    fn search(
+    async fn search(
         &self,
         query: &[f32],
         top_k: usize,
@@ -167,7 +168,7 @@ impl VectorStore for SqliteVecStore {
             .map_err(|_| crate::Error::Internal("sqlite vec mutex poisoned".to_string()))?;
 
         let mut sql = format!("SELECT id, vec, metadata FROM {}", self.table_name);
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
+        let params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
 
         if let Some(f) = filter {
             sql.push_str(&format!(" WHERE metadata LIKE '%{}%'", f.value));
@@ -204,8 +205,8 @@ impl VectorStore for SqliteVecStore {
         Ok(results)
     }
 
-    fn delete(&self, id: &str) -> Result<(), crate::Error> {
-        let mut conn = self
+    async fn delete(&self, id: &str) -> Result<(), crate::Error> {
+        let conn = self
             .conn
             .lock()
             .map_err(|_| crate::Error::Internal("sqlite vec mutex poisoned".to_string()))?;
@@ -217,7 +218,7 @@ impl VectorStore for SqliteVecStore {
         Ok(())
     }
 
-    fn hybrid_search(
+    async fn hybrid_search(
         &self,
         text_query: &str,
         vector: &[f32],
@@ -230,7 +231,7 @@ impl VectorStore for SqliteVecStore {
             alpha
         );
         // SQLite-vec 暂不支持原生全文混合搜索，回退到纯向量搜索。
-        self.search(vector, 10, None)
+        self.search(vector, 10, None).await
     }
 }
 

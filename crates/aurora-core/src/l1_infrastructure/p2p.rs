@@ -58,7 +58,7 @@ impl SyncTarget for IrohSyncTarget {
         Ok(conn)
     }
 
-    fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error> {
+    async fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error> {
         let connections = self
             .connections
             .lock()
@@ -88,7 +88,7 @@ impl SyncTarget for IrohSyncTarget {
         }
     }
 
-    fn disconnect(&self, conn: &Connection) -> Result<(), crate::Error> {
+    async fn disconnect(&self, conn: &Connection) -> Result<(), crate::Error> {
         let mut connections = self
             .connections
             .lock()
@@ -154,7 +154,7 @@ impl SyncTarget for WebSocketSyncTarget {
         Ok(conn)
     }
 
-    fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error> {
+    async fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error> {
         let connections = self
             .connections
             .lock()
@@ -184,7 +184,7 @@ impl SyncTarget for WebSocketSyncTarget {
         }
     }
 
-    fn disconnect(&self, conn: &Connection) -> Result<(), crate::Error> {
+    async fn disconnect(&self, conn: &Connection) -> Result<(), crate::Error> {
         let mut connections = self
             .connections
             .lock()
@@ -246,7 +246,7 @@ impl SyncTarget for LanSyncTarget {
         Ok(conn)
     }
 
-    fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error> {
+    async fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error> {
         let connections = self
             .connections
             .lock()
@@ -272,7 +272,7 @@ impl SyncTarget for LanSyncTarget {
         }
     }
 
-    fn disconnect(&self, conn: &Connection) -> Result<(), crate::Error> {
+    async fn disconnect(&self, conn: &Connection) -> Result<(), crate::Error> {
         let mut connections = self
             .connections
             .lock()

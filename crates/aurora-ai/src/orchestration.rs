@@ -300,7 +300,7 @@ impl AgentOrchestrator {
     }
 
     /// 执行一个计划，返回总结。
-    pub fn execute(&self, plan: &OrchestrationPlan) -> Result<OrchestrationSummary, crate::Error> {
+    pub async fn execute(&self, plan: &OrchestrationPlan) -> Result<OrchestrationSummary, crate::Error> {
         info!(
             "orchestrator: execute plan mode={:?} steps={}",
             plan.mode,
@@ -308,9 +308,9 @@ impl AgentOrchestrator {
         );
         let started = std::time::Instant::now();
         let (step_results, final_output) = match plan.mode {
-            OrchestrationMode::Sequential => self.execute_sequential(plan)?,
-            OrchestrationMode::Parallel => self.execute_parallel(plan)?,
-            OrchestrationMode::Hierarchical => self.execute_hierarchical(plan)?,
+            OrchestrationMode::Sequential => self.execute_sequential(plan).await?,
+            OrchestrationMode::Parallel => self.execute_parallel(plan).await?,
+            OrchestrationMode::Hierarchical => self.execute_hierarchical(plan).await?,
         };
         let total_latency = started.elapsed().as_millis() as u64;
         let success = step_results.iter().all(|r| r.result.is_ok());
@@ -327,7 +327,7 @@ impl AgentOrchestrator {
     }
 
     /// 顺序执行：链式传递前一步结果。
-    fn execute_sequential(
+    async fn execute_sequential(
         &self,
         plan: &OrchestrationPlan,
     ) -> Result<(Vec<StepResult>, Option<serde_json::Value>), crate::Error> {
@@ -342,7 +342,7 @@ impl AgentOrchestrator {
                 &plan.session_id,
             );
             debug!("orchestrator[seq]: step {} tool {}", step.id, step.tool_name);
-            let tr = self.registry.invoke(&inv)?;
+            let tr = self.registry.invoke(&inv).await?;
             results.push(StepResult {
                 step_id: step.id.clone(),
                 tool_name: step.tool_name.clone(),
@@ -359,7 +359,7 @@ impl AgentOrchestrator {
     }
 
     /// 并行执行：所有步骤独立调用，汇聚结果。
-    fn execute_parallel(
+    async fn execute_parallel(
         &self,
         plan: &OrchestrationPlan,
     ) -> Result<(Vec<StepResult>, Option<serde_json::Value>), crate::Error> {
@@ -372,7 +372,7 @@ impl AgentOrchestrator {
                 &plan.session_id,
             );
             debug!("orchestrator[par]: step {} tool {}", step.id, step.tool_name);
-            let tr = self.registry.invoke(&inv)?;
+            let tr = self.registry.invoke(&inv).await?;
             results.push(StepResult {
                 step_id: step.id.clone(),
                 tool_name: step.tool_name.clone(),
@@ -388,13 +388,13 @@ impl AgentOrchestrator {
     }
 
     /// 层级执行：递归遍历树。
-    fn execute_hierarchical(
+    async fn execute_hierarchical(
         &self,
         plan: &OrchestrationPlan,
     ) -> Result<(Vec<StepResult>, Option<serde_json::Value>), crate::Error> {
         let mut results = Vec::new();
         if let Some(root) = &plan.root {
-            let mut final_output = self.execute_node(root, plan, &mut results, None)?;
+            let mut final_output = self.execute_node(root, plan, &mut results, None).await?;
             // 最终输出取根节点结果
             if final_output.is_none() && !results.is_empty() {
                 final_output = Some(results[0].result.output.clone());
@@ -407,7 +407,7 @@ impl AgentOrchestrator {
         }
     }
 
-    fn execute_node(
+    async fn execute_node(
         &self,
         node: &PlanNode,
         plan: &OrchestrationPlan,
@@ -424,7 +424,7 @@ impl AgentOrchestrator {
             "orchestrator[hier]: node {} tool {}",
             node.step.id, node.step.tool_name
         );
-        let tr = self.registry.invoke(&inv)?;
+        let tr = self.registry.invoke(&inv).await?;
         let output = tr.output.clone();
         let is_err = tr.is_err();
         results.push(StepResult {
@@ -441,7 +441,7 @@ impl AgentOrchestrator {
         }
         // 递归执行子节点
         for child in &node.children {
-            self.execute_node(child, plan, results, Some(&output))?;
+            Box::pin(self.execute_node(child, plan, results, Some(&output))).await?;
         }
         Ok(Some(output))
     }

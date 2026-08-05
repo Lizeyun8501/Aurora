@@ -225,7 +225,7 @@ impl ToolRegistry {
     }
 
     /// 注册一个工具，并绑定到指定智能体。
-    pub fn register_tool(&self, tool: Tool) -> Result<(), crate::Error> {
+    pub async fn register_tool(&self, tool: Tool) -> Result<(), crate::Error> {
         if tool.agent_id.is_empty() {
             return Err(crate::Error::InvalidInput(
                 "tool.agent_id must be set".into(),
@@ -246,7 +246,7 @@ impl ToolRegistry {
         // 同步到底层 agent（通过 AgentProtocol::register_tool）
         if let Some(agent) = self.agents.read().get(&tool.agent_id).cloned() {
             let def = tool.to_definition();
-            if let Err(e) = agent.register_tool(&def) {
+            if let Err(e) = agent.register_tool(&def).await {
                 return Err(crate::Error::from(e));
             }
         }
@@ -306,7 +306,7 @@ impl ToolRegistry {
     }
 
     /// 调用一个工具：根据路由表找到对应 agent，转发 `AgentRequest`。
-    pub fn invoke(&self, invocation: &ToolInvocation) -> Result<ToolResult, crate::Error> {
+    pub async fn invoke(&self, invocation: &ToolInvocation) -> Result<ToolResult, crate::Error> {
         let started = std::time::Instant::now();
         let agent_id = self
             .tool_routes
@@ -336,7 +336,7 @@ impl ToolRegistry {
             method: invocation.tool_name.clone(),
             params: invocation.arguments.clone(),
         };
-        match agent.execute(&request) {
+        match agent.execute(&request).await {
             Ok(resp) => {
                 let latency = started.elapsed().as_millis() as u64;
                 if let Some(err) = resp.error {
@@ -357,14 +357,14 @@ impl ToolRegistry {
     }
 
     /// 在沙箱约束下调用工具：先做权限检查，再执行调用并写入审计。
-    pub fn invoke_sandboxed(
+    pub async fn invoke_sandboxed(
         &self,
         invocation: &ToolInvocation,
         sandbox: &SecuritySandbox,
     ) -> Result<ToolResult, crate::Error> {
         sandbox.check_tool(&invocation.tool_name)?;
         sandbox.audit_invoke(invocation)?;
-        let result = self.invoke(invocation)?;
+        let result = self.invoke(invocation).await?;
         sandbox.audit_result(&invocation.tool_name, &result)?;
         Ok(result)
     }
@@ -452,7 +452,7 @@ impl AgentProtocol for MockAgent {
         Ok(())
     }
 
-    fn execute(&self, request: &AgentRequest) -> Result<AgentResponse, aurora_core::Error> {
+    async fn execute(&self, request: &AgentRequest) -> Result<AgentResponse, aurora_core::Error> {
         debug!(
             "mock agent {}: execute method={}",
             self.agent_id, request.method
@@ -486,7 +486,7 @@ impl AgentProtocol for MockAgent {
             .push((event_type.to_string(), Arc::from(callback)));
     }
 
-    fn get_context(&self, session_id: &str) -> Result<Context, aurora_core::Error> {
+    async fn get_context(&self, session_id: &str) -> Result<Context, aurora_core::Error> {
         self.contexts
             .read()
             .get(session_id)

@@ -3,7 +3,7 @@
 //! 实现任务状态机、项目层级嵌套、收件箱、重复任务、提醒、习惯追踪、自动化规则。
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use uuid::Uuid;

@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use crate::traits::plugin_runtime::{PluginHandle, PluginManifest, PluginRuntime, RuntimeType};
 
 /// 基于 Wasmtime 的 WASM 运行时实现。
+#[allow(dead_code)]
 pub struct WasmtimeRuntime {
     engine: wasmtime::Engine,
     modules: Mutex<HashMap<String, wasmtime::Module>>,
@@ -49,7 +50,7 @@ impl PluginRuntime for WasmtimeRuntime {
             id: manifest.id.clone(),
             manifest: manifest.clone(),
         };
-        let mut modules = self
+        let _modules = self
             .modules
             .lock()
             .map_err(|_| crate::Error::Internal("wasmtime modules mutex poisoned".to_string()))?;
@@ -58,7 +59,7 @@ impl PluginRuntime for WasmtimeRuntime {
         Ok(handle)
     }
 
-    fn invoke(
+    async fn invoke(
         &self,
         handle: &PluginHandle,
         method: &str,
@@ -78,7 +79,7 @@ impl PluginRuntime for WasmtimeRuntime {
         Ok(serde_json::Value::Null)
     }
 
-    fn unload(&mut self, handle: &PluginHandle) -> Result<(), crate::Error> {
+    async fn unload(&mut self, handle: &PluginHandle) -> Result<(), crate::Error> {
         let mut modules = self
             .modules
             .lock()
@@ -142,7 +143,7 @@ impl PluginRuntime for IframeRuntime {
         Ok(handle)
     }
 
-    fn invoke(
+    async fn invoke(
         &self,
         handle: &PluginHandle,
         method: &str,
@@ -160,7 +161,7 @@ impl PluginRuntime for IframeRuntime {
         ))
     }
 
-    fn unload(&mut self, handle: &PluginHandle) -> Result<(), crate::Error> {
+    async fn unload(&mut self, handle: &PluginHandle) -> Result<(), crate::Error> {
         let mut plugins = self
             .plugins
             .lock()

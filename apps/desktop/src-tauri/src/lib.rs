@@ -66,7 +66,7 @@ pub fn run() {
 
     // 打开 SQLite 数据库并执行迁移
     let db_path = data_dir.join("aurora.db");
-    let migration_manager = match migration::MigrationManager::new(&db_path) {
+    let migration_manager = match aurora_migration::MigrationManager::new(&db_path) {
         Ok(m) => m,
         Err(e) => {
             error!(error = %e, db_path = ?db_path, "SQLite migration failed");
