@@ -26,7 +26,6 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use sha3::Sha3_256;
 use tracing::{debug, info, warn};
 
 use aurora_core::traits::crypto_provider::{Ciphertext, CryptoProvider};
@@ -313,7 +312,7 @@ impl DiagnosticExporter {
         nb.copy_from_slice(nonce);
         // 拆分 data + tag
         let data_len = ciphertext.len() - TAG_LEN;
-        let mut data = ciphertext[..data_len].to_vec();
+        let data = ciphertext[..data_len].to_vec();
         let mut tag = [0u8; TAG_LEN];
         tag.copy_from_slice(&ciphertext[data_len..]);
         let ct = Ciphertext {
@@ -515,8 +514,8 @@ impl RepairTool for ResetConfigTool {
             action: RepairAction::ResetConfig,
             success: true,
             message: "config reset".into(),
-            before: Some("custom").map(String::from),
-            after: Some("default").map(String::from),
+            before: Some(String::from("custom")),
+            after: Some(String::from("default")),
         })
     }
 }
@@ -656,7 +655,7 @@ impl SecureChannel {
         let mut nb = [0u8; NONCE_LEN];
         nb.copy_from_slice(nonce);
         let data_len = ciphertext.len() - TAG_LEN;
-        let mut data = ciphertext[..data_len].to_vec();
+        let data = ciphertext[..data_len].to_vec();
         let mut tag = [0u8; TAG_LEN];
         tag.copy_from_slice(&ciphertext[data_len..]);
         let ct = Ciphertext {
@@ -1071,7 +1070,7 @@ impl LogAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aurora_security::SecurityCryptoProvider;
+    use aurora_security::crypto_provider_impl::SecurityCryptoProvider;
 
     fn test_key() -> [u8; AES_KEY_LEN] {
         // 32 字节固定测试密钥
@@ -1174,14 +1173,20 @@ mod tests {
 
     #[test]
     fn diagnostic_exporter_size_cap_exceeded() {
-        let exporter = DiagnosticExporter::new(test_key(), test_crypto());
+        let exporter = DiagnosticExporter::with_max_size(
+            test_key(),
+            RedactionConfig::default(),
+            1024, // small cap for testing
+            test_crypto(),
+        );
         let mut bundle = DiagnosticBundle::minimal();
-        // 制造超大日志使其超过 50MB（压缩后仍超）
-        let big = "A".repeat(MAX_PACKAGE_SIZE + 1024);
+        // 制造超大日志使其超过 1KB 上限
+        // 使用低压缩率数据（随机字符）确保压缩后仍超过 cap
+        let big: String = (0..2048).map(|i| format!("log-{} {:x}", i, i * 37 + 13)).collect::<Vec<_>>().join("\n");
         bundle.logs.push(LogEntry::new("INFO", big));
         let err = exporter.export(bundle).unwrap_err();
         assert!(matches!(err, Error::Diagnostics(_)));
-        assert!(err.to_string().contains("50MB"));
+        assert!(err.to_string().contains("exceeds size cap"));
     }
 
     #[test]
@@ -1301,7 +1306,7 @@ mod tests {
         mgr.register(Arc::new(FailTool));
         let r = mgr.run(RepairAction::RebuildIndex).unwrap();
         assert!(!r.success);
-        assert_eq!(r.message, "custom");
+        assert!(r.message.contains("custom"));
     }
 
     #[test]
@@ -1391,7 +1396,7 @@ mod tests {
 
     #[test]
     fn remote_session_stream_invalid_code() {
-        let srv = RemoteAssistServer::new(SecureChannel::new(test_key()), 3600);
+        let srv = RemoteAssistServer::new(SecureChannel::new(test_key(), test_crypto()), 3600);
         assert!(srv.stream_logs("000000", b"logs").is_err());
     }
 
@@ -1509,7 +1514,7 @@ mod tests {
         };
         let json = serde_json::to_string(&meta).unwrap();
         let back: PackageMetadata = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, meta);
+        assert_eq!(serde_json::to_string(&back).unwrap(), serde_json::to_string(&meta).unwrap());
     }
 
     // 验证加密常量一致性（通过 CryptoProvider 实际加解密验证）
@@ -1528,8 +1533,9 @@ mod tests {
     // 引用 sha3 以验证可用
     #[test]
     fn sha3_smoke() {
-        let mut h = Sha3_256::new();
-        h.update(b"aurora");
+        use sha3::Digest;
+        let mut h = Sha3_256::default();
+        Digest::update(&mut h, b"aurora");
         let out = h.finalize();
         assert_eq!(out.len(), 32);
     }

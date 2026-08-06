@@ -316,7 +316,7 @@ impl Marketplace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aurora_security::SecurityCryptoProvider;
+    use aurora_security::crypto_provider_impl::SecurityCryptoProvider;
 
     /// 构造测试用 Marketplace（注入真实 SecurityCryptoProvider）。
     fn make_marketplace() -> Marketplace {

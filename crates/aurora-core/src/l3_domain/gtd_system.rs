@@ -675,7 +675,7 @@ impl GtdEngine {
             Condition::HasTag(tag) => task.tags.contains(tag),
             Condition::InProject(pid) => task.project_id.as_ref() == Some(pid),
             Condition::DueWithinHours(hours) => {
-                task.due_date.map_or(false, |due| {
+                task.due_date.is_some_and(|due| {
                     let diff = due - chrono::Utc::now();
                     diff.num_hours() <= *hours as i64 && diff.num_hours() >= 0
                 })
@@ -722,7 +722,7 @@ impl GtdEngine {
         self.tasks.read()
             .values()
             .filter(|t| {
-                t.due_date.map_or(false, |due| {
+                t.due_date.is_some_and(|due| {
                     due > now && due <= deadline && t.status != TaskStatus::Done
                 })
             })
@@ -759,7 +759,7 @@ impl GtdEngine {
             .values()
             .filter(|t| {
                 matches!(t.status, TaskStatus::Scheduled | TaskStatus::Doing)
-                    || t.due_date.map_or(false, |due| due >= today_start && due < today_end)
+                    || t.due_date.is_some_and(|due| due >= today_start && due < today_end)
             })
             .cloned()
             .collect()

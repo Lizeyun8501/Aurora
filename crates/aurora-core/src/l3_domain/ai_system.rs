@@ -91,6 +91,12 @@ pub struct MockAIProvider {
     available: bool,
 }
 
+impl Default for MockAIProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockAIProvider {
     pub fn new() -> Self {
         Self {
@@ -412,7 +418,7 @@ impl TaskDecomposer {
             .filter(|line| !line.is_empty())
             .map(|line| {
                 // 去除常见的列表前缀
-                line.trim_start_matches(|c| c == '-' || c == '*' || c == '•')
+                line.trim_start_matches(['-', '*', '•'])
                     .trim_start_matches(|c: char| c.is_numeric())
                     .trim_start_matches('.')
                     .trim_start_matches(')')

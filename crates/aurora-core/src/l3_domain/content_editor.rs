@@ -14,7 +14,7 @@ pub type DocId = String;
 pub type BlockId = String;
 
 /// 文档结构
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Document {
     pub id: DocId,
     pub title: String,
@@ -81,7 +81,7 @@ impl Document {
 }
 
 /// 块结构
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Block {
     pub id: BlockId,
     pub block_type: BlockType,

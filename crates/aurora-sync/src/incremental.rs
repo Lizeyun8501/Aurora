@@ -186,7 +186,7 @@ impl IncrementalSync {
             if start >= out.len() {
                 // 扩展输出缓冲区
                 if start > out.len() {
-                    out.extend(std::iter::repeat(0u8).take(start - out.len()));
+                    out.extend(std::iter::repeat_n(0u8, start - out.len()));
                 }
                 out.extend_from_slice(&delta.data);
             } else {

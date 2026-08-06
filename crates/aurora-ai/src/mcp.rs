@@ -727,7 +727,7 @@ impl McpServer {
                 // 默认行为：返回一个空内容结果（实际工具执行由调用方注入）
                 JsonRpcResponse::success(
                     request.id.clone(),
-                    serde_json::to_value(&ToolsCallResult::ok(vec![serde_json::json!({
+                    serde_json::to_value(ToolsCallResult::ok(vec![serde_json::json!({
                         "type": "text",
                         "text": "ok",
                     })]))

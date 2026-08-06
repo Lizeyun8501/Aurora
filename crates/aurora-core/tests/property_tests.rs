@@ -119,7 +119,7 @@ proptest! {
     /// N distinct ids.
     #[test]
     fn prop_block_ids_unique(texts in prop::collection::vec(arb_text(), 1..=64)) {
-        let blocks: Vec<Block> = texts.iter().map(make_text_block).collect();
+        let blocks: Vec<Block> = texts.iter().map(|t| make_text_block(t)).collect();
         let ids: HashSet<&str> = blocks.iter().map(|b| b.id.as_str()).collect();
         prop_assert_eq!(ids.len(), blocks.len());
     }
@@ -146,7 +146,7 @@ proptest! {
         title in arb_text_maybe_empty(),
         contents in prop::collection::vec(arb_text(), 1..=12),
     ) {
-        let blocks: Vec<Block> = contents.iter().map(make_text_block).collect();
+        let blocks: Vec<Block> = contents.iter().map(|t| make_text_block(t)).collect();
         let doc = make_document(&title, blocks);
         let md = doc.to_markdown();
 
@@ -232,10 +232,10 @@ proptest! {
             if candidates.is_empty() {
                 break;
             }
-            let pick = candidates[(*s as usize) % candidates.len()];
+            let pick = candidates[(*s as usize) % candidates.len()].clone();
             let res = task.transition_to(pick.clone());
             prop_assert!(res.is_ok(), "valid transition {:?} -> {:?} must succeed", current, pick);
-            prop_assert_eq!(task.status, pick);
+            prop_assert_eq!(&task.status, &pick);
             // Status must always be a known variant.
             prop_assert!(all_task_statuses().contains(&task.status));
             current = pick;
@@ -260,7 +260,7 @@ proptest! {
         // Every state has at most 3 successors out of 7, so there is always
         // at least one invalid choice — but guard defensively anyway.
         if !invalid_choices.is_empty() {
-            let bad = invalid_choices[(*seed as usize) % invalid_choices.len()];
+            let bad = invalid_choices[(seed as usize) % invalid_choices.len()].clone();
             let before = task.status.clone();
             let res = task.transition_to(bad.clone());
             prop_assert!(res.is_err(), "invalid transition {:?} -> {:?} must fail", before, bad);
@@ -511,7 +511,7 @@ proptest! {
         let valid = engine.validate("note", &serde_json::json!(s));
         prop_assert!(valid.valid, "string must validate: {:?}", valid.errors);
         let invalid = engine.validate("note", &serde_json::json!(42));
-        prop_assert!(!invalid.invalid_or_warn(), "number must fail Text validation");
+        prop_assert!(invalid.invalid_or_warn(), "number must fail Text validation");
     }
 }
 

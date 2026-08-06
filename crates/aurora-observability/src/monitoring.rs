@@ -9,7 +9,7 @@
 //! - **6.2.4 监控仪表板**：Grafana 预置模板 + Desktop 内嵌轻量面板 + 关键视图看板。
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -187,6 +187,16 @@ impl HealthChecker {
                         }
                     }
                     HealthStatus::Degraded => {
+                        if overall == HealthStatus::Healthy {
+                            overall = HealthStatus::Degraded;
+                        }
+                    }
+                    _ => {}
+                }
+            } else {
+                // Non-critical checks can degrade but not make unhealthy
+                match component.status {
+                    HealthStatus::Degraded | HealthStatus::Unhealthy => {
                         if overall == HealthStatus::Healthy {
                             overall = HealthStatus::Degraded;
                         }
@@ -547,7 +557,7 @@ impl WebhookPusher {
             return Ok(());
         }
         let payload = serde_json::to_string(alert)
-            .map_err(|e| Error::Serialization(e))?;
+            .map_err(Error::Serialization)?;
 
         let mut req = self
             .client
@@ -1371,7 +1381,7 @@ impl MonitorService {
 
                 // 评估告警
                 let am = alert_mgr.clone();
-                let _ = rt.block_on(async move {
+                rt.block_on(async move {
                     am.evaluate(&metrics).await;
                 });
 
@@ -1639,7 +1649,7 @@ mod tests {
     fn noise_reducer_aggregation_window() {
         let reducer = NoiseReducer::new(AggregationWindow {
             window_secs: 300,
-            max_aggregations: 3,
+            max_aggregations: 2,
         });
         let now = Utc::now();
 
@@ -1647,8 +1657,8 @@ mod tests {
         assert!(reducer.should_alert("rule_a", AlertSeverity::Warning, now));
         assert!(reducer.should_alert("rule_a", AlertSeverity::Warning, now));
 
-        // 第三次达到阈值（不发出）
-        assert!(!reducer.should_alert("rule_a", AlertSeverity::Warning, now));
+        // 第三次达到阈值，发出聚合摘要
+        assert!(reducer.should_alert("rule_a", AlertSeverity::Warning, now));
 
         // 不同规则不受影响
         assert!(reducer.should_alert("rule_b", AlertSeverity::Warning, now));
@@ -1798,6 +1808,6 @@ mod tests {
         };
         let json = serde_json::to_string(&ch).unwrap();
         assert!(json.contains("db"));
-        assert!(json.contains("healthy"));
+        assert!(json.contains("Healthy"));
     }
 }

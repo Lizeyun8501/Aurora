@@ -13,17 +13,11 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use sha3::{Digest, Sha3_256};
 
 /// 密码学上下文，封装常用密码学配置。
+#[derive(Default)]
 pub struct CryptoContext {
     pub argon2_params: argon2::Params,
 }
 
-impl Default for CryptoContext {
-    fn default() -> Self {
-        Self {
-            argon2_params: argon2::Params::default(),
-        }
-    }
-}
 
 impl CryptoContext {
     /// 创建默认密码学上下文。
@@ -160,7 +154,7 @@ mod base64 {
     pub fn encode(input: &[u8]) -> String {
         
         const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+        let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
         for chunk in input.chunks(3) {
             let b = ((chunk[0] as u32) << 16)
                 | ((chunk.get(1).copied().unwrap_or(0) as u32) << 8)

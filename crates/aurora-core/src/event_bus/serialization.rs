@@ -63,7 +63,7 @@ pub fn deserialize<'de, T: Deserialize<'de>>(
 /// Base64 编码二进制数据（用于 JSON 传输）
 pub fn encode_base64(data: &[u8]) -> String {
     use std::fmt::Write;
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     for chunk in data.chunks(3) {

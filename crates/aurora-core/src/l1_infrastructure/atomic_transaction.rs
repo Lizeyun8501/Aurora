@@ -280,19 +280,17 @@ impl AtomicTransaction {
         })?;
 
         let mut count = 0;
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if path.extension().and_then(|e| e.to_str()) == Some("tmp")
-                    && !except.contains(&file_name)
-                {
-                    debug!(path = %path.display(), "cleaning stale tmp file");
-                    if let Err(e) = fs::remove_file(&path) {
-                        warn!(path = %path.display(), error = %e, "failed to remove stale tmp");
-                    } else {
-                        count += 1;
-                    }
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if path.extension().and_then(|e| e.to_str()) == Some("tmp")
+                && !except.contains(&file_name)
+            {
+                debug!(path = %path.display(), "cleaning stale tmp file");
+                if let Err(e) = fs::remove_file(&path) {
+                    warn!(path = %path.display(), error = %e, "failed to remove stale tmp");
+                } else {
+                    count += 1;
                 }
             }
         }

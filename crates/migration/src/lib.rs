@@ -70,13 +70,24 @@ impl MigrationManager {
     }
 
     fn current_version(conn: &rusqlite::Connection) -> Result<i64, MigrationError> {
+        // Create _migrations table if it doesn't exist yet
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS _migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+
         let mut stmt = conn
             .prepare("SELECT MAX(version) FROM _migrations")
             .map_err(|e| MigrationError::Query(e.to_string()))?;
         let version: Option<i64> = stmt
-            .query_row([], |row| row.get(0))
+            .query_row([], |row| row.get::<_, Option<i64>>(0))
             .optional()
-            .map_err(|e| MigrationError::Query(e.to_string()))?;
+            .map_err(|e| MigrationError::Query(e.to_string()))?
+            .flatten();
         Ok(version.unwrap_or(0))
     }
 

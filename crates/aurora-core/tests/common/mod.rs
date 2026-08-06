@@ -64,7 +64,7 @@ impl Storage for MockStorage {
         Ok(self.inner.lock().unwrap().get(key).cloned())
     }
 
-    fn put(&self, key: &str, value: &[u8]) -> Result<(), aurora_core::Error> {
+    async fn put(&self, key: &str, value: &[u8]) -> Result<(), aurora_core::Error> {
         self.inner
             .lock()
             .unwrap()
@@ -72,12 +72,12 @@ impl Storage for MockStorage {
         Ok(())
     }
 
-    fn delete(&self, key: &str) -> Result<(), aurora_core::Error> {
+    async fn delete(&self, key: &str) -> Result<(), aurora_core::Error> {
         self.inner.lock().unwrap().remove(key);
         Ok(())
     }
 
-    fn query(&self, q: &StorageQuery) -> Result<Vec<Record>, aurora_core::Error> {
+    async fn query(&self, q: &StorageQuery) -> Result<Vec<Record>, aurora_core::Error> {
         let map = self.inner.lock().unwrap();
         let mut records: Vec<Record> = Vec::new();
         for (k, v) in map.iter() {
@@ -109,7 +109,7 @@ impl Storage for MockStorage {
         Ok(records)
     }
 
-    fn transaction(&self, ops: &[StorageOp]) -> Result<(), aurora_core::Error> {
+    async fn transaction(&self, ops: &[StorageOp]) -> Result<(), aurora_core::Error> {
         let mut map = self.inner.lock().unwrap();
         for op in ops {
             match op {

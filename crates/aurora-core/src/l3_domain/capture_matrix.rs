@@ -1346,7 +1346,7 @@ impl RssPoller {
         let feed = RssParser::parse(&sub.feed_url, feed_xml);
         let new_items = {
             let mut seen = self.seen_items.write();
-            let sub_seen = seen.entry(sub.id.clone()).or_insert_with(HashSet::new);
+            let sub_seen = seen.entry(sub.id.clone()).or_default();
             let new: Vec<RssItem> = feed
                 .items
                 .iter()

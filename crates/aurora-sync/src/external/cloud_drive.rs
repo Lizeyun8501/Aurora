@@ -515,8 +515,8 @@ impl CloudDriveSync {
         }
         // 本地删除但远端更新也是一种冲突
         for path in modified.iter() {
-            if !self.local_files.read().contains_key(path) && known_etags.contains_key(path) {
-                if changes.updated.iter().any(|f| &f.path == path) {
+            if !self.local_files.read().contains_key(path) && known_etags.contains_key(path)
+                && changes.updated.iter().any(|f| &f.path == path) {
                     conflicts.push(DriveConflict {
                         path: path.clone(),
                         local_etag: None,
@@ -527,7 +527,6 @@ impl CloudDriveSync {
                             .map(|f| f.etag.clone()),
                     });
                 }
-            }
         }
         Ok(conflicts)
     }

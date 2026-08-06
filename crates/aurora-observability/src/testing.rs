@@ -369,10 +369,10 @@ impl CrdtMonkeyTester {
     /// `apply_fn` 为将操作应用到副本的回调（由上层提供实际 CRDT 引擎）。
     pub fn run<F>(
         &self,
-        apply_fn: F,
+        mut apply_fn: F,
     ) -> CrdtConsistencyReport
     where
-        F: Fn(CrdtOperation) -> CrdtStateSnapshot,
+        F: FnMut(CrdtOperation) -> CrdtStateSnapshot,
     {
         let start = Instant::now();
         let ops = self.generate_random_ops();
@@ -387,7 +387,7 @@ impl CrdtMonkeyTester {
 
         // 各副本独立应用操作序列
         let mut snapshots = Vec::new();
-        for (_i, replica_ops) in replicas.iter().enumerate() {
+        for replica_ops in replicas.iter() {
             let mut last_snapshot: Option<CrdtStateSnapshot> = None;
             for op in replica_ops {
                 last_snapshot = Some(apply_fn(op.clone()));
@@ -413,7 +413,7 @@ impl CrdtMonkeyTester {
 
         // delta-debugging 反例压缩
         let (min_ops, reduction_method) = if !consistent && self.config.enable_reduction {
-            let reduced = delta_debugging(&ops, &apply_fn);
+            let reduced = delta_debugging(&ops, &mut apply_fn);
             let method = format!(
                 "delta-debugging: {}→{} ops",
                 ops.len(),
@@ -553,9 +553,9 @@ fn compare_snapshots(a: &CrdtStateSnapshot, b: &CrdtStateSnapshot) -> Option<Str
 }
 
 /// Delta-debugging 反例压缩：二分搜索最小反例操作集。
-fn delta_debugging<F>(ops: &[CrdtOperation], apply_fn: &F) -> usize
+fn delta_debugging<F>(ops: &[CrdtOperation], apply_fn: &mut F) -> usize
 where
-    F: Fn(CrdtOperation) -> CrdtStateSnapshot,
+    F: FnMut(CrdtOperation) -> CrdtStateSnapshot,
 {
     // 简化实现：二分搜索找到最小仍不一致的子集大小
     let mut low = 1;

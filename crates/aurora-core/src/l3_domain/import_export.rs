@@ -245,7 +245,7 @@ impl MarkdownParser {
                     || lt.starts_with("* ")
                     || lt.starts_with("> ")
                     || lt == "---"
-                    || (lt.starts_with(|c: char| c.is_ascii_digit()) && lt.find(". ").is_some())
+                    || (lt.starts_with(|c: char| c.is_ascii_digit()) && lt.contains(". "))
                 {
                     break;
                 }

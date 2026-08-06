@@ -43,8 +43,10 @@ impl BiometricKind {
 
 /// 生物识别状态
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default)]
 pub enum BiometricStatus {
     /// 未认证
+    #[default]
     Unauthenticated,
     /// 已认证：记录认证时刻与方式
     Authenticated {
@@ -63,11 +65,6 @@ impl BiometricStatus {
     }
 }
 
-impl Default for BiometricStatus {
-    fn default() -> Self {
-        BiometricStatus::Unauthenticated
-    }
-}
 
 /// 生物识别配置
 #[derive(Debug, Clone, Serialize, Deserialize)]

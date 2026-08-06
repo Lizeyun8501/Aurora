@@ -575,7 +575,7 @@ mod tests {
     use crate::registry::MockAgent;
     use aurora_core::traits::agent_protocol::AgentProtocol;
 
-    fn make_orchestrator_with_tools() -> (AgentOrchestrator, Arc<ToolRegistry>) {
+    async fn make_orchestrator_with_tools() -> (AgentOrchestrator, Arc<ToolRegistry>) {
         let registry = Arc::new(ToolRegistry::new());
         let agent = Arc::new(MockAgent::new("a1"));
         // 注册一组工具处理器
@@ -614,6 +614,7 @@ mod tests {
                     crate::registry::Tool::new(name, format!("{} tool", name), serde_json::json!({}))
                         .with_agent("a1"),
                 )
+                .await
                 .unwrap();
         }
         let orch = AgentOrchestrator::new(registry.clone());
@@ -795,11 +796,11 @@ mod tests {
         assert_eq!(p.steps[0].tool_name, "default");
     }
 
-    #[test]
-    fn test_orchestrator_execute_sequential() {
-        let (orch, _) = make_orchestrator_with_tools();
+    #[tokio::test]
+    async fn test_orchestrator_execute_sequential() {
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = DeterministicPlanner.plan("translate this", "s1");
-        let summary = orch.execute(&plan).unwrap();
+        let summary = orch.execute(&plan).await.unwrap();
         assert!(summary.success);
         assert_eq!(summary.step_results.len(), 3);
         // 最终输出为最后一步 format 的结果
@@ -808,11 +809,11 @@ mod tests {
         assert!(final_out.get("formatted").is_some());
     }
 
-    #[test]
-    fn test_orchestrator_execute_parallel() {
-        let (orch, _) = make_orchestrator_with_tools();
+    #[tokio::test]
+    async fn test_orchestrator_execute_parallel() {
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = DeterministicPlanner.plan("search it", "s1");
-        let summary = orch.execute(&plan).unwrap();
+        let summary = orch.execute(&plan).await.unwrap();
         assert!(summary.success);
         assert_eq!(summary.step_results.len(), 2);
         let gathered = summary.final_output.unwrap();
@@ -820,11 +821,11 @@ mod tests {
         assert!(gathered.get("s2").is_some());
     }
 
-    #[test]
-    fn test_orchestrator_execute_hierarchical() {
-        let (orch, _) = make_orchestrator_with_tools();
+    #[tokio::test]
+    async fn test_orchestrator_execute_hierarchical() {
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = DeterministicPlanner.plan("classify this", "s1");
-        let summary = orch.execute(&plan).unwrap();
+        let summary = orch.execute(&plan).await.unwrap();
         assert!(summary.success);
         // root + 2 children = 3 results
         assert_eq!(summary.step_results.len(), 3);
@@ -832,31 +833,31 @@ mod tests {
         assert!(summary.final_output.is_some());
     }
 
-    #[test]
-    fn test_orchestrator_hierarchical_without_root_fails() {
-        let (orch, _) = make_orchestrator_with_tools();
+    #[tokio::test]
+    async fn test_orchestrator_hierarchical_without_root_fails() {
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = OrchestrationPlan::new(OrchestrationMode::Hierarchical, "s1");
-        let err = orch.execute(&plan).unwrap_err();
+        let err = orch.execute(&plan).await.unwrap_err();
         assert!(matches!(err, crate::Error::InvalidInput(_)));
     }
 
-    #[test]
-    fn test_orchestrator_sequential_failure_aborts_chain() {
-        let (orch, _) = make_orchestrator_with_tools();
+    #[tokio::test]
+    async fn test_orchestrator_sequential_failure_aborts_chain() {
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = OrchestrationPlan::new(OrchestrationMode::Sequential, "s1").with_steps(vec![
             PlanStep::new("s1", "fail", serde_json::json!({})),
             PlanStep::new("s2", "echo", serde_json::json!({})).with_depends_on(vec!["s1".into()]),
         ]);
-        let summary = orch.execute(&plan).unwrap();
+        let summary = orch.execute(&plan).await.unwrap();
         assert!(!summary.success);
         // 链中断后只应执行第一步
         assert_eq!(summary.step_results.len(), 1);
         assert!(summary.final_output.is_none());
     }
 
-    #[test]
-    fn test_orchestrator_hierarchical_node_failure_skips_children() {
-        let (orch, _) = make_orchestrator_with_tools();
+    #[tokio::test]
+    async fn test_orchestrator_hierarchical_node_failure_skips_children() {
+        let (orch, _) = make_orchestrator_with_tools().await;
         let root = PlanNode::new(PlanStep::new("r", "fail", serde_json::json!({})))
             .with_children(vec![PlanNode::new(PlanStep::new(
                 "c1",
@@ -864,26 +865,26 @@ mod tests {
                 serde_json::json!({}),
             ))]);
         let plan = OrchestrationPlan::new(OrchestrationMode::Hierarchical, "s1").with_root(root);
-        let summary = orch.execute(&plan).unwrap();
+        let summary = orch.execute(&plan).await.unwrap();
         assert!(!summary.success);
         // 失败的根节点 + 跳过的子节点 → 仅 1 个结果
         assert_eq!(summary.step_results.len(), 1);
     }
 
-    #[test]
-    fn test_orchestrator_history_recorded() {
-        let (orch, _) = make_orchestrator_with_tools();
+    #[tokio::test]
+    async fn test_orchestrator_history_recorded() {
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = DeterministicPlanner.plan("search it", "s1");
-        orch.execute(&plan).unwrap();
-        orch.execute(&plan).unwrap();
+        orch.execute(&plan).await.unwrap();
+        orch.execute(&plan).await.unwrap();
         let history = orch.history();
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].mode, OrchestrationMode::Parallel);
     }
 
-    #[test]
-    fn test_orchestrator_registry_accessor() {
-        let (orch, registry) = make_orchestrator_with_tools();
+    #[tokio::test]
+    async fn test_orchestrator_registry_accessor() {
+        let (orch, registry) = make_orchestrator_with_tools().await;
         let r = orch.registry();
         // 同一 Arc
         assert!(Arc::ptr_eq(r, &registry));

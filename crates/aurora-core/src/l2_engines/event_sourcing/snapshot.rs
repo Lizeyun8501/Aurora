@@ -51,7 +51,7 @@ impl SnapshotManager {
 
     /// 根据当前事件数量判断是否应当生成快照。
     pub fn should_snapshot(&self, event_count: usize) -> bool {
-        event_count > 0 && event_count % self.snapshot_interval == 0
+        event_count > 0 && event_count.is_multiple_of(self.snapshot_interval)
     }
 
     /// 创建一个快照，并将其缓存为该聚合的最新快照。

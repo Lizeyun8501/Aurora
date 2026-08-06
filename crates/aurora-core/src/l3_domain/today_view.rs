@@ -472,15 +472,11 @@ pub struct DailyReport {
 
 /// 回顾历史
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ReviewHistory {
     pub reports: Vec<DailyReport>,
 }
 
-impl Default for ReviewHistory {
-    fn default() -> Self {
-        Self { reports: Vec::new() }
-    }
-}
 
 impl ReviewHistory {
     pub fn add(&mut self, report: DailyReport) {

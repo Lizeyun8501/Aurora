@@ -106,8 +106,10 @@ pub struct Transition {
 /// 迁移条件。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TransitionCondition {
     /// 无条件通过
+    #[default]
     Always,
     /// 表达式条件（运行时求值，当前实现为简化比较）
     Expression { expr: String },
@@ -115,11 +117,6 @@ pub enum TransitionCondition {
     VariableEquals { key: String, value: serde_json::Value },
 }
 
-impl Default for TransitionCondition {
-    fn default() -> Self {
-        TransitionCondition::Always
-    }
-}
 
 impl TransitionCondition {
     /// 基于上下文评估条件是否满足。

@@ -467,7 +467,7 @@ impl PluginRuntime for PluginManager {
         Ok(handle)
     }
 
-    fn invoke(
+    async fn invoke(
         &self,
         handle: &PluginHandle,
         method: &str,
@@ -477,7 +477,7 @@ impl PluginRuntime for PluginManager {
             .map_err(aurora_core::Error::from)
     }
 
-    fn unload(&mut self, handle: &PluginHandle) -> Result<(), aurora_core::Error> {
+    async fn unload(&mut self, handle: &PluginHandle) -> Result<(), aurora_core::Error> {
         self.unload_plugin(&handle.id).map_err(aurora_core::Error::from)
     }
 
@@ -613,11 +613,11 @@ mod tests {
         assert!(!plugin.is_running());
     }
 
-    #[test]
-    fn test_plugin_manager_load_and_status() {
+    #[tokio::test]
+    async fn test_plugin_manager_load_and_status() {
         let mut mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &["storage"]);
-        let handle = mgr.load(&manifest).unwrap();
+        let handle = mgr.load(&manifest).await.unwrap();
         assert_eq!(handle.id, "p1");
         assert_eq!(mgr.status("p1"), Some(PluginStatus::Loaded));
         assert_eq!(mgr.list().len(), 1);
@@ -726,17 +726,17 @@ mod tests {
         assert_eq!(mgr.hook_plugin_ids("on_save").len(), 0);
     }
 
-    #[test]
-    fn test_plugin_runtime_trait_round_trip() {
+    #[tokio::test]
+    async fn test_plugin_runtime_trait_round_trip() {
         let mut mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Iframe, &[]);
-        let handle = mgr.load(&manifest).unwrap();
+        let handle = mgr.load(&manifest).await.unwrap();
         // trait 方法初始化需经 manager 自身（trait 仅暴露 load/invoke/unload）
         mgr.init(&handle.id).unwrap();
         mgr.start(&handle.id).unwrap();
-        let out = mgr.invoke(&handle, "ping", &serde_json::json!({})).unwrap();
+        let out = mgr.invoke(&handle, "ping", &serde_json::json!({})).await.unwrap();
         assert_eq!(out, serde_json::json!("pong"));
-        mgr.unload(&handle).unwrap();
+        mgr.unload(&handle).await.unwrap();
         assert_eq!(mgr.status(&handle.id).unwrap(), PluginStatus::Unloaded);
     }
 

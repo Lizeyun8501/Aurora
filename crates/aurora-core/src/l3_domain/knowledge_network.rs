@@ -363,7 +363,7 @@ impl LinkParser {
                 let mut text_end = text_start;
                 let mut bracket_depth = 1;
 
-                while let Some((end, c)) = chars.next() {
+                for (end, c) in chars.by_ref() {
                     if c == '[' {
                         bracket_depth += 1;
                     } else if c == ']' {
@@ -380,7 +380,7 @@ impl LinkParser {
                     let url_start = text_end + 2;
                     let mut url_end = url_start;
 
-                    while let Some((end, c)) = chars.next() {
+                    for (end, c) in chars.by_ref() {
                         if c == ')' {
                             url_end = end;
                             break;

@@ -1199,7 +1199,7 @@ mod tests {
     #[test]
     fn canary_manager_evaluate_brakes_over_auto_promote() {
         let ch = Arc::new(CapacitorAppflowChannel::new());
-        let mgr = CanaryManager::new(ch as Arc<dyn UpdateChannel>, cfg(3, 0, true));
+        let mgr = CanaryManager::new(ch.clone() as Arc<dyn UpdateChannel>, cfg(3, 0, true));
         mgr.start(b"v2").unwrap();
         // 同时满足 auto_promote 与超阈值 → 应优先刹车
         ch.set_errors(5);

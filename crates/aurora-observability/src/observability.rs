@@ -194,7 +194,19 @@ fn redact_field_in_string(input: &str, field: &str) -> String {
                 search_from = pos + 1;
                 continue;
             }
-            let sep = bytes[j];
+            let mut sep = bytes[j];
+            // JSON key format: "field_name" is followed by ": value"
+            if sep == b'"' {
+                j += 1;
+                while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                    j += 1;
+                }
+                if j >= bytes.len() {
+                    search_from = pos + 1;
+                    continue;
+                }
+                sep = bytes[j];
+            }
             if sep != b'=' && sep != b':' {
                 search_from = pos + 1;
                 continue;
@@ -1088,7 +1100,7 @@ impl Span {
 }
 
 thread_local! {
-    static CURRENT_TRACE: std::cell::RefCell<Option<TraceContext>> = std::cell::RefCell::new(None);
+    static CURRENT_TRACE: std::cell::RefCell<Option<TraceContext>> = const { std::cell::RefCell::new(None) };
 }
 
 /// 轻量级追踪器：创建 Span + 通过 thread-local 传播上下文。
