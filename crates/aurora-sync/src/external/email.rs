@@ -64,7 +64,11 @@ pub struct EmailAttachment {
 }
 
 impl EmailAttachment {
-    pub fn new(filename: impl Into<String>, content_type: impl Into<String>, data: Vec<u8>) -> Self {
+    pub fn new(
+        filename: impl Into<String>,
+        content_type: impl Into<String>,
+        data: Vec<u8>,
+    ) -> Self {
         let size = data.len();
         Self {
             filename: filename.into(),
@@ -544,7 +548,11 @@ mod tests {
     fn test_email_to_document_mapping() {
         let msg = EmailMessage::new("mid-1", "Report Q1", "boss@corp.com", "Q1 numbers")
             .with_to(vec!["me@aurora.com".to_string()])
-            .with_attachment(EmailAttachment::new("q1.pdf", "application/pdf", vec![0u8; 50]));
+            .with_attachment(EmailAttachment::new(
+                "q1.pdf",
+                "application/pdf",
+                vec![0u8; 50],
+            ));
         let doc = msg.to_document();
         assert_eq!(doc.title, "Report Q1");
         assert_eq!(doc.content, "Q1 numbers");
@@ -673,8 +681,9 @@ mod tests {
         conn.connect().unwrap();
         let sync = EmailSync::new(conn.clone());
         conn.deliver(
-            EmailMessage::new("m1", "Report", "boss@corp.com", "see attached")
-                .with_attachment(EmailAttachment::new("r.pdf", "application/pdf", vec![0u8; 10])),
+            EmailMessage::new("m1", "Report", "boss@corp.com", "see attached").with_attachment(
+                EmailAttachment::new("r.pdf", "application/pdf", vec![0u8; 10]),
+            ),
         );
         conn.deliver(sample_msg("m2", "Spam", "spam@bad.com"));
         let (docs, atts) = sync.sync().unwrap();

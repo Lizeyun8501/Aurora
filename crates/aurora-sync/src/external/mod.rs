@@ -30,7 +30,7 @@ use tracing::{debug, info, warn};
 // 重导出子模块公开类型，便于通过 `external::` 路径访问。
 pub use calendar::{CalDavConfig, CalDavConnector, CalendarEvent, CalendarSync, Ctag, Etag};
 pub use cloud_drive::{
-    CloudDriveConnector, CloudDriveSync, DropboxConnector, DriveFile, DriveProvider,
+    CloudDriveConnector, CloudDriveSync, DriveFile, DriveProvider, DropboxConnector,
     GoogleDriveConnector, OneDriveConnector, SelectiveSyncConfig, WebDavConnector,
 };
 pub use email::{
@@ -189,7 +189,11 @@ impl ConnectorRegistry {
     /// 注册一个连接器。
     ///
     /// 若 `name` 已存在则返回错误。
-    pub fn register(&self, name: impl Into<String>, connector: Arc<dyn SyncConnector>) -> crate::Result<()> {
+    pub fn register(
+        &self,
+        name: impl Into<String>,
+        connector: Arc<dyn SyncConnector>,
+    ) -> crate::Result<()> {
         let name = name.into();
         let mut map = self.connectors.write();
         if map.contains_key(&name) {
@@ -234,25 +238,25 @@ impl ConnectorRegistry {
 
     /// 连接指定连接器。
     pub fn connect(&self, name: &str) -> crate::Result<()> {
-        let connector = self.get(name).ok_or_else(|| {
-            crate::Error::NotFound(format!("connector not found: {}", name))
-        })?;
+        let connector = self
+            .get(name)
+            .ok_or_else(|| crate::Error::NotFound(format!("connector not found: {}", name)))?;
         connector.connect()
     }
 
     /// 断开指定连接器。
     pub fn disconnect(&self, name: &str) -> crate::Result<()> {
-        let connector = self.get(name).ok_or_else(|| {
-            crate::Error::NotFound(format!("connector not found: {}", name))
-        })?;
+        let connector = self
+            .get(name)
+            .ok_or_else(|| crate::Error::NotFound(format!("connector not found: {}", name)))?;
         connector.disconnect()
     }
 
     /// 触发指定连接器同步。
     pub fn sync(&self, name: &str) -> crate::Result<SyncSession> {
-        let connector = self.get(name).ok_or_else(|| {
-            crate::Error::NotFound(format!("connector not found: {}", name))
-        })?;
+        let connector = self
+            .get(name)
+            .ok_or_else(|| crate::Error::NotFound(format!("connector not found: {}", name)))?;
         connector.sync()
     }
 

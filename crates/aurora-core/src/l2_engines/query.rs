@@ -17,9 +17,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
 use crate::traits::storage::{QueryFilter as StorageFilter, Storage, StorageQuery};
-use crate::traits::vector_store::{
-    QueryFilter as VectorFilter, VectorStore,
-};
+use crate::traits::vector_store::{QueryFilter as VectorFilter, VectorStore};
 
 // ==================== Query DSL ====================
 
@@ -864,7 +862,9 @@ impl QueryEngine {
             .map(|p| p.offset + top_k)
             .unwrap_or(top_k);
 
-        let results = vector_store.search(&vector, adjusted_top_k, filter.as_ref()).await?;
+        let results = vector_store
+            .search(&vector, adjusted_top_k, filter.as_ref())
+            .await?;
 
         let mut items: Vec<serde_json::Value> = results
             .into_iter()

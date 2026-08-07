@@ -306,7 +306,10 @@ impl LayeredEventBus {
                         warn!(seq, error = %e, "event_queue persist failed");
                     }
                 } else {
-                    debug!(seq, "no EventQueueStore configured; medium event not persisted");
+                    debug!(
+                        seq,
+                        "no EventQueueStore configured; medium event not persisted"
+                    );
                 }
                 self.medium_backlog.fetch_add(1, Ordering::SeqCst);
                 if self.medium_tx.send(envelope).is_err() {

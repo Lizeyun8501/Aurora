@@ -432,7 +432,9 @@ impl McpTransport for StdioTransport {
 
     fn send(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse, crate::Error> {
         if !*self.connected.read() {
-            return Err(crate::Error::Transport("stdio transport not connected".into()));
+            return Err(crate::Error::Transport(
+                "stdio transport not connected".into(),
+            ));
         }
         debug!(
             "stdio transport: send method={} id={:?}",
@@ -514,7 +516,9 @@ impl McpTransport for SseTransport {
 
     fn send(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse, crate::Error> {
         if !*self.connected.read() {
-            return Err(crate::Error::Transport("sse transport not connected".into()));
+            return Err(crate::Error::Transport(
+                "sse transport not connected".into(),
+            ));
         }
         debug!(
             "sse transport: send method={} id={:?} endpoint={}",
@@ -569,34 +573,27 @@ impl McpClient {
     }
 
     /// 发起 `initialize` 握手。
-    pub fn initialize(
-        &self,
-        client_info: &ServerInfo,
-    ) -> Result<InitializeResult, crate::Error> {
+    pub fn initialize(&self, client_info: &ServerInfo) -> Result<InitializeResult, crate::Error> {
         let params = serde_json::json!({
             "protocol_version": MCP_PROTOCOL_VERSION,
             "client_info": client_info,
             "capabilities": {},
         });
-        let request = JsonRpcRequest::new(
-            self.next_id(),
-            McpMethod::Initialize.as_str(),
-            Some(params),
-        );
+        let request =
+            JsonRpcRequest::new(self.next_id(), McpMethod::Initialize.as_str(), Some(params));
         let resp = self.transport.send(&request)?;
         if let Some(err) = resp.error {
             return Err(crate::Error::JsonRpc(err.message));
         }
-        let result = resp.result.ok_or_else(|| {
-            crate::Error::JsonRpc("initialize response missing result".into())
-        })?;
+        let result = resp
+            .result
+            .ok_or_else(|| crate::Error::JsonRpc("initialize response missing result".into()))?;
         serde_json::from_value(result).map_err(crate::Error::from)
     }
 
     /// 列出工具。
     pub fn tools_list(&self) -> Result<ToolsListResult, crate::Error> {
-        let request =
-            JsonRpcRequest::new(self.next_id(), McpMethod::ToolsList.as_str(), None);
+        let request = JsonRpcRequest::new(self.next_id(), McpMethod::ToolsList.as_str(), None);
         let resp = self.transport.send(&request)?;
         if let Some(err) = resp.error {
             return Err(crate::Error::JsonRpc(err.message));
@@ -617,11 +614,8 @@ impl McpClient {
             "name": name,
             "arguments": arguments,
         });
-        let request = JsonRpcRequest::new(
-            self.next_id(),
-            McpMethod::ToolsCall.as_str(),
-            Some(params),
-        );
+        let request =
+            JsonRpcRequest::new(self.next_id(), McpMethod::ToolsCall.as_str(), Some(params));
         let resp = self.transport.send(&request)?;
         if let Some(err) = resp.error {
             return Err(crate::Error::JsonRpc(err.message));
@@ -634,11 +628,7 @@ impl McpClient {
 
     /// 列出资源。
     pub fn resources_list(&self) -> Result<ResourcesListResult, crate::Error> {
-        let request = JsonRpcRequest::new(
-            self.next_id(),
-            McpMethod::ResourcesList.as_str(),
-            None,
-        );
+        let request = JsonRpcRequest::new(self.next_id(), McpMethod::ResourcesList.as_str(), None);
         let resp = self.transport.send(&request)?;
         if let Some(err) = resp.error {
             return Err(crate::Error::JsonRpc(err.message));
@@ -694,7 +684,10 @@ impl McpServer {
             Some(m) => m,
             None => {
                 warn!("mcp server: unknown method {}", request.method);
-                return JsonRpcResponse::error(request.id.clone(), JsonRpcError::method_not_found());
+                return JsonRpcResponse::error(
+                    request.id.clone(),
+                    JsonRpcError::method_not_found(),
+                );
             }
         };
         debug!("mcp server: dispatch method={:?}", method);
@@ -836,10 +829,7 @@ mod tests {
 
     #[test]
     fn test_jsonrpc_response_error() {
-        let resp = JsonRpcResponse::error(
-            JsonRpcId::num(2),
-            JsonRpcError::method_not_found(),
-        );
+        let resp = JsonRpcResponse::error(JsonRpcId::num(2), JsonRpcError::method_not_found());
         assert!(!resp.is_success());
         assert!(resp.is_error());
         assert_eq!(resp.error.unwrap().code, -32601);
@@ -937,8 +927,12 @@ mod tests {
         t.enqueue_response(ok_response(JsonRpcId::num(1), serde_json::json!(1)));
         t.enqueue_response(ok_response(JsonRpcId::num(2), serde_json::json!(2)));
 
-        let r1 = t.send(&JsonRpcRequest::new(JsonRpcId::num(1), "a", None)).unwrap();
-        let r2 = t.send(&JsonRpcRequest::new(JsonRpcId::num(2), "b", None)).unwrap();
+        let r1 = t
+            .send(&JsonRpcRequest::new(JsonRpcId::num(1), "a", None))
+            .unwrap();
+        let r2 = t
+            .send(&JsonRpcRequest::new(JsonRpcId::num(2), "b", None))
+            .unwrap();
         assert_eq!(r1.result.unwrap(), serde_json::json!(1));
         assert_eq!(r2.result.unwrap(), serde_json::json!(2));
         assert_eq!(t.pending_responses(), 0);
@@ -951,7 +945,10 @@ mod tests {
         assert!(t.is_connected());
         assert_eq!(t.endpoint(), "http://localhost:9999/sse");
 
-        t.enqueue_event(ok_response(JsonRpcId::num(1), serde_json::json!({"event": "open"})));
+        t.enqueue_event(ok_response(
+            JsonRpcId::num(1),
+            serde_json::json!({"event": "open"}),
+        ));
         let req = JsonRpcRequest::new(JsonRpcId::num(1), "subscribe", None);
         let resp = t.send(&req).unwrap();
         assert!(resp.is_success());
@@ -1031,7 +1028,9 @@ mod tests {
             }),
         ));
         let client = McpClient::new(stdio);
-        let result = client.tools_call("echo", serde_json::json!({"msg": "hi"})).unwrap();
+        let result = client
+            .tools_call("echo", serde_json::json!({"msg": "hi"}))
+            .unwrap();
         assert!(!result.is_error);
         assert_eq!(result.content.len(), 1);
         assert_eq!(result.content[0]["text"], "echoed");
@@ -1071,8 +1070,14 @@ mod tests {
         let stdio = Arc::new(StdioTransport::new());
         // 保留一个具名 clone 用于事后检查 sent_requests
         let probe = stdio.clone();
-        stdio.enqueue_response(ok_response(JsonRpcId::num(1), serde_json::json!({"tools": []})));
-        stdio.enqueue_response(ok_response(JsonRpcId::num(2), serde_json::json!({"tools": []})));
+        stdio.enqueue_response(ok_response(
+            JsonRpcId::num(1),
+            serde_json::json!({"tools": []}),
+        ));
+        stdio.enqueue_response(ok_response(
+            JsonRpcId::num(2),
+            serde_json::json!({"tools": []}),
+        ));
         let client = McpClient::new(stdio);
         client.tools_list().unwrap();
         client.tools_list().unwrap();

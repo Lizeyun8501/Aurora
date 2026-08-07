@@ -2,10 +2,10 @@
 //!
 //! 实现双链引用、反向链接面板、知识图谱可视化、关系属性、图谱探索。
 
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use parking_lot::RwLock;
 use uuid::Uuid;
 
 use super::content_editor::{DocId, Document};
@@ -85,11 +85,7 @@ pub struct Link {
 }
 
 impl Link {
-    pub fn new(
-        source_doc_id: DocId,
-        target_doc_id: DocId,
-        link_type: LinkType,
-    ) -> Self {
+    pub fn new(source_doc_id: DocId, target_doc_id: DocId, link_type: LinkType) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             source_doc_id,
@@ -285,12 +281,18 @@ impl LinkIndex {
 
     /// 获取文档的出链
     pub fn get_outgoing_links(&self, doc_id: &str) -> Vec<&Link> {
-        self.forward.get(doc_id).map(|v| v.iter().collect()).unwrap_or_default()
+        self.forward
+            .get(doc_id)
+            .map(|v| v.iter().collect())
+            .unwrap_or_default()
     }
 
     /// 获取文档的反向链接
     pub fn get_backlinks(&self, doc_id: &str) -> Vec<&BacklinkEntry> {
-        self.backward.get(doc_id).map(|v| v.iter().collect()).unwrap_or_default()
+        self.backward
+            .get(doc_id)
+            .map(|v| v.iter().collect())
+            .unwrap_or_default()
     }
 
     /// 通过标题查找文档ID
@@ -410,7 +412,11 @@ impl LinkParser {
         links
     }
 
-    fn extract_links_from_block(doc_id: &str, block: &super::content_editor::Block, links: &mut Vec<Link>) {
+    fn extract_links_from_block(
+        doc_id: &str,
+        block: &super::content_editor::Block,
+        links: &mut Vec<Link>,
+    ) {
         if let Some(text) = block.content.as_str() {
             // 解析 WikiLink
             for (title, _) in Self::parse_wiki_links(text) {
@@ -426,11 +432,7 @@ impl LinkParser {
 
             // 解析 MarkdownLink
             for (link_text, url) in Self::parse_markdown_links(text) {
-                let mut link = Link::new(
-                    doc_id.to_string(),
-                    url.clone(),
-                    LinkType::MarkdownLink,
-                );
+                let mut link = Link::new(doc_id.to_string(), url.clone(), LinkType::MarkdownLink);
                 link.anchor_text = Some(link_text);
                 link.block_id = Some(block.id.clone());
                 links.push(link);
@@ -488,7 +490,9 @@ impl KnowledgeNetworkEngine {
         for mut link in extracted {
             // 对于 WikiLink，通过标题解析目标文档ID
             if link.link_type == LinkType::WikiLink {
-                if let Some(target_id) = link.anchor_text.as_ref()
+                if let Some(target_id) = link
+                    .anchor_text
+                    .as_ref()
                     .and_then(|title| index.resolve_wiki_link(title))
                     .cloned()
                 {
@@ -496,7 +500,9 @@ impl KnowledgeNetworkEngine {
                 }
             }
 
-            let target_title = self.documents.read()
+            let target_title = self
+                .documents
+                .read()
                 .get(&link.target_doc_id)
                 .map(|d| d.title.clone())
                 .unwrap_or_else(|| link.target_doc_id.clone());
@@ -513,8 +519,7 @@ impl KnowledgeNetworkEngine {
 
         // 添加所有节点
         for (doc_id, doc) in docs.iter() {
-            let degree = index.get_outgoing_links(doc_id).len()
-                + index.get_backlinks(doc_id).len();
+            let degree = index.get_outgoing_links(doc_id).len() + index.get_backlinks(doc_id).len();
             graph.add_node(GraphNode {
                 id: doc_id.clone(),
                 title: doc.title.clone(),
@@ -543,12 +548,22 @@ impl KnowledgeNetworkEngine {
 
     /// 获取文档的反向链接
     pub fn get_backlinks(&self, doc_id: &str) -> Vec<BacklinkEntry> {
-        self.link_index.read().get_backlinks(doc_id).into_iter().cloned().collect()
+        self.link_index
+            .read()
+            .get_backlinks(doc_id)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// 获取文档的出链
     pub fn get_outgoing_links(&self, doc_id: &str) -> Vec<Link> {
-        self.link_index.read().get_outgoing_links(doc_id).into_iter().cloned().collect()
+        self.link_index
+            .read()
+            .get_outgoing_links(doc_id)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// 获取知识图谱
@@ -672,10 +687,13 @@ impl KnowledgeNetworkEngine {
             source_doc_id.clone(),
             target_doc_id.clone(),
             LinkType::Relation,
-        ).with_semantic_relation(relation);
+        )
+        .with_semantic_relation(relation);
 
         let mut index = self.link_index.write();
-        let target_title = self.documents.read()
+        let target_title = self
+            .documents
+            .read()
             .get(&target_doc_id)
             .map(|d| d.title.clone())
             .unwrap_or_default();
@@ -686,13 +704,12 @@ impl KnowledgeNetworkEngine {
 
     /// 获取文档的语义关系
     pub fn get_semantic_relations(&self, doc_id: &str) -> Vec<(Link, SemanticRelation)> {
-        self.link_index.read()
+        self.link_index
+            .read()
             .get_outgoing_links(doc_id)
             .iter()
             .filter(|l| l.link_type == LinkType::Relation)
-            .filter_map(|l| {
-                l.semantic_relation.clone().map(|r| ((*l).clone(), r))
-            })
+            .filter_map(|l| l.semantic_relation.clone().map(|r| ((*l).clone(), r)))
             .collect()
     }
 
@@ -703,14 +720,17 @@ impl KnowledgeNetworkEngine {
             let old_title = doc.title.clone();
             doc.title = new_title.clone();
             drop(docs);
-            self.link_index.write().update_title(doc_id, &old_title, new_title);
+            self.link_index
+                .write()
+                .update_title(doc_id, &old_title, new_title);
         }
     }
 
     /// 搜索文档（通过标题模糊匹配）
     pub fn search_documents(&self, query: &str) -> Vec<Document> {
         let query_lower = query.to_lowercase();
-        self.documents.read()
+        self.documents
+            .read()
             .values()
             .filter(|d| d.title.to_lowercase().contains(&query_lower))
             .cloned()
@@ -720,11 +740,11 @@ impl KnowledgeNetworkEngine {
     /// 获取孤立文档（没有任何链接的文档）
     pub fn get_orphan_documents(&self) -> Vec<Document> {
         let index = self.link_index.read();
-        self.documents.read()
+        self.documents
+            .read()
             .values()
             .filter(|d| {
-                index.get_outgoing_links(&d.id).is_empty()
-                    && index.get_backlinks(&d.id).is_empty()
+                index.get_outgoing_links(&d.id).is_empty() && index.get_backlinks(&d.id).is_empty()
             })
             .cloned()
             .collect()
@@ -733,11 +753,13 @@ impl KnowledgeNetworkEngine {
     /// 获取枢纽文档（连接数最多的文档）
     pub fn get_hub_documents(&self, limit: usize) -> Vec<(Document, usize)> {
         let index = self.link_index.read();
-        let mut docs: Vec<_> = self.documents.read()
+        let mut docs: Vec<_> = self
+            .documents
+            .read()
             .values()
             .map(|d| {
-                let degree = index.get_outgoing_links(&d.id).len()
-                    + index.get_backlinks(&d.id).len();
+                let degree =
+                    index.get_outgoing_links(&d.id).len() + index.get_backlinks(&d.id).len();
                 (d.clone(), degree)
             })
             .collect();
@@ -749,8 +771,8 @@ impl KnowledgeNetworkEngine {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::content_editor::{Block, ContentEditorEngine};
+    use super::*;
 
     #[test]
     fn test_parse_wiki_links() {
@@ -983,11 +1005,23 @@ mod tests {
         let doc = editor.create_document("Old Title");
         network.register_document(doc.clone());
 
-        assert!(network.link_index.read().resolve_wiki_link("Old Title").is_some());
+        assert!(network
+            .link_index
+            .read()
+            .resolve_wiki_link("Old Title")
+            .is_some());
 
         network.update_document_title(&doc.id, "New Title".to_string());
 
-        assert!(network.link_index.read().resolve_wiki_link("Old Title").is_none());
-        assert!(network.link_index.read().resolve_wiki_link("New Title").is_some());
+        assert!(network
+            .link_index
+            .read()
+            .resolve_wiki_link("Old Title")
+            .is_none());
+        assert!(network
+            .link_index
+            .read()
+            .resolve_wiki_link("New Title")
+            .is_some());
     }
 }

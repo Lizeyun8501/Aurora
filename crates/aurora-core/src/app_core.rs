@@ -21,8 +21,8 @@
 use std::sync::Arc;
 
 use crate::event_bus::layered::LayeredEventBus;
-use crate::Error;
 use crate::traits::*;
+use crate::Error;
 use tracing::{error, info, warn};
 
 /// 核心应用聚合根（V19 §36.1 `AppCore`）。
@@ -124,9 +124,7 @@ impl AppCoreBuilder {
         let event_bus = Arc::new(LayeredEventBus::new(self.event_bus_store));
 
         AppCore {
-            sync_target: self
-                .sync_target
-                .expect("SyncTarget must be provided"),
+            sync_target: self.sync_target.expect("SyncTarget must be provided"),
             crypto: self.crypto.expect("CryptoProvider must be provided"),
             ai: self.ai.expect("AIProvider must be provided"),
             kv_store: self.kv_store.expect("KVStore must be provided"),
@@ -156,7 +154,11 @@ impl AppCore {
                     info!(count = events.len(), "replaying unconsumed events");
                     // 在实际实现中，将事件重新入队到各通道
                     for env in &events {
-                        info!(seq = env.seq, event_type = env.event.event_type(), "replayed");
+                        info!(
+                            seq = env.seq,
+                            event_type = env.event.event_type(),
+                            "replayed"
+                        );
                     }
                 }
             }

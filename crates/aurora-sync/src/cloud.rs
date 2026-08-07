@@ -171,11 +171,7 @@ impl CloudSyncEngine {
                     .all(|(k, v)| since_vv.get(k).copied().unwrap_or(0) >= *v)
             })
             .collect();
-        debug!(
-            "cloud download: doc={} returned={}",
-            doc_id,
-            filtered.len()
-        );
+        debug!("cloud download: doc={} returned={}", doc_id, filtered.len());
         Ok(filtered)
     }
 
@@ -207,11 +203,7 @@ impl CloudSyncEngine {
 
     /// 返回某文档云端存储的批次数。
     pub fn batch_count(&self, doc_id: &str) -> usize {
-        self.relay
-            .read()
-            .get(doc_id)
-            .map(|v| v.len())
-            .unwrap_or(0)
+        self.relay.read().get(doc_id).map(|v| v.len()).unwrap_or(0)
     }
 }
 

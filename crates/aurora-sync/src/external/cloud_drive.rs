@@ -153,8 +153,7 @@ fn path_under(path: &str, prefix: &str) -> bool {
         return true;
     }
     let prefix_norm = prefix.trim_end_matches('/');
-    path.starts_with(prefix_norm)
-        && path[prefix_norm.len()..].starts_with('/')
+    path.starts_with(prefix_norm) && path[prefix_norm.len()..].starts_with('/')
 }
 
 /// 根据扩展名猜测 MIME 类型。
@@ -366,7 +365,8 @@ macro_rules! impl_mock_drive_connector {
                     )));
                 }
                 let count = self.drive.file_count();
-                let mut session = SyncSession::new(self.drive.name().to_string(), ($provider).as_str());
+                let mut session =
+                    SyncSession::new(self.drive.name().to_string(), ($provider).as_str());
                 session.finish(count, 0);
                 Ok(session)
             }
@@ -515,18 +515,20 @@ impl CloudDriveSync {
         }
         // 本地删除但远端更新也是一种冲突
         for path in modified.iter() {
-            if !self.local_files.read().contains_key(path) && known_etags.contains_key(path)
-                && changes.updated.iter().any(|f| &f.path == path) {
-                    conflicts.push(DriveConflict {
-                        path: path.clone(),
-                        local_etag: None,
-                        remote_etag: changes
-                            .updated
-                            .iter()
-                            .find(|f| &f.path == path)
-                            .map(|f| f.etag.clone()),
-                    });
-                }
+            if !self.local_files.read().contains_key(path)
+                && known_etags.contains_key(path)
+                && changes.updated.iter().any(|f| &f.path == path)
+            {
+                conflicts.push(DriveConflict {
+                    path: path.clone(),
+                    local_etag: None,
+                    remote_etag: changes
+                        .updated
+                        .iter()
+                        .find(|f| &f.path == path)
+                        .map(|f| f.etag.clone()),
+                });
+            }
         }
         Ok(conflicts)
     }
@@ -539,7 +541,9 @@ impl CloudDriveSync {
             let content = self.connector.download(&f.id)?;
             self.local_files.write().insert(f.path.clone(), f.clone());
             self.local_contents.write().insert(f.path.clone(), content);
-            self.local_etags.write().insert(f.path.clone(), f.etag.clone());
+            self.local_etags
+                .write()
+                .insert(f.path.clone(), f.etag.clone());
             applied += 1;
         }
         for path in &changes.deleted {
@@ -577,7 +581,9 @@ impl CloudDriveSync {
         for (path, data) in &to_push {
             let file = self.connector.upload(path, data.clone())?;
             self.local_files.write().insert(path.clone(), file.clone());
-            self.local_etags.write().insert(path.clone(), file.etag.clone());
+            self.local_etags
+                .write()
+                .insert(path.clone(), file.etag.clone());
             pushed += 1;
         }
         // 删除：按 path 找到远端 id
@@ -631,7 +637,10 @@ impl CloudDriveSync {
             self.locally_modified.write().remove(&c.path);
         }
         if conflict_count > 0 {
-            warn!("drive full_sync: resolved {} conflicts (LWW)", conflict_count);
+            warn!(
+                "drive full_sync: resolved {} conflicts (LWW)",
+                conflict_count
+            );
         }
         let pushed = self.push_local()?;
         let pulled = self.pull_remote()?;
@@ -809,7 +818,10 @@ mod tests {
     #[test]
     fn test_sync_pull_incremental_etag() {
         let conn = Arc::new(make_webdav());
-        let sync = CloudDriveSync::new(conn.clone() as Arc<dyn CloudDriveConnector>, SelectiveSyncConfig::default());
+        let sync = CloudDriveSync::new(
+            conn.clone() as Arc<dyn CloudDriveConnector>,
+            SelectiveSyncConfig::default(),
+        );
         conn.upload("/docs/a.md", vec![1]).unwrap();
         sync.pull_remote().unwrap();
         // 无变化
@@ -825,7 +837,10 @@ mod tests {
     #[test]
     fn test_sync_push_local() {
         let conn = Arc::new(make_webdav());
-        let sync = CloudDriveSync::new(conn.clone() as Arc<dyn CloudDriveConnector>, SelectiveSyncConfig::default());
+        let sync = CloudDriveSync::new(
+            conn.clone() as Arc<dyn CloudDriveConnector>,
+            SelectiveSyncConfig::default(),
+        );
         sync.local_put("/docs/x.md", vec![9, 9]);
         let pushed = sync.push_local().unwrap();
         assert_eq!(pushed, 1);
@@ -838,7 +853,10 @@ mod tests {
     #[test]
     fn test_sync_push_local_deletion() {
         let conn = Arc::new(make_webdav());
-        let sync = CloudDriveSync::new(conn.clone() as Arc<dyn CloudDriveConnector>, SelectiveSyncConfig::default());
+        let sync = CloudDriveSync::new(
+            conn.clone() as Arc<dyn CloudDriveConnector>,
+            SelectiveSyncConfig::default(),
+        );
         sync.local_put("/docs/x.md", vec![1]);
         sync.push_local().unwrap();
         assert_eq!(conn.file_count(), 1);
@@ -869,7 +887,10 @@ mod tests {
     #[test]
     fn test_sync_detect_conflicts_both_modified() {
         let conn = Arc::new(make_webdav());
-        let sync = CloudDriveSync::new(conn.clone() as Arc<dyn CloudDriveConnector>, SelectiveSyncConfig::default());
+        let sync = CloudDriveSync::new(
+            conn.clone() as Arc<dyn CloudDriveConnector>,
+            SelectiveSyncConfig::default(),
+        );
         conn.upload("/docs/a.md", vec![1]).unwrap();
         sync.pull_remote().unwrap();
         // 双方都修改
@@ -883,7 +904,10 @@ mod tests {
     #[test]
     fn test_sync_full_sync_lww_local_wins() {
         let conn = Arc::new(make_webdav());
-        let sync = CloudDriveSync::new(conn.clone() as Arc<dyn CloudDriveConnector>, SelectiveSyncConfig::default());
+        let sync = CloudDriveSync::new(
+            conn.clone() as Arc<dyn CloudDriveConnector>,
+            SelectiveSyncConfig::default(),
+        );
         conn.upload("/docs/a.md", vec![1]).unwrap();
         sync.pull_remote().unwrap();
         // 远端修改 (较早)
@@ -896,7 +920,10 @@ mod tests {
         assert!(synced > 0);
         // 远端最终内容应为本地版本
         let remote_files = conn.list_files("").unwrap();
-        let rf = remote_files.iter().find(|f| f.path == "/docs/a.md").unwrap();
+        let rf = remote_files
+            .iter()
+            .find(|f| f.path == "/docs/a.md")
+            .unwrap();
         assert_eq!(conn.download(&rf.id).unwrap(), vec![3]);
     }
 
@@ -911,7 +938,8 @@ mod tests {
         use super::super::{ConnectorRegistry, SyncConnector};
         let conn = Arc::new(make_webdav());
         let reg = ConnectorRegistry::new();
-        reg.register("drive", conn.clone() as Arc<dyn SyncConnector>).unwrap();
+        reg.register("drive", conn.clone() as Arc<dyn SyncConnector>)
+            .unwrap();
         reg.connect("drive").unwrap();
         assert_eq!(reg.state("drive"), Some(ConnectorState::Connected));
         let s = reg.sync("drive").unwrap();

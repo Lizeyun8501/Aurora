@@ -20,13 +20,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use proptest::prelude::*;
 
+use aurora_core::l2_engines::property::{
+    PropertyDefinition, PropertyEngine, PropertyType, SelectOption,
+};
 use aurora_core::l3_domain::content_editor::{Block, ContentEditorEngine, Document};
 use aurora_core::l3_domain::gtd_system::{Priority, Task, TaskStatus};
 use aurora_core::l3_domain::knowledge_network::{
     GraphEdge, GraphNode, KnowledgeGraph, KnowledgeNetworkEngine, LinkType,
-};
-use aurora_core::l2_engines::property::{
-    PropertyDefinition, PropertyEngine, PropertyType, SelectOption,
 };
 
 use common::{make_document, make_heading_block, make_text_block};
@@ -50,9 +50,8 @@ fn arb_heading_level() -> impl Strategy<Value = u8> {
 
 /// A vector of text blocks (1..=12 entries).
 fn arb_text_blocks() -> impl Strategy<Value = Vec<Block>> {
-    prop::collection::vec(arb_text(), 1..=12).prop_map(|texts| {
-        texts.into_iter().map(|t| make_text_block(&t)).collect()
-    })
+    prop::collection::vec(arb_text(), 1..=12)
+        .prop_map(|texts| texts.into_iter().map(|t| make_text_block(&t)).collect())
 }
 
 /// All seven GTD task statuses, in a fixed canonical order.

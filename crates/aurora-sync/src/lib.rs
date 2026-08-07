@@ -86,14 +86,16 @@ pub use conflict::{Branch, ConflictResolution, ConflictResolver, SemanticConflic
 pub use device::{Device, DeviceId, DeviceManager, DeviceStatus, QrAuthorization};
 pub use external::{
     CalDavConfig, CalDavConnector, CalendarEvent, CalendarSync, CloudDriveConnector,
-    ConnectorRegistry, ConnectorState, DropboxConnector, DriveFile, DriveProvider,
-    EmailAttachment, EmailDocument, EmailFilter, EmailMessage, EmailSync, GoogleDriveConnector,
-    HmacVerifier, ImapConfig, ImapConnector, OneDriveConnector, SelectiveSyncConfig,
-    SyncConnector, SyncSession, SyncSessionStatus, WebDavConnector, WebhookConfig, WebhookEvent,
-    WebhookReceiver, WebhookSource,
+    ConnectorRegistry, ConnectorState, DriveFile, DriveProvider, DropboxConnector, EmailAttachment,
+    EmailDocument, EmailFilter, EmailMessage, EmailSync, GoogleDriveConnector, HmacVerifier,
+    ImapConfig, ImapConnector, OneDriveConnector, SelectiveSyncConfig, SyncConnector, SyncSession,
+    SyncSessionStatus, WebDavConnector, WebhookConfig, WebhookEvent, WebhookReceiver,
+    WebhookSource,
 };
 pub use incremental::{BlockDelta, BlockSignature, IncrementalSync, RollingHash};
+pub use iroh_transport::{
+    run_accept_loop, IrohTransport, SyncReport, AURORA_ALPN, MAX_SYNC_MESSAGE_SIZE,
+};
 pub use lan::{LanPeer, LanSyncEngine, MdnsDiscovery, SyncRoute};
 pub use offline_queue::{OfflineQueue, Priority, QueueItem};
 pub use p2p::{P2pSyncEngine, PeerId, SyncMessage, VersionVector};
-pub use iroh_transport::{IrohTransport, SyncReport, run_accept_loop, AURORA_ALPN, MAX_SYNC_MESSAGE_SIZE};

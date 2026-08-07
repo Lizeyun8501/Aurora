@@ -20,9 +20,8 @@ impl SqliteEventQueue {
     ///
     /// 要求目标数据库已包含 `event_queue` 表（由 `aurora-migration` 初始化）。
     pub fn new(path: impl AsRef<std::path::Path>) -> Result<Self, crate::Error> {
-        let conn = rusqlite::Connection::open(path).map_err(|e| {
-            crate::Error::Database(format!("sqlite queue open failed: {}", e))
-        })?;
+        let conn = rusqlite::Connection::open(path)
+            .map_err(|e| crate::Error::Database(format!("sqlite queue open failed: {}", e)))?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -52,16 +51,12 @@ impl SqliteEventQueue {
             )",
             [],
         )
-        .map_err(|e| {
-            crate::Error::Database(format!("sqlite queue create table failed: {}", e))
-        })?;
+        .map_err(|e| crate::Error::Database(format!("sqlite queue create table failed: {}", e)))?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_event_channel ON event_queue(channel, consumed_at)",
             [],
         )
-        .map_err(|e| {
-            crate::Error::Database(format!("sqlite queue create index failed: {}", e))
-        })?;
+        .map_err(|e| crate::Error::Database(format!("sqlite queue create index failed: {}", e)))?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -86,9 +81,10 @@ impl SqliteEventQueue {
 
 impl EventQueueStore for SqliteEventQueue {
     fn enqueue(&self, record: &QueuedEvent) -> Result<(), crate::Error> {
-        let conn = self.conn.lock().map_err(|_| {
-            crate::Error::Internal("sqlite queue mutex poisoned".into())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite queue mutex poisoned".into()))?;
         let created_at = Utc::now().to_rfc3339();
         conn.execute(
             "INSERT INTO event_queue (channel, event_type, payload, seq, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -106,9 +102,10 @@ impl EventQueueStore for SqliteEventQueue {
     }
 
     fn mark_consumed(&self, seq: u64) -> Result<(), crate::Error> {
-        let conn = self.conn.lock().map_err(|_| {
-            crate::Error::Internal("sqlite queue mutex poisoned".into())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite queue mutex poisoned".into()))?;
         let consumed_at = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE event_queue SET consumed_at = ?1 WHERE seq = ?2",
@@ -120,9 +117,10 @@ impl EventQueueStore for SqliteEventQueue {
     }
 
     fn pending(&self) -> Result<Vec<QueuedEvent>, crate::Error> {
-        let conn = self.conn.lock().map_err(|_| {
-            crate::Error::Internal("sqlite queue mutex poisoned".into())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite queue mutex poisoned".into()))?;
         let mut stmt = conn
             .prepare("SELECT seq, channel, event_type, payload FROM event_queue WHERE consumed_at IS NULL ORDER BY seq")
             .map_err(|e| crate::Error::Database(format!("sqlite queue prepare failed: {}", e)))?;

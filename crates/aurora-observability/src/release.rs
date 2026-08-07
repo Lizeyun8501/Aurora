@@ -228,7 +228,11 @@ impl UpdateChannel for TauriUpdaterChannel {
         &self.name
     }
     fn distribute(&self, stage: CanaryStage, payload: &[u8]) -> Result<()> {
-        info!(stage = stage.percentage(), bytes = payload.len(), "tauri updater: distribute");
+        info!(
+            stage = stage.percentage(),
+            bytes = payload.len(),
+            "tauri updater: distribute"
+        );
         *self.last_stage.write() = Some(stage);
         Ok(())
     }
@@ -282,7 +286,11 @@ impl UpdateChannel for CapacitorAppflowChannel {
         &self.name
     }
     fn distribute(&self, stage: CanaryStage, payload: &[u8]) -> Result<()> {
-        info!(stage = stage.percentage(), bytes = payload.len(), "capacitor appflow: distribute");
+        info!(
+            stage = stage.percentage(),
+            bytes = payload.len(),
+            "capacitor appflow: distribute"
+        );
         *self.last_stage.write() = Some(stage);
         Ok(())
     }
@@ -400,7 +408,10 @@ impl CanaryManager {
             .as_mut()
             .ok_or_else(|| Error::Release("no active rollout".into()))?;
         rollout.status = CanaryStatus::Braked;
-        warn!(stage = rollout.current_stage.percentage(), "canary EMERGENCY BRAKE");
+        warn!(
+            stage = rollout.current_stage.percentage(),
+            "canary EMERGENCY BRAKE"
+        );
         let snapshot = rollout.clone();
         drop(guard);
         *self.rollout.write() = Some(snapshot.clone());
@@ -421,17 +432,26 @@ impl CanaryManager {
             }
         }
         if errors >= self.config.error_threshold {
-            warn!(errors, threshold = self.config.error_threshold, "braking on threshold");
+            warn!(
+                errors,
+                threshold = self.config.error_threshold,
+                "braking on threshold"
+            );
             return self.brake();
         }
-        if self.config.auto_promote && (self.peek_dwell_secs() as u64) >= self.config.min_dwell_secs {
+        if self.config.auto_promote && (self.peek_dwell_secs() as u64) >= self.config.min_dwell_secs
+        {
             // 仅当未到 100% 时尝试推进
-            let at_top = matches!(self.current().map(|r| r.current_stage), Some(CanaryStage::Percent100));
+            let at_top = matches!(
+                self.current().map(|r| r.current_stage),
+                Some(CanaryStage::Percent100)
+            );
             if !at_top {
                 return self.promote();
             }
         }
-        self.current().ok_or_else(|| Error::Release("no active rollout".into()))
+        self.current()
+            .ok_or_else(|| Error::Release("no active rollout".into()))
     }
 
     fn peek_dwell_secs(&self) -> i64 {
@@ -704,7 +724,10 @@ impl FeatureFlags {
                     }
                     FlagType::Percentage => {
                         let pct = flag.value.as_u64().unwrap_or(0) as u32;
-                        (eval_percentage(&flag.key, pct, ctx), "percentage".to_string())
+                        (
+                            eval_percentage(&flag.key, pct, ctx),
+                            "percentage".to_string(),
+                        )
                     }
                     FlagType::Targeting => {
                         let hit = flag
@@ -1076,9 +1099,7 @@ impl VersionManager {
     pub fn rollback(&self, trigger: RollbackTrigger) -> Result<VersionInfo> {
         let mut guard = self.versions.write();
         if guard.len() < 2 {
-            return Err(Error::Release(
-                "no previous version to roll back to".into(),
-            ));
+            return Err(Error::Release("no previous version to roll back to".into()));
         }
         // 从倒数第二个开始向前找最近的稳定版本。
         let target_idx = guard[..guard.len() - 1]
@@ -1306,8 +1327,16 @@ mod tests {
         };
         store.set(FeatureFlag::targeting("beta", rule));
         let flags = FeatureFlags::new(store);
-        assert!(flags.is_enabled("beta", &EvaluationContext::default().with_user("alice")).enabled);
-        assert!(!flags.is_enabled("beta", &EvaluationContext::default().with_user("bob")).enabled);
+        assert!(
+            flags
+                .is_enabled("beta", &EvaluationContext::default().with_user("alice"))
+                .enabled
+        );
+        assert!(
+            !flags
+                .is_enabled("beta", &EvaluationContext::default().with_user("bob"))
+                .enabled
+        );
     }
 
     #[test]
@@ -1503,7 +1532,7 @@ mod tests {
         mgr.install("1.0.0").unwrap();
         mgr.mark_stable("1.0.0").unwrap();
         mgr.install("2.0.0").unwrap(); // current, unstable
-        // 触发 3 次崩溃
+                                       // 触发 3 次崩溃
         for _ in 0..3 {
             mgr.crash_tracker().record_crash();
         }
@@ -1531,7 +1560,9 @@ mod tests {
         mgr.install("3.0.0").unwrap();
         mgr.mark_stable("3.0.0").unwrap();
         mgr.install("4.0.0").unwrap();
-        let t2 = mgr.rollback(RollbackTrigger::DataFormatIncompatible).unwrap();
+        let t2 = mgr
+            .rollback(RollbackTrigger::DataFormatIncompatible)
+            .unwrap();
         assert_eq!(t2.version, "3.0.0");
     }
 
@@ -1572,7 +1603,10 @@ mod tests {
     #[test]
     fn rollback_trigger_label() {
         assert_eq!(RollbackTrigger::CrashCount(2).label(), "crash_count");
-        assert_eq!(RollbackTrigger::DataFormatIncompatible.label(), "data_format_incompatible");
+        assert_eq!(
+            RollbackTrigger::DataFormatIncompatible.label(),
+            "data_format_incompatible"
+        );
         assert_eq!(RollbackTrigger::Manual.label(), "manual");
     }
 

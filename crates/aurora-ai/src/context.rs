@@ -317,9 +317,7 @@ impl ContextStore {
             .read()
             .get(session_id)
             .cloned()
-            .ok_or_else(|| {
-                crate::Error::NotFound(format!("session not found: {}", session_id))
-            })
+            .ok_or_else(|| crate::Error::NotFound(format!("session not found: {}", session_id)))
     }
 
     /// 删除上下文。
@@ -361,17 +359,16 @@ impl ContextStore {
     ///
     /// 保留最近 `max_messages` 条消息，将更早的消息折叠为一条 system 摘要。
     /// 每次调用都会写入 `compression_history`。
-    pub fn compress_window(&self, ctx: &mut AgentContext) -> Result<CompressedContext, crate::Error> {
+    pub fn compress_window(
+        &self,
+        ctx: &mut AgentContext,
+    ) -> Result<CompressedContext, crate::Error> {
         let window = &mut ctx.window;
         let original = window.messages.len();
         let keep = window.max_messages;
         if original <= keep {
-            let compressed = CompressedContext::new(
-                ctx.session_id.clone(),
-                original,
-                original,
-                String::new(),
-            );
+            let compressed =
+                CompressedContext::new(ctx.session_id.clone(), original, original, String::new());
             self.compressions.write().push(compressed.clone());
             return Ok(compressed);
         }
@@ -391,12 +388,7 @@ impl ContextStore {
         );
         // retained_count 表示保留的原始消息数（不含新生成的 summary），
         // 因此 compressed_count = original - retained 即被折叠的消息数。
-        let compressed = CompressedContext::new(
-            ctx.session_id.clone(),
-            original,
-            keep,
-            summary,
-        );
+        let compressed = CompressedContext::new(ctx.session_id.clone(), original, keep, summary);
         self.compressions.write().push(compressed.clone());
         Ok(compressed)
     }
@@ -414,7 +406,11 @@ fn summarize_messages(msgs: &[&ContextMessage]) -> String {
         let snippet: String = m.content.chars().take(40).collect();
         parts.push(format!("[{}] {}: {}", i, m.role, snippet));
     }
-    format!("Summary of {} earlier messages: {}", msgs.len(), parts.join("; "))
+    format!(
+        "Summary of {} earlier messages: {}",
+        msgs.len(),
+        parts.join("; ")
+    )
 }
 
 #[cfg(test)]
@@ -540,9 +536,7 @@ mod tests {
     #[test]
     fn test_context_store_delete() {
         let store = ContextStore::new();
-        store
-            .save(AgentContext::new(make_session()))
-            .unwrap();
+        store.save(AgentContext::new(make_session())).unwrap();
         assert_eq!(store.len(), 1);
         let removed = store.delete(&make_session()).unwrap();
         assert!(removed);

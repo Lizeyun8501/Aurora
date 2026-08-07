@@ -48,11 +48,8 @@ impl EventBus {
 
     /// 订阅特定类型的事件
     /// 返回一个 tokio 任务，处理匹配的事件
-    pub fn subscribe_filtered<F>(
-        &self,
-        filter: F,
-        handler: Box<dyn Fn(CoreEvent) + Send + Sync>,
-    ) where
+    pub fn subscribe_filtered<F>(&self, filter: F, handler: Box<dyn Fn(CoreEvent) + Send + Sync>)
+    where
         F: Fn(&CoreEvent) -> bool + Send + Sync + 'static,
     {
         let mut rx = self.subscribe();

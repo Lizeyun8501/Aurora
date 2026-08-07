@@ -122,7 +122,10 @@ pub enum SyncMessage {
     /// 握手：交换 PeerId 与版本向量。
     Hello { peer_id: PeerId, vv: VersionVector },
     /// 增量更新：携带 op 字节流与起始 VV。
-    Update { ops: Vec<u8>, from_vv: VersionVector },
+    Update {
+        ops: Vec<u8>,
+        from_vv: VersionVector,
+    },
     /// 确认：返回接收方当前 VV。
     Ack { vv: VersionVector },
     /// 快照：完整文档二进制 (用于冷启动或大差异同步)。
@@ -177,7 +180,9 @@ impl MockTransport {
 
     /// 注册本节点的发送端到共享 mesh 注册表。
     pub fn register(&self, peer_id: &PeerId) {
-        self.peers.write().insert(peer_id.clone(), self.inbox_tx.clone());
+        self.peers
+            .write()
+            .insert(peer_id.clone(), self.inbox_tx.clone());
     }
 
     /// 注销本节点。
@@ -189,10 +194,13 @@ impl MockTransport {
     pub fn send_to(&self, peer: &PeerId, msg: SyncMessage) -> crate::Result<()> {
         let peers = self.peers.read();
         match peers.get(peer) {
-            Some(tx) => tx.try_send(msg).map_err(|e| {
-                crate::Error::Network(format!("send to {} failed: {}", peer, e))
-            }),
-            None => Err(crate::Error::NotFound(format!("peer not connected: {}", peer))),
+            Some(tx) => tx
+                .try_send(msg)
+                .map_err(|e| crate::Error::Network(format!("send to {} failed: {}", peer, e))),
+            None => Err(crate::Error::NotFound(format!(
+                "peer not connected: {}",
+                peer
+            ))),
         }
     }
 
@@ -248,7 +256,12 @@ impl P2pSyncEngine {
     /// 向对端发送 Hello 消息，发起握手与版本向量交换。
     pub fn send_hello(&self, peer: &PeerId) -> crate::Result<()> {
         let vv = self.version_vector();
-        info!("p2p hello: {} -> {} vv_len={}", self.peer_id, peer, vv.len());
+        info!(
+            "p2p hello: {} -> {} vv_len={}",
+            self.peer_id,
+            peer,
+            vv.len()
+        );
         self.transport.send_to(
             peer,
             SyncMessage::Hello {
@@ -267,13 +280,15 @@ impl P2pSyncEngine {
             peer,
             ops.len()
         );
-        self.transport.send_to(peer, SyncMessage::Update { ops, from_vv })
+        self.transport
+            .send_to(peer, SyncMessage::Update { ops, from_vv })
     }
 
     /// 向对端发送快照。
     pub fn send_snapshot(&self, peer: &PeerId, blob: Vec<u8>) -> crate::Result<()> {
         let vv = self.version_vector();
-        self.transport.send_to(peer, SyncMessage::Snapshot { blob, vv })
+        self.transport
+            .send_to(peer, SyncMessage::Snapshot { blob, vv })
     }
 
     /// 处理接收到的消息，更新本地 VV，必要时回 Ack。
@@ -406,10 +421,31 @@ mod tests {
     fn test_sync_message_kind() {
         let p = PeerId::from_str("p");
         let empty = VersionVector::new();
-        assert_eq!(SyncMessage::Hello { peer_id: p.clone(), vv: empty.clone() }.kind(), "Hello");
-        assert_eq!(SyncMessage::Update { ops: vec![], from_vv: empty.clone() }.kind(), "Update");
+        assert_eq!(
+            SyncMessage::Hello {
+                peer_id: p.clone(),
+                vv: empty.clone()
+            }
+            .kind(),
+            "Hello"
+        );
+        assert_eq!(
+            SyncMessage::Update {
+                ops: vec![],
+                from_vv: empty.clone()
+            }
+            .kind(),
+            "Update"
+        );
         assert_eq!(SyncMessage::Ack { vv: empty.clone() }.kind(), "Ack");
-        assert_eq!(SyncMessage::Snapshot { blob: vec![], vv: empty }.kind(), "Snapshot");
+        assert_eq!(
+            SyncMessage::Snapshot {
+                blob: vec![],
+                vv: empty
+            }
+            .kind(),
+            "Snapshot"
+        );
     }
 
     #[test]

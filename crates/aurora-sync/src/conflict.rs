@@ -202,12 +202,17 @@ impl ConflictResolver {
                 base_vv.insert("local".to_string(), 1);
                 let mut branch = Branch::new(
                     conflict.doc_id.clone(),
-                    format!("conflict-{}", &conflict.conflict_id[..8.min(conflict.conflict_id.len())]),
+                    format!(
+                        "conflict-{}",
+                        &conflict.conflict_id[..8.min(conflict.conflict_id.len())]
+                    ),
                     base_vv,
                 );
                 branch.advance("local", 1);
                 branch.advance("remote", 1);
-                self.branches.write().insert(branch.branch_id.clone(), branch);
+                self.branches
+                    .write()
+                    .insert(branch.branch_id.clone(), branch);
             }
         }
 
@@ -243,9 +248,9 @@ impl ConflictResolver {
     /// 归档分支。
     pub fn archive_branch(&self, branch_id: &str) -> crate::Result<()> {
         let mut branches = self.branches.write();
-        let branch = branches.get_mut(branch_id).ok_or_else(|| {
-            crate::Error::NotFound(format!("branch not found: {}", branch_id))
-        })?;
+        let branch = branches
+            .get_mut(branch_id)
+            .ok_or_else(|| crate::Error::NotFound(format!("branch not found: {}", branch_id)))?;
         branch.archive();
         Ok(())
     }
@@ -278,7 +283,9 @@ mod tests {
     fn test_conflict_resolve_local_wins() {
         let resolver = ConflictResolver::new(ConflictResolution::AutoMerge);
         let id = resolver.register(make_conflict());
-        let value = resolver.resolve(&id, ConflictResolution::LocalWins).expect("resolve");
+        let value = resolver
+            .resolve(&id, ConflictResolution::LocalWins)
+            .expect("resolve");
         assert_eq!(value, serde_json::json!("https://local/img.png"));
         // 已解决，不再出现在 pending
         assert_eq!(resolver.pending_conflicts().len(), 0);
@@ -288,7 +295,9 @@ mod tests {
     fn test_conflict_resolve_remote_wins() {
         let resolver = ConflictResolver::new(ConflictResolution::AutoMerge);
         let id = resolver.register(make_conflict());
-        let value = resolver.resolve(&id, ConflictResolution::RemoteWins).expect("resolve");
+        let value = resolver
+            .resolve(&id, ConflictResolution::RemoteWins)
+            .expect("resolve");
         assert_eq!(value, serde_json::json!("https://remote/img.png"));
     }
 
@@ -306,14 +315,19 @@ mod tests {
             conflicts[0].resolved_value,
             Some(serde_json::json!("https://custom/img.png"))
         );
-        assert_eq!(conflicts[0].resolution, Some(ConflictResolution::ManualSelect));
+        assert_eq!(
+            conflicts[0].resolution,
+            Some(ConflictResolution::ManualSelect)
+        );
     }
 
     #[test]
     fn test_conflict_resolve_creates_branch() {
         let resolver = ConflictResolver::new(ConflictResolution::AutoMerge);
         let id = resolver.register(make_conflict());
-        let _ = resolver.resolve(&id, ConflictResolution::Branch).expect("resolve");
+        let _ = resolver
+            .resolve(&id, ConflictResolution::Branch)
+            .expect("resolve");
         let branches = resolver.branches();
         assert_eq!(branches.len(), 1);
         assert!(branches[0].has_advanced());
@@ -337,10 +351,16 @@ mod tests {
         let resolver = ConflictResolver::new(ConflictResolution::AutoMerge);
         let id1 = resolver.register(make_conflict());
         let _id2 = resolver.register(SemanticConflict::new(
-            "doc2", "b2", "f2", serde_json::json!(1), serde_json::json!(2),
+            "doc2",
+            "b2",
+            "f2",
+            serde_json::json!(1),
+            serde_json::json!(2),
         ));
         assert_eq!(resolver.pending_conflicts().len(), 2);
-        resolver.resolve(&id1, ConflictResolution::LocalWins).unwrap();
+        resolver
+            .resolve(&id1, ConflictResolution::LocalWins)
+            .unwrap();
         assert_eq!(resolver.pending_conflicts().len(), 1);
     }
 
@@ -363,6 +383,9 @@ mod tests {
     #[test]
     fn test_default_strategy() {
         let resolver = ConflictResolver::new(ConflictResolution::LastWriteWins);
-        assert_eq!(resolver.default_strategy(), ConflictResolution::LastWriteWins);
+        assert_eq!(
+            resolver.default_strategy(),
+            ConflictResolution::LastWriteWins
+        );
     }
 }

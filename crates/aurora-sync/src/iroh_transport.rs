@@ -30,8 +30,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
 // iroh 1.0 API（对应 V19 §31.2）
-use iroh::{Endpoint, EndpointAddr};
 use iroh::endpoint::presets::Empty;
+use iroh::{Endpoint, EndpointAddr};
 use loro::LoroDoc;
 
 use crate::p2p::PeerId;
@@ -101,10 +101,7 @@ impl IrohTransport {
                 format!("iroh bind failed: {}", e)
             })?;
 
-        info!(
-            "iroh transport bound: peer_id={}",
-            peer_id,
-        );
+        info!("iroh transport bound: peer_id={}", peer_id,);
 
         Ok(Self {
             endpoint,
@@ -141,10 +138,7 @@ impl IrohTransport {
         peer_addr: EndpointAddr,
         local_doc: &LoroDoc,
     ) -> Result<SyncReport, String> {
-        debug!(
-            "sync_with_peer: connecting to node_id={:?}",
-            peer_addr.id
-        );
+        debug!("sync_with_peer: connecting to node_id={:?}", peer_addr.id);
 
         // 1. 建立 QUIC 连接
         let conn = self
@@ -163,8 +157,11 @@ impl IrohTransport {
         let local_vv = local_doc.oplog_vv();
         let vv_bytes = local_vv.encode();
         let frame = encode_frame(&vv_bytes);
-        send.write_all(&frame).await.map_err(|e| format!("write vv failed: {}", e))?;
-        send.finish().map_err(|e| format!("finish send failed: {}", e))?;
+        send.write_all(&frame)
+            .await
+            .map_err(|e| format!("write vv failed: {}", e))?;
+        send.finish()
+            .map_err(|e| format!("finish send failed: {}", e))?;
 
         // 4. 接收远端增量更新
         let remote_update = recv
@@ -198,12 +195,18 @@ impl IrohTransport {
             .map_err(|e| format!("decode remote vv failed: {}", e))?;
 
         // 导出本地相对远端的增量
-        let local_update = local_doc.export(loro::ExportMode::updates(&remote_vv))
+        let local_update = local_doc
+            .export(loro::ExportMode::updates(&remote_vv))
             .map_err(|e| format!("loro export failed: {}", e))?;
 
         let sent_bytes = local_update.len();
-        send2.write_all(&local_update).await.map_err(|e| format!("write reverse update failed: {}", e))?;
-        send2.finish().map_err(|e| format!("finish reverse send failed: {}", e))?;
+        send2
+            .write_all(&local_update)
+            .await
+            .map_err(|e| format!("write reverse update failed: {}", e))?;
+        send2
+            .finish()
+            .map_err(|e| format!("finish reverse send failed: {}", e))?;
 
         info!(
             "sync_with_peer completed: sent={} bytes, received={} bytes",
@@ -222,10 +225,7 @@ impl IrohTransport {
     /// 接收同步（服务端角色）：监听入站连接并响应。
     ///
     /// 在 tokio 任务中循环调用此方法以持续接收同步请求。
-    pub async fn accept_sync(
-        &self,
-        local_doc: &LoroDoc,
-    ) -> Result<SyncReport, String> {
+    pub async fn accept_sync(&self, local_doc: &LoroDoc) -> Result<SyncReport, String> {
         debug!("accept_sync: waiting for incoming connection...");
 
         // 接受入站连接
@@ -257,12 +257,16 @@ impl IrohTransport {
             .map_err(|e| format!("decode remote vv failed: {}", e))?;
 
         // 导出本地相对远端的增量
-        let local_update = local_doc.export(loro::ExportMode::updates(&remote_vv))
+        let local_update = local_doc
+            .export(loro::ExportMode::updates(&remote_vv))
             .map_err(|e| format!("loro export failed: {}", e))?;
 
         let sent_bytes = local_update.len();
-        send.write_all(&local_update).await.map_err(|e| format!("write update failed: {}", e))?;
-        send.finish().map_err(|e| format!("finish send failed: {}", e))?;
+        send.write_all(&local_update)
+            .await
+            .map_err(|e| format!("write update failed: {}", e))?;
+        send.finish()
+            .map_err(|e| format!("finish send failed: {}", e))?;
 
         // 反向：接收远端缺失更新
         let (mut send2, mut recv2) = conn
@@ -274,8 +278,13 @@ impl IrohTransport {
         let local_vv = local_doc.oplog_vv();
         let vv_bytes = local_vv.encode();
         let frame = encode_frame(&vv_bytes);
-        send2.write_all(&frame).await.map_err(|e| format!("write vv reverse failed: {}", e))?;
-        send2.finish().map_err(|e| format!("finish vv reverse failed: {}", e))?;
+        send2
+            .write_all(&frame)
+            .await
+            .map_err(|e| format!("write vv reverse failed: {}", e))?;
+        send2
+            .finish()
+            .map_err(|e| format!("finish vv reverse failed: {}", e))?;
 
         // 接收远端增量
         let remote_update = recv2

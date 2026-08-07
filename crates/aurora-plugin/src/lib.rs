@@ -77,9 +77,7 @@ pub use hot_update::{HotUpdateManager, UpdateResult, UpdateState};
 pub use iframe_runtime::{
     CssTheme, IframeFrame, IframeRuntime, JsonRpcError, JsonRpcId, JsonRpcRequest, JsonRpcResponse,
 };
-pub use lifecycle::{
-    Plugin, PluginId, PluginLifecycle, PluginManager, PluginMode, PluginStatus,
-};
+pub use lifecycle::{Plugin, PluginId, PluginLifecycle, PluginManager, PluginMode, PluginStatus};
 pub use marketplace::{
     generate_keypair, Marketplace, PluginListing, PluginSignature, PluginSource, UpdateCheck,
 };

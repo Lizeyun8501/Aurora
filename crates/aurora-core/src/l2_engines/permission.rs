@@ -185,7 +185,10 @@ pub enum AbacCondition {
     /// 设备 ID 必须匹配前缀
     DevicePrefix(String),
     /// 自定义属性等于某值
-    CustomEq { key: String, value: serde_json::Value },
+    CustomEq {
+        key: String,
+        value: serde_json::Value,
+    },
     /// 多条件：全部满足
     And(Vec<AbacCondition>),
     /// 多条件：任一满足
@@ -220,14 +223,22 @@ impl AbacCondition {
             }
             AbacCondition::IpWhitelist(ips) => {
                 if let Some(ip) = ctx.client_ip {
-                    ips.iter().any(|s| parse_ip_or_cidr(s).map(|range| range.contains(ip)).unwrap_or(false))
+                    ips.iter().any(|s| {
+                        parse_ip_or_cidr(s)
+                            .map(|range| range.contains(ip))
+                            .unwrap_or(false)
+                    })
                 } else {
                     false
                 }
             }
             AbacCondition::IpBlacklist(ips) => {
                 if let Some(ip) = ctx.client_ip {
-                    !ips.iter().any(|s| parse_ip_or_cidr(s).map(|range| range.contains(ip)).unwrap_or(false))
+                    !ips.iter().any(|s| {
+                        parse_ip_or_cidr(s)
+                            .map(|range| range.contains(ip))
+                            .unwrap_or(false)
+                    })
                 } else {
                     true
                 }
@@ -237,11 +248,9 @@ impl AbacCondition {
                 .as_ref()
                 .map(|d| d.starts_with(prefix))
                 .unwrap_or(false),
-            AbacCondition::CustomEq { key, value } => ctx
-                .extra
-                .get(key)
-                .map(|v| v == value)
-                .unwrap_or(false),
+            AbacCondition::CustomEq { key, value } => {
+                ctx.extra.get(key).map(|v| v == value).unwrap_or(false)
+            }
             AbacCondition::And(conds) => conds.iter().all(|c| c.evaluate(ctx)),
             AbacCondition::Or(conds) => conds.iter().any(|c| c.evaluate(ctx)),
             AbacCondition::Not(cond) => !cond.evaluate(ctx),
@@ -253,8 +262,14 @@ impl AbacCondition {
 #[derive(Debug, Clone)]
 enum IpRange {
     Single(IpAddr),
-    V4Subnet { addr: std::net::Ipv4Addr, prefix: u8 },
-    V6Subnet { addr: std::net::Ipv6Addr, prefix: u8 },
+    V4Subnet {
+        addr: std::net::Ipv4Addr,
+        prefix: u8,
+    },
+    V6Subnet {
+        addr: std::net::Ipv6Addr,
+        prefix: u8,
+    },
 }
 
 impl IpRange {
@@ -424,7 +439,9 @@ impl PermissionEngine {
 
     /// 撤销用户策略
     pub fn revoke(&self, user_id: &str, resource_id: &ResourceId) {
-        self.assignments.write().remove(&(user_id.to_string(), resource_id.clone()));
+        self.assignments
+            .write()
+            .remove(&(user_id.to_string(), resource_id.clone()));
     }
 
     /// 检查某用户是否对某资源拥有指定权限
@@ -443,9 +460,7 @@ impl PermissionEngine {
         let effective_role = match self.resolve_effective_role(user_id, resource_id, ctx) {
             Some(role) => role,
             None => {
-                return PermissionResult::DenyWithReason(
-                    "No applicable policy found".to_string(),
-                );
+                return PermissionResult::DenyWithReason("No applicable policy found".to_string());
             }
         };
 
@@ -491,7 +506,11 @@ impl PermissionEngine {
             (Some(d), Some(i)) => {
                 if self.inheritance == InheritanceStrategy::Strict {
                     // 严格模式下取权限较小者（level 更小）
-                    if d.level() <= i.level() { Some(d) } else { Some(i) }
+                    if d.level() <= i.level() {
+                        Some(d)
+                    } else {
+                        Some(i)
+                    }
                 } else {
                     // 宽松模式下直接策略优先
                     Some(d)
@@ -679,16 +698,12 @@ mod tests {
         engine.assign(user("u1"), res_ws("ws1"), Policy::new(Role::Editor));
 
         let ctx = AccessContext::default();
-        assert!(
-            engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &ctx)
-                .is_allowed()
-        );
-        assert!(
-            !engine
-                .check("u1", &res_ws("ws1"), Permission::ManageUsers, &ctx)
-                .is_allowed()
-        );
+        assert!(engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &ctx)
+            .is_allowed());
+        assert!(!engine
+            .check("u1", &res_ws("ws1"), Permission::ManageUsers, &ctx)
+            .is_allowed());
     }
 
     #[test]
@@ -698,11 +713,9 @@ mod tests {
         engine.revoke("u1", &res_ws("ws1"));
 
         let ctx = AccessContext::default();
-        assert!(
-            !engine
-                .check("u1", &res_ws("ws1"), Permission::Read, &ctx)
-                .is_allowed()
-        );
+        assert!(!engine
+            .check("u1", &res_ws("ws1"), Permission::Read, &ctx)
+            .is_allowed());
     }
 
     #[test]
@@ -715,16 +728,12 @@ mod tests {
 
         let ctx = AccessContext::default();
         // Block 未显式分配，应继承 Workspace 的 Editor 权限
-        assert!(
-            engine
-                .check("u1", &res_block("blk1"), Permission::Write, &ctx)
-                .is_allowed()
-        );
-        assert!(
-            !engine
-                .check("u1", &res_block("blk1"), Permission::Delete, &ctx)
-                .is_allowed()
-        );
+        assert!(engine
+            .check("u1", &res_block("blk1"), Permission::Write, &ctx)
+            .is_allowed());
+        assert!(!engine
+            .check("u1", &res_block("blk1"), Permission::Delete, &ctx)
+            .is_allowed());
     }
 
     #[test]
@@ -738,16 +747,12 @@ mod tests {
 
         let ctx = AccessContext::default();
         // 在 Collection 上，Strict 模式下直接分配的 Viewer 与继承的 Admin 取较小者 => Viewer
-        assert!(
-            engine
-                .check("u1", &res_col("col1"), Permission::Read, &ctx)
-                .is_allowed()
-        );
-        assert!(
-            !engine
-                .check("u1", &res_col("col1"), Permission::Write, &ctx)
-                .is_allowed()
-        );
+        assert!(engine
+            .check("u1", &res_col("col1"), Permission::Read, &ctx)
+            .is_allowed());
+        assert!(!engine
+            .check("u1", &res_col("col1"), Permission::Write, &ctx)
+            .is_allowed());
     }
 
     #[test]
@@ -759,18 +764,16 @@ mod tests {
 
         let ctx = AccessContext::default();
         // Permissive 模式下直接策略优先，Collection 可使用 Editor 覆盖上级 Viewer
-        assert!(
-            engine
-                .check("u1", &res_col("col1"), Permission::Write, &ctx)
-                .is_allowed()
-        );
+        assert!(engine
+            .check("u1", &res_col("col1"), Permission::Write, &ctx)
+            .is_allowed());
     }
 
     #[test]
     fn test_abac_weekday_condition() {
         let engine = make_engine();
-        let weekday_policy = Policy::new(Role::Editor)
-            .with_condition(AbacCondition::Weekdays(vec![1, 2, 3, 4, 5]));
+        let weekday_policy =
+            Policy::new(Role::Editor).with_condition(AbacCondition::Weekdays(vec![1, 2, 3, 4, 5]));
         engine.assign(user("u1"), res_ws("ws1"), weekday_policy);
 
         // 构造一个工作日的上下文
@@ -783,11 +786,9 @@ mod tests {
             ..Default::default()
         };
         // 该时间戳 2024-07-14 是周日 (weekday=7)，条件不满足
-        assert!(
-            !engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &weekday_ctx)
-                .is_allowed()
-        );
+        assert!(!engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &weekday_ctx)
+            .is_allowed());
 
         // 构造一个周一的上下文
         let monday_ctx = AccessContext {
@@ -799,11 +800,9 @@ mod tests {
             ..Default::default()
         };
         // 该时间戳 2024-07-17 是周三 (weekday=3)，条件满足
-        assert!(
-            engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &monday_ctx)
-                .is_allowed()
-        );
+        assert!(engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &monday_ctx)
+            .is_allowed());
     }
 
     #[test]
@@ -826,11 +825,9 @@ mod tests {
             ),
             ..Default::default()
         };
-        assert!(
-            engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &noon_ctx)
-                .is_allowed()
-        );
+        assert!(engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &noon_ctx)
+            .is_allowed());
 
         let night_ctx = AccessContext {
             request_time: Some(
@@ -843,42 +840,35 @@ mod tests {
             ),
             ..Default::default()
         };
-        assert!(
-            !engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &night_ctx)
-                .is_allowed()
-        );
+        assert!(!engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &night_ctx)
+            .is_allowed());
     }
 
     #[test]
     fn test_abac_ip_whitelist() {
         let engine = make_engine();
-        let ip_policy = Policy::new(Role::Editor)
-            .with_condition(AbacCondition::IpWhitelist(vec![
-                "192.168.1.0/24".to_string(),
-                "10.0.0.5".to_string(),
-            ]));
+        let ip_policy = Policy::new(Role::Editor).with_condition(AbacCondition::IpWhitelist(vec![
+            "192.168.1.0/24".to_string(),
+            "10.0.0.5".to_string(),
+        ]));
         engine.assign(user("u1"), res_ws("ws1"), ip_policy);
 
         let allowed_ctx = AccessContext {
             client_ip: Some("192.168.1.100".parse().unwrap()),
             ..Default::default()
         };
-        assert!(
-            engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &allowed_ctx)
-                .is_allowed()
-        );
+        assert!(engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &allowed_ctx)
+            .is_allowed());
 
         let denied_ctx = AccessContext {
             client_ip: Some("8.8.8.8".parse().unwrap()),
             ..Default::default()
         };
-        assert!(
-            !engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &denied_ctx)
-                .is_allowed()
-        );
+        assert!(!engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &denied_ctx)
+            .is_allowed());
     }
 
     #[test]
@@ -898,16 +888,12 @@ mod tests {
             ),
             ..Default::default()
         };
-        assert!(
-            engine
-                .check("u1", &res_ws("ws1"), Permission::Read, &sunday_ctx)
-                .is_allowed()
-        );
-        assert!(
-            !engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &sunday_ctx)
-                .is_allowed()
-        );
+        assert!(engine
+            .check("u1", &res_ws("ws1"), Permission::Read, &sunday_ctx)
+            .is_allowed());
+        assert!(!engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &sunday_ctx)
+            .is_allowed());
     }
 
     #[test]
@@ -929,11 +915,9 @@ mod tests {
             client_ip: Some("192.168.1.10".parse().unwrap()),
             ..Default::default()
         };
-        assert!(
-            engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &ok_ctx)
-                .is_allowed()
-        );
+        assert!(engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &ok_ctx)
+            .is_allowed());
 
         let bad_ip_ctx = AccessContext {
             request_time: Some(
@@ -944,11 +928,9 @@ mod tests {
             client_ip: Some("10.0.0.1".parse().unwrap()),
             ..Default::default()
         };
-        assert!(
-            !engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &bad_ip_ctx)
-                .is_allowed()
-        );
+        assert!(!engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &bad_ip_ctx)
+            .is_allowed());
     }
 
     #[test]
@@ -958,16 +940,12 @@ mod tests {
 
         let ctx = AccessContext::default();
         // u1 未在任何资源上显式分配，应走默认策略
-        assert!(
-            engine
-                .check("u1", &res_ws("ws1"), Permission::Read, &ctx)
-                .is_allowed()
-        );
-        assert!(
-            !engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &ctx)
-                .is_allowed()
-        );
+        assert!(engine
+            .check("u1", &res_ws("ws1"), Permission::Read, &ctx)
+            .is_allowed());
+        assert!(!engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &ctx)
+            .is_allowed());
     }
 
     #[test]
@@ -988,26 +966,22 @@ mod tests {
         engine.assign(user("u1"), res_ws("ws1"), Policy::new(Role::Editor));
 
         let ctx = AccessContext::default();
-        assert!(
-            engine
-                .check_all(
-                    "u1",
-                    &res_ws("ws1"),
-                    &[Permission::Read, Permission::Write],
-                    &ctx
-                )
-                .is_allowed()
-        );
-        assert!(
-            !engine
-                .check_all(
-                    "u1",
-                    &res_ws("ws1"),
-                    &[Permission::Read, Permission::Delete],
-                    &ctx
-                )
-                .is_allowed()
-        );
+        assert!(engine
+            .check_all(
+                "u1",
+                &res_ws("ws1"),
+                &[Permission::Read, Permission::Write],
+                &ctx
+            )
+            .is_allowed());
+        assert!(!engine
+            .check_all(
+                "u1",
+                &res_ws("ws1"),
+                &[Permission::Read, Permission::Delete],
+                &ctx
+            )
+            .is_allowed());
     }
 
     #[test]
@@ -1016,26 +990,22 @@ mod tests {
         engine.assign(user("u1"), res_ws("ws1"), Policy::new(Role::Editor));
 
         let ctx = AccessContext::default();
-        assert!(
-            engine
-                .check_any(
-                    "u1",
-                    &res_ws("ws1"),
-                    &[Permission::Read, Permission::Delete],
-                    &ctx
-                )
-                .is_allowed()
-        );
-        assert!(
-            !engine
-                .check_any(
-                    "u1",
-                    &res_ws("ws1"),
-                    &[Permission::Delete, Permission::ManageUsers],
-                    &ctx
-                )
-                .is_allowed()
-        );
+        assert!(engine
+            .check_any(
+                "u1",
+                &res_ws("ws1"),
+                &[Permission::Read, Permission::Delete],
+                &ctx
+            )
+            .is_allowed());
+        assert!(!engine
+            .check_any(
+                "u1",
+                &res_ws("ws1"),
+                &[Permission::Delete, Permission::ManageUsers],
+                &ctx
+            )
+            .is_allowed());
     }
 
     #[test]
@@ -1047,16 +1017,28 @@ mod tests {
         let ctx = AccessContext::default();
         let snapshot = engine.user_permissions_snapshot("u1", &ctx);
         assert_eq!(snapshot.len(), 2);
-        assert!(snapshot.get(&res_ws("ws1")).unwrap().contains(&Permission::Write));
-        assert!(!snapshot.get(&res_col("col1")).unwrap().contains(&Permission::Write));
+        assert!(snapshot
+            .get(&res_ws("ws1"))
+            .unwrap()
+            .contains(&Permission::Write));
+        assert!(!snapshot
+            .get(&res_col("col1"))
+            .unwrap()
+            .contains(&Permission::Write));
     }
 
     #[test]
     fn test_resource_type_depth_and_parent() {
         assert_eq!(ResourceType::Workspace.depth(), 1);
         assert_eq!(ResourceType::Block.depth(), 4);
-        assert_eq!(ResourceType::Collection.parent(), Some(ResourceType::Workspace));
-        assert_eq!(ResourceType::Document.parent(), Some(ResourceType::Collection));
+        assert_eq!(
+            ResourceType::Collection.parent(),
+            Some(ResourceType::Workspace)
+        );
+        assert_eq!(
+            ResourceType::Document.parent(),
+            Some(ResourceType::Collection)
+        );
         assert_eq!(ResourceType::Block.parent(), Some(ResourceType::Document));
         assert_eq!(ResourceType::Workspace.parent(), None);
     }

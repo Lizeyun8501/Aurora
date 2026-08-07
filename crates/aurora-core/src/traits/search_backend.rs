@@ -77,7 +77,8 @@ pub struct IndexEntry {
 #[async_trait]
 pub trait SearchBackend: Send + Sync {
     /// 全文搜索。
-    async fn search(&self, query: &str, opts: &SearchOptions) -> Result<SearchResult, crate::Error>;
+    async fn search(&self, query: &str, opts: &SearchOptions)
+        -> Result<SearchResult, crate::Error>;
 
     /// 索引单篇笔记（存在则更新）。
     async fn index_note(

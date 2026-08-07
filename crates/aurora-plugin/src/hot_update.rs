@@ -125,22 +125,13 @@ impl HotUpdateManager {
     }
 
     /// 安装某插件的初始版本。
-    pub fn install(
-        &self,
-        plugin_id: impl Into<String>,
-        version: impl Into<String>,
-        blob: Vec<u8>,
-    ) {
+    pub fn install(&self, plugin_id: impl Into<String>, version: impl Into<String>, blob: Vec<u8>) {
         let id = plugin_id.into();
         let ver = version.into();
         info!("hot update: install {} v{}", id, ver);
-        self.installed.write().insert(
-            id,
-            Installed {
-                version: ver,
-                blob,
-            },
-        );
+        self.installed
+            .write()
+            .insert(id, Installed { version: ver, blob });
     }
 
     /// 设置金丝雀灰度比例（0–100）。
@@ -155,7 +146,10 @@ impl HotUpdateManager {
 
     /// 当前已安装版本。
     pub fn current_version(&self, plugin_id: &str) -> Option<String> {
-        self.installed.read().get(plugin_id).map(|i| i.version.clone())
+        self.installed
+            .read()
+            .get(plugin_id)
+            .map(|i| i.version.clone())
     }
 
     /// 当前已安装字节码长度（便于测试断言）。
@@ -362,10 +356,7 @@ mod tests {
     #[tokio::test]
     async fn test_hot_update_preload_to_pending() {
         let mgr = installed_manager();
-        let result = mgr
-            .preload("p1", "1.1.0", vec![1u8; 200])
-            .await
-            .unwrap();
+        let result = mgr.preload("p1", "1.1.0", vec![1u8; 200]).await.unwrap();
         assert_eq!(result.state, UpdateState::Pending);
         assert_eq!(result.from_version, "1.0.0");
         assert_eq!(result.to_version, "1.1.0");

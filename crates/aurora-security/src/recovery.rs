@@ -255,10 +255,7 @@ impl ShamirSecretSharing {
 
     /// 默认 3-of-2：拆成 3 份，需 2 份重建
     pub fn default_3_of_2() -> Self {
-        Self {
-            n: 3,
-            threshold: 2,
-        }
+        Self { n: 3, threshold: 2 }
     }
 
     pub fn n(&self) -> usize {
@@ -293,7 +290,11 @@ impl ShamirSecretSharing {
                 share.y[j] = acc;
             }
         }
-        info!(n = self.n, threshold = self.threshold, "split secret into shares");
+        info!(
+            n = self.n,
+            threshold = self.threshold,
+            "split secret into shares"
+        );
         Ok(shares)
     }
 
@@ -506,7 +507,11 @@ mod tests {
         let m = Mnemonic::generate().unwrap();
         assert_eq!(m.word_count(), MNEMONIC_WORDS);
         for w in m.words() {
-            assert!(w.starts_with('w'), "synthetic word must start with 'w': {}", w);
+            assert!(
+                w.starts_with('w'),
+                "synthetic word must start with 'w': {}",
+                w
+            );
         }
     }
 
@@ -623,9 +628,15 @@ mod tests {
         let shares = sss.split(&secret).unwrap();
 
         // 任意两份都应重建出同一秘密
-        let r1 = sss.combine(&[shares[0].clone(), shares[1].clone()]).unwrap();
-        let r2 = sss.combine(&[shares[0].clone(), shares[2].clone()]).unwrap();
-        let r3 = sss.combine(&[shares[1].clone(), shares[2].clone()]).unwrap();
+        let r1 = sss
+            .combine(&[shares[0].clone(), shares[1].clone()])
+            .unwrap();
+        let r2 = sss
+            .combine(&[shares[0].clone(), shares[2].clone()])
+            .unwrap();
+        let r3 = sss
+            .combine(&[shares[1].clone(), shares[2].clone()])
+            .unwrap();
         assert_eq!(r1, secret);
         assert_eq!(r2, secret);
         assert_eq!(r3, secret);
@@ -655,7 +666,9 @@ mod tests {
         let mut secret = [0u8; 32];
         OsRng.fill_bytes(&mut secret);
         let shares = sss.split(&secret).unwrap();
-        let recon = sss.combine(&[shares[0].clone(), shares[2].clone()]).unwrap();
+        let recon = sss
+            .combine(&[shares[0].clone(), shares[2].clone()])
+            .unwrap();
         assert_eq!(recon, secret.to_vec());
     }
 
@@ -730,9 +743,7 @@ mod tests {
         let d2 = DeviceAuthorizationQr::decode(&e2).unwrap();
 
         // 用解码后的两份份额重建秘密
-        let recon = sss
-            .combine(&[d0.share.clone(), d2.share.clone()])
-            .unwrap();
+        let recon = sss.combine(&[d0.share.clone(), d2.share.clone()]).unwrap();
         assert_eq!(recon, secret);
     }
 

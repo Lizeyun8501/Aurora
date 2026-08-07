@@ -9,10 +9,10 @@
 //! - 图像预处理只返回元数据（尺寸/倾斜角等），不真正做像素级变换。
 //! - 表格识别 mock：基于输入的「网格化文本」重组成单元格。
 
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tracing::{debug, info, warn};
 
 use super::content_editor::Block;
@@ -306,7 +306,8 @@ impl RecognizedTable {
         if self.rows == 0 || self.cols == 0 {
             return String::new();
         }
-        let mut grid: Vec<Vec<String>> = vec![vec![String::new(); self.cols as usize]; self.rows as usize];
+        let mut grid: Vec<Vec<String>> =
+            vec![vec![String::new(); self.cols as usize]; self.rows as usize];
         for cell in &self.cells {
             let r = cell.row as usize;
             let c = cell.col as usize;
@@ -393,9 +394,16 @@ pub struct LatexOutput {
 impl LatexOutput {
     /// 转换为可插入文档的 `Block`（MathBlock 用 Custom 类型表示）
     pub fn to_block(&self) -> Block {
-        let mut block = Block::new(super::content_editor::BlockType::Custom("math".to_string()), &self.latex);
-        block.properties.insert("is_block".to_string(), serde_json::json!(self.is_block));
-        block.properties.insert("confidence".to_string(), serde_json::json!(self.confidence));
+        let mut block = Block::new(
+            super::content_editor::BlockType::Custom("math".to_string()),
+            &self.latex,
+        );
+        block
+            .properties
+            .insert("is_block".to_string(), serde_json::json!(self.is_block));
+        block
+            .properties
+            .insert("confidence".to_string(), serde_json::json!(self.confidence));
         block
     }
 }
@@ -503,7 +511,12 @@ impl BatchOcrProcessor {
     }
 
     /// 处理一个图像（同步 mock）
-    pub fn process_one(&self, asset_id: &str, image_data: &[u8], language: OcrLanguage) -> OcrResult {
+    pub fn process_one(
+        &self,
+        asset_id: &str,
+        image_data: &[u8],
+        language: OcrLanguage,
+    ) -> OcrResult {
         {
             let mut st = self.state.write();
             st.current = Some(asset_id.to_string());
@@ -653,8 +666,12 @@ mod tests {
 
     #[test]
     fn test_provider_supported_languages() {
-        assert!(PaddleOcrProvider.supported_languages().contains(&OcrLanguage::Chinese));
-        assert!(TesseractProvider.supported_languages().contains(&OcrLanguage::English));
+        assert!(PaddleOcrProvider
+            .supported_languages()
+            .contains(&OcrLanguage::Chinese));
+        assert!(TesseractProvider
+            .supported_languages()
+            .contains(&OcrLanguage::English));
     }
 
     #[test]
@@ -728,10 +745,34 @@ mod tests {
             rows: 2,
             cols: 2,
             cells: vec![
-                TableCell { row: 0, col: 0, text: "A".into(), confidence: 0.9, bbox: BoundingBox::default() },
-                TableCell { row: 0, col: 1, text: "B".into(), confidence: 0.9, bbox: BoundingBox::default() },
-                TableCell { row: 1, col: 0, text: "1".into(), confidence: 0.9, bbox: BoundingBox::default() },
-                TableCell { row: 1, col: 1, text: "2".into(), confidence: 0.9, bbox: BoundingBox::default() },
+                TableCell {
+                    row: 0,
+                    col: 0,
+                    text: "A".into(),
+                    confidence: 0.9,
+                    bbox: BoundingBox::default(),
+                },
+                TableCell {
+                    row: 0,
+                    col: 1,
+                    text: "B".into(),
+                    confidence: 0.9,
+                    bbox: BoundingBox::default(),
+                },
+                TableCell {
+                    row: 1,
+                    col: 0,
+                    text: "1".into(),
+                    confidence: 0.9,
+                    bbox: BoundingBox::default(),
+                },
+                TableCell {
+                    row: 1,
+                    col: 1,
+                    text: "2".into(),
+                    confidence: 0.9,
+                    bbox: BoundingBox::default(),
+                },
             ],
         };
         let md = table.to_markdown();
@@ -746,12 +787,27 @@ mod tests {
             rows: 1,
             cols: 2,
             cells: vec![
-                TableCell { row: 0, col: 0, text: "h1".into(), confidence: 0.9, bbox: BoundingBox::default() },
-                TableCell { row: 0, col: 1, text: "h2".into(), confidence: 0.9, bbox: BoundingBox::default() },
+                TableCell {
+                    row: 0,
+                    col: 0,
+                    text: "h1".into(),
+                    confidence: 0.9,
+                    bbox: BoundingBox::default(),
+                },
+                TableCell {
+                    row: 0,
+                    col: 1,
+                    text: "h2".into(),
+                    confidence: 0.9,
+                    bbox: BoundingBox::default(),
+                },
             ],
         };
         let block = table.to_block();
-        assert!(matches!(block.block_type, super::super::content_editor::BlockType::Table));
+        assert!(matches!(
+            block.block_type,
+            super::super::content_editor::BlockType::Table
+        ));
         let rows = block.content.as_array().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].as_array().unwrap().len(), 2);
@@ -801,7 +857,10 @@ mod tests {
             super::super::content_editor::BlockType::Custom(ref s) if s == "math"
         ));
         assert_eq!(block.content.as_str().unwrap(), "x^2 + y^2 = r^2");
-        assert_eq!(block.properties.get("is_block").unwrap().as_bool(), Some(true));
+        assert_eq!(
+            block.properties.get("is_block").unwrap().as_bool(),
+            Some(true)
+        );
     }
 
     // --- Batch OCR ---

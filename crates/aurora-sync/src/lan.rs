@@ -151,10 +151,7 @@ impl LanSyncEngine {
     pub fn select_route(&self) -> SyncRoute {
         let peers = self.discovery.discover_sorted(&self.self_id);
         if let Some(best) = peers.into_iter().next() {
-            info!(
-                "lan route selected: {} rtt={}ms",
-                best.peer_id, best.rtt_ms
-            );
+            info!("lan route selected: {} rtt={}ms", best.peer_id, best.rtt_ms);
             SyncRoute::Lan(best)
         } else {
             info!("no lan peer, fallback to cloud");
@@ -211,9 +208,9 @@ mod tests {
         let engine = LanSyncEngine::new("self");
         engine.announce_self(LanPeer::new("self", "192.168.1.1", 11000));
         // 注册一个低延迟对端
-        engine.discovery().announce(
-            LanPeer::new("peer", "192.168.1.2", 11001).with_rtt(3),
-        );
+        engine
+            .discovery()
+            .announce(LanPeer::new("peer", "192.168.1.2", 11001).with_rtt(3));
         let route = engine.select_route();
         match route {
             SyncRoute::Lan(peer) => assert_eq!(peer.peer_id, "peer"),

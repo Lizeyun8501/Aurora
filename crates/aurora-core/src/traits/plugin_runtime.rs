@@ -36,7 +36,12 @@ pub struct PluginHandle {
 #[async_trait]
 pub trait PluginRuntime: Send + Sync {
     async fn load(&mut self, manifest: &PluginManifest) -> Result<PluginHandle, crate::Error>;
-    async fn invoke(&self, handle: &PluginHandle, method: &str, args: &serde_json::Value) -> Result<serde_json::Value, crate::Error>;
+    async fn invoke(
+        &self,
+        handle: &PluginHandle,
+        method: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, crate::Error>;
     async fn unload(&mut self, handle: &PluginHandle) -> Result<(), crate::Error>;
     /// 纯查询方法，保持同步签名。
     fn list_hooks(&self, hook_point: &str) -> Vec<PluginHandle>;

@@ -2,10 +2,10 @@
 //!
 //! 实现块级文档模型、块类型注册表、Markdown 支持、版本历史、评论批注。
 
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use uuid::Uuid;
 
 /// 文档唯一标识
@@ -112,25 +112,33 @@ impl Block {
 
     pub fn heading(level: u8, content: impl Into<String>) -> Self {
         let mut block = Self::new(BlockType::Heading, content.into());
-        block.properties.insert("level".to_string(), serde_json::json!(level.min(6).max(1)));
+        block
+            .properties
+            .insert("level".to_string(), serde_json::json!(level.min(6).max(1)));
         block
     }
 
     pub fn code(language: impl Into<String>, code: impl Into<String>) -> Self {
         let mut block = Self::new(BlockType::Code, code.into());
-        block.properties.insert("language".to_string(), serde_json::json!(language.into()));
+        block
+            .properties
+            .insert("language".to_string(), serde_json::json!(language.into()));
         block
     }
 
     pub fn image(url: impl Into<String>, alt: impl Into<String>) -> Self {
         let mut block = Self::new(BlockType::Image, url.into());
-        block.properties.insert("alt".to_string(), serde_json::json!(alt.into()));
+        block
+            .properties
+            .insert("alt".to_string(), serde_json::json!(alt.into()));
         block
     }
 
     pub fn todo(checked: bool, content: impl Into<String>) -> Self {
         let mut block = Self::new(BlockType::TodoItem, content.into());
-        block.properties.insert("checked".to_string(), serde_json::json!(checked));
+        block
+            .properties
+            .insert("checked".to_string(), serde_json::json!(checked));
         block
     }
 
@@ -152,30 +160,36 @@ impl Block {
 
     pub fn to_markdown(&self) -> String {
         match self.block_type {
-            BlockType::Text => {
-                self.content.as_str().unwrap_or("").to_string()
-            }
+            BlockType::Text => self.content.as_str().unwrap_or("").to_string(),
             BlockType::Heading => {
-                let level = self.properties.get("level")
+                let level = self
+                    .properties
+                    .get("level")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(1) as usize;
                 let hashes = "#".repeat(level);
                 format!("{} {}", hashes, self.content.as_str().unwrap_or(""))
             }
             BlockType::Code => {
-                let lang = self.properties.get("language")
+                let lang = self
+                    .properties
+                    .get("language")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 format!("```{lang}\n{}\n```", self.content.as_str().unwrap_or(""))
             }
             BlockType::Image => {
-                let alt = self.properties.get("alt")
+                let alt = self
+                    .properties
+                    .get("alt")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 format!("![{}]({})", alt, self.content.as_str().unwrap_or(""))
             }
             BlockType::TodoItem => {
-                let checked = self.properties.get("checked")
+                let checked = self
+                    .properties
+                    .get("checked")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 let mark = if checked { "[x]" } else { "[ ]" };
@@ -184,7 +198,10 @@ impl Block {
             BlockType::Divider => "---".to_string(),
             BlockType::Quote => {
                 let text = self.content.as_str().unwrap_or("");
-                text.lines().map(|l| format!("> {}", l)).collect::<Vec<_>>().join("\n")
+                text.lines()
+                    .map(|l| format!("> {}", l))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             }
             BlockType::ListItem => {
                 format!("- {}", self.content.as_str().unwrap_or(""))
@@ -194,12 +211,14 @@ impl Block {
                     let mut md = String::new();
                     for (i, row) in rows.iter().enumerate() {
                         if let Some(cells) = row.as_array() {
-                            let cells_str: Vec<String> = cells.iter()
+                            let cells_str: Vec<String> = cells
+                                .iter()
                                 .map(|c| c.as_str().unwrap_or("").to_string())
                                 .collect();
                             md.push_str(&format!("| {} |\n", cells_str.join(" | ")));
                             if i == 0 {
-                                let sep: Vec<String> = cells.iter().map(|_| "---".to_string()).collect();
+                                let sep: Vec<String> =
+                                    cells.iter().map(|_| "---".to_string()).collect();
                                 md.push_str(&format!("| {} |\n", sep.join(" | ")));
                             }
                         }
@@ -210,7 +229,11 @@ impl Block {
                 }
             }
             BlockType::Custom(ref name) => {
-                format!("<!-- custom:{} -->\n{}", name, self.content.as_str().unwrap_or(""))
+                format!(
+                    "<!-- custom:{} -->\n{}",
+                    name,
+                    self.content.as_str().unwrap_or("")
+                )
             }
         }
     }
@@ -546,7 +569,12 @@ impl ContentEditorEngine {
     }
 
     /// 创建文档快照
-    pub fn create_snapshot(&self, doc_id: &str, created_by: impl Into<String>, comment: Option<String>) -> Option<DocumentSnapshot> {
+    pub fn create_snapshot(
+        &self,
+        doc_id: &str,
+        created_by: impl Into<String>,
+        comment: Option<String>,
+    ) -> Option<DocumentSnapshot> {
         let doc = self.documents.read().get(doc_id)?.clone();
         let snapshot = DocumentSnapshot {
             id: Uuid::new_v4().to_string(),
@@ -557,7 +585,8 @@ impl ContentEditorEngine {
             created_by: created_by.into(),
             comment,
         };
-        self.snapshots.write()
+        self.snapshots
+            .write()
             .entry(doc_id.to_string())
             .or_default()
             .push(snapshot.clone());
@@ -565,7 +594,8 @@ impl ContentEditorEngine {
     }
 
     pub fn get_snapshots(&self, doc_id: &str) -> Vec<DocumentSnapshot> {
-        self.snapshots.read()
+        self.snapshots
+            .read()
             .get(doc_id)
             .cloned()
             .unwrap_or_default()
@@ -574,7 +604,9 @@ impl ContentEditorEngine {
     pub fn restore_snapshot(&self, snapshot_id: &str) -> Option<Document> {
         let snapshots = self.snapshots.read();
         let found = snapshots.iter().find_map(|(doc_id, list)| {
-            list.iter().find(|s| s.id == snapshot_id).map(|snap| (doc_id.clone(), snap.document.clone()))
+            list.iter()
+                .find(|s| s.id == snapshot_id)
+                .map(|snap| (doc_id.clone(), snap.document.clone()))
         });
         drop(snapshots);
         found.map(|(doc_id, doc)| {
@@ -595,7 +627,8 @@ impl ContentEditorEngine {
     }
 
     pub fn list_comments(&self, doc_id: &str) -> Vec<Comment> {
-        self.comments.read()
+        self.comments
+            .read()
             .values()
             .filter(|c| c.doc_id == doc_id)
             .cloned()
@@ -698,7 +731,10 @@ mod tests {
 
         let retrieved = engine.get_document(&doc.id).unwrap();
         assert_eq!(retrieved.blocks.len(), 1);
-        assert_eq!(retrieved.blocks[0].content, serde_json::json!("Hello world"));
+        assert_eq!(
+            retrieved.blocks[0].content,
+            serde_json::json!("Hello world")
+        );
     }
 
     #[test]
@@ -731,7 +767,9 @@ mod tests {
         let doc = engine.create_document("Original");
         engine.add_block(&doc.id, Block::text("v1"));
 
-        let snap = engine.create_snapshot(&doc.id, "user1", Some("first draft".to_string())).unwrap();
+        let snap = engine
+            .create_snapshot(&doc.id, "user1", Some("first draft".to_string()))
+            .unwrap();
 
         engine.add_block(&doc.id, Block::text("v2"));
         let current = engine.get_document(&doc.id).unwrap();

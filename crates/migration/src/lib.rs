@@ -5,8 +5,8 @@
 //! - 版本化迁移机制
 //! - FTS5 全文索引支持检测与降级
 
-use std::sync::Mutex;
 use rusqlite::OptionalExtension;
+use std::sync::Mutex;
 use tracing::{error, info, warn};
 
 /// 当前数据库 Schema 版本。
@@ -20,8 +20,8 @@ pub struct MigrationManager {
 impl MigrationManager {
     /// 打开数据库并初始化迁移表。
     pub fn new(path: impl AsRef<std::path::Path>) -> Result<Self, MigrationError> {
-        let conn = rusqlite::Connection::open(path)
-            .map_err(|e| MigrationError::Open(e.to_string()))?;
+        let conn =
+            rusqlite::Connection::open(path).map_err(|e| MigrationError::Open(e.to_string()))?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS _migrations (
                 version INTEGER PRIMARY KEY,
@@ -56,7 +56,11 @@ impl MigrationManager {
     pub fn migrate(&self) -> Result<(), MigrationError> {
         let mut conn = self.conn.lock().unwrap();
         let current = Self::current_version(&conn)?;
-        info!(current, target = CURRENT_SCHEMA_VERSION, "starting migration");
+        info!(
+            current,
+            target = CURRENT_SCHEMA_VERSION,
+            "starting migration"
+        );
 
         if current < 1 {
             Self::apply_v1(&mut conn)?;
@@ -91,10 +95,7 @@ impl MigrationManager {
         Ok(version.unwrap_or(0))
     }
 
-    fn record_version(
-        conn: &rusqlite::Connection,
-        version: i64,
-    ) -> Result<(), MigrationError> {
+    fn record_version(conn: &rusqlite::Connection, version: i64) -> Result<(), MigrationError> {
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
             "INSERT INTO _migrations (version, applied_at) VALUES (?1, ?2)",
@@ -107,7 +108,9 @@ impl MigrationManager {
     // ── V1 初始 Schema ──────────────────────────────────────────
 
     fn apply_v1(conn: &mut rusqlite::Connection) -> Result<(), MigrationError> {
-        let tx = conn.transaction().map_err(|e| MigrationError::Exec(e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
 
         // notes 表
         tx.execute(
@@ -353,7 +356,8 @@ impl MigrationManager {
         .map_err(|e| MigrationError::Exec(e.to_string()))?;
 
         Self::record_version(&tx, 1)?;
-        tx.commit().map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.commit()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
         info!("applied migration v1");
         Ok(())
     }

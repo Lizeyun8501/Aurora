@@ -77,7 +77,9 @@ impl Plaintext {
     }
 
     pub fn from_str(s: &str) -> Self {
-        Self { data: s.as_bytes().to_vec() }
+        Self {
+            data: s.as_bytes().to_vec(),
+        }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -99,7 +101,9 @@ impl Plaintext {
 
 impl From<String> for Plaintext {
     fn from(s: String) -> Self {
-        Self { data: s.into_bytes() }
+        Self {
+            data: s.into_bytes(),
+        }
     }
 }
 
@@ -242,7 +246,10 @@ mod tests {
         if !tampered.ciphertext.is_empty() {
             tampered.ciphertext[0] ^= 0xFF;
         }
-        assert!(cipher.decrypt(&tampered, &dek).is_err(), "tampered ciphertext must fail GCM tag");
+        assert!(
+            cipher.decrypt(&tampered, &dek).is_err(),
+            "tampered ciphertext must fail GCM tag"
+        );
     }
 
     #[test]

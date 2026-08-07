@@ -18,18 +18,18 @@
 //! - RSS 解析为简化 XML 扫描器（按 `<item>` 切片 + 子标签提取），
 //!   不依赖 `feed-rs`；15 分钟轮询通过 `should_poll` 时间差判断。
 
+use chrono::{DateTime, Utc};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Sha3_256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tracing::{debug, info, warn};
-use chrono::{DateTime, Utc};
 use uuid::Uuid;
-use sha3::{Digest, Sha3_256};
 
+use super::asset_library::{Asset, AssetStore};
 use super::content_editor::{Block, Document};
 use super::ocr_service::{BoundingBox, OcrEngine, OcrLanguage};
-use super::asset_library::{Asset, AssetStore};
 
 // ============================================================================
 // SubTask 4.3.1: 网页剪藏 (Web Clipping)
@@ -92,7 +92,9 @@ impl ReadabilityExtractor {
 
         let cleaned = strip_tag_blocks(
             html,
-            &["script", "style", "nav", "header", "footer", "noscript", "iframe"],
+            &[
+                "script", "style", "nav", "header", "footer", "noscript", "iframe",
+            ],
         );
 
         // 剥除 <head>...</head>，避免 title/link 干扰正文
@@ -1098,9 +1100,7 @@ impl VoiceMemo {
     /// 停止录音并转写
     pub fn stop_and_transcribe(&self) -> TranscriptionResult {
         let audio = self.recorder.stop();
-        let result = self
-            .provider
-            .transcribe(&audio, &self.language);
+        let result = self.provider.transcribe(&audio, &self.language);
         for seg in result.segments.clone() {
             self.realtime.insert_segment(seg);
         }
@@ -1214,8 +1214,8 @@ pub struct RssParser;
 impl RssParser {
     /// 解析 RSS XML，返回 RssFeed
     pub fn parse(url: &str, xml: &str) -> RssFeed {
-        let channel_title = extract_first_tag(xml, "title")
-            .unwrap_or_else(|| "Untitled Feed".to_string());
+        let channel_title =
+            extract_first_tag(xml, "title").unwrap_or_else(|| "Untitled Feed".to_string());
         let items = extract_rss_items(xml);
         RssFeed {
             url: url.to_string(),
@@ -1250,14 +1250,12 @@ fn extract_rss_items(xml: &str) -> Vec<RssItem> {
         let item_xml = &xml[abs..close];
         let title = extract_first_tag(item_xml, "title").unwrap_or_default();
         let link = extract_first_tag(item_xml, "link").unwrap_or_default();
-        let published = extract_first_tag(item_xml, "pubDate")
-            .and_then(|s| parse_rss_date(&s));
+        let published = extract_first_tag(item_xml, "pubDate").and_then(|s| parse_rss_date(&s));
         let description = extract_first_tag(item_xml, "description").unwrap_or_default();
         let content = extract_first_tag(item_xml, "content:encoded")
             .or_else(|| extract_first_tag(item_xml, "content"))
             .unwrap_or_else(|| description.clone());
-        let guid = extract_first_tag(item_xml, "guid")
-            .unwrap_or_else(|| link.clone());
+        let guid = extract_first_tag(item_xml, "guid").unwrap_or_else(|| link.clone());
         items.push(RssItem {
             guid,
             title,
@@ -1375,8 +1373,10 @@ impl RssPoller {
         doc.properties
             .insert("guid".to_string(), serde_json::json!(item.guid));
         if let Some(pub_at) = item.published {
-            doc.properties
-                .insert("published".to_string(), serde_json::json!(pub_at.to_rfc3339()));
+            doc.properties.insert(
+                "published".to_string(),
+                serde_json::json!(pub_at.to_rfc3339()),
+            );
         }
         if !item.summary.is_empty() {
             doc = doc.with_block(Block::quote(&item.summary));
@@ -1451,8 +1451,8 @@ impl CaptureMatrix {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::content_editor::BlockType;
+    use super::*;
     use chrono::Duration;
 
     // ---- Readability 提取 ----
@@ -1501,7 +1501,10 @@ mod tests {
     fn test_readability_extracts_favicon() {
         let ext = ReadabilityExtractor::new();
         let page = ext.extract("https://example.com", sample_html());
-        assert_eq!(page.favicon.as_deref(), Some("https://example.com/favicon.ico"));
+        assert_eq!(
+            page.favicon.as_deref(),
+            Some("https://example.com/favicon.ico")
+        );
     }
 
     #[test]
@@ -1574,8 +1577,10 @@ mod tests {
 
     #[test]
     fn test_html_to_markdown_pre_block() {
-        let md = html_to_markdown("<pre><code>fn main() {}
-}</code></pre>");
+        let md = html_to_markdown(
+            "<pre><code>fn main() {}
+}</code></pre>",
+        );
         assert!(md.contains("```"));
         assert!(md.contains("fn main()"));
     }
@@ -1662,10 +1667,7 @@ mod tests {
 
     #[test]
     fn test_web_clipper_excerpt_truncates() {
-        let long_html = format!(
-            "<article><p>{}</p></article>",
-            "word ".repeat(200)
-        );
+        let long_html = format!("<article><p>{}</p></article>", "word ".repeat(200));
         let clipper = WebClipper::new();
         let page = match clipper.clip("https://x.com", &long_html) {
             ClipResult::Success(p) => p,

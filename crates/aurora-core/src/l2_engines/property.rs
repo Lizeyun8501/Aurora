@@ -5,11 +5,11 @@
 //! 类型校验：基于 JSON Schema 的运行时校验
 //! 索引策略：热点属性自动建立 SQLite 索引，冷属性按需查询
 
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tracing::info;
 
 /// 属性类型系统
@@ -67,11 +67,17 @@ pub struct ValidationResult {
 
 impl ValidationResult {
     pub fn valid() -> Self {
-        Self { valid: true, errors: vec![] }
+        Self {
+            valid: true,
+            errors: vec![],
+        }
     }
 
     pub fn invalid(msg: impl Into<String>) -> Self {
-        Self { valid: false, errors: vec![msg.into()] }
+        Self {
+            valid: false,
+            errors: vec![msg.into()],
+        }
     }
 
     pub fn add_error(&mut self, msg: impl Into<String>) {
@@ -139,18 +145,29 @@ impl PropertyEngine {
         self.validate_type(&def.prop_type, value, &def.name)
     }
 
-    fn validate_type(&self, prop_type: &PropertyType, value: &serde_json::Value, name: &str) -> ValidationResult {
+    fn validate_type(
+        &self,
+        prop_type: &PropertyType,
+        value: &serde_json::Value,
+        name: &str,
+    ) -> ValidationResult {
         let mut result = ValidationResult::valid();
 
         match prop_type {
             PropertyType::Text => {
                 if !value.is_null() && !value.is_string() {
-                    result.add_error(format!("Property '{}' expects string, got {:?}", name, value));
+                    result.add_error(format!(
+                        "Property '{}' expects string, got {:?}",
+                        name, value
+                    ));
                 }
             }
             PropertyType::Number => {
                 if !value.is_null() && !value.is_number() {
-                    result.add_error(format!("Property '{}' expects number, got {:?}", name, value));
+                    result.add_error(format!(
+                        "Property '{}' expects number, got {:?}",
+                        name, value
+                    ));
                 }
             }
             PropertyType::Date => {
@@ -158,16 +175,24 @@ impl PropertyEngine {
                     match value {
                         serde_json::Value::String(s) => {
                             if chrono::DateTime::parse_from_rfc3339(s).is_err()
-                                && chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_err() {
-                                result.add_error(format!("Property '{}' invalid date format", name));
+                                && chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_err()
+                            {
+                                result
+                                    .add_error(format!("Property '{}' invalid date format", name));
                             }
                         }
                         serde_json::Value::Number(n) => {
                             if n.as_i64().is_none() {
-                                result.add_error(format!("Property '{}' expects integer timestamp", name));
+                                result.add_error(format!(
+                                    "Property '{}' expects integer timestamp",
+                                    name
+                                ));
                             }
                         }
-                        _ => result.add_error(format!("Property '{}' expects date string or timestamp", name)),
+                        _ => result.add_error(format!(
+                            "Property '{}' expects date string or timestamp",
+                            name
+                        )),
                     }
                 }
             }
@@ -181,7 +206,10 @@ impl PropertyEngine {
                     match value.as_str() {
                         Some(val) => {
                             if !options.iter().any(|opt| opt.value == val) {
-                                result.add_error(format!("Property '{}' invalid option '{}'", name, val));
+                                result.add_error(format!(
+                                    "Property '{}' invalid option '{}'",
+                                    name, val
+                                ));
                             }
                         }
                         None => result.add_error(format!("Property '{}' expects string", name)),
@@ -195,10 +223,16 @@ impl PropertyEngine {
                             for item in arr {
                                 if let Some(s) = item.as_str() {
                                     if !options.iter().any(|opt| opt.value == s) {
-                                        result.add_error(format!("Property '{}' invalid option '{}'", name, s));
+                                        result.add_error(format!(
+                                            "Property '{}' invalid option '{}'",
+                                            name, s
+                                        ));
                                     }
                                 } else {
-                                    result.add_error(format!("Property '{}' expects array of strings", name));
+                                    result.add_error(format!(
+                                        "Property '{}' expects array of strings",
+                                        name
+                                    ));
                                 }
                             }
                         }
@@ -209,7 +243,10 @@ impl PropertyEngine {
             PropertyType::Relation { target_collection } => {
                 if !value.is_null() {
                     if !value.is_string() && !value.is_array() {
-                        result.add_error(format!("Property '{}' expects string or array of IDs", name));
+                        result.add_error(format!(
+                            "Property '{}' expects string or array of IDs",
+                            name
+                        ));
                     }
                     // Could validate that referenced items exist in target_collection
                     let _ = target_collection;
@@ -229,24 +266,44 @@ impl PropertyEngine {
     }
 
     /// Set a property value on a block
-    pub fn set_property(&self, prop_set: &mut PropertySet, def_id: &str, value: serde_json::Value) -> ValidationResult {
+    pub fn set_property(
+        &self,
+        prop_set: &mut PropertySet,
+        def_id: &str,
+        value: serde_json::Value,
+    ) -> ValidationResult {
         let validation = self.validate(def_id, &value);
         if validation.valid {
-            prop_set.values.insert(def_id.to_string(), PropertyValue {
-                definition_id: def_id.to_string(),
-                value,
-            });
+            prop_set.values.insert(
+                def_id.to_string(),
+                PropertyValue {
+                    definition_id: def_id.to_string(),
+                    value,
+                },
+            );
 
             // Track access for hot/cold classification
-            *self.access_counts.write().entry(def_id.to_string()).or_insert(0) += 1;
+            *self
+                .access_counts
+                .write()
+                .entry(def_id.to_string())
+                .or_insert(0) += 1;
             self.update_hot_cold(def_id);
         }
         validation
     }
 
     /// Get a property value from a block
-    pub fn get_property<'a>(&self, prop_set: &'a PropertySet, def_id: &str) -> Option<&'a serde_json::Value> {
-        *self.access_counts.write().entry(def_id.to_string()).or_insert(0) += 1;
+    pub fn get_property<'a>(
+        &self,
+        prop_set: &'a PropertySet,
+        def_id: &str,
+    ) -> Option<&'a serde_json::Value> {
+        *self
+            .access_counts
+            .write()
+            .entry(def_id.to_string())
+            .or_insert(0) += 1;
         self.update_hot_cold(def_id);
         prop_set.values.get(def_id).map(|pv| &pv.value)
     }
@@ -306,9 +363,18 @@ mod tests {
             id: id.to_string(),
             name: "Status".to_string(),
             prop_type: PropertyType::Select(vec![
-                SelectOption { value: "todo".to_string(), color: Some("red".to_string()) },
-                SelectOption { value: "doing".to_string(), color: Some("yellow".to_string()) },
-                SelectOption { value: "done".to_string(), color: Some("green".to_string()) },
+                SelectOption {
+                    value: "todo".to_string(),
+                    color: Some("red".to_string()),
+                },
+                SelectOption {
+                    value: "doing".to_string(),
+                    color: Some("yellow".to_string()),
+                },
+                SelectOption {
+                    value: "done".to_string(),
+                    color: Some("green".to_string()),
+                },
             ]),
             required: true,
             default_value: Some(serde_json::json!("todo")),
@@ -421,8 +487,14 @@ mod tests {
             id: "tags".to_string(),
             name: "Tags".to_string(),
             prop_type: PropertyType::MultiSelect(vec![
-                SelectOption { value: "rust".to_string(), color: None },
-                SelectOption { value: "ai".to_string(), color: None },
+                SelectOption {
+                    value: "rust".to_string(),
+                    color: None,
+                },
+                SelectOption {
+                    value: "ai".to_string(),
+                    color: None,
+                },
             ]),
             required: false,
             default_value: None,
@@ -430,7 +502,15 @@ mod tests {
             description: None,
         });
 
-        assert!(engine.validate("tags", &serde_json::json!(["rust", "ai"])).valid);
-        assert!(!engine.validate("tags", &serde_json::json!(["rust", "invalid"])).valid);
+        assert!(
+            engine
+                .validate("tags", &serde_json::json!(["rust", "ai"]))
+                .valid
+        );
+        assert!(
+            !engine
+                .validate("tags", &serde_json::json!(["rust", "invalid"]))
+                .valid
+        );
     }
 }

@@ -42,8 +42,7 @@ impl BiometricKind {
 }
 
 /// 生物识别状态
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum BiometricStatus {
     /// 未认证
     #[default]
@@ -64,7 +63,6 @@ impl BiometricStatus {
         matches!(self, BiometricStatus::Authenticated { .. })
     }
 }
-
 
 /// 生物识别配置
 #[derive(Debug, Clone, Serialize, Deserialize)]

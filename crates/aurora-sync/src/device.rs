@@ -77,11 +77,7 @@ pub struct Device {
 }
 
 impl Device {
-    pub fn new(
-        device_id: DeviceId,
-        display_name: impl Into<String>,
-        public_key: Vec<u8>,
-    ) -> Self {
+    pub fn new(device_id: DeviceId, display_name: impl Into<String>, public_key: Vec<u8>) -> Self {
         Self {
             device_id,
             display_name: display_name.into(),
@@ -219,9 +215,9 @@ impl DeviceManager {
         };
         let current_dek_version = *self.global_dek_version.read();
         let mut devices = self.devices.write();
-        let device = devices.get_mut(&requesting).ok_or_else(|| {
-            crate::Error::Device(format!("device not found: {}", requesting))
-        })?;
+        let device = devices
+            .get_mut(&requesting)
+            .ok_or_else(|| crate::Error::Device(format!("device not found: {}", requesting)))?;
         device.status = DeviceStatus::Active;
         device.dek_version = current_dek_version;
         device.last_seen = Some(chrono::Utc::now());
@@ -234,9 +230,9 @@ impl DeviceManager {
     pub fn revoke_device(&self, device_id: &DeviceId) -> crate::Result<u32> {
         {
             let mut devices = self.devices.write();
-            let device = devices.get_mut(device_id).ok_or_else(|| {
-                crate::Error::Device(format!("device not found: {}", device_id))
-            })?;
+            let device = devices
+                .get_mut(device_id)
+                .ok_or_else(|| crate::Error::Device(format!("device not found: {}", device_id)))?;
             if device.status == DeviceStatus::Revoked {
                 warn!("device already revoked: {}", device_id);
                 return Ok(*self.global_dek_version.read());
@@ -255,7 +251,10 @@ impl DeviceManager {
                 dev.dek_version = new_version;
             }
         }
-        info!("device revoked: {} new_dek_version={}", device_id, new_version);
+        info!(
+            "device revoked: {} new_dek_version={}",
+            device_id, new_version
+        );
         Ok(new_version)
     }
 
@@ -377,7 +376,7 @@ mod tests {
         let d2 = make_device("d2");
         let id1 = mgr.register_device(d1); // Pending
         let id2 = mgr.register_device(d2); // Pending
-        // 两个都 Pending，不能互相授权
+                                           // 两个都 Pending，不能互相授权
         let result = mgr.initiate_qr_auth(&id2, &id1);
         assert!(result.is_err());
     }

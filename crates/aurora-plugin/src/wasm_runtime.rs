@@ -208,27 +208,22 @@ impl HostFunctionRegistry for DefaultHostFunctions {
     ) -> Result<serde_json::Value, crate::Error> {
         match function {
             HostFunction::ReadDoc => {
-                let doc_id = args
-                    .get("doc_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| crate::Error::HostFunction("read_doc requires `doc_id`".into()))?;
+                let doc_id = args.get("doc_id").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::Error::HostFunction("read_doc requires `doc_id`".into())
+                })?;
                 let docs = self.docs.read();
                 Ok(docs.get(doc_id).cloned().unwrap_or(serde_json::Value::Null))
             }
             HostFunction::WriteDoc => {
-                let doc_id = args
-                    .get("doc_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| crate::Error::HostFunction("write_doc requires `doc_id`".into()))?;
+                let doc_id = args.get("doc_id").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::Error::HostFunction("write_doc requires `doc_id`".into())
+                })?;
                 let data = args.get("data").cloned().unwrap_or(serde_json::Value::Null);
                 self.docs.write().insert(doc_id.to_string(), data);
                 Ok(serde_json::json!({"ok": true}))
             }
             HostFunction::Query => {
-                let query = args
-                    .get("query")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
                 let docs = self.docs.read();
                 let matches: Vec<&String> = docs
                     .keys()
@@ -283,7 +278,11 @@ impl WasmRuntime {
     /// 注册插件及其能力清单。
     pub fn register(&self, plugin_id: impl Into<PluginId>, manifest: CapabilityManifest) {
         let id = plugin_id.into();
-        debug!("wasm runtime: register plugin {} with {} capabilities", id, manifest.len());
+        debug!(
+            "wasm runtime: register plugin {} with {} capabilities",
+            id,
+            manifest.len()
+        );
         self.manifests.write().insert(id, manifest);
     }
 
@@ -303,9 +302,9 @@ impl WasmRuntime {
         plugin_id: &str,
         required: Capability,
     ) -> Result<(), crate::Error> {
-        let manifest = self
-            .manifest(plugin_id)
-            .ok_or_else(|| crate::Error::NotFound(format!("plugin not registered: {}", plugin_id)))?;
+        let manifest = self.manifest(plugin_id).ok_or_else(|| {
+            crate::Error::NotFound(format!("plugin not registered: {}", plugin_id))
+        })?;
         manifest.require(required)
     }
 
@@ -398,7 +397,10 @@ mod tests {
         assert!(m.grants(Capability::Native));
         assert!(m.require(Capability::Native).is_ok());
         let err = m.require(Capability::Fs).unwrap_err();
-        assert!(matches!(err, crate::Error::CapabilityDenied(Capability::Fs)));
+        assert!(matches!(
+            err,
+            crate::Error::CapabilityDenied(Capability::Fs)
+        ));
     }
 
     #[test]
@@ -434,7 +436,11 @@ mod tests {
         assert_eq!(write["ok"], serde_json::json!(true));
 
         let read = rt
-            .call_host_function("p1", HostFunction::ReadDoc, &serde_json::json!({"doc_id": "d1"}))
+            .call_host_function(
+                "p1",
+                HostFunction::ReadDoc,
+                &serde_json::json!({"doc_id": "d1"}),
+            )
             .unwrap();
         assert_eq!(read["title"], serde_json::json!("Hello"));
     }
@@ -461,7 +467,11 @@ mod tests {
         .unwrap();
 
         let q = rt
-            .call_host_function("p1", HostFunction::Query, &serde_json::json!({"query": "alpha"}))
+            .call_host_function(
+                "p1",
+                HostFunction::Query,
+                &serde_json::json!({"query": "alpha"}),
+            )
             .unwrap();
         let results = q["results"].as_array().unwrap();
         assert_eq!(results.len(), 1);
@@ -470,7 +480,11 @@ mod tests {
         // Log 不需要能力，即便无 Storage 也应成功
         rt.register("p2", CapabilityManifest::new());
         let log = rt
-            .call_host_function("p2", HostFunction::Log, &serde_json::json!({"level": "info", "message": "hi"}))
+            .call_host_function(
+                "p2",
+                HostFunction::Log,
+                &serde_json::json!({"level": "info", "message": "hi"}),
+            )
             .unwrap();
         assert_eq!(log["ok"], serde_json::json!(true));
     }
@@ -494,7 +508,11 @@ mod tests {
         ));
 
         // 授予 Storage 后调用成功
-        rt.manifests.write().get_mut("p1").unwrap().grant(Capability::Storage);
+        rt.manifests
+            .write()
+            .get_mut("p1")
+            .unwrap()
+            .grant(Capability::Storage);
         let res = rt.call_host_function(
             "p1",
             HostFunction::ReadDoc,
@@ -513,11 +531,17 @@ mod tests {
         });
         // invoke "write_doc" 应分派到宿主函数
         let out = rt
-            .invoke("p1", "write_doc", &serde_json::json!({"doc_id": "z", "data": 42}))
+            .invoke(
+                "p1",
+                "write_doc",
+                &serde_json::json!({"doc_id": "z", "data": 42}),
+            )
             .unwrap();
         assert_eq!(out["ok"], serde_json::json!(true));
 
-        let read = rt.invoke("p1", "read_doc", &serde_json::json!({"doc_id": "z"})).unwrap();
+        let read = rt
+            .invoke("p1", "read_doc", &serde_json::json!({"doc_id": "z"}))
+            .unwrap();
         assert_eq!(read, serde_json::json!(42));
     }
 
@@ -525,7 +549,9 @@ mod tests {
     fn test_wasm_runtime_invoke_unknown_method() {
         let rt = WasmRuntime::with_default_registry();
         rt.register("p1", CapabilityManifest::new());
-        let out = rt.invoke("p1", "render", &serde_json::json!({"x": 1})).unwrap();
+        let out = rt
+            .invoke("p1", "render", &serde_json::json!({"x": 1}))
+            .unwrap();
         assert_eq!(out["ok"], serde_json::json!(true));
         assert_eq!(out["method"], serde_json::json!("render"));
     }
@@ -535,7 +561,9 @@ mod tests {
         let rt = WasmRuntime::with_default_registry();
         let err = rt.validate_capability("ghost", Capability::Fs).unwrap_err();
         assert!(matches!(err, crate::Error::NotFound(_)));
-        let err = rt.invoke("ghost", "log", &serde_json::json!({})).unwrap_err();
+        let err = rt
+            .invoke("ghost", "log", &serde_json::json!({}))
+            .unwrap_err();
         assert!(matches!(err, crate::Error::NotFound(_)));
     }
 
