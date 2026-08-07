@@ -15,6 +15,7 @@ pub mod e2ee;
 pub mod key_hierarchy;
 pub mod post_quantum;
 pub mod recovery;
+pub mod vault;
 
 use thiserror::Error;
 
@@ -53,13 +54,14 @@ pub use biometric::{
     BiometricAuthenticator, BiometricConfig, BiometricKind, BiometricProtector, BiometricStatus,
     MockBiometricAuthenticator,
 };
-pub use e2ee::{encrypt, decrypt, AesGcmCipher, Ciphertext, Plaintext};
+pub use e2ee::{decrypt, encrypt, AesGcmCipher, Ciphertext, Plaintext};
 pub use key_hierarchy::{KeyHierarchy, MasterKey, WorkspaceDek};
 pub use post_quantum::{
     HybridEncapsulation, HybridKeyExchange, HybridKeyPair, KemAlgorithm, KemKeyPair, MlKem768Kem,
     MockKem, PostQuantumKem,
 };
 pub use recovery::{DeviceAuthorizationQr, Mnemonic, ShamirSecretSharing, ShamirShare};
+pub use vault::LocalDekVault;
 
 #[cfg(test)]
 mod tests {
@@ -95,7 +97,9 @@ mod tests {
         let shares = sss.split(mk.as_bytes()).unwrap();
 
         // 3. 用其中 2 份重建主密钥
-        let recon = sss.combine(&[shares[0].clone(), shares[2].clone()]).unwrap();
+        let recon = sss
+            .combine(&[shares[0].clone(), shares[2].clone()])
+            .unwrap();
         assert_eq!(recon, mk.as_bytes());
     }
 

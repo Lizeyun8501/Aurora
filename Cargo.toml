@@ -7,8 +7,12 @@ members = [
     "crates/aurora-security",
     "crates/aurora-plugin",
     "crates/aurora-observability",
+    "crates/aurora-bootstrap",
     "crates/entity",
     "crates/migration",
+    "crates/mobile-ffi",
+    # 桌面平台适配（Tauri v2）；此前不在 workspace 导致从未被 CI 编译
+    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]

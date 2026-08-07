@@ -5,23 +5,39 @@
 //! - DesktopPlatform Trait 实现（菜单、托盘、快捷键、剪贴板）
 //! - 启动时 AppCore 初始化与恢复（V19 §36.1）
 //!
-//! # 启动流程（V19 §36.1 + ARCH-003）
+//! # 启动流程（V19 §36.1 + ARCH-003，装配复用 [`aurora_bootstrap`]）
 //! 1. 确定 data_dir（用户库目录）
-//! 2. 打开 SQLite 数据库并执行迁移
-//! 3. 构造各 Trait 默认实现（LoroCrdtEngine / IrohSyncTarget / ...）
-//! 4. 通过 AppCoreBuilder 注入
-//! 5. app_core.startup() → 重放未消费事件 + 健康检查
-//! 6. 存入全局 APP_STATE 供 command handler 使用
+//! 2. `aurora_bootstrap::bootstrap()`：迁移 + DEK 保险库 + AppCore DI 注入 + startup
+//! 3. 存入全局状态供 command handler 使用，并注册 Tauri 平台能力
+//!
+//! # E2EE 说明
+//! 笔记 JSON 经 [`LocalDekVault`]（32 字节随机 DEK + AES-256-GCM）加密后写入
+//! KVStore，满足 V19 §10「明文 → DEK 加密 → 存储密文」；本地全文检索索引
+//! （Tantivy）按 V19 设计保留明文，仅存在于本机。
+//! 过渡方案说明：DEK 当前以本地文件保管（Unix 0600），生产应迁移至
+//! `KeyHierarchy` 口令解锁 + OS 安全存储（DPAPI / Keychain）。
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use aurora_core::app_core::{AppCore, AppCoreBuilder};
-use tracing::{error, info, warn};
+use aurora_core::app_core::AppCore;
+use aurora_core::traits::crypto_provider::CryptoProvider;
+use aurora_core::traits::kv_store::KVStore;
+use aurora_core::traits::search_backend::{NoteMetadata, SearchBackend};
+use aurora_security::LocalDekVault;
+use tracing::{info, warn};
 
-// ── L1 默认实现（薄包装，真实生产由 DI 容器注入） ─────────────
+// ── 启动期常量与全局状态 ─────────────────────────────
 
 /// 桌面端默认数据目录名。
 const AURORA_DIR_NAME: &str = "aurora";
+/// 默认工作区 ID（单工作区模式；多工作区接入后改为按用户选择注入）。
+const DEFAULT_WORKSPACE_ID: &str = "default";
+
+/// 桌面端应用核心（全局单例）。
+static APP_STATE: Mutex<Option<Arc<AppCore>>> = Mutex::new(None);
+/// 本地 DEK 保险库（全局单例）。
+static VAULT_STATE: Mutex<Option<Arc<LocalDekVault>>> = Mutex::new(None);
 
 /// 获取用户数据目录路径。
 ///
@@ -29,151 +45,12 @@ const AURORA_DIR_NAME: &str = "aurora";
 /// - Linux: `~/.local/share/aurora/`
 /// - macOS: `~/Library/Application Support/aurora/`
 /// - Windows: `%APPDATA%\aurora\`
-fn get_data_dir() -> std::path::PathBuf {
+fn get_data_dir() -> PathBuf {
     if let Some(dir) = dirs_next::data_dir() {
         dir.join(AURORA_DIR_NAME)
     } else {
         std::env::temp_dir().join(AURORA_DIR_NAME)
     }
-}
-
-/// 确保数据目录存在。
-fn ensure_data_dir(path: &std::path::Path) -> std::io::Result<()> {
-    if !path.exists() {
-        std::fs::create_dir_all(path)?;
-    }
-    Ok(())
-}
-
-/// 桌面端应用状态（全局单例）。
-static APP_STATE: Mutex<Option<Arc<AppCore>>> = Mutex::new(None);
-
-/// 初始化桌面应用核心。
-///
-/// 这是真正的 AppCore 初始化入口（V19 §36.1），不再使用占位逻辑。
-/// 失败时记录错误并 panic（早失败策略，避免在不可用状态下继续运行）。
-pub fn run() {
-    // 初始化 tracing
-    tracing_subscriber::fmt::init();
-    info!("Aurora Desktop starting");
-
-    let data_dir = get_data_dir();
-    if let Err(e) = ensure_data_dir(&data_dir) {
-        error!(error = %e, dir = ?data_dir, "failed to create data directory");
-        panic!("AppCore init: cannot create data dir: {}", e);
-    }
-    info!(data_dir = ?data_dir, "data directory ready");
-
-    // 打开 SQLite 数据库并执行迁移
-    let db_path = data_dir.join("aurora.db");
-    let migration_manager = match aurora_migration::MigrationManager::new(&db_path) {
-        Ok(m) => m,
-        Err(e) => {
-            error!(error = %e, db_path = ?db_path, "SQLite migration failed");
-            panic!("AppCore init: database migration failed: {}", e);
-        }
-    };
-    if let Err(e) = migration_manager.migrate() {
-        error!(error = %e, "migration execution failed");
-        panic!("AppCore init: migration execution failed: {}", e);
-    }
-    info!(db_path = ?db_path, "SQLite migrations complete");
-
-    // 构造各 Trait 默认实现并注入 AppCoreBuilder
-    let core = build_app_core(&data_dir, &db_path);
-    if let Err(e) = core.startup() {
-        error!(error = %e, "AppCore startup failed");
-        panic!("AppCore startup failed: {}", e);
-    }
-    info!("AppCore startup complete");
-
-    *APP_STATE.lock().expect("APP_STATE mutex poisoned") = Some(Arc::new(core));
-    info!("Aurora Desktop initialized and ready");
-}
-
-/// 构造 AppCore 并注入各 Trait 默认实现。
-///
-/// 对应 V19 §36.1 启动流程步骤 2-4。
-fn build_app_core(data_dir: &std::path::Path, db_path: &std::path::Path) -> AppCore {
-    // 加载系统设置（V19 §16）：本轮先用默认值，后续 PR 可改为从 SQLite 的
-    // settings_layer 表读出已持久化的 SystemSettings。AI 子结构会驱动
-    // 本地 Ollama provider 的 base_url/model 以及云端 fallback 的开关。
-    let core_settings = aurora_core::l3_domain::system_settings::SystemSettings::new();
-
-    // KVStore：基于 SQLite 的实现
-    let kv_store: Arc<dyn aurora_core::traits::kv_store::KVStore> = Arc::new(
-        aurora_core::l1_infrastructure::storage::SqliteStorage::new(db_path),
-    );
-
-    // SearchBackend：基于 Tantivy 的全文检索
-    let index_dir = data_dir.join("tantivy_index");
-    let search: Arc<dyn aurora_core::traits::search_backend::SearchBackend> =
-        Arc::new(aurora_core::l1_infrastructure::search::TantivySearchBackend::new(&index_dir));
-
-    // CryptoProvider：AES-256-GCM + Argon2id + ML-KEM-768
-    let crypto: Arc<dyn aurora_core::traits::crypto_provider::CryptoProvider> =
-        Arc::new(aurora_security::CryptoProviderImpl::new());
-
-    // SyncTarget：iroh P2P 同步（生产环境使用 IrohTransport）
-    let sync_target: Arc<dyn aurora_core::traits::sync_target::SyncTarget> =
-        Arc::new(aurora_core::l1_infrastructure::p2p::IrohP2pSyncTarget::new());
-
-    // AIProvider：本地 Ollama HTTP（V19 §7.2「本地 AI」），本地不可达时降级到
-    // 可选的云 Provider（OpenAI 兼容端点）。云端 fallback 仅在用户通过
-    // SystemSettings.ai.cloud_api_key 配置之后才会启用（默认 None）。
-    //
-    // 真实接入替换此前指向不存在的 `aurora_ai::LocalLlamaProvider`（apps/ 不
-    // 在 workspace members，CI 不编译，故曾未报警）。后续把 apps/ 纳入
-    // workspace 后这条路径会被实际编译验证。
-    let ai_settings = &core_settings.ai;
-    let cloud: Option<Arc<dyn aurora_core::traits::ai_provider::AIProvider>> =
-        if ai_settings.cloud_configured() {
-            Some(Arc::new(aurora_ai::OpenAiCompatProvider::new(
-                ai_settings.cloud_base_url.clone().unwrap_or_default(),
-                ai_settings.cloud_api_key.clone().unwrap_or_default(),
-                ai_settings
-                    .cloud_model
-                    .clone()
-                    .unwrap_or_else(|| "gpt-4o-mini".to_string()),
-            )))
-        } else {
-            None
-        };
-    let ai: Arc<dyn aurora_core::traits::ai_provider::AIProvider> = {
-        let p = aurora_ai::OllamaProvider::new_with_fallback(
-            ai_settings.ollama_base_url.clone(),
-            ai_settings.ollama_model.clone(),
-            cloud,
-        );
-        // 后台周期探测 is_available；AppCore 启动后调用一次即可。
-        p.start_probing();
-        Arc::new(p)
-    };
-
-    // OcrProvider：PaddleOCR（本地，桌面端）
-    let ocr: Arc<dyn aurora_core::traits::ocr_provider::OcrProvider> =
-        Arc::new(aurora_core::l1_infrastructure::ocr::PaddleOcrEngine::new());
-
-    // PluginRuntime：Wasmtime WASM 运行时
-    let plugin: Arc<dyn aurora_core::traits::plugin_runtime::PluginRuntime> = Arc::new(
-        aurora_plugin::WasmtimeRuntime::new(data_dir.join("plugins")),
-    );
-
-    // EventBus 持久化：SQLite event_queue 表
-    let event_bus_store: Arc<dyn aurora_core::event_bus::layered::EventQueueStore> = Arc::new(
-        aurora_core::event_bus::sqlite_queue::SqliteEventQueue::new(db_path),
-    );
-
-    AppCoreBuilder::new()
-        .kv_store(kv_store)
-        .search(search)
-        .crypto(crypto)
-        .sync_target(sync_target)
-        .ai(ai)
-        .ocr(ocr)
-        .plugin(plugin)
-        .event_bus_store(event_bus_store)
-        .build()
 }
 
 /// 获取 AppCore 实例的 Arc 引用（不持有锁，可安全跨 .await）。
@@ -187,46 +64,158 @@ fn get_core() -> Result<Arc<AppCore>, String> {
         .ok_or_else(|| "AppCore not initialized".into())
 }
 
-// ── Tauri Commands (§30 平台适配) ─────────────────────────────
+/// 获取本地 DEK 保险库引用。
+fn get_vault() -> Result<Arc<LocalDekVault>, String> {
+    let guard = VAULT_STATE
+        .lock()
+        .map_err(|e| format!("mutex poisoned: {}", e))?;
+    guard
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "vault not initialized".into())
+}
 
-/// 创建新笔记。
+fn box_err(e: impl std::fmt::Display) -> Box<dyn std::error::Error> {
+    Box::<dyn std::error::Error>::from(e.to_string())
+}
+
+/// 初始化桌面应用并启动 Tauri 事件循环（V19 §36.1 真实启动入口）。
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![
+            cmd_create_note,
+            cmd_get_note,
+            cmd_update_note,
+            cmd_delete_note,
+            cmd_search_notes,
+            cmd_app_status,
+        ])
+        .setup(|app| {
+            tracing_subscriber::fmt::init();
+            info!("Aurora Desktop starting");
+
+            let data_dir = get_data_dir();
+            info!(data_dir = ?data_dir, "data directory ready");
+
+            // 共享装配：迁移 + DEK 保险库 + AppCore DI 注入 + startup（V19 §36.1）
+            let booted = aurora_bootstrap::bootstrap(&data_dir).map_err(box_err)?;
+            *VAULT_STATE.lock().expect("VAULT_STATE mutex poisoned") = Some(booted.vault.clone());
+            *APP_STATE.lock().expect("APP_STATE mutex poisoned") = Some(booted.core.clone());
+            info!("AppCore startup complete");
+
+            // 注册平台能力（托盘/快捷键/剪贴板/通知），供后续 command 使用
+            app.manage(TauriDesktopPlatform::new(app.handle().clone()));
+
+            info!("Aurora Desktop initialized and ready");
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+
+// ── 笔记编解码辅助（E2EE + 搜索索引同步） ──────────────
+
+/// 解密笔记字节：优先按密文（bincode(Ciphertext)）解密；解密失败时兼容
+/// 升级前的明文 JSON（旧版本无加密落库），保证存量数据不丢失。
+fn unwrap_note_bytes(
+    core: &AppCore,
+    vault: &LocalDekVault,
+    data: &[u8],
+) -> Result<serde_json::Value, String> {
+    match vault.decrypt(core.crypto.as_ref(), data) {
+        Ok(plaintext) => serde_json::from_slice(&plaintext).map_err(|e| e.to_string()),
+        Err(e) => match serde_json::from_slice::<serde_json::Value>(data) {
+            Ok(v) => {
+                warn!("note stored in legacy plaintext format; consider re-saving",);
+                Ok(v)
+            }
+            Err(_) => Err(format!("note decrypt failed: {}", e)),
+        },
+    }
+}
+
+/// 将笔记明文加密为落库字节。
+fn seal_note_bytes(
+    core: &AppCore,
+    vault: &LocalDekVault,
+    note: &serde_json::Value,
+) -> Result<Vec<u8>, String> {
+    let payload = serde_json::to_vec(note).map_err(|e| e.to_string())?;
+    vault
+        .encrypt(core.crypto.as_ref(), &payload)
+        .map_err(|e| e.to_string())
+}
+
+/// 同步笔记到本地全文检索索引（明文索引，V19 本地检索设计）。
+async fn index_note_in_search(
+    core: &AppCore,
+    id: &str,
+    note: &serde_json::Value,
+) -> Result<(), String> {
+    let title = note
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let content = note
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let metadata = NoteMetadata {
+        title,
+        tags: vec![],
+        workspace_id: DEFAULT_WORKSPACE_ID.to_string(),
+        updated_at: Some(chrono::Utc::now()),
+    };
+    core.search
+        .index_note(id, &content, &metadata)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ── Tauri Commands（§30 平台适配） ─────────────────────
+
+/// 创建新笔记（加密存储 + 建立搜索索引）。
 #[tauri::command]
 pub async fn cmd_create_note(title: String) -> Result<String, String> {
     let core = get_core()?;
+    let vault = get_vault()?;
     let id = uuid::Uuid::new_v4().to_string();
-    info!(note_id = %id, title, "note created via desktop command");
-    let note_json = serde_json::json!({
+    let note = serde_json::json!({
         "id": id,
         "title": title,
         "content": "",
         "content_type": "markdown",
         "created_at": chrono::Utc::now().to_rfc3339(),
     });
-    let key = format!("note:{}", id);
-    let payload = serde_json::to_vec(&note_json).map_err(|e| e.to_string())?;
+    let sealed = seal_note_bytes(&core, &vault, &note)?;
     core.kv_store
-        .set(&key, &payload)
+        .set(&format!("note:{}", id), &sealed)
         .await
         .map_err(|e| e.to_string())?;
+    index_note_in_search(&core, &id, &note).await?;
+    info!(note_id = %id, "note created via desktop command");
     Ok(id)
 }
 
-/// 获取笔记内容。
+/// 获取笔记内容（解密后返回）。
 #[tauri::command]
 pub async fn cmd_get_note(note_id: String) -> Result<serde_json::Value, String> {
     let core = get_core()?;
+    let vault = get_vault()?;
     let key = format!("note:{}", note_id);
-    let payload = core
+    let data = core
         .kv_store
         .get(&key)
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("note not found: {}", note_id))?;
-    let note: serde_json::Value = serde_json::from_slice(&payload).map_err(|e| e.to_string())?;
-    Ok(note)
+    unwrap_note_bytes(&core, &vault, &data)
 }
 
-/// 更新笔记。
+/// 更新笔记（解密 → 修改 → 重新加密落库 + 更新索引）。
 #[tauri::command]
 pub async fn cmd_update_note(
     note_id: String,
@@ -234,10 +223,10 @@ pub async fn cmd_update_note(
     content: Option<String>,
 ) -> Result<(), String> {
     let core = get_core()?;
+    let vault = get_vault()?;
     let key = format!("note:{}", note_id);
-    let existing = core.kv_store.get(&key).await.map_err(|e| e.to_string())?;
-    let mut note: serde_json::Value = match existing {
-        Some(data) => serde_json::from_slice(&data).map_err(|e| e.to_string())?,
+    let mut note = match core.kv_store.get(&key).await.map_err(|e| e.to_string())? {
+        Some(data) => unwrap_note_bytes(&core, &vault, &data)?,
         None => serde_json::json!({"id": note_id, "content_type": "markdown"}),
     };
     if let Some(t) = title {
@@ -247,16 +236,17 @@ pub async fn cmd_update_note(
         note["content"] = serde_json::Value::String(c);
     }
     note["updated_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
-    let payload = serde_json::to_vec(&note).map_err(|e| e.to_string())?;
+    let sealed = seal_note_bytes(&core, &vault, &note)?;
     core.kv_store
-        .set(&key, &payload)
+        .set(&key, &sealed)
         .await
         .map_err(|e| e.to_string())?;
+    index_note_in_search(&core, &note_id, &note).await?;
     info!(note_id = %note_id, "note updated via desktop command");
     Ok(())
 }
 
-/// 删除笔记。
+/// 删除笔记（含搜索索引）。
 #[tauri::command]
 pub async fn cmd_delete_note(note_id: String) -> Result<(), String> {
     let core = get_core()?;
@@ -265,26 +255,35 @@ pub async fn cmd_delete_note(note_id: String) -> Result<(), String> {
         .delete(&key)
         .await
         .map_err(|e| e.to_string())?;
+    core.search
+        .remove_index(&note_id)
+        .await
+        .map_err(|e| e.to_string())?;
     info!(note_id = %note_id, "note deleted via desktop command");
     Ok(())
 }
 
-/// 搜索笔记。
+/// 搜索笔记（Tantivy 全文检索）。
 #[tauri::command]
 pub async fn cmd_search_notes(query: String) -> Result<Vec<serde_json::Value>, String> {
     let core = get_core()?;
     info!(query, "search notes via desktop command");
-    // 注意：SearchBackend::search 签名为 async fn search(&self, query: &str, opts: &SearchOptions)
-    // V19 §28 异步化迁移后需 .await
     let opts = aurora_core::traits::search_backend::SearchOptions::default();
     let result = core
         .search
         .search(&query, &opts)
         .await
         .map_err(|e| e.to_string())?;
-    let results: Vec<serde_json::Value> = result.hits
+    let results: Vec<serde_json::Value> = result
+        .hits
         .into_iter()
-        .map(|hit| serde_json::json!({"doc_id": hit.note_id, "score": hit.score, "snippet": hit.snippet}))
+        .map(|hit| {
+            serde_json::json!({
+                "doc_id": hit.note_id,
+                "score": hit.score,
+                "snippet": hit.snippet,
+            })
+        })
         .collect();
     Ok(results)
 }
@@ -298,13 +297,14 @@ pub fn cmd_app_status() -> Result<serde_json::Value, String> {
         "status": "healthy",
         "platform": "desktop",
         "crypto_version": crypto_version,
+        "workspace_id": DEFAULT_WORKSPACE_ID,
     }))
 }
 
-// ── DesktopPlatform Trait (§30) ───────────────────────────────
+// ── DesktopPlatform Trait（§30） ───────────────────────
 
 /// 桌面端平台能力 Trait。
-/// 由 AppCore 初始化时注入，提供原生桌面功能（菜单、托盘、剪贴板、快捷键）。
+/// 由 Tauri 初始化时注入应用状态，提供原生桌面功能（菜单、托盘、剪贴板、快捷键）。
 pub trait DesktopPlatform: Send + Sync {
     /// 设置应用托盘图标与菜单。
     fn set_tray(&self, icon_path: &str, menu_items: Vec<TrayMenuItem>);
@@ -328,49 +328,49 @@ pub struct TrayMenuItem {
     pub accelerator: Option<String>,
 }
 
-/// 默认 DesktopPlatform 实现（基于 Tauri API）。
-pub struct TauriDesktopPlatform;
-
-impl TauriDesktopPlatform {
-    pub fn new() -> Self {
-        Self
-    }
+/// Tauri v2 DesktopPlatform 实现（持有 AppHandle，接入应用生命周期）。
+pub struct TauriDesktopPlatform {
+    // 保留 AppHandle 供托盘/快捷键/通知等原生能力接入；
+    // 当前实现为接口就绪 + 日志占位（见各方法 TODO）。
+    #[allow(dead_code)]
+    app: tauri::AppHandle,
 }
 
-impl Default for TauriDesktopPlatform {
-    fn default() -> Self {
-        Self::new()
+impl TauriDesktopPlatform {
+    pub fn new(app: tauri::AppHandle) -> Self {
+        Self { app }
     }
 }
 
 impl DesktopPlatform for TauriDesktopPlatform {
     fn set_tray(&self, icon_path: &str, menu_items: Vec<TrayMenuItem>) {
+        // TODO: 接入 tauri::tray::TrayIconBuilder（需 bundle icon 资源就绪后启用）
         info!(icon_path, ?menu_items, "set_tray requested");
-        // Tauri v2 SystemTray 接入待实现
     }
 
     fn register_shortcut(&self, accelerator: &str, _callback: Box<dyn Fn() + Send>) {
+        // TODO: 接入 tauri-plugin-global-shortcut
         info!(accelerator, "register_shortcut requested");
-        // Tauri v2 GlobalShortcut 接入待实现
     }
 
     fn set_menu(&self, menu_spec: &str) {
+        // TODO: 接入 tauri::menu::Menu
         info!(menu_spec, "set_menu requested");
-        // Tauri v2 Menu 接入待实现
     }
 
     fn clipboard_read(&self) -> Result<String, String> {
-        // Tauri v2 Clipboard 接入待实现
+        // TODO: 接入 tauri-plugin-clipboard-manager
         Ok(String::new())
     }
 
     fn clipboard_write(&self, text: &str) -> Result<(), String> {
+        // TODO: 接入 tauri-plugin-clipboard-manager
         info!(len = text.len(), "clipboard_write requested");
         Ok(())
     }
 
     fn notify(&self, title: &str, body: &str) {
+        // TODO: 接入 tauri-plugin-notification
         info!(title, body, "notify requested");
-        // Tauri v2 Notification 接入待实现
     }
 }
