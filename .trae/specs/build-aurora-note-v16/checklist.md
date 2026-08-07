@@ -4,7 +4,8 @@
 - [x] Monorepo 目录结构完整（crates/aurora-*, apps/desktop|mobile|web|extension, shared/types|ui-components）
 - [x] Cargo.toml workspace 和 package.json workspace 配置正确
 - [x] rustfmt、clippy、EditorConfig 代码规范工具链配置完成
-- [x] L1 基础设施层所有依赖集成（Loro, iroh, Tantivy, LanceDB, sqlite-vec, Wasmtime, rust-crypto, PaddleOCR）
+- [~] L1 基础设施层所有依赖集成（Loro, iroh, Tantivy, LanceDB, sqlite-vec, Wasmtime, rust-crypto, PaddleOCR）
+      — LanceDB 因 Rust 工具链兼容性临时禁用（见根 Cargo.toml 注释），向量检索退化到 sqlite-vec；PaddleOCR/Tesseract/Whisper.cpp 当前为 Trait 级 stub（未真接原生二进制），下轮按用户答复顺序逐个落地。Loro/iroh/Tantivy/Wasmtime/rust-crypto 已真接。
 - [x] 7 大 Trait 接口定义完整（CrdtEngine, SyncTarget, VectorStore, AIProvider, Storage, PluginRuntime, AgentProtocol）
 - [x] EventBus 实现支持 publish/subscribe 多消费者模式
 - [x] 层间通信数据序列化规范（bincode/JSON/protobuf）定义完成
@@ -44,10 +45,14 @@
 - [x] AI：混合推理架构 AIProviderRouter 支持 LocalFirst/CloudOnly/Auto 策略
 - [x] AI：智能续写 debounce 500ms + 流式 + ghost text + Tab/Esc 交互
 - [x] AI：内容摘要三级粒度 + Map-Reduce + 缓存关联版本号
-- [x] AI：问答对话 RAG 架构（Embedding → LanceDB → 上下文 → LLM）
-- [x] AI：混合搜索 Tantivy + LanceDB + Cross-Encoder 重排序 + RRF 融合
-- [x] AI：自动标签 TF-IDF + TextRank + 用户确认不强制
-- [x] AI：任务分解 LLM 生成 + 预览编辑 + 批量创建
+- [~] AI：问答对话 RAG 架构（Embedding → LanceDB → 上下文 → LLM）
+      — Embedding 端已真接 OllamaProvider；LanceDB 暂禁用，向量检索退化为 sqlite-vec
+- [~] AI：混合搜索 Tantivy + LanceDB + Cross-Encoder 重排序 + RRF 融合
+      — Tantivy 端跑通；LanceDB 段同上
+- [~] AI：自动标签 TF-IDF + TextRank + 用户确认不强制
+      — TF-IDF/TextRank 骨架跑通；LLM 候选标签需接通 OllamaProvider（本轮已具备条件，待下次落地）
+- [~] AI：任务分解 LLM 生成 + 预览编辑 + 批量创建
+      — DeterministicPlanner 骨架跑通；真正 LLM 触发需接通 OllamaProvider（本轮已具备条件，待下次落地）
 
 ## Phase 3: P1 领域服务模块
 - [x] 安全加密：三级密钥结构（密码 → Master Key → DEK）+ Argon2id（64MB/3次/4并行）
@@ -82,11 +87,16 @@
 - [x] TodayView：时间线日/周/月 + react-window 虚拟列表 + 拖拽回写
 - [x] TodayView：专注模式 Pomodoro + 白噪音 + 专注统计
 - [x] TodayView：每日回顾自动生成 + 历史浏览
-- [x] OCR：双引擎 PaddleOCR + Tesseract + OCRProvider Trait
-- [x] OCR：图像预处理流水线（去噪/二值化/倾斜校正/版面分析）
-- [x] OCR：表格识别 PP-Structure + 单元格 OCR + Markdown 重组
-- [x] OCR：公式识别 Texify + LaTeX + MathBlock
-- [x] OCR：批量 tokio 线程池 + EventBus 进度
+- [~] OCR：双引擎 PaddleOCR + Tesseract + OCRProvider Trait
+      — Trait 已定义；PaddleOCR/Tesseract 引擎本身未真接（当前为 stub 返回 mock 文本）。下轮按用户答复顺序（PaddleOCR ONNX + Tesseract fallback）补齐。
+- [~] OCR：图像预处理流水线（去噪/二值化/倾斜校正/版面分析）
+      — 骨架可编译；真实图像处理算法依赖真实 OCR 引擎接入后才有意义。
+- [~] OCR：表格识别 PP-Structure + 单元格 OCR + Markdown 重组
+      — 同上 PP-Structure 段未真接
+- [~] OCR：公式识别 Texify + LaTeX + MathBlock
+      — 同上 Texify 未真接
+- [~] OCR：批量 tokio 线程池 + EventBus 进度
+      — tokio 批量骨架可编译；EventBus 进度通道已搭，待真实引擎接入
 
 ## Phase 4: P2 领域服务模块
 - [x] AgentGateway：MCP 协议 JSON-RPC 2.0 + stdio/SSE 传输
@@ -101,7 +111,8 @@
 - [x] ExternalSyncHub：Webhook HMAC-SHA256 签名验证
 - [x] CaptureMatrix：网页剪藏 Readability + Markdown + Message Passing
 - [x] CaptureMatrix：截图 OCR 全局快捷键 + 悬浮窗 + 截图即笔记
-- [x] CaptureMatrix：语音速记 Whisper.cpp + WebRTC + 实时转写
+- [~] CaptureMatrix：语音速记 Whisper.cpp + WebRTC + 实时转写
+      — Whisper.cpp 未真接（Trait 级 stub）；WebRTC 通道未搭。下轮安排（与 OCR 同一脚手架模式）。
 - [x] CaptureMatrix：RSS feed-rs + 15 分钟轮询 + 全文抓取
 
 ## Phase 5: 视图层与适配层

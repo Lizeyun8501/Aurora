@@ -84,3 +84,19 @@ sled = "0.34"
 # Property-based testing & enum ergonomics (Task 6.3 test quality assurance)
 proptest = "1"
 strum = { version = "0.26", features = ["derive"] }
+
+# ---------------------------------------------------------------------------
+# [patch.crates-io] — local source replacements
+# See `third_party/README.md` for rationale and minimum-change justification.
+# Each entry is kept on a *minimum-divergence* line: only the bits that fail to
+# compile upstream are relaxed; no crate's source is modified.
+# Drop a patch (and its `third_party/<name>/` subdir) as soon as upstream
+# publishes a compatible release.
+# ---------------------------------------------------------------------------
+[patch.crates-io]
+# netwatch 0.19.1 hard-pins `windows = "0.62.2"` *and* `wmi = "0.18"` while
+# `wmi 0.18.4` cannot compile against `windows-core 0.62.x` (Free/Interface
+# ABI breaks). Our vendored copy only relaxes those two version pins so the
+# resolver unifies on `windows 0.61.x` (compatible with wmi 0.18.4). Tracked
+# in PR feat/ai-ollama-provider; remove when upstream ships a fix.
+netwatch = { path = "third_party/netwatch" }

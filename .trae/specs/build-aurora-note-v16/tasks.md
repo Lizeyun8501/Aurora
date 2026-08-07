@@ -105,12 +105,16 @@
 
 - [x] Task 2.4: 实现 AI 智能系统
   - [x] SubTask 2.4.1: 实现混合推理架构（AIProviderRouter：LocalFirst / CloudOnly / Auto 策略 + 运行时选择）
-  - [x] SubTask 2.4.2: 实现 AIProvider 实现（LlamaCppProvider 本地、OpenAIProvider 云端、OllamaProvider 本地 API）
+  - [~] SubTask 2.4.2: 实现 AIProvider 实现（LlamaCppProvider 本地、OpenAIProvider 云端、OllamaProvider 本地 API）
+        — 实际接入：`OllamaProvider`（本地 HTTP `http://localhost:11434`，含异步周期可用性探测 + 本地不可达降级到云端 fallback）；`OpenAiCompatProvider`（OpenAI 兼容 `/v1/chat/completions` + `/v1/embeddings` 最小实现，做 fallback）。未完成：`LlamaCppProvider`（嵌入式 GGUF 加载，依赖 `llama.cpp` FFI/`kalosm` 等重依赖，下轮再评估是否真接，OCR/STT 同推）；OpenAI provider 流式仍为退化模式（先 chat 后 split），并非真实 SSE。详见 PR `feat/ai-ollama-provider`。
   - [x] SubTask 2.4.3: 实现智能续写（debounce 500ms + 流式 stream_complete + ghost text 显示 + Tab 接受/Esc 取消）
   - [x] SubTask 2.4.4: 实现内容摘要（三级粒度：段落/文档/多文档 + Map-Reduce 策略 + SQLite 缓存关联版本号）
-  - [x] SubTask 2.4.5: 实现问答对话（RAG 架构：Embedding → LanceDB 检索 → 上下文拼接 → LLM 生成）
-  - [x] SubTask 2.4.6: 实现混合搜索（Tantivy 关键词 Top-20 + LanceDB 向量 Top-20 + Cross-Encoder 重排序 Top-5）
-  - [x] SubTask 2.4.7: 实现语义搜索（all-MiniLM-L6-v2 本地 Embedding + LanceDB IVF_PQ 索引 + RRF 融合排序）
+  - [~] SubTask 2.4.5: 实现问答对话（RAG 架构：Embedding → LanceDB 检索 → 上下文拼接 → LLM 生成）
+        — 骨架已具备；LanceDB 当前因 Rust 工具链兼容性临时禁用（见根 `Cargo.toml` 注释），向量检索退化到 sqlite-vec；待 LanceDB 恢复或换为 `qdrant`/`milvus-lite` 后再回 `[x]`。Embedding 端本轮起可由 `OllamaProvider` 真实出向量。
+  - [~] SubTask 2.4.6: 实现混合搜索（Tantivy 关键词 Top-20 + LanceDB 向量 Top-20 + Cross-Encoder 重排序 Top-5）
+        — Tantivy 端跑通；LanceDB 段同 2.4.5，待恢复后再回 `[x]`。
+  - [~] SubTask 2.4.7: 实现语义搜索（all-MiniLM-L6-v2 本地 Embedding + LanceDB IVF_PQ 索引 + RRF 融合排序）
+        — Embedding 端可由 Ollama 替代（不在 all-MiniLM 路径上）；LanceDB 段同 2.4.5。
   - [x] SubTask 2.4.8: 实现自动标签（TF-IDF + TextRank 关键词提取 + LLM 候选标签 + 用户确认）
   - [x] SubTask 2.4.9: 实现任务分解（LLM 生成子任务列表 + 预览编辑 + 批量创建关联父任务）
 
