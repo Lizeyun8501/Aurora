@@ -59,7 +59,7 @@ pub fn bootstrap(data_dir: &Path) -> Result<BootedApp, BootstrapError> {
 
     // 打开 SQLite 数据库并执行迁移
     let db_path = data_dir.join("aurora.db");
-    let mut migration = aurora_migration::MigrationManager::new(&db_path)?;
+    let migration = aurora_migration::MigrationManager::new(&db_path)?;
     migration.migrate()?;
     info!(db_path = ?db_path, "SQLite migrations complete");
 

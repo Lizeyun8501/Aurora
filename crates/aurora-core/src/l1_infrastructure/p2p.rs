@@ -11,10 +11,13 @@ use crate::traits::sync_target::{
     Connection, DocSet, Endpoint, SyncEvent, SyncProtocol, SyncReport, SyncTarget,
 };
 
+/// 同步事件回调类型。
+type SyncEventCallback = Box<dyn Fn(SyncEvent) + Send + Sync>;
+
 /// 基于 iroh 的 P2P 同步目标实现。
 pub struct IrohSyncTarget {
     connections: Mutex<HashMap<String, Connection>>,
-    callback: Mutex<Option<Box<dyn Fn(SyncEvent) + Send + Sync>>>,
+    callback: Mutex<Option<SyncEventCallback>>,
 }
 
 impl IrohSyncTarget {
@@ -106,7 +109,7 @@ impl SyncTarget for IrohSyncTarget {
 /// 基于 WebSocket 的同步目标实现。
 pub struct WebSocketSyncTarget {
     connections: Mutex<HashMap<String, Connection>>,
-    callback: Mutex<Option<Box<dyn Fn(SyncEvent) + Send + Sync>>>,
+    callback: Mutex<Option<SyncEventCallback>>,
 }
 
 impl WebSocketSyncTarget {
@@ -204,7 +207,7 @@ impl SyncTarget for WebSocketSyncTarget {
 /// 通过本地网络广播或多播发现邻近节点，实现局域网内高速同步。
 pub struct LanSyncTarget {
     connections: Mutex<HashMap<String, Connection>>,
-    callback: Mutex<Option<Box<dyn Fn(SyncEvent) + Send + Sync>>>,
+    callback: Mutex<Option<SyncEventCallback>>,
 }
 
 impl LanSyncTarget {

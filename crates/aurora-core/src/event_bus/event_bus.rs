@@ -21,11 +21,6 @@ impl EventBus {
         }
     }
 
-    /// 创建默认缓冲区大小（1024）的事件总线
-    pub fn default() -> Self {
-        Self::new(1024)
-    }
-
     /// 发布事件到所有订阅者
     pub fn publish(&self, event: CoreEvent) {
         // 忽略发送错误（无订阅者时）

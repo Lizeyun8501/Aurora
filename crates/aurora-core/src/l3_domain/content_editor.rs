@@ -114,7 +114,7 @@ impl Block {
         let mut block = Self::new(BlockType::Heading, content.into());
         block
             .properties
-            .insert("level".to_string(), serde_json::json!(level.min(6).max(1)));
+            .insert("level".to_string(), serde_json::json!(level.clamp(1, 6)));
         block
     }
 
@@ -671,20 +671,20 @@ impl ContentEditorEngine {
 
             if line.starts_with("---") || line.starts_with("***") {
                 doc.blocks.push(Block::divider());
-            } else if line.starts_with("# ") {
-                doc.blocks.push(Block::heading(1, &line[2..]));
-            } else if line.starts_with("## ") {
-                doc.blocks.push(Block::heading(2, &line[3..]));
-            } else if line.starts_with("### ") {
-                doc.blocks.push(Block::heading(3, &line[4..]));
-            } else if line.starts_with("> ") {
-                doc.blocks.push(Block::quote(&line[2..]));
-            } else if line.starts_with("- [ ] ") {
-                doc.blocks.push(Block::todo(false, &line[6..]));
+            } else if let Some(stripped) = line.strip_prefix("# ") {
+                doc.blocks.push(Block::heading(1, stripped));
+            } else if let Some(stripped) = line.strip_prefix("## ") {
+                doc.blocks.push(Block::heading(2, stripped));
+            } else if let Some(stripped) = line.strip_prefix("### ") {
+                doc.blocks.push(Block::heading(3, stripped));
+            } else if let Some(stripped) = line.strip_prefix("> ") {
+                doc.blocks.push(Block::quote(stripped));
+            } else if let Some(stripped) = line.strip_prefix("- [ ] ") {
+                doc.blocks.push(Block::todo(false, stripped));
             } else if line.starts_with("- [x] ") || line.starts_with("- [X] ") {
                 doc.blocks.push(Block::todo(true, &line[6..]));
-            } else if line.starts_with("- ") {
-                doc.blocks.push(Block::list_item(&line[2..]));
+            } else if let Some(stripped) = line.strip_prefix("- ") {
+                doc.blocks.push(Block::list_item(stripped));
             } else if line.starts_with("! [") {
                 if let Some((alt, url)) = Self::parse_markdown_image(line) {
                     doc.blocks.push(Block::image(url, alt));

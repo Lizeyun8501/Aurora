@@ -166,10 +166,10 @@ impl MarkdownParser {
                     level += 1;
                     rest = &rest[1..];
                 }
-                if rest.starts_with(' ') {
+                if let Some(stripped) = rest.strip_prefix(' ') {
                     nodes.push(MdNode::Heading {
                         level,
-                        text: rest[1..].trim().to_string(),
+                        text: stripped.trim().to_string(),
                     });
                     i += 1;
                     continue;
@@ -221,13 +221,13 @@ impl MarkdownParser {
             }
 
             // 引用
-            if trimmed.starts_with("> ") {
-                let mut quote_lines = vec![trimmed[2..].to_string()];
+            if let Some(stripped) = trimmed.strip_prefix("> ") {
+                let mut quote_lines = vec![stripped.to_string()];
                 i += 1;
                 while i < lines.len() {
                     let l = lines[i].trim_start();
-                    if l.starts_with("> ") {
-                        quote_lines.push(l[2..].to_string());
+                    if let Some(stripped) = l.strip_prefix("> ") {
+                        quote_lines.push(stripped.to_string());
                         i += 1;
                     } else {
                         break;
@@ -704,8 +704,7 @@ fn render_block_html(block: &Block) -> String {
                 .get("level")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(1)
-                .min(6)
-                .max(1);
+                .clamp(1, 6);
             format!(
                 "<h{lvl}>{txt}</h{lvl}>",
                 lvl = level,

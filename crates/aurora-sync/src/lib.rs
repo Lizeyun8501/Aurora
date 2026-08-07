@@ -6,13 +6,13 @@
 //! # 模块组织
 //! - [`p2p`]: P2P 同步 (iroh + QUIC + NAT 穿透)
 //! - [`iroh_transport`]: iroh 真实传输层 (V19 §31 DEV-005，生产替代 MockTransport)
-//! - [`cloud`]: 云端同步 (WebSocket 实时推送 + HTTPS 批量，零知识密文中转)
-//! - [`lan`]: 局域网同步 (mDNS 自动发现 + LAN 直连 QUIC，优先于云端)
-//! - [`conflict`]: 冲突解决 (CRDT 自动合并 + 语义冲突手动选择 + 分支模式)
-//! - [`incremental`]: 增量同步 (CRDT ops 增量 + rsync 块级增量 + zstd 压缩)
-//! - [`offline_queue`]: 离线队列 (SQLite 持久化 + 优先级 + 幂等键 + 批量压缩)
-//! - [`device`]: 多设备管理 (Ed25519 设备 ID + QR 授权 + 远程吊销 + DEK 失效)
-//! - [`external`]: 外部同步中心 (CalDAV 日历 + IMAP 邮件 + 云盘 + Webhook 接收)
+//! - [`cloud`][]: 云端同步 (WebSocket 实时推送 + HTTPS 批量，零知识密文中转)
+//! - [`lan`][]: 局域网同步 (mDNS 自动发现 + LAN 直连 QUIC，优先于云端)
+//! - [`conflict`][]: 冲突解决 (CRDT 自动合并 + 语义冲突手动选择 + 分支模式)
+//! - [`incremental`][]: 增量同步 (CRDT ops 增量 + rsync 块级增量 + zstd 压缩)
+//! - [`offline_queue`][]: 离线队列 (SQLite 持久化 + 优先级 + 幂等键 + 批量压缩)
+//! - [`device`][]: 多设备管理 (Ed25519 设备 ID + QR 授权 + 远程吊销 + DEK 失效)
+//! - [`external`][]: 外部同步中心 (CalDAV 日历 + IMAP 邮件 + 云盘 + Webhook 接收)
 
 pub mod cloud;
 pub mod conflict;

@@ -35,6 +35,7 @@ impl PeerId {
     }
 
     /// 从字符串构造 PeerId。
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         Self(s.to_string())
     }

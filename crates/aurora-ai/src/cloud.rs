@@ -173,7 +173,7 @@ impl AIProvider for OpenAiCompatProvider {
         }
         let req = EmbeddingsReq {
             model: &self.model,
-            input: texts.iter().copied().collect(),
+            input: texts.to_vec(),
         };
         let resp = self
             .client

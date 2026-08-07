@@ -6,6 +6,7 @@
 //!   背压策略 + Medium 通道持久化，对应 §32 事件定义与 ARCH-003 崩溃恢复）。
 
 pub mod event;
+#[allow(clippy::module_inception)]
 pub mod event_bus;
 pub mod layered;
 pub mod serialization;

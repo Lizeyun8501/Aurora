@@ -17,6 +17,7 @@ use aurora_core::traits::crypto_provider::{Ciphertext, CryptoProvider};
 use crate::Error;
 
 /// 本地文件 DEK 保险库。
+#[derive(Debug)]
 pub struct LocalDekVault {
     dek: [u8; 32],
     path: PathBuf,

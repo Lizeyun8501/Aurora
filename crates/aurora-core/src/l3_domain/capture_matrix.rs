@@ -620,8 +620,8 @@ fn markdown_to_blocks(markdown: &str) -> Vec<Block> {
         }
         if let Some((level, text)) = parse_heading(trimmed) {
             blocks.push(Block::heading(level, text));
-        } else if trimmed.starts_with("```") {
-            let lang = trimmed[3..].trim();
+        } else if let Some(stripped) = trimmed.strip_prefix("```") {
+            let lang = stripped.trim();
             let mut code_lines = Vec::new();
             i += 1;
             while i < lines.len() && !lines[i].trim().starts_with("```") {
@@ -633,8 +633,8 @@ fn markdown_to_blocks(markdown: &str) -> Vec<Block> {
                 if lang.is_empty() { "plaintext" } else { lang },
                 code,
             ));
-        } else if trimmed.starts_with("- ") {
-            blocks.push(Block::list_item(trimmed[2..].trim()));
+        } else if let Some(stripped) = trimmed.strip_prefix("- ") {
+            blocks.push(Block::list_item(stripped.trim()));
         } else if let Some(rest) = parse_ordered_item(trimmed) {
             blocks.push(Block::list_item(rest));
         } else if let Some(rest) = trimmed.strip_prefix("> ") {
@@ -878,7 +878,7 @@ fn mock_capture_image(bounds: &BoundingBox) -> Vec<u8> {
         ^ ((bounds.width as u64) << 32)
         ^ ((bounds.height as u64) << 48);
     let area = (bounds.width as usize) * (bounds.height as usize);
-    let size = area.max(256).min(4096);
+    let size = area.clamp(256, 4096);
     (0..size)
         .map(|i| ((seed.wrapping_add(i as u64)) & 0xFF) as u8)
         .collect()

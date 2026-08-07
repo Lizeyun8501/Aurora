@@ -13,8 +13,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use aurora_core::app_core::AppCore;
-use aurora_core::traits::kv_store::KVStore;
-use aurora_core::traits::search_backend::SearchBackend;
 use aurora_security::LocalDekVault;
 use tracing::warn;
 
@@ -57,6 +55,7 @@ const DEFAULT_WORKSPACE_ID: &str = "default";
 ///
 /// 内部持有 `aurora_core::AppCore` 实例与本地 DEK 保险库（E2EE），
 /// 通过独立 tokio runtime 以同步阻塞方式驱动异步核心调用。
+#[derive(uniffi::Object)]
 pub struct UniffiAppCore {
     core: Arc<AppCore>,
     vault: Arc<LocalDekVault>,
@@ -253,17 +252,17 @@ mod tests {
     fn note_lifecycle() {
         let dir = tempfile::tempdir().unwrap();
         let core = UniffiAppCore::new(dir.path().to_string_lossy().into_owned()).unwrap();
-        let id = core.create_note("Test Note".into()).unwrap();
-        let notes = core.list_notes();
+        let id = core.clone().create_note("Test Note".into()).unwrap();
+        let notes = core.clone().list_notes();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].id, id);
         assert_eq!(notes[0].title, "Test Note");
 
-        let results = core.search_notes("test".into());
+        let results = core.clone().search_notes("test".into());
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].note_id, id);
 
-        core.delete_note(id).unwrap();
+        core.clone().delete_note(id).unwrap();
         assert!(core.list_notes().is_empty());
     }
 }

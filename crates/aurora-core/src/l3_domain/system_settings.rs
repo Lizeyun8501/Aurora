@@ -13,6 +13,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
+/// 分层设置映射： (layer, workspace_id) → LayerSettings。
+type LayerMap = HashMap<(SettingsLayer, Option<String>), LayerSettings>;
+/// 迁移函数：接收 SettingsStore 引用执行迁移。
+type MigrationFn = Box<dyn Fn(&SettingsStore)>;
+
 // ============================================================================
 // SubTask 3.6.1: 设置分层存储
 // ============================================================================
@@ -88,7 +93,7 @@ impl LayerSettings {
 /// 设置存储（分层 + 合并 + 版本迁移）
 pub struct SettingsStore {
     /// (layer, workspace_id) → LayerSettings
-    layers: Arc<RwLock<HashMap<(SettingsLayer, Option<String>), LayerSettings>>>,
+    layers: Arc<RwLock<LayerMap>>,
     version: Arc<RwLock<SettingsVersion>>,
 }
 
@@ -215,7 +220,7 @@ impl SettingsStore {
     }
 
     /// 迁移：应用一组迁移函数（按顺序执行，记录已应用）
-    pub fn migrate(&self, migrations: Vec<(String, Box<dyn Fn(&Self)>)>) {
+    pub fn migrate(&self, migrations: Vec<(String, MigrationFn)>) {
         let mut version = self.version.write();
         for (name, f) in migrations {
             if version.migrations_applied.contains(&name) {

@@ -160,8 +160,8 @@ fn entropy_to_indices(entropy: &[u8; ENTROPY_LEN], checksum: u8) -> [u16; MNEMON
     buf[..ENTROPY_LEN].copy_from_slice(entropy);
     buf[ENTROPY_LEN] = checksum;
     let mut indices = [0u16; MNEMONIC_WORDS];
-    for i in 0..MNEMONIC_WORDS {
-        indices[i] = read_bits(&buf, i * 11, 11) as u16;
+    for (i, item) in indices.iter_mut().enumerate().take(MNEMONIC_WORDS) {
+        *item = read_bits(&buf, i * 11, 11) as u16;
     }
     indices
 }
@@ -313,9 +313,9 @@ impl ShamirSecretSharing {
         let len = shares[0].y.len();
         let k = self.threshold;
         let mut secret = vec![0u8; len];
-        for j in 0..len {
+        for (j, secret_byte) in secret.iter_mut().enumerate().take(len) {
             let pts: Vec<(u8, u8)> = shares[..k].iter().map(|s| (s.x, s.y[j])).collect();
-            secret[j] = lagrange_at_zero(&pts);
+            *secret_byte = lagrange_at_zero(&pts);
         }
         debug!(k, "reconstructed secret from shares");
         Ok(secret)
@@ -377,11 +377,10 @@ fn lagrange_at_zero(pts: &[(u8, u8)]) -> u8 {
         let (xi, yi) = pts[i];
         let mut num = 1u8; // ∏ (0 - x_j) = ∏ x_j   (GF(2^8) 中 -a = a)
         let mut den = 1u8; // ∏ (x_i - x_j) = ∏ (x_i ⊕ x_j)
-        for j in 0..k {
+        for (j, &(xj, _)) in pts.iter().enumerate().take(k) {
             if j == i {
                 continue;
             }
-            let (xj, _) = pts[j];
             num = gf_mul(num, xj);
             den = gf_mul(den, xi ^ xj);
         }

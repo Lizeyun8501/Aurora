@@ -230,6 +230,7 @@ impl McpMethod {
     }
 
     /// 从方法名解析为枚举。
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "initialize" => Some(McpMethod::Initialize),

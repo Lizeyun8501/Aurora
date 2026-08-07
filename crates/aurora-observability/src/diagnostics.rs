@@ -1556,7 +1556,7 @@ mod tests {
     // 引用 sha3 以验证可用
     #[test]
     fn sha3_smoke() {
-        use sha3::Digest;
+        use sha3::{Digest, Sha3_256};
         let mut h = Sha3_256::default();
         Digest::update(&mut h, b"aurora");
         let out = h.finalize();

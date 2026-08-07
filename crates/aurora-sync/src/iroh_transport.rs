@@ -26,7 +26,6 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
 // iroh 1.0 API（对应 V19 §31.2）
@@ -51,6 +50,7 @@ fn encode_frame(data: &[u8]) -> Vec<u8> {
 }
 
 /// 解析帧：返回 payload（不含长度前缀），返回剩余偏移。
+#[cfg(test)]
 fn decode_frame(buf: &[u8]) -> Option<(&[u8], &[u8])> {
     if buf.len() < 4 {
         return None;

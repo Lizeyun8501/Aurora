@@ -20,7 +20,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Field, Schema, STORED, STRING, TEXT};
+use tantivy::schema::{Field, Schema, STORED, STRING, TEXT, Value};
 use tantivy::tokenizer::{LowerCaser, SimpleTokenizer, TextAnalyzer};
 use tantivy::{doc, Index, TantivyDocument, Term};
 
@@ -83,7 +83,7 @@ impl TantivySearchBackend {
     /// 目录已含有效索引（`meta.json`）时打开，否则新建。
     pub fn new(dir: impl AsRef<Path>) -> Result<Self, Error> {
         let dir = dir.as_ref();
-        std::fs::create_dir_all(dir).map_err(|e| Error::Io(e))?;
+        std::fs::create_dir_all(dir).map_err(Error::Io)?;
         let index = if dir.join("meta.json").exists() {
             Index::open_in_dir(dir).map_err(map_err)?
         } else {
@@ -159,7 +159,7 @@ impl TantivySearchBackend {
             self.id => note_id,
             self.title => metadata.title.as_str(),
             self.content => content,
-            self.tags => metadata.tags.as_slice(),
+            self.tags => metadata.tags.join(" "),
             self.workspace_id => metadata.workspace_id.as_str(),
             self.updated_at => updated_at.as_str(),
         )
@@ -189,7 +189,9 @@ impl SearchBackend for TantivySearchBackend {
         let limit = if opts.limit == 0 { 20 } else { opts.limit };
         let query_parser =
             QueryParser::for_index(&self.index, vec![self.title, self.content, self.tags]);
-        let parsed = query_parser.parse_query(query).map_err(map_err)?;
+        let parsed = query_parser
+            .parse_query(query)
+            .map_err(|e| Error::Internal(format!("query parse error: {}", e)))?;
         let reader = self.index.reader().map_err(map_err)?;
         let searcher = reader.searcher();
         let top_docs = searcher
@@ -217,9 +219,10 @@ impl SearchBackend for TantivySearchBackend {
             });
         }
 
+        let total = hits.len();
         Ok(SearchResult {
             hits,
-            total: hits.len(),
+            total,
             took_ms: started.elapsed().as_millis() as u64,
         })
     }
@@ -235,7 +238,8 @@ impl SearchBackend for TantivySearchBackend {
         // 同一 id 先删后写，保证幂等更新
         writer.delete_term(Term::from_field_text(self.id, note_id));
         writer.add_document(document).map_err(map_err)?;
-        writer.commit().map_err(map_err)
+        writer.commit().map_err(map_err)?;
+        Ok(())
     }
 
     async fn batch_index(&self, notes: &[IndexEntry]) -> Result<(), Error> {
@@ -245,13 +249,18 @@ impl SearchBackend for TantivySearchBackend {
             writer.delete_term(Term::from_field_text(self.id, &entry.note_id));
             writer.add_document(document).map_err(map_err)?;
         }
-        writer.commit().map_err(map_err)
+        writer.commit().map_err(map_err)?;
+        Ok(())
     }
 
     async fn remove_index(&self, note_id: &str) -> Result<(), Error> {
-        let mut writer = self.index.writer(50_000_000).map_err(map_err)?;
+        let mut writer = self
+            .index
+            .writer::<TantivyDocument>(50_000_000)
+            .map_err(map_err)?;
         writer.delete_term(Term::from_field_text(self.id, note_id));
-        writer.commit().map_err(map_err)
+        writer.commit().map_err(map_err)?;
+        Ok(())
     }
 
     async fn rebuild_index(&self, all_notes: &[IndexEntry]) -> Result<(), Error> {
@@ -261,7 +270,8 @@ impl SearchBackend for TantivySearchBackend {
             let document = self.build_doc(&entry.note_id, &entry.content, &entry.metadata);
             writer.add_document(document).map_err(map_err)?;
         }
-        writer.commit().map_err(map_err)
+        writer.commit().map_err(map_err)?;
+        Ok(())
     }
 
     fn tokenize(&self, text: &str) -> Vec<String> {
