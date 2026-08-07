@@ -104,16 +104,30 @@ impl SqliteVecStore {
         let conn = rusqlite::Connection::open(path)
             .map_err(|e| crate::Error::Database(format!("rusqlite open failed: {}", e)))?;
         let table_name = table_name.into();
-        // 尝试加载 sqlite-vec 扩展（如果可用）。
-        let _ = conn.execute_batch(&format!(
-            "SELECT load_extension('sqlite_vec');
-             CREATE TABLE IF NOT EXISTS {} (
+        // 表名将拼入 DDL 字符串，必须限制为安全字符集，防止 SQL 注入。
+        if table_name.is_empty()
+            || !table_name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(crate::Error::InvalidInput(format!(
+                "invalid vector table name: {:?} (allowed: [A-Za-z0-9_])",
+                table_name
+            )));
+        }
+        // sqlite-vec 扩展为可选能力：加载失败仅降级为无向量索引加速，
+        // 不阻断建表；但建表失败必须报错——此前整个 execute_batch 被
+        // `let _ =` 吞错，会导致构造返回 Ok 但表实际不存在。
+        let _ = conn.execute_batch("SELECT load_extension('sqlite_vec');");
+        conn.execute_batch(&format!(
+            "CREATE TABLE IF NOT EXISTS {} (
                  id TEXT PRIMARY KEY,
                  vec BLOB,
                  metadata TEXT
              );",
             table_name
-        ));
+        ))
+        .map_err(|e| crate::Error::Database(format!("create vector table failed: {}", e)))?;
         Ok(Self {
             conn: Mutex::new(conn),
             table_name,

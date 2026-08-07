@@ -548,8 +548,16 @@ impl TaskExecutor {
     }
 
     /// 提交任务到执行队列。
+    ///
+    /// unbounded channel 的 send 仅在后台 worker 已退出（receiver 被 drop）
+    /// 时失败；此前静默丢弃会让任务无声丢失，这里记录 error 以便观测。
     pub fn submit(&self, task: TaskRequest) {
-        let _ = self.sender.send(task);
+        if let Err(e) = self.sender.send(task) {
+            error!(
+                task_id = %e.0.task_id,
+                "task submit failed: worker channel closed, task dropped"
+            );
+        }
     }
 
     /// 获取死信队列当前长度。

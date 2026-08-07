@@ -6,33 +6,12 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+// base64 编码统一复用 crypto 模块实现（P4 已修复越界缺陷并补测试），
+// 避免此处再维护一份重复副本。
+use crate::l1_infrastructure::crypto::base64_encode;
 use crate::traits::kv_store::KVStore;
 use crate::traits::storage::{Record, Storage, StorageOp, StorageQuery};
 use rusqlite::OptionalExtension;
-
-fn base64_encode(input: &[u8]) -> String {
-    
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
-    for chunk in input.chunks(3) {
-        let b = ((chunk[0] as u32) << 16)
-            | ((chunk.get(1).copied().unwrap_or(0) as u32) << 8)
-            | (chunk.get(2).copied().unwrap_or(0) as u32);
-        out.push(CHARS[((b >> 18) & 0x3F) as usize] as char);
-        out.push(CHARS[((b >> 12) & 0x3F) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            CHARS[((b >> 6) & 0x3F) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            CHARS[(b & 0x3F) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
 
 /// 基于 SQLite 的存储实现。
 pub struct SqliteStorage {

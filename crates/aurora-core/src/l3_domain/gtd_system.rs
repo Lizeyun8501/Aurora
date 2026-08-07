@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use parking_lot::RwLock;
+use tracing::warn;
 use uuid::Uuid;
 
 /// 任务唯一标识
@@ -687,21 +688,37 @@ impl GtdEngine {
         let mut tasks = self.tasks.write();
         let task = tasks.get_mut(task_id)?;
 
+        // 仅当动作真正生效时才更新 updated_at：非法状态迁移（被状态机拒绝）
+        // 或空操作（未知动作 / 重复标签）此前也会触碰 updated_at 并返回
+        // Some，表现为“已应用”但实际未变，属于静默失败。
+        let mut changed = false;
         match action {
-            Action::ChangeStatus(s) => {
-                let _ = task.transition_to(s.clone());
+            Action::ChangeStatus(s) => match task.transition_to(s.clone()) {
+                Ok(()) => changed = true,
+                Err(e) => {
+                    warn!(task_id = %task.id, error = %e, "apply_action ChangeStatus rejected")
+                }
+            },
+            Action::SetPriority(p) => {
+                task.priority = p.clone();
+                changed = true;
             }
-            Action::SetPriority(p) => task.priority = p.clone(),
             Action::AddTag(tag) => {
                 if !task.tags.contains(tag) {
                     task.tags.push(tag.clone());
+                    changed = true;
                 }
             }
-            Action::MoveToProject(pid) => task.project_id = Some(pid.clone()),
+            Action::MoveToProject(pid) => {
+                task.project_id = Some(pid.clone());
+                changed = true;
+            }
             _ => {}
         }
 
-        task.updated_at = chrono::Utc::now();
+        if changed {
+            task.updated_at = chrono::Utc::now();
+        }
         Some(task.clone())
     }
 
