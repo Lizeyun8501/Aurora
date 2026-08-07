@@ -82,6 +82,8 @@ pub enum Error {
     },
     #[error("OCR 识别失败: {0}")]
     Ocr(String),
+    #[error("AI 推理失败: {0}")]
+    AiInference(String),
 
     // ===== 配置与初始化错误 =====
     #[error("配置错误: {0}")]
@@ -110,6 +112,7 @@ impl Error {
             Error::Plugin(_) => "插件执行出错，已自动终止".into(),
             Error::AgentAuth(_) => "Agent 认证失败，请重新授权".into(),
             Error::ModelNotFound { .. } => "模型文件未找到，请先下载模型".into(),
+            Error::AiInference(_) => "AI 推理失败，已切换到云端或离线模式".into(),
             _ => "操作失败，请重试".into(),
         }
     }
@@ -118,7 +121,7 @@ impl Error {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            Error::Network(_) | Error::Database(_) | Error::Io(_)
+            Error::Network(_) | Error::Database(_) | Error::Io(_) | Error::AiInference(_)
         )
     }
 
@@ -128,6 +131,7 @@ impl Error {
     /// - `Network` → P2P 失败切换 WebDAV 同步
     /// - `Loro` → import 失败保存原始字节到 `.corrupt` 文件
     /// - `Ocr` / `ModelNotFound` → 提示下载模型，阻塞对应功能
+    /// - `AiInference` → 本地 AI 不可用时降级到云端 Provider（V19 §7.2）
     pub fn requires_fallback(&self) -> bool {
         matches!(
             self,
@@ -135,6 +139,7 @@ impl Error {
                 | Error::Loro(_)
                 | Error::Ocr(_)
                 | Error::ModelNotFound { .. }
+                | Error::AiInference(_)
         )
     }
 }

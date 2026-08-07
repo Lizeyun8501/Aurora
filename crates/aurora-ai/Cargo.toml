@@ -36,3 +36,25 @@ uuid = { workspace = true }
 
 # Concurrency
 parking_lot = { workspace = true }
+
+# HTTP client for Ollama HTTP API (V19 §7.2 — 本地 AI 走 HTTP).
+# 0.11 + `json` for request/response bodies, `stream` for NDJSON chat
+# streaming. 选 0.11 而非 0.13 以对齐 aurora-observability 既有选型，
+# 避免引入第二套 hyper 主版本。Availability probe + periodic re-probe
+# 直接用 tokio（已是 dep）。
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# `bytes::Bytes` 用于 stream_complete 的 NDJSON 行拆分（reqwest::stream
+# 产出的 `Bytes` chunk 顺序拼接后按 \n 切行）。
+bytes = "1"
+
+# `futures_util::future::try_join_all`（embed 多 prompt 并发 gather）+
+# `futures_util::StreamExt`（NDJSON 流式增量拆行）。
+futures-util = "0.3"
+
+[dev-dependencies]
+# Mock HTTP server for Ollama unit tests (URL joining / body shape / response
+# parsing / fallback routing) — pure local ephemeral server, never hits real
+# Ollama. Live-integration tests are kept under `#[ignore]` and only run on
+# `cargo test -- --ignored ollama_live` with a real Ollama on localhost:11434.
+mockito = "1"

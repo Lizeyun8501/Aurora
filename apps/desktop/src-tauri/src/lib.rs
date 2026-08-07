@@ -87,9 +87,7 @@ pub fn run() {
     }
     info!("AppCore startup complete");
 
-    *APP_STATE
-        .lock()
-        .expect("APP_STATE mutex poisoned") = Some(Arc::new(core));
+    *APP_STATE.lock().expect("APP_STATE mutex poisoned") = Some(Arc::new(core));
     info!("Aurora Desktop initialized and ready");
 }
 
@@ -97,6 +95,11 @@ pub fn run() {
 ///
 /// 对应 V19 §36.1 启动流程步骤 2-4。
 fn build_app_core(data_dir: &std::path::Path, db_path: &std::path::Path) -> AppCore {
+    // 加载系统设置（V19 §16）：本轮先用默认值，后续 PR 可改为从 SQLite 的
+    // settings_layer 表读出已持久化的 SystemSettings。AI 子结构会驱动
+    // 本地 Ollama provider 的 base_url/model 以及云端 fallback 的开关。
+    let core_settings = aurora_core::l3_domain::system_settings::SystemSettings::new();
+
     // KVStore：基于 SQLite 的实现
     let kv_store: Arc<dyn aurora_core::traits::kv_store::KVStore> = Arc::new(
         aurora_core::l1_infrastructure::storage::SqliteStorage::new(db_path),
@@ -104,29 +107,52 @@ fn build_app_core(data_dir: &std::path::Path, db_path: &std::path::Path) -> AppC
 
     // SearchBackend：基于 Tantivy 的全文检索
     let index_dir = data_dir.join("tantivy_index");
-    let search: Arc<dyn aurora_core::traits::search_backend::SearchBackend> = Arc::new(
-        aurora_core::l1_infrastructure::search::TantivySearchBackend::new(&index_dir),
-    );
+    let search: Arc<dyn aurora_core::traits::search_backend::SearchBackend> =
+        Arc::new(aurora_core::l1_infrastructure::search::TantivySearchBackend::new(&index_dir));
 
     // CryptoProvider：AES-256-GCM + Argon2id + ML-KEM-768
-    let crypto: Arc<dyn aurora_core::traits::crypto_provider::CryptoProvider> = Arc::new(
-        aurora_security::CryptoProviderImpl::new(),
-    );
+    let crypto: Arc<dyn aurora_core::traits::crypto_provider::CryptoProvider> =
+        Arc::new(aurora_security::CryptoProviderImpl::new());
 
     // SyncTarget：iroh P2P 同步（生产环境使用 IrohTransport）
-    let sync_target: Arc<dyn aurora_core::traits::sync_target::SyncTarget> = Arc::new(
-        aurora_core::l1_infrastructure::p2p::IrohP2pSyncTarget::new(),
-    );
+    let sync_target: Arc<dyn aurora_core::traits::sync_target::SyncTarget> =
+        Arc::new(aurora_core::l1_infrastructure::p2p::IrohP2pSyncTarget::new());
 
-    // AIProvider：本地 llama.cpp + 云端 fallback
-    let ai: Arc<dyn aurora_core::traits::ai_provider::AIProvider> = Arc::new(
-        aurora_ai::LocalLlamaProvider::new(data_dir.join("models")),
-    );
+    // AIProvider：本地 Ollama HTTP（V19 §7.2「本地 AI」），本地不可达时降级到
+    // 可选的云 Provider（OpenAI 兼容端点）。云端 fallback 仅在用户通过
+    // SystemSettings.ai.cloud_api_key 配置之后才会启用（默认 None）。
+    //
+    // 真实接入替换此前指向不存在的 `aurora_ai::LocalLlamaProvider`（apps/ 不
+    // 在 workspace members，CI 不编译，故曾未报警）。后续把 apps/ 纳入
+    // workspace 后这条路径会被实际编译验证。
+    let ai_settings = &core_settings.ai;
+    let cloud: Option<Arc<dyn aurora_core::traits::ai_provider::AIProvider>> =
+        if ai_settings.cloud_configured() {
+            Some(Arc::new(aurora_ai::OpenAiCompatProvider::new(
+                ai_settings.cloud_base_url.clone().unwrap_or_default(),
+                ai_settings.cloud_api_key.clone().unwrap_or_default(),
+                ai_settings
+                    .cloud_model
+                    .clone()
+                    .unwrap_or_else(|| "gpt-4o-mini".to_string()),
+            )))
+        } else {
+            None
+        };
+    let ai: Arc<dyn aurora_core::traits::ai_provider::AIProvider> = {
+        let p = aurora_ai::OllamaProvider::new_with_fallback(
+            ai_settings.ollama_base_url.clone(),
+            ai_settings.ollama_model.clone(),
+            cloud,
+        );
+        // 后台周期探测 is_available；AppCore 启动后调用一次即可。
+        p.start_probing();
+        Arc::new(p)
+    };
 
     // OcrProvider：PaddleOCR（本地，桌面端）
-    let ocr: Arc<dyn aurora_core::traits::ocr_provider::OcrProvider> = Arc::new(
-        aurora_core::l1_infrastructure::ocr::PaddleOcrEngine::new(),
-    );
+    let ocr: Arc<dyn aurora_core::traits::ocr_provider::OcrProvider> =
+        Arc::new(aurora_core::l1_infrastructure::ocr::PaddleOcrEngine::new());
 
     // PluginRuntime：Wasmtime WASM 运行时
     let plugin: Arc<dyn aurora_core::traits::plugin_runtime::PluginRuntime> = Arc::new(
@@ -152,8 +178,13 @@ fn build_app_core(data_dir: &std::path::Path, db_path: &std::path::Path) -> AppC
 
 /// 获取 AppCore 实例的 Arc 引用（不持有锁，可安全跨 .await）。
 fn get_core() -> Result<Arc<AppCore>, String> {
-    let guard = APP_STATE.lock().map_err(|e| format!("mutex poisoned: {}", e))?;
-    guard.as_ref().cloned().ok_or_else(|| "AppCore not initialized".into())
+    let guard = APP_STATE
+        .lock()
+        .map_err(|e| format!("mutex poisoned: {}", e))?;
+    guard
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "AppCore not initialized".into())
 }
 
 // ── Tauri Commands (§30 平台适配) ─────────────────────────────
@@ -173,7 +204,10 @@ pub async fn cmd_create_note(title: String) -> Result<String, String> {
     });
     let key = format!("note:{}", id);
     let payload = serde_json::to_vec(&note_json).map_err(|e| e.to_string())?;
-    core.kv_store.set(&key, &payload).await.map_err(|e| e.to_string())?;
+    core.kv_store
+        .set(&key, &payload)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(id)
 }
 
@@ -182,7 +216,9 @@ pub async fn cmd_create_note(title: String) -> Result<String, String> {
 pub async fn cmd_get_note(note_id: String) -> Result<serde_json::Value, String> {
     let core = get_core()?;
     let key = format!("note:{}", note_id);
-    let payload = core.kv_store.get(&key)
+    let payload = core
+        .kv_store
+        .get(&key)
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("note not found: {}", note_id))?;
@@ -212,7 +248,10 @@ pub async fn cmd_update_note(
     }
     note["updated_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
     let payload = serde_json::to_vec(&note).map_err(|e| e.to_string())?;
-    core.kv_store.set(&key, &payload).await.map_err(|e| e.to_string())?;
+    core.kv_store
+        .set(&key, &payload)
+        .await
+        .map_err(|e| e.to_string())?;
     info!(note_id = %note_id, "note updated via desktop command");
     Ok(())
 }
@@ -222,7 +261,10 @@ pub async fn cmd_update_note(
 pub async fn cmd_delete_note(note_id: String) -> Result<(), String> {
     let core = get_core()?;
     let key = format!("note:{}", note_id);
-    core.kv_store.delete(&key).await.map_err(|e| e.to_string())?;
+    core.kv_store
+        .delete(&key)
+        .await
+        .map_err(|e| e.to_string())?;
     info!(note_id = %note_id, "note deleted via desktop command");
     Ok(())
 }
@@ -235,7 +277,11 @@ pub async fn cmd_search_notes(query: String) -> Result<Vec<serde_json::Value>, S
     // 注意：SearchBackend::search 签名为 async fn search(&self, query: &str, opts: &SearchOptions)
     // V19 §28 异步化迁移后需 .await
     let opts = aurora_core::traits::search_backend::SearchOptions::default();
-    let result = core.search.search(&query, &opts).await.map_err(|e| e.to_string())?;
+    let result = core
+        .search
+        .search(&query, &opts)
+        .await
+        .map_err(|e| e.to_string())?;
     let results: Vec<serde_json::Value> = result.hits
         .into_iter()
         .map(|hit| serde_json::json!({"doc_id": hit.note_id, "score": hit.score, "snippet": hit.snippet}))

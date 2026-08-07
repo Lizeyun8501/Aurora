@@ -7,10 +7,10 @@
 //! - 主题系统输出 CSS 变量形式的设计令牌（design tokens）。
 //! - 快捷键冲突检测基于「平台 + 键位」精确匹配。
 
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tracing::{debug, warn};
 
 // ============================================================================
@@ -102,7 +102,10 @@ impl SettingsStore {
     pub fn new() -> Self {
         let mut layers = HashMap::new();
         // 系统层默认存在
-        layers.insert((SettingsLayer::System, None), LayerSettings::new(SettingsLayer::System));
+        layers.insert(
+            (SettingsLayer::System, None),
+            LayerSettings::new(SettingsLayer::System),
+        );
         Self {
             layers: Arc::new(RwLock::new(layers)),
             version: Arc::new(RwLock::new(SettingsVersion::default())),
@@ -110,18 +113,33 @@ impl SettingsStore {
     }
 
     /// 写入某层的某个键
-    pub fn set(&self, layer: SettingsLayer, workspace_id: Option<&str>, key: &str, value: serde_json::Value) {
+    pub fn set(
+        &self,
+        layer: SettingsLayer,
+        workspace_id: Option<&str>,
+        key: &str,
+        value: serde_json::Value,
+    ) {
         let ws = workspace_id.map(|s| s.to_string());
         let mut layers = self.layers.write();
         let entry = layers
             .entry((layer, ws.clone()))
-            .or_insert_with(|| LayerSettings { layer, workspace_id: ws, values: HashMap::new() });
+            .or_insert_with(|| LayerSettings {
+                layer,
+                workspace_id: ws,
+                values: HashMap::new(),
+            });
         entry.values.insert(key.to_string(), value);
         debug!(?layer, key, "setting updated");
     }
 
     /// 读取某层某键（不合并）
-    pub fn get_layer_value(&self, layer: SettingsLayer, workspace_id: Option<&str>, key: &str) -> Option<serde_json::Value> {
+    pub fn get_layer_value(
+        &self,
+        layer: SettingsLayer,
+        workspace_id: Option<&str>,
+        key: &str,
+    ) -> Option<serde_json::Value> {
         let ws = workspace_id.map(|s| s.to_string());
         self.layers
             .read()
@@ -130,7 +148,11 @@ impl SettingsStore {
     }
 
     /// 合并读取：Workspace > User > System
-    pub fn get_effective(&self, workspace_id: Option<&str>, key: &str) -> Option<serde_json::Value> {
+    pub fn get_effective(
+        &self,
+        workspace_id: Option<&str>,
+        key: &str,
+    ) -> Option<serde_json::Value> {
         let layers = self.layers.read();
         // 优先级从高到低
         if let Some(ws) = workspace_id {
@@ -154,7 +176,10 @@ impl SettingsStore {
     }
 
     /// 合并读取整层（所有键）
-    pub fn get_effective_all(&self, workspace_id: Option<&str>) -> HashMap<String, serde_json::Value> {
+    pub fn get_effective_all(
+        &self,
+        workspace_id: Option<&str>,
+    ) -> HashMap<String, serde_json::Value> {
         let layers = self.layers.read();
         let mut merged: HashMap<String, serde_json::Value> = HashMap::new();
         // 从低到高合并
@@ -340,13 +365,41 @@ impl DesignTokens {
     /// 合并：以 self 为基底，用 override 中非空字段覆盖
     pub fn merge(&self, override_tokens: &DesignTokens) -> DesignTokens {
         DesignTokens {
-            bg_primary: if override_tokens.bg_primary.is_empty() { self.bg_primary.clone() } else { override_tokens.bg_primary.clone() },
-            bg_secondary: if override_tokens.bg_secondary.is_empty() { self.bg_secondary.clone() } else { override_tokens.bg_secondary.clone() },
-            text_primary: if override_tokens.text_primary.is_empty() { self.text_primary.clone() } else { override_tokens.text_primary.clone() },
-            text_secondary: if override_tokens.text_secondary.is_empty() { self.text_secondary.clone() } else { override_tokens.text_secondary.clone() },
-            accent: if override_tokens.accent.is_empty() { self.accent.clone() } else { override_tokens.accent.clone() },
-            border: if override_tokens.border.is_empty() { self.border.clone() } else { override_tokens.border.clone() },
-            font_size_base: if override_tokens.font_size_base.is_empty() { self.font_size_base.clone() } else { override_tokens.font_size_base.clone() },
+            bg_primary: if override_tokens.bg_primary.is_empty() {
+                self.bg_primary.clone()
+            } else {
+                override_tokens.bg_primary.clone()
+            },
+            bg_secondary: if override_tokens.bg_secondary.is_empty() {
+                self.bg_secondary.clone()
+            } else {
+                override_tokens.bg_secondary.clone()
+            },
+            text_primary: if override_tokens.text_primary.is_empty() {
+                self.text_primary.clone()
+            } else {
+                override_tokens.text_primary.clone()
+            },
+            text_secondary: if override_tokens.text_secondary.is_empty() {
+                self.text_secondary.clone()
+            } else {
+                override_tokens.text_secondary.clone()
+            },
+            accent: if override_tokens.accent.is_empty() {
+                self.accent.clone()
+            } else {
+                override_tokens.accent.clone()
+            },
+            border: if override_tokens.border.is_empty() {
+                self.border.clone()
+            } else {
+                override_tokens.border.clone()
+            },
+            font_size_base: if override_tokens.font_size_base.is_empty() {
+                self.font_size_base.clone()
+            } else {
+                override_tokens.font_size_base.clone()
+            },
         }
     }
 
@@ -470,7 +523,11 @@ pub struct ShortcutBinding {
 
 impl ShortcutBinding {
     pub fn new(scope: ShortcutScope, key: impl Into<String>, modifiers: Vec<String>) -> Self {
-        Self { scope, modifiers, key: key.into() }
+        Self {
+            scope,
+            modifiers,
+            key: key.into(),
+        }
     }
 
     /// 平台适配：Mac 上 Ctrl → Cmd
@@ -499,7 +556,12 @@ impl ShortcutBinding {
     pub fn signature(&self) -> String {
         let mut mods = self.modifiers.clone();
         mods.sort();
-        format!("{:?}|{}|{}", self.scope, mods.join("+"), self.key.to_lowercase())
+        format!(
+            "{:?}|{}|{}",
+            self.scope,
+            mods.join("+"),
+            self.key.to_lowercase()
+        )
     }
 }
 
@@ -573,7 +635,10 @@ impl ShortcutManager {
         by_sig
             .into_iter()
             .filter(|(_, ids)| ids.len() > 1)
-            .map(|((_, sig), ids)| ShortcutConflict { signature: sig, shortcuts: ids })
+            .map(|((_, sig), ids)| ShortcutConflict {
+                signature: sig,
+                shortcuts: ids,
+            })
             .collect()
     }
 
@@ -596,11 +661,58 @@ impl ShortcutManager {
 // 顶层系统设置
 // ============================================================================
 
+/// AI 推理设置（V19 §7.2 功能依赖懒加载 + §13.1 混合推理架构）
+///
+/// 本地 Ollama 作为 LocalFirst 默认，本地不可用时降级到云端 OpenAI 兼容 API。
+/// `cloud_*` 字段任一缺失则不启用云端 Provider（仅本地）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AISettings {
+    /// 本地 Ollama HTTP 基地址（默认 `http://localhost:11434`）。
+    pub ollama_base_url: String,
+    /// 本地 Ollama 模型名（首次使用前需 `ollama pull <model>`）。
+    pub ollama_model: String,
+    /// 云端 OpenAI 兼容 API 基地址（如 `https://api.openai.com/v1`）。缺省则不启用云端。
+    pub cloud_base_url: Option<String>,
+    /// 云端 API Key（Bearer）。缺省则不启用云端。
+    pub cloud_api_key: Option<String>,
+    /// 云端模型名（如 `gpt-4o-mini`）。缺省则不启用云端。
+    pub cloud_model: Option<String>,
+    /// 推理策略：LocalFirst / CloudOnly / Auto（复用 `ai_system::InferenceStrategy`）。
+    #[serde(default = "default_inference_strategy")]
+    pub strategy: crate::l3_domain::ai_system::InferenceStrategy,
+}
+
+fn default_inference_strategy() -> crate::l3_domain::ai_system::InferenceStrategy {
+    crate::l3_domain::ai_system::InferenceStrategy::LocalFirst
+}
+
+impl Default for AISettings {
+    fn default() -> Self {
+        Self {
+            ollama_base_url: "http://localhost:11434".into(),
+            ollama_model: "llama3.2".into(),
+            cloud_base_url: None,
+            cloud_api_key: None,
+            cloud_model: None,
+            strategy: crate::l3_domain::ai_system::InferenceStrategy::LocalFirst,
+        }
+    }
+}
+
+impl AISettings {
+    /// 云端 Provider 所需的三元组是否齐备（base_url + key + model 均存在）。
+    pub fn cloud_configured(&self) -> bool {
+        self.cloud_base_url.is_some() && self.cloud_api_key.is_some() && self.cloud_model.is_some()
+    }
+}
+
 /// 系统设置顶层聚合
 pub struct SystemSettings {
     pub store: SettingsStore,
     pub theme: ThemeManager,
     pub shortcuts: ShortcutManager,
+    /// AI 推理设置（V19 §7.2 / §13.1）。
+    pub ai: AISettings,
 }
 
 impl Default for SystemSettings {
@@ -615,6 +727,7 @@ impl SystemSettings {
             store: SettingsStore::new(),
             theme: ThemeManager::new(),
             shortcuts: ShortcutManager::new(),
+            ai: AISettings::default(),
         }
     }
 }
@@ -654,8 +767,18 @@ mod tests {
     #[test]
     fn test_settings_effective_resolution() {
         let store = SettingsStore::new();
-        store.set(SettingsLayer::System, None, "theme", serde_json::json!("light"));
-        store.set(SettingsLayer::User, None, "theme", serde_json::json!("dark"));
+        store.set(
+            SettingsLayer::System,
+            None,
+            "theme",
+            serde_json::json!("light"),
+        );
+        store.set(
+            SettingsLayer::User,
+            None,
+            "theme",
+            serde_json::json!("dark"),
+        );
         // User 覆盖 System
         assert_eq!(
             store.get_effective(None, "theme"),
@@ -667,7 +790,12 @@ mod tests {
     fn test_settings_workspace_overrides_user() {
         let store = SettingsStore::new();
         store.set(SettingsLayer::User, None, "lang", serde_json::json!("en"));
-        store.set(SettingsLayer::Workspace, Some("ws1"), "lang", serde_json::json!("zh"));
+        store.set(
+            SettingsLayer::Workspace,
+            Some("ws1"),
+            "lang",
+            serde_json::json!("zh"),
+        );
         assert_eq!(
             store.get_effective(Some("ws1"), "lang"),
             Some(serde_json::json!("zh"))
@@ -684,7 +812,12 @@ mod tests {
         let store = SettingsStore::new();
         store.set(SettingsLayer::System, None, "a", serde_json::json!(1));
         store.set(SettingsLayer::User, None, "b", serde_json::json!(2));
-        store.set(SettingsLayer::Workspace, Some("ws1"), "c", serde_json::json!(3));
+        store.set(
+            SettingsLayer::Workspace,
+            Some("ws1"),
+            "c",
+            serde_json::json!(3),
+        );
         let merged = store.get_effective_all(Some("ws1"));
         assert_eq!(merged.get("a"), Some(&serde_json::json!(1)));
         assert_eq!(merged.get("b"), Some(&serde_json::json!(2)));
@@ -696,7 +829,9 @@ mod tests {
         let store = SettingsStore::new();
         store.set(SettingsLayer::User, None, "k", serde_json::json!("v"));
         assert!(store.unset(SettingsLayer::User, None, "k"));
-        assert!(store.get_layer_value(SettingsLayer::User, None, "k").is_none());
+        assert!(store
+            .get_layer_value(SettingsLayer::User, None, "k")
+            .is_none());
     }
 
     #[test]
@@ -704,12 +839,28 @@ mod tests {
         let store = SettingsStore::new();
         let initial = store.version().schema_version;
         store.migrate(vec![
-            ("m1".to_string(), Box::new(|s: &SettingsStore| {
-                s.set(SettingsLayer::System, None, "migrated", serde_json::json!(true));
-            }) as Box<dyn Fn(&SettingsStore)>),
-            ("m2".to_string(), Box::new(|s: &SettingsStore| {
-                s.set(SettingsLayer::System, None, "migrated2", serde_json::json!(true));
-            }) as Box<dyn Fn(&SettingsStore)>),
+            (
+                "m1".to_string(),
+                Box::new(|s: &SettingsStore| {
+                    s.set(
+                        SettingsLayer::System,
+                        None,
+                        "migrated",
+                        serde_json::json!(true),
+                    );
+                }) as Box<dyn Fn(&SettingsStore)>,
+            ),
+            (
+                "m2".to_string(),
+                Box::new(|s: &SettingsStore| {
+                    s.set(
+                        SettingsLayer::System,
+                        None,
+                        "migrated2",
+                        serde_json::json!(true),
+                    );
+                }) as Box<dyn Fn(&SettingsStore)>,
+            ),
         ]);
         let v = store.version();
         assert_eq!(v.schema_version, initial + 2);
@@ -782,7 +933,10 @@ mod tests {
         });
         let theme = tm.current_theme();
         assert_eq!(theme.tokens.bg_primary, "#custom");
-        assert_eq!(theme.tokens.text_primary, DesignTokens::light().text_primary);
+        assert_eq!(
+            theme.tokens.text_primary,
+            DesignTokens::light().text_primary
+        );
     }
 
     // --- Shortcuts ---
@@ -805,8 +959,16 @@ mod tests {
 
     #[test]
     fn test_shortcut_signature_normalized() {
-        let b1 = ShortcutBinding::new(ShortcutScope::Editor, "K", vec!["Ctrl".into(), "Shift".into()]);
-        let b2 = ShortcutBinding::new(ShortcutScope::Editor, "k", vec!["Shift".into(), "Ctrl".into()]);
+        let b1 = ShortcutBinding::new(
+            ShortcutScope::Editor,
+            "K",
+            vec!["Ctrl".into(), "Shift".into()],
+        );
+        let b2 = ShortcutBinding::new(
+            ShortcutScope::Editor,
+            "k",
+            vec!["Shift".into(), "Ctrl".into()],
+        );
         // 顺序不同、大小写不同 → 签名相同
         assert_eq!(b1.signature(), b2.signature());
     }
@@ -922,7 +1084,8 @@ mod tests {
     #[test]
     fn test_system_settings_aggregate() {
         let s = SystemSettings::new();
-        s.store.set(SettingsLayer::User, None, "k", serde_json::json!("v"));
+        s.store
+            .set(SettingsLayer::User, None, "k", serde_json::json!("v"));
         s.theme.set_mode(ThemeMode::Dark);
         s.shortcuts.register(Shortcut {
             id: "s1".into(),
@@ -931,7 +1094,10 @@ mod tests {
             binding: ShortcutBinding::new(ShortcutScope::Global, "T", vec![]),
             platform: Platform::Linux,
         });
-        assert_eq!(s.store.get_effective(None, "k"), Some(serde_json::json!("v")));
+        assert_eq!(
+            s.store.get_effective(None, "k"),
+            Some(serde_json::json!("v"))
+        );
         assert_eq!(s.theme.current_theme().mode, ThemeMode::Dark);
         assert_eq!(s.shortcuts.list().len(), 1);
     }
