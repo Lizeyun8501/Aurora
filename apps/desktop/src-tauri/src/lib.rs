@@ -95,17 +95,31 @@ pub fn run() {
 ///
 /// 对应 V19 §36.1 启动流程步骤 2-4。
 fn build_app_core(data_dir: &std::path::Path, db_path: &std::path::Path) -> AppCore {
-    // 加载系统设置（V19 §16）：本轮先用默认值，后续 PR 可改为从 SQLite 的
-    // settings_layer 表读出已持久化的 SystemSettings。AI 子结构会驱动
-    // 本地 Ollama provider 的 base_url/model 以及云端 fallback 的开关。
+    // 加载系统设置（V19 §16）。
+    //
+    // SystemSettings::new() 内部已接通 AISettings::load_from(SettingsStore)：
+    // 当 SettingsStore 为空内存版时退化为 AISettings::default()；一旦未来的
+    // SettingsStore 真基于 SQLite 持久化实现，AISettings 即自动从 System/User/
+    // Workspace 三层合并读取（Workspace > User > System）。AI 子结构驱动本地
+    // Ollama provider 的 base_url/model 以及云端 fallback 的开关。
     let core_settings = aurora_core::l3_domain::system_settings::SystemSettings::new();
 
     // KVStore：基于 SQLite 的实现
+    // 注：SqliteStorage::new 返回 Result<Self, Error>，原代码漏 .expect() 会因
+    // apps/ 非 workspace member、CI 不编而静默多年。本轮接 expect 早失败，语气与
+    // run() 一致。apps/ 仍是非 member；但这样未来纳入 workspace 时直接编通。
     let kv_store: Arc<dyn aurora_core::traits::kv_store::KVStore> = Arc::new(
-        aurora_core::l1_infrastructure::storage::SqliteStorage::new(db_path),
+        aurora_core::l1_infrastructure::storage::SqliteStorage::new(db_path)
+            .expect("AppCore init: sqlite storage open failed"),
     );
 
     // SearchBackend：基于 Tantivy 的全文检索
+    // 已知缺口：`search::TantivySearchBackend` 当前在仓库里并不存在
+    // （`crates/aurora-core/src/l1_infrastructure/search.rs` 只有 `pub struct
+    // SearchIndex;` 占位）。这同样是一处 phantom reference，与刚修的
+    // LocalLlamaProvider 同类，导致 apps/desktop 真做 workspace member 后
+    // 仍编不通。本轮范围仅修下方两处 Result→expect 缺陷；将 search 注入真正
+    // 接通的活儿留到「apps/ 收 workspace + 补 TantivySearchBackend」下一轮。
     let index_dir = data_dir.join("tantivy_index");
     let search: Arc<dyn aurora_core::traits::search_backend::SearchBackend> =
         Arc::new(aurora_core::l1_infrastructure::search::TantivySearchBackend::new(&index_dir));
@@ -161,7 +175,8 @@ fn build_app_core(data_dir: &std::path::Path, db_path: &std::path::Path) -> AppC
 
     // EventBus 持久化：SQLite event_queue 表
     let event_bus_store: Arc<dyn aurora_core::event_bus::layered::EventQueueStore> = Arc::new(
-        aurora_core::event_bus::sqlite_queue::SqliteEventQueue::new(db_path),
+        aurora_core::event_bus::sqlite_queue::SqliteEventQueue::new(db_path)
+            .expect("AppCore init: sqlite event queue open failed"),
     );
 
     AppCoreBuilder::new()

@@ -704,6 +704,113 @@ impl AISettings {
     pub fn cloud_configured(&self) -> bool {
         self.cloud_base_url.is_some() && self.cloud_api_key.is_some() && self.cloud_model.is_some()
     }
+
+    // ----- SettingsStore 接通（V19 §16 / §7.2）---------------------------
+    //
+    // 键命名规约（前缀 `ai.`，扁平存在 `SettingsStore` 的 kv 里）：
+    //   ai.ollama_base_url : String              — 空串视作缺省
+    //   ai.ollama_model    : String              — 空串视作缺省
+    //   ai.cloud_base_url  : String              — 空串视作 None
+    //   ai.cloud_api_key   : String              — 空串视作 None
+    //     （TODO: 生产环境应存进 secret store，扁平只是过渡）
+    //   ai.cloud_model     : String              — 空串视作 None
+    //   ai.strategy        : String serde 名     — InferenceStrategy 的
+    //     snake_case 名（local_first / cloud_only / auto）
+    //
+    // 失败哲学：任一字段类型/解析失败 → `warn!` 并保留默认；不 panic。
+    // 坏配置降级到 Default 而非硬崩，与 V19 §lower-grade 一致。
+
+    /// 从 `SettingsStore` 合并读取（Workspace > User > System），缺省回 `Default`。
+    pub fn load_from(store: &SettingsStore, workspace_id: Option<&str>) -> Self {
+        let mut out = AISettings::default();
+
+        if let Some(serde_json::Value::String(s)) =
+            store.get_effective(workspace_id, "ai.ollama_base_url")
+        {
+            if !s.is_empty() {
+                out.ollama_base_url = s;
+            }
+        };
+        if let Some(serde_json::Value::String(s)) =
+            store.get_effective(workspace_id, "ai.ollama_model")
+        {
+            if !s.is_empty() {
+                out.ollama_model = s;
+            }
+        };
+        out.cloud_base_url = load_opt_string(store, workspace_id, "ai.cloud_base_url");
+        out.cloud_api_key = load_opt_string(store, workspace_id, "ai.cloud_api_key");
+        out.cloud_model = load_opt_string(store, workspace_id, "ai.cloud_model");
+
+        if let Some(raw) = store.get_effective(workspace_id, "ai.strategy") {
+            match serde_json::from_value::<crate::l3_domain::ai_system::InferenceStrategy>(raw) {
+                Ok(s) => out.strategy = s,
+                Err(e) => warn!(
+                    field = "ai.strategy",
+                    error = %e,
+                    "bad ai.strategy value; keeping default"
+                ),
+            }
+        }
+        out
+    }
+
+    /// 把当前 AI 设置写回 `SettingsStore` 的指定层。
+    ///
+    /// `Option<String>` = `None` 时**跳过**该键（不写成空串），避免后续 `load_from`
+    /// 把「已设置但空」读回成 None 的语义模糊。
+    pub fn save_to(&self, store: &SettingsStore, layer: SettingsLayer, workspace_id: Option<&str>) {
+        store.set(
+            layer,
+            workspace_id,
+            "ai.ollama_base_url",
+            serde_json::Value::String(self.ollama_base_url.clone()),
+        );
+        store.set(
+            layer,
+            workspace_id,
+            "ai.ollama_model",
+            serde_json::Value::String(self.ollama_model.clone()),
+        );
+        if let Some(ref v) = self.cloud_base_url {
+            store.set(
+                layer,
+                workspace_id,
+                "ai.cloud_base_url",
+                serde_json::Value::String(v.clone()),
+            );
+        }
+        if let Some(ref v) = self.cloud_api_key {
+            store.set(
+                layer,
+                workspace_id,
+                "ai.cloud_api_key",
+                serde_json::Value::String(v.clone()),
+            );
+        }
+        if let Some(ref v) = self.cloud_model {
+            store.set(
+                layer,
+                workspace_id,
+                "ai.cloud_model",
+                serde_json::Value::String(v.clone()),
+            );
+        }
+        match serde_json::to_value(&self.strategy) {
+            Ok(v) => store.set(layer, workspace_id, "ai.strategy", v),
+            Err(e) => warn!(error = %e, "ai.strategy serialize failed; skipping write"),
+        }
+    }
+}
+
+/// Helper: 读取 `Option<String>` 字段；空串 / 非 String 类型都视作 `None`。
+/// 写成自由函数而非 `AISettings` 方法，避免 `&self` 借用与 `store.get_effective` 冲突。
+fn load_opt_string(store: &SettingsStore, workspace_id: Option<&str>, key: &str) -> Option<String> {
+    match store.get_effective(workspace_id, key) {
+        Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s),
+        // 其它类型（数字、对象、空串）：保留默认 None，不 panic。
+        _ => None,
+    }
 }
 
 /// 系统设置顶层聚合
@@ -723,11 +830,25 @@ impl Default for SystemSettings {
 
 impl SystemSettings {
     pub fn new() -> Self {
+        let store = SettingsStore::new();
+        Self::new_with_store(store)
+    }
+
+    /// 用一个外部 `SettingsStore` 装载顶层设置；`ai` 子结构通过
+    /// [`AISettings::load_from`] 从 store 读取（合并 Workspace > User > System）。
+    /// store 为空时退化为 `AISettings::default()`，行为可观察地与原 `new()` 等价。
+    ///
+    /// **本轮限制**：`SettingsStore` 本身仍是内存版（`HashMap` 模拟 SQLite，
+    /// 见模块首段简化说明）。真 SQLite 持久化留下轮；本轮接通的是
+    /// `ai` 字段与 store 之间的读写电缆（让未来的写入 / Tauri command /
+    /// 设置界面有地方落了之后即生效）。
+    pub fn new_with_store(store: SettingsStore) -> Self {
+        let ai = AISettings::load_from(&store, None);
         Self {
-            store: SettingsStore::new(),
+            store,
             theme: ThemeManager::new(),
             shortcuts: ShortcutManager::new(),
-            ai: AISettings::default(),
+            ai,
         }
     }
 }
@@ -1100,5 +1221,151 @@ mod tests {
         );
         assert_eq!(s.theme.current_theme().mode, ThemeMode::Dark);
         assert_eq!(s.shortcuts.list().len(), 1);
+    }
+
+    // ----- AISettings::load_from / save_to (V19 §16 / §7.2) ------------------
+
+    #[test]
+    fn test_ai_settings_load_from_empty_store_returns_default() {
+        let store = SettingsStore::new();
+        let loaded = AISettings::load_from(&store, None);
+        let default = AISettings::default();
+        assert_eq!(loaded.ollama_base_url, default.ollama_base_url);
+        assert_eq!(loaded.ollama_model, default.ollama_model);
+        assert_eq!(loaded.cloud_base_url, default.cloud_base_url);
+        assert_eq!(loaded.cloud_api_key, default.cloud_api_key);
+        assert_eq!(loaded.cloud_model, default.cloud_model);
+        assert_eq!(loaded.strategy, default.strategy);
+        // 也验证 cloud_configured() 与默认一致（应 false）。
+        assert!(!loaded.cloud_configured());
+    }
+
+    #[test]
+    fn test_ai_settings_load_from_store_overrides_default() {
+        let store = SettingsStore::new();
+        store.set(
+            SettingsLayer::System,
+            None,
+            "ai.ollama_base_url",
+            serde_json::json!("http://other:1234"),
+        );
+        store.set(
+            SettingsLayer::User,
+            None,
+            "ai.ollama_model",
+            serde_json::json!("qwen2.5"),
+        );
+        // User 覆盖 System 应在 get_effective 层做（这是 SettingsStore 的责，
+        // AISettings::load_from 只消费）。这里验证 User 层确实生效。
+        store.set(
+            SettingsLayer::User,
+            None,
+            "ai.cloud_base_url",
+            serde_json::json!("https://api.openai.com/v1"),
+        );
+        store.set(
+            SettingsLayer::User,
+            None,
+            "ai.cloud_api_key",
+            serde_json::json!("sk-test"),
+        );
+        store.set(
+            SettingsLayer::User,
+            None,
+            "ai.cloud_model",
+            serde_json::json!("gpt-4o-mini"),
+        );
+        store.set(
+            SettingsLayer::User,
+            None,
+            "ai.strategy",
+            serde_json::json!("auto"),
+        );
+
+        let loaded = AISettings::load_from(&store, None);
+        assert_eq!(loaded.ollama_base_url, "http://other:1234");
+        assert_eq!(loaded.ollama_model, "qwen2.5");
+        assert_eq!(
+            loaded.cloud_base_url.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        assert_eq!(loaded.cloud_api_key.as_deref(), Some("sk-test"));
+        assert_eq!(loaded.cloud_model.as_deref(), Some("gpt-4o-mini"));
+        assert_eq!(
+            loaded.strategy,
+            crate::l3_domain::ai_system::InferenceStrategy::Auto
+        );
+        assert!(loaded.cloud_configured());
+    }
+
+    #[test]
+    fn test_ai_settings_save_then_load_roundtrip() {
+        let store = SettingsStore::new();
+        let original = AISettings {
+            ollama_base_url: "http://gpu-box:11434".into(),
+            ollama_model: "deepseek-r1".into(),
+            cloud_base_url: Some("https://api.deepseek.com".into()),
+            cloud_api_key: Some("sk-abc".into()),
+            cloud_model: Some("deepseek-chat".into()),
+            strategy: crate::l3_domain::ai_system::InferenceStrategy::CloudOnly,
+        };
+        original.save_to(&store, SettingsLayer::User, None);
+
+        let loaded = AISettings::load_from(&store, None);
+        assert_eq!(loaded.ollama_base_url, original.ollama_base_url);
+        assert_eq!(loaded.ollama_model, original.ollama_model);
+        assert_eq!(loaded.cloud_base_url, original.cloud_base_url);
+        assert_eq!(loaded.cloud_api_key, original.cloud_api_key);
+        assert_eq!(loaded.cloud_model, original.cloud_model);
+        assert_eq!(loaded.strategy, original.strategy);
+        assert!(loaded.cloud_configured());
+    }
+
+    #[test]
+    fn test_ai_settings_load_bad_type_falls_back_to_default() {
+        let store = SettingsStore::new();
+        // 数字而非 String —— 应不 panic、保留默认。
+        store.set(
+            SettingsLayer::System,
+            None,
+            "ai.ollama_base_url",
+            serde_json::json!(42),
+        );
+        // strategy 写个无意义的对象 —— serde 反序列化失败 → warn! 并保留默认。
+        store.set(
+            SettingsLayer::User,
+            None,
+            "ai.strategy",
+            serde_json::json!({ "foo": "bar" }),
+        );
+        // cloud 三元组写空串 —— 空串视作 None。
+        store.set(
+            SettingsLayer::User,
+            None,
+            "ai.cloud_api_key",
+            serde_json::json!(""),
+        );
+
+        let loaded = AISettings::load_from(&store, None);
+        let default = AISettings::default();
+        assert_eq!(loaded.ollama_base_url, default.ollama_base_url);
+        assert_eq!(loaded.strategy, default.strategy);
+        assert_eq!(loaded.cloud_api_key, None);
+        assert!(!loaded.cloud_configured());
+    }
+
+    #[test]
+    fn test_system_settings_new_loads_ai_from_store() {
+        // 直接覆盖生产路径：SystemSettings::new_with_store(store) → ai 字段
+        // 应反映 store 内容。
+        let store = SettingsStore::new();
+        store.set(
+            SettingsLayer::System,
+            None,
+            "ai.ollama_model",
+            serde_json::json!("phi3"),
+        );
+        let s = SystemSettings::new_with_store(store);
+        assert_eq!(s.ai.ollama_model, "phi3");
     }
 }

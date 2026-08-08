@@ -774,15 +774,19 @@ mod tests {
         engine.assign(user("u1"), res_ws("ws1"), weekday_policy);
 
         // 构造一个工作日的上下文
+        // 注：必须用 UTC 凌晨时间戳，否则在正偏移时区（如 Asia/Shanghai UTC+8）
+        // 投影后会跨午夜变成周一，weekday=1 ∈ [1..5] 反而满足条件，断言反转。
+        // 旧值 1_721_000_000 = UTC 2024-07-14 23:33 周日深夜 → 北京周一 → 假阳。
+        // 新值 1_720_956_800 = UTC 2024-07-14 00:00 = 北京 08:00 仍周日 (weekday=7)。
         let weekday_ctx = AccessContext {
             request_time: Some(
-                chrono::DateTime::from_timestamp(1_721_000_000, 0)
+                chrono::DateTime::from_timestamp(1_720_956_800, 0)
                     .unwrap()
                     .with_timezone(&Local),
             ),
             ..Default::default()
         };
-        // 该时间戳 2024-07-14 是周日 (weekday=7)，条件不满足
+        // UTC 2024-07-14 00:00 是周日 (weekday=7)，条件 [1..5] 不满足
         assert!(
             !engine
                 .check("u1", &res_ws("ws1"), Permission::Write, &weekday_ctx)
@@ -890,9 +894,12 @@ mod tests {
         engine.assign(user("u1"), res_ws("ws1"), fallback_policy);
 
         // 周日访问，条件不满足，降级为 Viewer
+        // 注：1_721_000_000 = UTC 2024-07-14 23:33 周日深夜 → 北京 (UTC+8) 周一 07:33，
+        // 假阳满足 Weekdays([1..5]) 条件，无法触发 fallback。改用 1_720_956_800
+        // = UTC 2024-07-14 00:00 = 北京 08:00，仍周日 (weekday=7)，触发 Viewer 降级。
         let sunday_ctx = AccessContext {
             request_time: Some(
-                chrono::DateTime::from_timestamp(1_721_000_000, 0)
+                chrono::DateTime::from_timestamp(1_720_956_800, 0)
                     .unwrap()
                     .with_timezone(&Local),
             ),
