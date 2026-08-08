@@ -160,8 +160,8 @@ fn entropy_to_indices(entropy: &[u8; ENTROPY_LEN], checksum: u8) -> [u16; MNEMON
     buf[..ENTROPY_LEN].copy_from_slice(entropy);
     buf[ENTROPY_LEN] = checksum;
     let mut indices = [0u16; MNEMONIC_WORDS];
-    for i in 0..MNEMONIC_WORDS {
-        indices[i] = read_bits(&buf, i * 11, 11) as u16;
+    for (i, item) in indices.iter_mut().enumerate().take(MNEMONIC_WORDS) {
+        *item = read_bits(&buf, i * 11, 11) as u16;
     }
     indices
 }
@@ -255,10 +255,7 @@ impl ShamirSecretSharing {
 
     /// 默认 3-of-2：拆成 3 份，需 2 份重建
     pub fn default_3_of_2() -> Self {
-        Self {
-            n: 3,
-            threshold: 2,
-        }
+        Self { n: 3, threshold: 2 }
     }
 
     pub fn n(&self) -> usize {
@@ -293,7 +290,11 @@ impl ShamirSecretSharing {
                 share.y[j] = acc;
             }
         }
-        info!(n = self.n, threshold = self.threshold, "split secret into shares");
+        info!(
+            n = self.n,
+            threshold = self.threshold,
+            "split secret into shares"
+        );
         Ok(shares)
     }
 
@@ -312,9 +313,9 @@ impl ShamirSecretSharing {
         let len = shares[0].y.len();
         let k = self.threshold;
         let mut secret = vec![0u8; len];
-        for j in 0..len {
+        for (j, secret_byte) in secret.iter_mut().enumerate().take(len) {
             let pts: Vec<(u8, u8)> = shares[..k].iter().map(|s| (s.x, s.y[j])).collect();
-            secret[j] = lagrange_at_zero(&pts);
+            *secret_byte = lagrange_at_zero(&pts);
         }
         debug!(k, "reconstructed secret from shares");
         Ok(secret)
@@ -376,11 +377,10 @@ fn lagrange_at_zero(pts: &[(u8, u8)]) -> u8 {
         let (xi, yi) = pts[i];
         let mut num = 1u8; // ∏ (0 - x_j) = ∏ x_j   (GF(2^8) 中 -a = a)
         let mut den = 1u8; // ∏ (x_i - x_j) = ∏ (x_i ⊕ x_j)
-        for j in 0..k {
+        for (j, &(xj, _)) in pts.iter().enumerate().take(k) {
             if j == i {
                 continue;
             }
-            let (xj, _) = pts[j];
             num = gf_mul(num, xj);
             den = gf_mul(den, xi ^ xj);
         }
@@ -506,7 +506,11 @@ mod tests {
         let m = Mnemonic::generate().unwrap();
         assert_eq!(m.word_count(), MNEMONIC_WORDS);
         for w in m.words() {
-            assert!(w.starts_with('w'), "synthetic word must start with 'w': {}", w);
+            assert!(
+                w.starts_with('w'),
+                "synthetic word must start with 'w': {}",
+                w
+            );
         }
     }
 
@@ -623,9 +627,15 @@ mod tests {
         let shares = sss.split(&secret).unwrap();
 
         // 任意两份都应重建出同一秘密
-        let r1 = sss.combine(&[shares[0].clone(), shares[1].clone()]).unwrap();
-        let r2 = sss.combine(&[shares[0].clone(), shares[2].clone()]).unwrap();
-        let r3 = sss.combine(&[shares[1].clone(), shares[2].clone()]).unwrap();
+        let r1 = sss
+            .combine(&[shares[0].clone(), shares[1].clone()])
+            .unwrap();
+        let r2 = sss
+            .combine(&[shares[0].clone(), shares[2].clone()])
+            .unwrap();
+        let r3 = sss
+            .combine(&[shares[1].clone(), shares[2].clone()])
+            .unwrap();
         assert_eq!(r1, secret);
         assert_eq!(r2, secret);
         assert_eq!(r3, secret);
@@ -655,7 +665,9 @@ mod tests {
         let mut secret = [0u8; 32];
         OsRng.fill_bytes(&mut secret);
         let shares = sss.split(&secret).unwrap();
-        let recon = sss.combine(&[shares[0].clone(), shares[2].clone()]).unwrap();
+        let recon = sss
+            .combine(&[shares[0].clone(), shares[2].clone()])
+            .unwrap();
         assert_eq!(recon, secret.to_vec());
     }
 
@@ -730,9 +742,7 @@ mod tests {
         let d2 = DeviceAuthorizationQr::decode(&e2).unwrap();
 
         // 用解码后的两份份额重建秘密
-        let recon = sss
-            .combine(&[d0.share.clone(), d2.share.clone()])
-            .unwrap();
+        let recon = sss.combine(&[d0.share.clone(), d2.share.clone()]).unwrap();
         assert_eq!(recon, secret);
     }
 

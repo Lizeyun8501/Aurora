@@ -19,7 +19,10 @@ pub trait OcrProvider: Send + Sync {
     async fn recognize(&self, image_bytes: &[u8]) -> Result<OcrResult, crate::Error>;
 
     /// 对多张图片进行批量文字识别
-    async fn recognize_batch(&self, image_bytes_list: &[&[u8]]) -> Result<Vec<OcrResult>, crate::Error>;
+    async fn recognize_batch(
+        &self,
+        image_bytes_list: &[&[u8]],
+    ) -> Result<Vec<OcrResult>, crate::Error>;
 
     /// 检查 OCR 引擎是否可用（纯查询，保持同步签名）
     fn is_available(&self) -> bool;

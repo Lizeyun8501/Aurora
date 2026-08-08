@@ -219,18 +219,18 @@ pub fn compute_simhash(text: &str) -> u64 {
     let mut vec = [0i32; 64];
     for (token, weight) in weights {
         let hash = hash_token(&token);
-        for i in 0..64 {
+        for (i, v) in vec.iter_mut().enumerate() {
             if (hash >> i) & 1 == 1 {
-                vec[i] += weight as i32;
+                *v += weight as i32;
             } else {
-                vec[i] -= weight as i32;
+                *v -= weight as i32;
             }
         }
     }
 
     let mut simhash: u64 = 0;
-    for i in 0..64 {
-        if vec[i] > 0 {
+    for (i, v) in vec.iter().enumerate() {
+        if *v > 0 {
             simhash |= 1 << i;
         }
     }

@@ -46,14 +46,13 @@ impl Default for SecurityCryptoProvider {
 impl CryptoProvider for SecurityCryptoProvider {
     fn encrypt(&self, plaintext: &[u8], key: &[u8; 32]) -> Result<Ciphertext, aurora_core::Error> {
         use aes_gcm::{
-            Aes256Gcm, Nonce,
             aead::{Aead, KeyInit},
+            Aes256Gcm, Nonce,
         };
         use rand::RngCore;
 
-        let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| {
-            aurora_core::Error::Crypto(format!("invalid key length: {}", e))
-        })?;
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| aurora_core::Error::Crypto(format!("invalid key length: {}", e)))?;
         let mut nonce_bytes = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
@@ -80,13 +79,12 @@ impl CryptoProvider for SecurityCryptoProvider {
 
     fn decrypt(&self, ct: &Ciphertext, key: &[u8; 32]) -> Result<Vec<u8>, aurora_core::Error> {
         use aes_gcm::{
-            Aes256Gcm, Nonce,
             aead::{Aead, KeyInit},
+            Aes256Gcm, Nonce,
         };
 
-        let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| {
-            aurora_core::Error::Crypto(format!("invalid key length: {}", e))
-        })?;
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| aurora_core::Error::Crypto(format!("invalid key length: {}", e)))?;
         let nonce = Nonce::from_slice(&ct.nonce);
         let mut payload = ct.data.clone();
         payload.extend_from_slice(&ct.tag);
@@ -97,24 +95,20 @@ impl CryptoProvider for SecurityCryptoProvider {
     }
 
     fn derive_key(&self, password: &str, salt: &[u8]) -> Result<[u8; 32], aurora_core::Error> {
-        use argon2::{
-            Argon2, Params, password_hash::SaltString,
-        };
+        use argon2::{password_hash::SaltString, Argon2, Params};
         use rand::rngs::OsRng;
 
         let salt_str = if salt.len() >= 8 {
-            SaltString::encode_b64(salt).map_err(|e| {
-                aurora_core::Error::Crypto(format!("salt encoding failed: {}", e))
-            })?
+            SaltString::encode_b64(salt)
+                .map_err(|e| aurora_core::Error::Crypto(format!("salt encoding failed: {}", e)))?
         } else {
             SaltString::generate(&mut OsRng)
         };
         let argon2 = Argon2::new(
             argon2::Algorithm::Argon2id,
             argon2::Version::V0x13,
-            Params::new(65536, 3, 4, Some(32)).map_err(|e| {
-                aurora_core::Error::Crypto(format!("argon2 params failed: {}", e))
-            })?,
+            Params::new(65536, 3, 4, Some(32))
+                .map_err(|e| aurora_core::Error::Crypto(format!("argon2 params failed: {}", e)))?,
         );
         let mut okm = [0u8; 32];
         argon2
@@ -126,9 +120,9 @@ impl CryptoProvider for SecurityCryptoProvider {
     fn kem_keypair(&self) -> Result<(KemPublicKey, KemSecretKey), aurora_core::Error> {
         use crate::post_quantum::PostQuantumKem;
         let kem = crate::post_quantum::MlKem768Kem::new();
-        let kp = kem.generate_keypair().map_err(|e| {
-            aurora_core::Error::Crypto(format!("ML-KEM-768 keygen failed: {}", e))
-        })?;
+        let kp = kem
+            .generate_keypair()
+            .map_err(|e| aurora_core::Error::Crypto(format!("ML-KEM-768 keygen failed: {}", e)))?;
         Ok((KemPublicKey(kp.public), KemSecretKey(kp.private)))
     }
 
@@ -169,7 +163,7 @@ impl CryptoProvider for SecurityCryptoProvider {
     }
 
     fn hash(&self, data: &[u8]) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(data);
         hasher.finalize().into()
@@ -240,7 +234,10 @@ mod tests {
         let (ss1, ct) = provider.kem_encapsulate(&pk).unwrap();
         let ss2 = provider.kem_decapsulate(&sk, &ct).unwrap();
         // ML-KEM-768 真实实现：共享秘密应完全一致
-        assert_eq!(ss1.0, ss2.0, "ML-KEM-768 encapsulate/decapsulate shared secret mismatch");
+        assert_eq!(
+            ss1.0, ss2.0,
+            "ML-KEM-768 encapsulate/decapsulate shared secret mismatch"
+        );
     }
 
     #[test]

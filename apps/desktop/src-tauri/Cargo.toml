@@ -19,12 +19,13 @@ chrono = { workspace = true }
 
 aurora-core = { path = "../../../crates/aurora-core" }
 aurora-security = { path = "../../../crates/aurora-security" }
-aurora-ai = { path = "../../../crates/aurora-ai" }
-aurora-plugin = { path = "../../../crates/aurora-plugin" }
-aurora-sync = { path = "../../../crates/aurora-sync" }
-aurora-migration = { path = "../../../crates/migration" }
+# 共享启动装配（迁移 + DEK 保险库 + AppCore DI 注入 + startup）
+aurora-bootstrap = { path = "../../../crates/aurora-bootstrap" }
 
 dirs-next = "2.0"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
 
 [features]
 default = []

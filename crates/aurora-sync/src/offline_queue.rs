@@ -252,9 +252,12 @@ mod tests {
     #[test]
     fn test_priority_queue_ordering() {
         let q = OfflineQueue::new();
-        q.enqueue(QueueItem::new("doc", vec![1], Priority::Low)).unwrap();
-        q.enqueue(QueueItem::new("doc", vec![2], Priority::High)).unwrap();
-        q.enqueue(QueueItem::new("doc", vec![3], Priority::Medium)).unwrap();
+        q.enqueue(QueueItem::new("doc", vec![1], Priority::Low))
+            .unwrap();
+        q.enqueue(QueueItem::new("doc", vec![2], Priority::High))
+            .unwrap();
+        q.enqueue(QueueItem::new("doc", vec![3], Priority::Medium))
+            .unwrap();
         // 应按 High -> Medium -> Low 出队
         let first = q.dequeue().unwrap();
         assert_eq!(first.priority, Priority::High);
@@ -267,12 +270,10 @@ mod tests {
     #[test]
     fn test_idempotency_dedup() {
         let q = OfflineQueue::new();
-        let item = QueueItem::new("doc1", vec![1], Priority::High)
-            .with_idempotency_key("key-1");
+        let item = QueueItem::new("doc1", vec![1], Priority::High).with_idempotency_key("key-1");
         let id1 = q.enqueue(item).expect("enqueue");
         // 相同幂等键再次入队应被去重
-        let dup = QueueItem::new("doc1", vec![2], Priority::High)
-            .with_idempotency_key("key-1");
+        let dup = QueueItem::new("doc1", vec![2], Priority::High).with_idempotency_key("key-1");
         let id2 = q.enqueue(dup).expect("enqueue");
         assert_eq!(id1, id2);
         assert_eq!(q.len(), 1);
@@ -283,7 +284,8 @@ mod tests {
     fn test_dequeue_batch() {
         let q = OfflineQueue::new();
         for i in 0..5 {
-            q.enqueue(QueueItem::new("doc", vec![i], Priority::Medium)).unwrap();
+            q.enqueue(QueueItem::new("doc", vec![i], Priority::Medium))
+                .unwrap();
         }
         let batch = q.dequeue_batch(3);
         assert_eq!(batch.len(), 3);
@@ -333,13 +335,11 @@ mod tests {
     fn test_fifo_within_same_priority() {
         let q = OfflineQueue::new();
         // 同优先级，先入的先出
-        let early = QueueItem::new("doc", vec![1], Priority::Medium)
-            .with_idempotency_key("e");
+        let early = QueueItem::new("doc", vec![1], Priority::Medium).with_idempotency_key("e");
         let early_id = q.enqueue(early).unwrap();
         // 确保 created_at 有差异
         std::thread::sleep(std::time::Duration::from_millis(2));
-        let late = QueueItem::new("doc", vec![2], Priority::Medium)
-            .with_idempotency_key("l");
+        let late = QueueItem::new("doc", vec![2], Priority::Medium).with_idempotency_key("l");
         let late_id = q.enqueue(late).unwrap();
         let first = q.dequeue().unwrap();
         assert_eq!(first.id, early_id);

@@ -18,7 +18,6 @@ pub struct CryptoContext {
     pub argon2_params: argon2::Params,
 }
 
-
 impl CryptoContext {
     /// 创建默认密码学上下文。
     pub fn new() -> Self {
@@ -104,7 +103,11 @@ pub fn encrypt_aes_gcm(
 }
 
 /// 使用 AES-256-GCM 解密数据。
-pub fn decrypt_aes_gcm(ciphertext: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>, crate::Error> {
+pub fn decrypt_aes_gcm(
+    ciphertext: &[u8],
+    key: &[u8],
+    nonce: &[u8],
+) -> Result<Vec<u8>, crate::Error> {
     if key.len() != 32 {
         return Err(crate::Error::InvalidInput(format!(
             "AES-256-GCM key must be 32 bytes, got {}",
@@ -141,7 +144,11 @@ pub fn sign_ecdsa_p256(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>, crate
 }
 
 /// 使用 ring 的 ECDSA (P-256) 验证签名。
-pub fn verify_ecdsa_p256(data: &[u8], public_key: &[u8], signature: &[u8]) -> Result<bool, crate::Error> {
+pub fn verify_ecdsa_p256(
+    data: &[u8],
+    public_key: &[u8],
+    signature: &[u8],
+) -> Result<bool, crate::Error> {
     let public_key = ring::signature::UnparsedPublicKey::new(
         &ring::signature::ECDSA_P256_SHA256_ASN1,
         public_key,
@@ -152,7 +159,6 @@ pub fn verify_ecdsa_p256(data: &[u8], public_key: &[u8], signature: &[u8]) -> Re
 /// base64 编码辅助模块（简化实现，避免额外依赖）。
 mod base64 {
     pub fn encode(input: &[u8]) -> String {
-        
         const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
         for chunk in input.chunks(3) {
@@ -176,6 +182,15 @@ mod base64 {
     }
 
     pub fn decode(input: &str) -> Result<Vec<u8>, crate::Error> {
+        // 标准 base64 输入长度必须为 4 的倍数（含 padding）。非 4 倍数时
+        // `chunks(4)` 的末块不足 4 字节，后续下标访问会越界 panic，
+        // 这里先校验并返回错误，避免崩溃。
+        if !input.is_empty() && !input.len().is_multiple_of(4) {
+            return Err(crate::Error::InvalidInput(format!(
+                "invalid base64 length: {} (must be a multiple of 4)",
+                input.len()
+            )));
+        }
         let mut out = Vec::with_capacity(input.len() / 4 * 3);
         for chunk in input.as_bytes().chunks(4) {
             let decode_char = |c: u8| -> Option<u8> {
@@ -189,10 +204,14 @@ mod base64 {
                     _ => None,
                 }
             };
-            let a = decode_char(chunk[0]).ok_or_else(|| crate::Error::InvalidInput("invalid base64".to_string()))?;
-            let b = decode_char(chunk[1]).ok_or_else(|| crate::Error::InvalidInput("invalid base64".to_string()))?;
-            let c = decode_char(chunk[2]).ok_or_else(|| crate::Error::InvalidInput("invalid base64".to_string()))?;
-            let d = decode_char(chunk[3]).ok_or_else(|| crate::Error::InvalidInput("invalid base64".to_string()))?;
+            let a = decode_char(chunk[0])
+                .ok_or_else(|| crate::Error::InvalidInput("invalid base64".to_string()))?;
+            let b = decode_char(chunk[1])
+                .ok_or_else(|| crate::Error::InvalidInput("invalid base64".to_string()))?;
+            let c = decode_char(chunk[2])
+                .ok_or_else(|| crate::Error::InvalidInput("invalid base64".to_string()))?;
+            let d = decode_char(chunk[3])
+                .ok_or_else(|| crate::Error::InvalidInput("invalid base64".to_string()))?;
             out.push((a << 2) | (b >> 4));
             if chunk[2] != b'=' {
                 out.push((b << 4) | (c >> 2));
@@ -206,3 +225,47 @@ mod base64 {
 }
 
 pub use base64::{decode as base64_decode, encode as base64_encode};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_roundtrip() {
+        for data in [
+            b"".as_slice(),
+            b"a",
+            b"ab",
+            b"abc",
+            b"hello world",
+            b"\x00\x01\x02\xff\xfe",
+        ] {
+            let encoded = base64_encode(data);
+            let decoded = base64_decode(&encoded).unwrap();
+            assert_eq!(decoded, data, "roundtrip failed for {:?}", data);
+        }
+    }
+
+    #[test]
+    fn base64_known_vectors() {
+        assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_decode("aGVsbG8=").unwrap(), b"hello");
+    }
+
+    #[test]
+    fn base64_decode_rejects_non_multiple_of_4() {
+        // 长度非 4 倍数（缺 padding）必须返回错误而非 panic
+        let err = base64_decode("aGVsbG8").unwrap_err();
+        assert!(matches!(err, crate::Error::InvalidInput(_)));
+        // 空输入合法
+        assert_eq!(base64_decode("").unwrap(), b"");
+    }
+
+    #[test]
+    fn base64_decode_rejects_invalid_chars() {
+        let err = base64_decode("ab!=").unwrap_err();
+        assert!(matches!(err, crate::Error::InvalidInput(_)));
+    }
+}

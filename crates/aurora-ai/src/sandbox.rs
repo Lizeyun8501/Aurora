@@ -30,24 +30,14 @@ use crate::registry::{ToolInvocation, ToolResult};
 
 /// 写操作类工具名称前缀（在只读模式下默认拒绝）。
 pub const WRITE_TOOL_PREFIXES: &[&str] = &[
-    "write_",
-    "delete_",
-    "create_",
-    "update_",
-    "exec_",
-    "shell_",
-    "rm_",
-    "drop_",
-    "insert_",
+    "write_", "delete_", "create_", "update_", "exec_", "shell_", "rm_", "drop_", "insert_",
     "modify_",
 ];
 
 /// 判定一个工具名是否属于写操作（按前缀）。
 pub fn is_write_tool(name: &str) -> bool {
     let lower = name.to_lowercase();
-    WRITE_PREFIXES
-        .iter()
-        .any(|p| lower.starts_with(p))
+    WRITE_PREFIXES.iter().any(|p| lower.starts_with(p))
 }
 
 // 为保持与 const 列表一致的命名
@@ -96,9 +86,7 @@ impl SandboxConfig {
 
     /// 是否显式允许某工具（白名单非空时使用）。
     pub fn explicitly_allows(&self, tool_name: &str) -> bool {
-        self.allowed_tools
-            .iter()
-            .any(|t| t == tool_name)
+        self.allowed_tools.iter().any(|t| t == tool_name)
     }
 
     /// 白名单是否为空（即不限制）。
@@ -375,10 +363,7 @@ impl SecuritySandbox {
             AuditAction::Invoke,
             AuditDecision::Allow,
             invocation.tool_name.clone(),
-            format!(
-                "invoking tool with args: {}",
-                invocation.arguments
-            ),
+            format!("invoking tool with args: {}", invocation.arguments),
         )
         .with_session(&invocation.session_id);
         self.audit_log.record(entry);
@@ -386,11 +371,7 @@ impl SecuritySandbox {
     }
 
     /// 记录工具调用结果（在执行后调用）。
-    pub fn audit_result(
-        &self,
-        tool_name: &str,
-        result: &ToolResult,
-    ) -> Result<(), crate::Error> {
+    pub fn audit_result(&self, tool_name: &str, result: &ToolResult) -> Result<(), crate::Error> {
         let decision = if result.is_ok() {
             AuditDecision::Success
         } else {
@@ -422,15 +403,21 @@ impl SecuritySandbox {
 
 /// 默认在只读模式下允许的「读」工具前缀。
 pub const READ_TOOL_PREFIXES: &[&str] = &[
-    "read_", "get_", "list_", "search_", "query_", "view_", "fetch_", "extract_", "summarize_",
+    "read_",
+    "get_",
+    "list_",
+    "search_",
+    "query_",
+    "view_",
+    "fetch_",
+    "extract_",
+    "summarize_",
 ];
 
 /// 判定一个工具名是否属于「读」操作（按前缀）。
 pub fn is_read_tool(name: &str) -> bool {
     let lower = name.to_lowercase();
-    READ_TOOL_PREFIXES
-        .iter()
-        .any(|p| lower.starts_with(p))
+    READ_TOOL_PREFIXES.iter().any(|p| lower.starts_with(p))
 }
 
 #[cfg(test)]
@@ -487,8 +474,7 @@ mod tests {
 
     #[test]
     fn test_sandbox_whitelist_denies_unlisted() {
-        let cfg = SandboxConfig::new()
-            .with_allowed_tools(vec!["read_a".into(), "read_b".into()]);
+        let cfg = SandboxConfig::new().with_allowed_tools(vec!["read_a".into(), "read_b".into()]);
         let s = SecuritySandbox::new(cfg);
         assert!(s.check_tool("read_a").is_ok());
         let err = s.check_tool("read_c").unwrap_err();
@@ -592,13 +578,8 @@ mod tests {
 
     #[test]
     fn test_audit_entry_with_session() {
-        let e = AuditEntry::new(
-            AuditAction::Invoke,
-            AuditDecision::Allow,
-            "t",
-            "d",
-        )
-        .with_session("s1");
+        let e =
+            AuditEntry::new(AuditAction::Invoke, AuditDecision::Allow, "t", "d").with_session("s1");
         assert_eq!(e.session_id.as_deref(), Some("s1"));
         assert_eq!(e.tool_name, "t");
     }

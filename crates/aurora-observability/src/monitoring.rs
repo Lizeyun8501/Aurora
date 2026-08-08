@@ -237,10 +237,7 @@ impl HealthChecker {
                 HealthStatus::Unknown => 0,
             }
         );
-        out.push_str(&format!(
-            "aurora_uptime_seconds {}\n",
-            report.uptime_secs
-        ));
+        out.push_str(&format!("aurora_uptime_seconds {}\n", report.uptime_secs));
         out.push_str(&format!(
             "aurora_startup_check_passed {}\n",
             report.startup_check_passed as u8
@@ -556,8 +553,7 @@ impl WebhookPusher {
         if alert.severity < self.config.min_severity {
             return Ok(());
         }
-        let payload = serde_json::to_string(alert)
-            .map_err(Error::Serialization)?;
+        let payload = serde_json::to_string(alert).map_err(Error::Serialization)?;
 
         let mut req = self
             .client
@@ -569,9 +565,10 @@ impl WebhookPusher {
             req = req.header(k, v);
         }
 
-        let resp = req.send().await.map_err(|e| {
-            Error::Internal(format!("webhook push failed: {e}"))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| Error::Internal(format!("webhook push failed: {e}")))?;
 
         if !resp.status().is_success() {
             warn!(
@@ -631,10 +628,7 @@ impl AlertManager {
     }
 
     /// 设置本地通知回调。
-    pub fn set_local_notifier(
-        &self,
-        notifier: impl Fn(LocalNotification) + Send + Sync + 'static,
-    ) {
+    pub fn set_local_notifier(&self, notifier: impl Fn(LocalNotification) + Send + Sync + 'static) {
         *self.local_notifier.write() = Some(Box::new(notifier));
     }
 
@@ -694,11 +688,7 @@ impl AlertManager {
                         summary: format!("{}: {value}", rule.description),
                         description: format!(
                             "{} {} {} (threshold: {}, current: {})",
-                            rule.metric,
-                            rule.operator,
-                            rule.threshold,
-                            rule.threshold,
-                            value
+                            rule.metric, rule.operator, rule.threshold, rule.threshold, value
                         ),
                         first_at: Utc::now(),
                         last_at: Utc::now(),
@@ -784,7 +774,10 @@ impl AlertManager {
     /// 清理已解决的告警（保留最近 N 条）。
     pub fn prune_resolved(&self, keep: usize) {
         let mut guard = self.alerts.write();
-        let resolved_count = guard.iter().filter(|a| a.status == AlertStatus::Resolved).count();
+        let resolved_count = guard
+            .iter()
+            .filter(|a| a.status == AlertStatus::Resolved)
+            .count();
         if resolved_count > keep {
             guard.retain(|a| a.status != AlertStatus::Resolved);
             // 保留最近的 keep 条
@@ -898,7 +891,11 @@ impl NoiseReducer {
     ) -> bool {
         // 1. 静默期检查
         if self.is_in_silence_period(rule_name, severity, now) {
-            debug!(rule_name, severity = severity.label(), "alert silenced by period");
+            debug!(
+                rule_name,
+                severity = severity.label(),
+                "alert silenced by period"
+            );
             return false;
         }
 
@@ -906,8 +903,7 @@ impl NoiseReducer {
         if let Some(upstream) = self.suppressed_by_dependency.read().get(rule_name) {
             debug!(
                 rule_name,
-                upstream,
-                "alert suppressed by dependency on upstream failure"
+                upstream, "alert suppressed by dependency on upstream failure"
             );
             return false;
         }
@@ -985,10 +981,10 @@ impl NoiseReducer {
                 now_str >= period.start_hhmm || now_str < period.end_hhmm
             };
             if in_range {
-                let rule_match = period.rules.is_empty()
-                    || period.rules.iter().any(|r| r == rule_name);
-                let severity_match = period.severities.is_empty()
-                    || period.severities.contains(&severity);
+                let rule_match =
+                    period.rules.is_empty() || period.rules.iter().any(|r| r == rule_name);
+                let severity_match =
+                    period.severities.is_empty() || period.severities.contains(&severity);
                 if rule_match && severity_match {
                     return true;
                 }
@@ -1001,16 +997,24 @@ impl NoiseReducer {
     pub fn aggregate_summary(&self, now: DateTime<Utc>) -> Vec<AggregatedAlert> {
         let queue = self.event_queue.read();
         let cutoff = now - chrono::Duration::seconds(self.aggregation.window_secs as i64);
-        let mut groups: HashMap<String, (AlertSeverity, u64, DateTime<Utc>, DateTime<Utc>, Vec<String>)> =
-            HashMap::new();
+        let mut groups: HashMap<
+            String,
+            (
+                AlertSeverity,
+                u64,
+                DateTime<Utc>,
+                DateTime<Utc>,
+                Vec<String>,
+            ),
+        > = HashMap::new();
 
         for (t, rule) in queue.iter() {
             if *t < cutoff {
                 continue;
             }
-            let entry = groups.entry(rule.clone()).or_insert_with(|| {
-                (AlertSeverity::Info, 0, *t, *t, Vec::new())
-            });
+            let entry = groups
+                .entry(rule.clone())
+                .or_insert_with(|| (AlertSeverity::Info, 0, *t, *t, Vec::new()));
             entry.1 += 1;
             if *t < entry.2 {
                 entry.2 = *t;
@@ -1025,15 +1029,17 @@ impl NoiseReducer {
 
         groups
             .into_iter()
-            .map(|(rule, (sev, count, first, last, samples))| AggregatedAlert {
-                group_id: Uuid::new_v4().to_string(),
-                rule_name: rule,
-                severity: sev,
-                count,
-                first_at: first,
-                last_at: last,
-                sample_ids: samples,
-            })
+            .map(
+                |(rule, (sev, count, first, last, samples))| AggregatedAlert {
+                    group_id: Uuid::new_v4().to_string(),
+                    rule_name: rule,
+                    severity: sev,
+                    count,
+                    first_at: first,
+                    last_at: last,
+                    sample_ids: samples,
+                },
+            )
             .collect()
     }
 }
@@ -1212,7 +1218,8 @@ impl DashboardBuilder {
                     id: "api_latency".into(),
                     title: "API Latency (p99)".into(),
                     panel_type: PanelType::TimeSeries,
-                    query: "histogram_quantile(0.99, rate(aurora_request_duration_bucket[5m]))".into(),
+                    query: "histogram_quantile(0.99, rate(aurora_request_duration_bucket[5m]))"
+                        .into(),
                     width: 12,
                     height: 6,
                     x: 0,
@@ -1417,11 +1424,7 @@ mod tests {
     #[test]
     fn health_checker_register_and_run() {
         let checker = HealthChecker::new();
-        checker.register(DatabaseHealthCheck::new(
-            "test-db",
-            || true,
-            true,
-        ));
+        checker.register(DatabaseHealthCheck::new("test-db", || true, true));
 
         let report = checker.run_health_check();
         assert_eq!(report.overall, HealthStatus::Healthy);
@@ -1451,15 +1454,11 @@ mod tests {
     #[test]
     fn health_checker_non_critical_degraded() {
         let checker = HealthChecker::new();
-        checker.register(DatabaseHealthCheck::new(
-            "critical-db",
-            || true,
-            true,
-        ));
+        checker.register(DatabaseHealthCheck::new("critical-db", || true, true));
         checker.register(DiskHealthCheck::new(
             "disk",
             1024 * 1024 * 1024, // 1GB min
-            || 1024,              // only 1KB free
+            || 1024,            // only 1KB free
             false,
         ));
 

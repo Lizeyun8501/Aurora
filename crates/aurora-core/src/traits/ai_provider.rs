@@ -42,9 +42,18 @@ pub struct ToolCall {
 #[async_trait]
 pub trait AIProvider: Send + Sync {
     async fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, crate::Error>;
-    async fn complete(&self, prompt: &str, opts: &CompletionOptions) -> Result<String, crate::Error>;
+    async fn complete(
+        &self,
+        prompt: &str,
+        opts: &CompletionOptions,
+    ) -> Result<String, crate::Error>;
     /// 流式回调（fire-and-forget，保持同步签名）。
-    fn stream_complete(&self, prompt: &str, opts: &CompletionOptions, callback: Box<dyn Fn(String) + Send + Sync>);
+    fn stream_complete(
+        &self,
+        prompt: &str,
+        opts: &CompletionOptions,
+        callback: Box<dyn Fn(String) + Send + Sync>,
+    );
     async fn chat(&self, messages: &[Message], opts: &ChatOptions) -> Result<String, crate::Error>;
     async fn function_call(&self, prompt: &str, tools: &[Tool]) -> Result<ToolCall, crate::Error>;
     /// 纯查询方法，保持同步签名。

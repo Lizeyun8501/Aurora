@@ -129,8 +129,9 @@ impl PostQuantumKem for MockKem {
 
     fn generate_keypair(&self) -> Result<KemKeyPair, Error> {
         let rng = ring::rand::SystemRandom::new();
-        let priv_key = ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::X25519, &rng)
-            .map_err(|_| Error::KeyExchange("x25519 keygen failed".into()))?;
+        let priv_key =
+            ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::X25519, &rng)
+                .map_err(|_| Error::KeyExchange("x25519 keygen failed".into()))?;
         let pub_key = priv_key
             .compute_public_key()
             .map_err(|_| Error::KeyExchange("x25519 public key derivation failed".into()))?;
@@ -145,8 +146,9 @@ impl PostQuantumKem for MockKem {
 
     fn encapsulate(&self, peer_public: &[u8]) -> Result<Encapsulation, Error> {
         let rng = ring::rand::SystemRandom::new();
-        let ephemeral = ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::X25519, &rng)
-            .map_err(|_| Error::KeyExchange("x25519 ephemeral keygen failed".into()))?;
+        let ephemeral =
+            ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::X25519, &rng)
+                .map_err(|_| Error::KeyExchange("x25519 ephemeral keygen failed".into()))?;
         let ephemeral_pub = ephemeral
             .compute_public_key()
             .map_err(|_| Error::KeyExchange("x25519 ephemeral public key failed".into()))?;
@@ -216,7 +218,11 @@ impl PostQuantumKem for MlKem768Kem {
         let pk = kp.public_key().as_slice().to_vec();
         let sk = kp.private_key().as_slice().to_vec();
 
-        debug!(pk_len = pk.len(), sk_len = sk.len(), "generated ML-KEM-768 keypair");
+        debug!(
+            pk_len = pk.len(),
+            sk_len = sk.len(),
+            "generated ML-KEM-768 keypair"
+        );
 
         Ok(KemKeyPair {
             public: pk,
@@ -229,12 +235,12 @@ impl PostQuantumKem for MlKem768Kem {
         use rand::RngCore;
 
         // 从字节切片重建公钥
-        let pk_arr: [u8; 1184] = peer_public
-            .try_into()
-            .map_err(|_| Error::InvalidInput(format!(
+        let pk_arr: [u8; 1184] = peer_public.try_into().map_err(|_| {
+            Error::InvalidInput(format!(
                 "ML-KEM-768 public key must be 1184 bytes, got {}",
                 peer_public.len()
-            )))?;
+            ))
+        })?;
 
         let pk = libcrux_ml_kem::mlkem768::MlKem768PublicKey::from(pk_arr);
 
@@ -262,19 +268,19 @@ impl PostQuantumKem for MlKem768Kem {
         use libcrux_ml_kem::mlkem768;
 
         // 从字节切片重建私钥
-        let sk_arr: [u8; 2400] = private
-            .try_into()
-            .map_err(|_| Error::InvalidInput(format!(
+        let sk_arr: [u8; 2400] = private.try_into().map_err(|_| {
+            Error::InvalidInput(format!(
                 "ML-KEM-768 private key must be 2400 bytes, got {}",
                 private.len()
-            )))?;
+            ))
+        })?;
 
-        let ct_arr: [u8; 1088] = ciphertext
-            .try_into()
-            .map_err(|_| Error::InvalidInput(format!(
+        let ct_arr: [u8; 1088] = ciphertext.try_into().map_err(|_| {
+            Error::InvalidInput(format!(
                 "ML-KEM-768 ciphertext must be 1088 bytes, got {}",
                 ciphertext.len()
-            )))?;
+            ))
+        })?;
 
         let sk = libcrux_ml_kem::mlkem768::MlKem768PrivateKey::from(sk_arr);
         let ct = libcrux_ml_kem::mlkem768::MlKem768Ciphertext::from(ct_arr);
@@ -282,7 +288,10 @@ impl PostQuantumKem for MlKem768Kem {
         let ss = mlkem768::decapsulate(&sk, &ct);
         let shared_secret = ss.as_slice().to_vec();
 
-        debug!(ss_len = shared_secret.len(), "ML-KEM-768 decapsulate completed");
+        debug!(
+            ss_len = shared_secret.len(),
+            "ML-KEM-768 decapsulate completed"
+        );
 
         Ok(shared_secret)
     }
@@ -294,13 +303,9 @@ fn x25519_agree(
     peer_public: &[u8],
 ) -> Result<Vec<u8>, Error> {
     let peer_pub = ring::agreement::UnparsedPublicKey::new(&ring::agreement::X25519, peer_public);
-    ring::agreement::agree_ephemeral(
-        priv_key,
-        &peer_pub,
-        |key_material: &[u8]| {
-            Ok::<Vec<u8>, ring::error::Unspecified>(key_material.to_vec())
-        },
-    )
+    ring::agreement::agree_ephemeral(priv_key, &peer_pub, |key_material: &[u8]| {
+        Ok::<Vec<u8>, ring::error::Unspecified>(key_material.to_vec())
+    })
     .map_err(|_| Error::KeyExchange("x25519 agreement failed".into()))?
     .map_err(|_| Error::KeyExchange("x25519 kdf returned error".into()))
 }
@@ -346,10 +351,7 @@ impl HybridKeyExchange {
     /// 对应 V19 §12 安全与加密模块设计：ML-KEM-768 + X25519 双轨并行混合密钥交换。
     /// 后量子轨道使用 `libcrux-ml-kem`（FIPS 203 标准化），经典轨道使用 X25519。
     pub fn with_real_ml_kem() -> Self {
-        Self::new(
-            Box::new(MockKem::new()),
-            Box::new(MlKem768Kem::new()),
-        )
+        Self::new(Box::new(MockKem::new()), Box::new(MlKem768Kem::new()))
     }
 }
 
@@ -404,9 +406,9 @@ impl HybridKeyExchange {
         kp: &HybridKeyPair,
         enc: &HybridEncapsulation,
     ) -> Result<Vec<u8>, Error> {
-        let classical_ss =
-            self.classical_kem
-                .decapsulate(&kp.classical.private, &enc.classical.ciphertext)?;
+        let classical_ss = self
+            .classical_kem
+            .decapsulate(&kp.classical.private, &enc.classical.ciphertext)?;
         let pq_ss = self
             .pq_kem
             .decapsulate(&kp.post_quantum.private, &enc.post_quantum.ciphertext)?;
@@ -469,10 +471,19 @@ mod tests {
         let enc = kem.encapsulate(&recipient.public).unwrap();
 
         assert_ne!(enc.shared_secret, Vec::<u8>::new());
-        assert_eq!(enc.ciphertext.len(), 32, "ciphertext is ephemeral X25519 public key");
+        assert_eq!(
+            enc.ciphertext.len(),
+            32,
+            "ciphertext is ephemeral X25519 public key"
+        );
 
-        let dec_ss = kem.decapsulate(&recipient.private, &enc.ciphertext).unwrap();
-        assert_eq!(dec_ss, enc.shared_secret, "decapsulated secret must match encapsulated");
+        let dec_ss = kem
+            .decapsulate(&recipient.private, &enc.ciphertext)
+            .unwrap();
+        assert_eq!(
+            dec_ss, enc.shared_secret,
+            "decapsulated secret must match encapsulated"
+        );
     }
 
     #[test]
@@ -490,8 +501,7 @@ mod tests {
         let result = kem.decapsulate(&recipient.private, &other.public);
         match result {
             Ok(wrong_secret) => assert_ne!(
-                wrong_secret,
-                enc.shared_secret,
+                wrong_secret, enc.shared_secret,
                 "wrong ciphertext must yield a different shared secret"
             ),
             Err(_) => { /* 对低阶点等异常输入报错亦可接受 */ }
@@ -522,7 +532,10 @@ mod tests {
         assert_ne!(enc.final_key, vec![0u8; HYBRID_KEY_LEN]);
 
         let dec_key = ex.decapsulate(&recipient_kp, &enc).unwrap();
-        assert_eq!(dec_key, enc.final_key, "sender and receiver must derive the same final key");
+        assert_eq!(
+            dec_key, enc.final_key,
+            "sender and receiver must derive the same final key"
+        );
     }
 
     #[test]
@@ -542,7 +555,10 @@ mod tests {
         let kp_b = ex2.generate_keypair().unwrap();
         let enc_b = ex2.encapsulate(&kp_b).unwrap();
 
-        assert_ne!(enc_a.final_key, enc_b.final_key, "different sessions derive different keys");
+        assert_ne!(
+            enc_a.final_key, enc_b.final_key,
+            "different sessions derive different keys"
+        );
     }
 
     #[test]
@@ -557,7 +573,10 @@ mod tests {
         enc.classical.ciphertext = fake.public;
 
         let result = ex.decapsulate(&kp, &enc);
-        assert!(result.is_err(), "tampered classical ciphertext must fail decapsulation");
+        assert!(
+            result.is_err(),
+            "tampered classical ciphertext must fail decapsulation"
+        );
     }
 
     #[test]
@@ -586,7 +605,11 @@ mod tests {
         let kem = MlKem768Kem::new();
         let kp = kem.generate_keypair().unwrap();
         assert_eq!(kp.public.len(), 1184, "ML-KEM-768 public key is 1184 bytes");
-        assert_eq!(kp.private.len(), 2400, "ML-KEM-768 private key is 2400 bytes");
+        assert_eq!(
+            kp.private.len(),
+            2400,
+            "ML-KEM-768 private key is 2400 bytes"
+        );
     }
 
     #[test]
@@ -595,12 +618,29 @@ mod tests {
         let recipient = kem.generate_keypair().unwrap();
         let enc = kem.encapsulate(&recipient.public).unwrap();
 
-        assert_eq!(enc.ciphertext.len(), 1088, "ML-KEM-768 ciphertext is 1088 bytes");
-        assert_eq!(enc.shared_secret.len(), 32, "ML-KEM-768 shared secret is 32 bytes");
-        assert_ne!(enc.shared_secret, vec![0u8; 32], "shared secret must not be all zeros");
+        assert_eq!(
+            enc.ciphertext.len(),
+            1088,
+            "ML-KEM-768 ciphertext is 1088 bytes"
+        );
+        assert_eq!(
+            enc.shared_secret.len(),
+            32,
+            "ML-KEM-768 shared secret is 32 bytes"
+        );
+        assert_ne!(
+            enc.shared_secret,
+            vec![0u8; 32],
+            "shared secret must not be all zeros"
+        );
 
-        let dec_ss = kem.decapsulate(&recipient.private, &enc.ciphertext).unwrap();
-        assert_eq!(dec_ss, enc.shared_secret, "ML-KEM-768 decapsulated secret must match encapsulated");
+        let dec_ss = kem
+            .decapsulate(&recipient.private, &enc.ciphertext)
+            .unwrap();
+        assert_eq!(
+            dec_ss, enc.shared_secret,
+            "ML-KEM-768 decapsulated secret must match encapsulated"
+        );
     }
 
     #[test]
@@ -616,8 +656,14 @@ mod tests {
         let kem = MlKem768Kem::new();
         let kp1 = kem.generate_keypair().unwrap();
         let kp2 = kem.generate_keypair().unwrap();
-        assert_ne!(kp1.public, kp2.public, "different keypairs must have different public keys");
-        assert_ne!(kp1.private, kp2.private, "different keypairs must have different private keys");
+        assert_ne!(
+            kp1.public, kp2.public,
+            "different keypairs must have different public keys"
+        );
+        assert_ne!(
+            kp1.private, kp2.private,
+            "different keypairs must have different private keys"
+        );
     }
 
     #[test]
@@ -642,22 +688,25 @@ mod tests {
         let kem = MlKem768Kem::new();
         // 使用错误长度公钥应返回错误
         let result = kem.encapsulate(&[0u8; 100]);
-        assert!(result.is_err(), "encapsulate with invalid pk length must fail");
+        assert!(
+            result.is_err(),
+            "encapsulate with invalid pk length must fail"
+        );
     }
 
     #[test]
     fn test_hybrid_exchange_with_real_mlkem() {
         // 使用真实 ML-KEM-768 作为后量子轨道
-        let ex = HybridKeyExchange::new(
-            Box::new(MockKem::new()),
-            Box::new(MlKem768Kem::new()),
-        );
+        let ex = HybridKeyExchange::new(Box::new(MockKem::new()), Box::new(MlKem768Kem::new()));
         let recipient = ex.generate_keypair().unwrap();
         let enc = ex.encapsulate(&recipient).unwrap();
         let shared = ex.decapsulate(&recipient, &enc).unwrap();
 
         assert_eq!(shared.len(), HYBRID_KEY_LEN);
-        assert_eq!(shared, enc.final_key, "hybrid key must match after decapsulation");
+        assert_eq!(
+            shared, enc.final_key,
+            "hybrid key must match after decapsulation"
+        );
         assert_eq!(ex.classical_algorithm(), KemAlgorithm::MockX25519);
         assert_eq!(ex.post_quantum_algorithm(), KemAlgorithm::MlKem768);
     }

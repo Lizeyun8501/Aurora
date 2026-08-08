@@ -17,8 +17,15 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+tokio = { workspace = true }
 
+# 共享启动装配（迁移 + DEK 保险库 + AppCore DI）
+aurora-bootstrap = { path = "../aurora-bootstrap" }
 aurora-core = { path = "../aurora-core" }
+aurora-security = { path = "../aurora-security" }
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }
+
+[dev-dependencies]
+tempfile = "3"

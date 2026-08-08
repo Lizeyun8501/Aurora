@@ -85,22 +85,34 @@ pub struct TestSuite {
 impl TestSuite {
     /// 通过数。
     pub fn passed(&self) -> usize {
-        self.cases.iter().filter(|c| c.status == TestStatus::Passed).count()
+        self.cases
+            .iter()
+            .filter(|c| c.status == TestStatus::Passed)
+            .count()
     }
 
     /// 失败数。
     pub fn failed(&self) -> usize {
-        self.cases.iter().filter(|c| c.status == TestStatus::Failed).count()
+        self.cases
+            .iter()
+            .filter(|c| c.status == TestStatus::Failed)
+            .count()
     }
 
     /// 跳过数。
     pub fn skipped(&self) -> usize {
-        self.cases.iter().filter(|c| c.status == TestStatus::Skipped).count()
+        self.cases
+            .iter()
+            .filter(|c| c.status == TestStatus::Skipped)
+            .count()
     }
 
     /// 错误数。
     pub fn errors(&self) -> usize {
-        self.cases.iter().filter(|c| c.status == TestStatus::Error).count()
+        self.cases
+            .iter()
+            .filter(|c| c.status == TestStatus::Error)
+            .count()
     }
 
     /// 总数。
@@ -367,17 +379,13 @@ impl CrdtMonkeyTester {
 
     /// 运行一次猴子测试：生成随机操作序列，分发到各副本，检查最终一致性。
     /// `apply_fn` 为将操作应用到副本的回调（由上层提供实际 CRDT 引擎）。
-    pub fn run<F>(
-        &self,
-        mut apply_fn: F,
-    ) -> CrdtConsistencyReport
+    pub fn run<F>(&self, mut apply_fn: F) -> CrdtConsistencyReport
     where
         F: FnMut(CrdtOperation) -> CrdtStateSnapshot,
     {
         let start = Instant::now();
         let ops = self.generate_random_ops();
-        let mut replicas: Vec<Vec<CrdtOperation>> =
-            vec![Vec::new(); self.config.replicas as usize];
+        let mut replicas: Vec<Vec<CrdtOperation>> = vec![Vec::new(); self.config.replicas as usize];
 
         // 随机分发：每个操作随机发送给一个或多个副本（模拟网络分区/乱序）
         for op in &ops {
@@ -414,11 +422,7 @@ impl CrdtMonkeyTester {
         // delta-debugging 反例压缩
         let (min_ops, reduction_method) = if !consistent && self.config.enable_reduction {
             let reduced = delta_debugging(&ops, &mut apply_fn);
-            let method = format!(
-                "delta-debugging: {}→{} ops",
-                ops.len(),
-                reduced
-            );
+            let method = format!("delta-debugging: {}→{} ops", ops.len(), reduced);
             (Some(reduced), Some(method))
         } else {
             (None, None)
@@ -437,22 +441,22 @@ impl CrdtMonkeyTester {
     }
 
     /// 运行稳定性测试：持续指定时间，反复随机操作后检查一致性。
-    pub fn run_stability_test<F>(
-        &self,
-        apply_fn: F,
-    ) -> Vec<CrdtConsistencyReport>
+    pub fn run_stability_test<F>(&self, apply_fn: F) -> Vec<CrdtConsistencyReport>
     where
         F: Fn(CrdtOperation) -> CrdtStateSnapshot + Clone + Send + 'static,
     {
-        let deadline = Instant::now()
-            + Duration::from_secs(self.config.stability_duration_secs);
+        let deadline = Instant::now() + Duration::from_secs(self.config.stability_duration_secs);
         let mut reports = Vec::new();
         let mut round = 0;
 
         while Instant::now() < deadline {
             let report = self.run(apply_fn.clone());
             round += 1;
-            debug!(round, consistent = report.consistent, "stability test round");
+            debug!(
+                round,
+                consistent = report.consistent,
+                "stability test round"
+            );
             if !report.consistent {
                 warn!(round, "CRDT stability test: divergence detected");
             }
@@ -510,8 +514,7 @@ fn compare_snapshots(a: &CrdtStateSnapshot, b: &CrdtStateSnapshot) -> Option<Str
     }
 
     // 检查块内容
-    let all_keys: std::collections::HashSet<_> =
-        a.blocks.keys().chain(b.blocks.keys()).collect();
+    let all_keys: std::collections::HashSet<_> = a.blocks.keys().chain(b.blocks.keys()).collect();
     for key in all_keys {
         match (a.blocks.get(key), b.blocks.get(key)) {
             (Some(va), Some(vb)) if va != vb => {
@@ -536,10 +539,16 @@ fn compare_snapshots(a: &CrdtStateSnapshot, b: &CrdtStateSnapshot) -> Option<Str
                 diffs.push(format!("property '{}': differs", key));
             }
             (Some(_), None) => {
-                diffs.push(format!("property '{}': only in replica {}", key, a.replica_id));
+                diffs.push(format!(
+                    "property '{}': only in replica {}",
+                    key, a.replica_id
+                ));
             }
             (None, Some(_)) => {
-                diffs.push(format!("property '{}': only in replica {}", key, b.replica_id));
+                diffs.push(format!(
+                    "property '{}': only in replica {}",
+                    key, b.replica_id
+                ));
             }
             _ => {}
         }
@@ -595,7 +604,9 @@ struct SimpleRng {
 
 impl SimpleRng {
     fn new(seed: u64) -> Self {
-        Self { state: seed.wrapping_add(1) } // 避免 seed=0
+        Self {
+            state: seed.wrapping_add(1),
+        } // 避免 seed=0
     }
 
     fn next(&mut self) -> u64 {
@@ -741,10 +752,7 @@ impl E2ETestManager {
             .collect();
 
         for name in &critical_names {
-            let latest = results
-                .iter()
-                .rev()
-                .find(|r| r.scenario == *name);
+            let latest = results.iter().rev().find(|r| r.scenario == *name);
             match latest {
                 Some(r) if !r.passed => return false,
                 None => return false, // 未执行
@@ -987,7 +995,9 @@ impl PerformanceRegistry {
 
     /// 注册/更新基准。
     pub fn set_baseline(&self, baseline: PerformanceBaseline) {
-        self.baselines.write().insert(baseline.name.clone(), baseline);
+        self.baselines
+            .write()
+            .insert(baseline.name.clone(), baseline);
     }
 
     /// 获取基准。

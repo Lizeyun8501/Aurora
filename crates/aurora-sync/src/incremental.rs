@@ -51,8 +51,13 @@ impl RollingHash {
     /// 滚动更新：移除旧字节 `old_byte`，加入新字节 `new_byte`。
     pub fn roll(&mut self, old_byte: u8, new_byte: u8) -> u32 {
         let n = self.block_size as u32;
-        self.a = (self.a.wrapping_sub(old_byte as u32).wrapping_add(new_byte as u32)) & 0xFFFF;
-        self.b = (self.b
+        self.a = (self
+            .a
+            .wrapping_sub(old_byte as u32)
+            .wrapping_add(new_byte as u32))
+            & 0xFFFF;
+        self.b = (self
+            .b
             .wrapping_sub(n.wrapping_mul(old_byte as u32))
             .wrapping_add(self.a))
             & 0xFFFF;
@@ -133,7 +138,11 @@ impl IncrementalSync {
             index += 1;
             pos += self.block_size;
         }
-        debug!("incremental sign: {} blocks for {} bytes", sigs.len(), source.len());
+        debug!(
+            "incremental sign: {} blocks for {} bytes",
+            sigs.len(),
+            source.len()
+        );
         sigs
     }
 

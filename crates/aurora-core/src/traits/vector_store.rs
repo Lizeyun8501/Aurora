@@ -21,8 +21,23 @@ pub struct QueryFilter {
 
 #[async_trait]
 pub trait VectorStore: Send + Sync {
-    async fn add(&self, id: &str, vector: &[f32], metadata: &serde_json::Value) -> Result<(), crate::Error>;
-    async fn search(&self, query: &[f32], top_k: usize, filter: Option<&QueryFilter>) -> Result<Vec<SearchResult>, crate::Error>;
+    async fn add(
+        &self,
+        id: &str,
+        vector: &[f32],
+        metadata: &serde_json::Value,
+    ) -> Result<(), crate::Error>;
+    async fn search(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        filter: Option<&QueryFilter>,
+    ) -> Result<Vec<SearchResult>, crate::Error>;
     async fn delete(&self, id: &str) -> Result<(), crate::Error>;
-    async fn hybrid_search(&self, text_query: &str, vector: &[f32], alpha: f32) -> Result<Vec<SearchResult>, crate::Error>;
+    async fn hybrid_search(
+        &self,
+        text_query: &str,
+        vector: &[f32],
+        alpha: f32,
+    ) -> Result<Vec<SearchResult>, crate::Error>;
 }

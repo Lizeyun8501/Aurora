@@ -254,7 +254,11 @@ impl DiagnosticExporter {
                 size_bytes, self.max_size
             )));
         }
-        info!(bytes = size_bytes, logs = log_count, "diagnostic package exported");
+        info!(
+            bytes = size_bytes,
+            logs = log_count,
+            "diagnostic package exported"
+        );
         Ok(DiagnosticPackage {
             encrypted_bytes: encrypted,
             nonce,
@@ -552,7 +556,12 @@ impl RepairManager {
     /// 修复前备份（逻辑路径，真实实现写文件）。
     pub fn backup(&self, action: RepairAction) -> Result<BackupResult> {
         let ts = Utc::now();
-        let path = format!("{}/pre-{}-{}.bak", self.backup_dir, action.name(), ts.timestamp());
+        let path = format!(
+            "{}/pre-{}-{}.bak",
+            self.backup_dir,
+            action.name(),
+            ts.timestamp()
+        );
         debug!(%path, action = action.name(), "pre-repair backup created");
         Ok(BackupResult {
             path,
@@ -578,7 +587,11 @@ impl RepairManager {
             .ok_or_else(|| Error::Diagnostics(format!("no tool for action {:?}", action)))?;
         let mut result = tool.run()?;
         result.message = format!("{} (backup: {})", result.message, backup.path);
-        info!(action = action.name(), success = result.success, "repair done");
+        info!(
+            action = action.name(),
+            success = result.success,
+            "repair done"
+        );
         Ok(result)
     }
 
@@ -701,10 +714,7 @@ impl RemoteAssistServer {
     }
 
     /// 创建会话，返回会话码。企业版强制 DiagnoseOnly。
-    pub fn create_session(
-        &self,
-        permissions: RemoteSessionPermission,
-    ) -> Result<RemoteSession> {
+    pub fn create_session(&self, permissions: RemoteSessionPermission) -> Result<RemoteSession> {
         let now = Utc::now();
         let perms = if self.enterprise {
             RemoteSessionPermission::DiagnoseOnly
@@ -903,11 +913,7 @@ impl KnowledgeBase {
 
     /// 按 ID 查找。
     pub fn get(&self, id: &str) -> Option<KnowledgeEntry> {
-        self.entries
-            .read()
-            .iter()
-            .find(|e| e.id == id)
-            .cloned()
+        self.entries.read().iter().find(|e| e.id == id).cloned()
     }
 
     /// 预置常见 FAQ 条目。
@@ -1127,14 +1133,19 @@ mod tests {
     fn diagnostic_exporter_compress_encrypt_size_cap_round_trip() {
         let exporter = DiagnosticExporter::new(test_key(), test_crypto());
         let mut bundle = DiagnosticBundle::minimal();
-        bundle.logs.push(LogEntry::new("INFO", "app started token=abc"));
+        bundle
+            .logs
+            .push(LogEntry::new("INFO", "app started token=abc"));
         bundle.config = serde_json::json!({"theme": "dark"});
         let pkg = exporter.export(bundle.clone()).unwrap();
         assert!(pkg.size_bytes <= MAX_PACKAGE_SIZE);
         assert!(pkg.metadata.redacted);
         assert_eq!(pkg.metadata.log_count, 1);
         assert!(pkg.metadata.encrypted_size > pkg.metadata.compressed_size); // tag appended
-        assert!(pkg.metadata.compressed_size < pkg.metadata.bundle_size || pkg.metadata.bundle_size < 50);
+        assert!(
+            pkg.metadata.compressed_size < pkg.metadata.bundle_size
+                || pkg.metadata.bundle_size < 50
+        );
         assert_eq!(pkg.nonce.len(), NONCE_LEN);
         // round trip
         let decrypted = exporter.decrypt_bundle(&pkg).unwrap();
@@ -1146,9 +1157,7 @@ mod tests {
     #[test]
     fn diagnostic_exporter_decrypt_bytes_round_trip() {
         let exporter = DiagnosticExporter::new(test_key(), test_crypto());
-        let pkg = exporter
-            .export(DiagnosticBundle::minimal())
-            .unwrap();
+        let pkg = exporter.export(DiagnosticBundle::minimal()).unwrap();
         let raw = exporter.decrypt(&pkg).unwrap();
         // raw 是解压后的 JSON
         let parsed: serde_json::Value = serde_json::from_slice(&raw).unwrap();
@@ -1182,7 +1191,10 @@ mod tests {
         let mut bundle = DiagnosticBundle::minimal();
         // 制造超大日志使其超过 1KB 上限
         // 使用低压缩率数据（随机字符）确保压缩后仍超过 cap
-        let big: String = (0..2048).map(|i| format!("log-{} {:x}", i, i * 37 + 13)).collect::<Vec<_>>().join("\n");
+        let big: String = (0..2048)
+            .map(|i| format!("log-{} {:x}", i, i * 37 + 13))
+            .collect::<Vec<_>>()
+            .join("\n");
         bundle.logs.push(LogEntry::new("INFO", big));
         let err = exporter.export(bundle).unwrap_err();
         assert!(matches!(err, Error::Diagnostics(_)));
@@ -1347,7 +1359,9 @@ mod tests {
     fn remote_session_create_and_validate() {
         let srv = RemoteAssistServer::new(SecureChannel::new(test_key(), test_crypto()), 3600);
         assert!(srv.is_enterprise());
-        let s = srv.create_session(RemoteSessionPermission::ReadModify).unwrap();
+        let s = srv
+            .create_session(RemoteSessionPermission::ReadModify)
+            .unwrap();
         // 企业模式强制 DiagnoseOnly
         assert_eq!(s.permissions, RemoteSessionPermission::DiagnoseOnly);
         assert!(!s.is_expired());
@@ -1358,16 +1372,21 @@ mod tests {
 
     #[test]
     fn remote_session_non_enterprise_allows_read_modify() {
-        let srv = RemoteAssistServer::non_enterprise(SecureChannel::new(test_key(), test_crypto()), 3600);
+        let srv =
+            RemoteAssistServer::non_enterprise(SecureChannel::new(test_key(), test_crypto()), 3600);
         assert!(!srv.is_enterprise());
-        let s = srv.create_session(RemoteSessionPermission::ReadModify).unwrap();
+        let s = srv
+            .create_session(RemoteSessionPermission::ReadModify)
+            .unwrap();
         assert_eq!(s.permissions, RemoteSessionPermission::ReadModify);
     }
 
     #[test]
     fn remote_session_expiry() {
         let srv = RemoteAssistServer::new(SecureChannel::new(test_key(), test_crypto()), 0);
-        let s = srv.create_session(RemoteSessionPermission::DiagnoseOnly).unwrap();
+        let s = srv
+            .create_session(RemoteSessionPermission::DiagnoseOnly)
+            .unwrap();
         // duration=0 → 立即过期
         std::thread::sleep(std::time::Duration::from_millis(10));
         assert!(s.is_expired());
@@ -1377,7 +1396,9 @@ mod tests {
     #[test]
     fn remote_session_close() {
         let srv = RemoteAssistServer::new(SecureChannel::new(test_key(), test_crypto()), 3600);
-        let s = srv.create_session(RemoteSessionPermission::DiagnoseOnly).unwrap();
+        let s = srv
+            .create_session(RemoteSessionPermission::DiagnoseOnly)
+            .unwrap();
         srv.close_session(&s.session_code).unwrap();
         assert!(srv.validate(&s.session_code).is_err());
         assert_eq!(srv.active_count(), 0);
@@ -1387,7 +1408,9 @@ mod tests {
     #[test]
     fn remote_session_stream_logs_e2ee() {
         let srv = RemoteAssistServer::new(SecureChannel::new(test_key(), test_crypto()), 3600);
-        let s = srv.create_session(RemoteSessionPermission::DiagnoseOnly).unwrap();
+        let s = srv
+            .create_session(RemoteSessionPermission::DiagnoseOnly)
+            .unwrap();
         let (ct, nonce) = srv.stream_logs(&s.session_code, b"some log line").unwrap();
         // 接收端解密
         let pt = srv.receive_logs(&ct, &nonce).unwrap();
@@ -1461,10 +1484,7 @@ mod tests {
         let kb = Arc::new(KnowledgeBase::with_defaults());
         let analyzer = LogAnalyzer::new(kb);
         // 同时命中两个关键词，返回首个匹配
-        let logs = vec![LogEntry::new(
-            "ERROR",
-            "sync stuck and cache full",
-        )];
+        let logs = vec![LogEntry::new("ERROR", "sync stuck and cache full")];
         let rec = analyzer.analyze(&logs);
         assert!(rec.confidence > 0.0);
         assert!(!rec.issue.is_empty());
@@ -1514,7 +1534,10 @@ mod tests {
         };
         let json = serde_json::to_string(&meta).unwrap();
         let back: PackageMetadata = serde_json::from_str(&json).unwrap();
-        assert_eq!(serde_json::to_string(&back).unwrap(), serde_json::to_string(&meta).unwrap());
+        assert_eq!(
+            serde_json::to_string(&back).unwrap(),
+            serde_json::to_string(&meta).unwrap()
+        );
     }
 
     // 验证加密常量一致性（通过 CryptoProvider 实际加解密验证）
@@ -1533,7 +1556,7 @@ mod tests {
     // 引用 sha3 以验证可用
     #[test]
     fn sha3_smoke() {
-        use sha3::Digest;
+        use sha3::{Digest, Sha3_256};
         let mut h = Sha3_256::default();
         Digest::update(&mut h, b"aurora");
         let out = h.finalize();

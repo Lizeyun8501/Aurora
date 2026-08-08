@@ -316,7 +316,10 @@ impl WebhookReceiver {
         timestamp: &str,
         signature_header: &str,
     ) -> crate::Result<WebhookEvent> {
-        if !self.verifier.verify_slack(&body, timestamp, signature_header) {
+        if !self
+            .verifier
+            .verify_slack(&body, timestamp, signature_header)
+        {
             return Err(crate::Error::HmacVerificationFailed);
         }
         self.receive_signed(WebhookSource::Slack, event_type, body)
@@ -594,7 +597,9 @@ mod tests {
         let v = HmacVerifier::new(&r.config().secret);
         let payload = br#"{"issue":{"key":"AUR-1"}}"#.to_vec();
         let hex = v.sign_hex(&payload);
-        let event = r.receive_jira("issue.created", payload.clone(), &hex).unwrap();
+        let event = r
+            .receive_jira("issue.created", payload.clone(), &hex)
+            .unwrap();
         assert_eq!(event.source, WebhookSource::Jira);
         assert_eq!(r.events_for_source(&WebhookSource::Jira).len(), 1);
         // payload_json 可解析
@@ -638,7 +643,8 @@ mod tests {
         // Jira
         let jira_payload = b"{}".to_vec();
         let jira_hex = v.sign_hex(&jira_payload);
-        r.receive_jira("issue.updated", jira_payload, &jira_hex).unwrap();
+        r.receive_jira("issue.updated", jira_payload, &jira_hex)
+            .unwrap();
         // Slack
         let body = b"{}".to_vec();
         let ts = "123";

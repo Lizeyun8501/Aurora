@@ -8,10 +8,10 @@
 //! - ProseMirror doc tree 用 `serde_json::Value` 表示中间结构。
 //! - PDF 导出仅生成可打印的 HTML 字符串，不调用真实 headless Chrome。
 
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tracing::{debug, info};
 
 use super::content_editor::{Block, BlockType, Document};
@@ -67,7 +67,9 @@ impl Frontmatter {
                 }
                 // 跳过结束的 `---` 行
                 let body_start = 4 + end + 4; // `\n---` 长度 4
-                body = markdown[body_start..].trim_start_matches(['\n', '\r']).to_string();
+                body = markdown[body_start..]
+                    .trim_start_matches(['\n', '\r'])
+                    .to_string();
             }
         }
 
@@ -143,7 +145,10 @@ impl MarkdownParser {
                 if i < lines.len() {
                     i += 1;
                 }
-                nodes.push(MdNode::Code { language: lang, code });
+                nodes.push(MdNode::Code {
+                    language: lang,
+                    code,
+                });
                 continue;
             }
 
@@ -161,10 +166,10 @@ impl MarkdownParser {
                     level += 1;
                     rest = &rest[1..];
                 }
-                if rest.starts_with(' ') {
+                if let Some(stripped) = rest.strip_prefix(' ') {
                     nodes.push(MdNode::Heading {
                         level,
-                        text: rest[1..].trim().to_string(),
+                        text: stripped.trim().to_string(),
                     });
                     i += 1;
                     continue;
@@ -180,8 +185,12 @@ impl MarkdownParser {
 
             // 待办项
             let trimmed = line.trim_start();
-            if trimmed.starts_with("- [ ] ") || trimmed.starts_with("- [x] ") || trimmed.starts_with("- [X] ") {
-                let checked = trimmed.chars().nth(3) == Some('x') || trimmed.chars().nth(3) == Some('X');
+            if trimmed.starts_with("- [ ] ")
+                || trimmed.starts_with("- [x] ")
+                || trimmed.starts_with("- [X] ")
+            {
+                let checked =
+                    trimmed.chars().nth(3) == Some('x') || trimmed.chars().nth(3) == Some('X');
                 let text = trimmed[6..].to_string();
                 nodes.push(MdNode::TodoItem { checked, text });
                 i += 1;
@@ -212,13 +221,13 @@ impl MarkdownParser {
             }
 
             // 引用
-            if trimmed.starts_with("> ") {
-                let mut quote_lines = vec![trimmed[2..].to_string()];
+            if let Some(stripped) = trimmed.strip_prefix("> ") {
+                let mut quote_lines = vec![stripped.to_string()];
                 i += 1;
                 while i < lines.len() {
                     let l = lines[i].trim_start();
-                    if l.starts_with("> ") {
-                        quote_lines.push(l[2..].to_string());
+                    if let Some(stripped) = l.strip_prefix("> ") {
+                        quote_lines.push(stripped.to_string());
                         i += 1;
                     } else {
                         break;
@@ -386,7 +395,10 @@ pub struct NotionBlock {
 impl NotionBlock {
     /// 将富文本片段拼接为纯文本
     pub fn plain_text(&self) -> String {
-        self.rich_text.iter().map(|r| r.plain_text.clone()).collect()
+        self.rich_text
+            .iter()
+            .map(|r| r.plain_text.clone())
+            .collect()
     }
 
     /// 将 Notion 块类型映射为内部 `BlockType`
@@ -682,15 +694,17 @@ fn escape_html(s: &str) -> String {
 
 fn render_block_html(block: &Block) -> String {
     match block.block_type {
-        BlockType::Text => format!("<p>{}</p>", escape_html(block.content.as_str().unwrap_or(""))),
+        BlockType::Text => format!(
+            "<p>{}</p>",
+            escape_html(block.content.as_str().unwrap_or(""))
+        ),
         BlockType::Heading => {
             let level = block
                 .properties
                 .get("level")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(1)
-                .min(6)
-                .max(1);
+                .clamp(1, 6);
             format!(
                 "<h{lvl}>{txt}</h{lvl}>",
                 lvl = level,
@@ -980,7 +994,9 @@ impl Exporter {
         let mut md = String::new();
         if !doc.properties.is_empty() {
             // 输出 frontmatter
-            let fm = Frontmatter { fields: doc.properties.clone() };
+            let fm = Frontmatter {
+                fields: doc.properties.clone(),
+            };
             let yaml = fm.to_yaml();
             if !yaml.is_empty() {
                 md.push_str(&yaml);
@@ -1146,7 +1162,11 @@ mod tests {
         };
         let block = nb.to_block();
         assert!(matches!(block.block_type, BlockType::Heading));
-        let level = block.properties.get("level").and_then(|v| v.as_u64()).unwrap();
+        let level = block
+            .properties
+            .get("level")
+            .and_then(|v| v.as_u64())
+            .unwrap();
         assert_eq!(level, 2);
     }
 

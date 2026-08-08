@@ -74,10 +74,15 @@ impl<'de> Deserialize<'de> for Ed25519Signature {
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 f.write_str("a tuple of 64 bytes")
             }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
                 let mut arr = [0u8; 64];
                 for (i, b) in arr.iter_mut().enumerate() {
-                    *b = seq.next_element()?.ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
+                    *b = seq
+                        .next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
                 }
                 Ok(Ed25519Signature(arr))
             }

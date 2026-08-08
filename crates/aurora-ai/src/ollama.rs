@@ -387,20 +387,38 @@ impl AIProvider for OllamaProvider {
             prompt: prompt.to_string(),
             opts: opts.clone(),
         };
-        let fut = stream_ndjson(owned, callback);
         // 用 block_in_place 的等价：当前 handle 上 block_on。若调用线程本身已经
         // 在 runtime 上跑（async task），block_on 会 panic——这是 trait 同步
         // 签名的固有约束，使用方在该入口避免在 async worker 上直接调用。
         match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(fut),
+            Ok(handle) => {
+                let fut = stream_ndjson(owned, callback);
+                handle.block_on(fut);
+            }
             Err(_) => {
                 debug!(
                     "stream_complete called outside runtime; \
                      degrading to complete()+split"
                 );
-                // 在无 runtime 的语境里没法 await self.complete()，只能静态降级
-                // 为「什么也不发」以避免 panic（与 MockAIProvider 在无 runtime
-                // 时的最小可用行为对齐）。
+                // 无 runtime 语境：创建临时 runtime 驱动完整推理后按空格切分
+                // 回放（与 MockAIProvider 的降级行为对齐），避免静默无输出。
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        warn!("stream_complete cannot create temp runtime: {}", e);
+                        return;
+                    }
+                };
+                match rt.block_on(self.complete(prompt, opts)) {
+                    Ok(text) => {
+                        for part in text.split(' ') {
+                            callback(part.to_string());
+                        }
+                    }
+                    Err(e) => {
+                        warn!("stream_complete degraded complete() failed: {}", e);
+                    }
+                }
             }
         }
     }

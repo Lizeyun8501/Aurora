@@ -5,10 +5,10 @@
 //! pillar (logs / metrics / traces / crashes), the monitoring & alerting system,
 //! the canary release & rollback machinery, and the log diagnostics toolkit.
 
-pub mod observability;
-pub mod monitoring;
-pub mod release;
 pub mod diagnostics;
+pub mod monitoring;
+pub mod observability;
+pub mod release;
 pub mod testing;
 
 use thiserror::Error;

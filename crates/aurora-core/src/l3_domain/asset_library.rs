@@ -11,11 +11,11 @@
 //!   datetime / GPS / device 信息。
 //! - pHash 使用「下采样到 8x8 灰度 + 平均哈希（aHash）」实现，并计算汉明距离。
 
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Sha3_256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use parking_lot::RwLock;
-use sha3::{Digest, Sha3_256};
 use tracing::{debug, info};
 
 // ============================================================================
@@ -241,12 +241,9 @@ impl ThumbnailGenerator {
         };
         // 模拟 16:9 缩略图
         let height = (target_width as f32 * 9.0 / 16.0).round() as u32;
-        let thumb_hash = content_hash_hex(format!("{}:{}", asset.content_hash, target_width).as_bytes());
-        let path = format!(
-            "thumbnails/{}/{}",
-            &asset.content_hash[..2],
-            thumb_hash
-        );
+        let thumb_hash =
+            content_hash_hex(format!("{}:{}", asset.content_hash, target_width).as_bytes());
+        let path = format!("thumbnails/{}/{}", &asset.content_hash[..2], thumb_hash);
         info!(asset_id = %asset.id, "thumbnail generated (mock)");
         Thumbnail {
             asset_id: asset.id.clone(),
@@ -313,9 +310,18 @@ impl ExifParser {
             .map(|(_, v)| v.clone());
 
         // GPS
-        let lat = tags.iter().find(|(k, _)| k == "GPSLatitude").map(|(_, v)| v);
-        let lon = tags.iter().find(|(k, _)| k == "GPSLongitude").map(|(_, v)| v);
-        let alt = tags.iter().find(|(k, _)| k == "GPSAltitude").map(|(_, v)| v);
+        let lat = tags
+            .iter()
+            .find(|(k, _)| k == "GPSLatitude")
+            .map(|(_, v)| v);
+        let lon = tags
+            .iter()
+            .find(|(k, _)| k == "GPSLongitude")
+            .map(|(_, v)| v);
+        let alt = tags
+            .iter()
+            .find(|(k, _)| k == "GPSAltitude")
+            .map(|(_, v)| v);
         if let (Some(lat_s), Some(lon_s)) = (lat, lon) {
             if let (Ok(lat_f), Ok(lon_f)) = (lat_s.parse::<f64>(), lon_s.parse::<f64>()) {
                 meta.gps = Some(GpsCoordinates {
@@ -327,11 +333,26 @@ impl ExifParser {
         }
 
         // Device
-        let make = tags.iter().find(|(k, _)| k == "Make").map(|(_, v)| v.clone()).unwrap_or_default();
-        let model = tags.iter().find(|(k, _)| k == "Model").map(|(_, v)| v.clone()).unwrap_or_default();
-        let software = tags.iter().find(|(k, _)| k == "Software").map(|(_, v)| v.clone());
+        let make = tags
+            .iter()
+            .find(|(k, _)| k == "Make")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        let model = tags
+            .iter()
+            .find(|(k, _)| k == "Model")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        let software = tags
+            .iter()
+            .find(|(k, _)| k == "Software")
+            .map(|(_, v)| v.clone());
         if !make.is_empty() || !model.is_empty() {
-            meta.device = Some(DeviceInfo { make, model, software });
+            meta.device = Some(DeviceInfo {
+                make,
+                model,
+                software,
+            });
         }
 
         // Orientation
@@ -425,20 +446,27 @@ pub struct DuplicateDetector {
 
 impl Default for DuplicateDetector {
     fn default() -> Self {
-        Self { phash_threshold: 0.9 }
+        Self {
+            phash_threshold: 0.9,
+        }
     }
 }
 
 impl DuplicateDetector {
     pub fn new(threshold: f32) -> Self {
-        Self { phash_threshold: threshold }
+        Self {
+            phash_threshold: threshold,
+        }
     }
 
     /// 检测精确重复（基于 content_hash）
     pub fn find_exact_duplicates(&self, assets: &[Asset]) -> Vec<DuplicateGroup> {
         let mut groups: HashMap<String, Vec<AssetId>> = HashMap::new();
         for a in assets {
-            groups.entry(a.content_hash.clone()).or_default().push(a.id.clone());
+            groups
+                .entry(a.content_hash.clone())
+                .or_default()
+                .push(a.id.clone());
         }
         groups
             .into_iter()
@@ -598,7 +626,10 @@ mod tests {
     #[test]
     fn test_exif_parse_full() {
         let tags = vec![
-            ("DateTimeOriginal".to_string(), "2024:01:15 10:30:00".to_string()),
+            (
+                "DateTimeOriginal".to_string(),
+                "2024:01:15 10:30:00".to_string(),
+            ),
             ("GPSLatitude".to_string(), "31.2304".to_string()),
             ("GPSLongitude".to_string(), "121.4737".to_string()),
             ("GPSAltitude".to_string(), "10.5".to_string()),

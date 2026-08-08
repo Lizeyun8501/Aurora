@@ -44,7 +44,9 @@ impl WorkflowDefinition {
 
     /// 获取初始状态节点。
     pub fn initial_state(&self) -> Option<&StateNode> {
-        self.states.iter().find(|s| s.state_type == StateType::Initial)
+        self.states
+            .iter()
+            .find(|s| s.state_type == StateType::Initial)
     }
 
     /// 根据状态 ID 查找节点。
@@ -114,9 +116,11 @@ pub enum TransitionCondition {
     /// 表达式条件（运行时求值，当前实现为简化比较）
     Expression { expr: String },
     /// 变量匹配条件
-    VariableEquals { key: String, value: serde_json::Value },
+    VariableEquals {
+        key: String,
+        value: serde_json::Value,
+    },
 }
-
 
 impl TransitionCondition {
     /// 基于上下文评估条件是否满足。
@@ -457,9 +461,8 @@ impl TaskExecutor {
                     TaskResult::Retryable(err) => {
                         if task.retry_count < task.max_retries {
                             task.retry_count += 1;
-                            let backoff = std::time::Duration::from_millis(
-                                100 * 2_u64.pow(task.retry_count),
-                            );
+                            let backoff =
+                                std::time::Duration::from_millis(100 * 2_u64.pow(task.retry_count));
                             warn!(
                                 task_id = %task.task_id,
                                 retry = task.retry_count,
@@ -548,8 +551,16 @@ impl TaskExecutor {
     }
 
     /// 提交任务到执行队列。
+    ///
+    /// unbounded channel 的 send 仅在后台 worker 已退出（receiver 被 drop）
+    /// 时失败；此前静默丢弃会让任务无声丢失，这里记录 error 以便观测。
     pub fn submit(&self, task: TaskRequest) {
-        let _ = self.sender.send(task);
+        if let Err(e) = self.sender.send(task) {
+            error!(
+                task_id = %e.0.task_id,
+                "task submit failed: worker channel closed, task dropped"
+            );
+        }
     }
 
     /// 获取死信队列当前长度。
@@ -633,11 +644,15 @@ impl WorkflowEngine {
     }
 
     /// 启动一个新的工作流实例。
-    pub fn start_instance(&self, workflow_id: &str, input: serde_json::Value) -> Result<WorkflowInstance, Error> {
+    pub fn start_instance(
+        &self,
+        workflow_id: &str,
+        input: serde_json::Value,
+    ) -> Result<WorkflowInstance, Error> {
         let defs = self.definitions.lock();
-        let def = defs
-            .get(workflow_id)
-            .ok_or_else(|| Error::NotFound(format!("workflow definition not found: {}", workflow_id)))?;
+        let def = defs.get(workflow_id).ok_or_else(|| {
+            Error::NotFound(format!("workflow definition not found: {}", workflow_id))
+        })?;
         let initial = def
             .initial_state()
             .ok_or_else(|| Error::InvalidInput("workflow has no initial state".to_string()))?;
@@ -646,7 +661,9 @@ impl WorkflowEngine {
         instance.context.input = input;
 
         info!(instance_id = %instance.instance_id, workflow_id = %workflow_id, "starting workflow instance");
-        self.instances.lock().insert(instance.instance_id.clone(), instance.clone());
+        self.instances
+            .lock()
+            .insert(instance.instance_id.clone(), instance.clone());
         Ok(instance)
     }
 
@@ -691,7 +708,9 @@ impl WorkflowEngine {
                 let next = transition.to.clone();
                 instance.transition_to(&next);
 
-                let next_state = def.find_state(&next).ok_or_else(|| Error::Internal("target state missing".to_string()))?;
+                let next_state = def
+                    .find_state(&next)
+                    .ok_or_else(|| Error::Internal("target state missing".to_string()))?;
                 if next_state.state_type == StateType::Terminal {
                     instance.complete();
                 } else if next_state.state_type == StateType::Error {
@@ -708,7 +727,9 @@ impl WorkflowEngine {
     /// 注册触发器。
     pub fn register_trigger(&self, trigger: Trigger) {
         info!(trigger_id = %trigger.trigger_id, workflow_id = %trigger.workflow_id, "registering trigger");
-        self.triggers.lock().insert(trigger.trigger_id.clone(), trigger);
+        self.triggers
+            .lock()
+            .insert(trigger.trigger_id.clone(), trigger);
     }
 
     /// 获取触发器。

@@ -3,8 +3,8 @@
 //! V19 §28 原始指定 `async_trait`，本批次 PR 推进异步化迁移。
 //! 纯计算方法 `get_history` 保持同步签名。
 
-use async_trait::async_trait;
 use crate::l1_infrastructure::crdt::LoroDoc;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,5 +44,9 @@ pub trait CrdtEngine: Send + Sync {
     async fn get_snapshot(&self, doc_id: &str) -> Result<Vec<u8>, crate::Error>;
     /// 纯计算方法，保持同步签名。
     fn get_history(&self, doc_id: &str, since: Option<Timestamp>) -> Vec<Event>;
-    async fn merge_branch(&self, doc_id: &str, branch_id: &str) -> Result<MergeResult, crate::Error>;
+    async fn merge_branch(
+        &self,
+        doc_id: &str,
+        branch_id: &str,
+    ) -> Result<MergeResult, crate::Error>;
 }

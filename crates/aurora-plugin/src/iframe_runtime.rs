@@ -315,10 +315,7 @@ impl IframeRuntime {
 
     /// 从框架收件箱取出下一条请求（模拟框架侧消费）。
     pub fn recv(&self, id: &str) -> Option<JsonRpcRequest> {
-        self.inbox
-            .write()
-            .get_mut(id)
-            .and_then(|q| q.pop_front())
+        self.inbox.write().get_mut(id).and_then(|q| q.pop_front())
     }
 
     /// 模拟框架侧处理请求并生成响应。
@@ -346,10 +343,9 @@ impl IframeRuntime {
                 request.params.clone().unwrap_or(serde_json::Value::Null),
             ),
             "get_theme" => JsonRpcResponse::success(request.id.clone(), frame.theme.to_json()),
-            "get_sandbox" => JsonRpcResponse::success(
-                request.id.clone(),
-                serde_json::json!(frame.sandbox),
-            ),
+            "get_sandbox" => {
+                JsonRpcResponse::success(request.id.clone(), serde_json::json!(frame.sandbox))
+            }
             other => {
                 warn!("iframe {}: unknown method `{}`", id, other);
                 JsonRpcResponse::error(request.id.clone(), JsonRpcError::method_not_found())
@@ -371,9 +367,7 @@ impl IframeRuntime {
             .recv(id)
             .ok_or_else(|| crate::Error::JsonRpc("message lost in transit".into()))?;
         if dequeued.id != request.id {
-            return Err(crate::Error::JsonRpc(
-                "request/response id mismatch".into(),
-            ));
+            return Err(crate::Error::JsonRpc("request/response id mismatch".into()));
         }
         Ok(self.handle_request(id, &dequeued))
     }
@@ -550,7 +544,9 @@ mod tests {
         let result = rt.invoke("p1", "ping", &serde_json::json!({})).unwrap();
         assert_eq!(result, serde_json::json!("pong"));
 
-        let err = rt.invoke("p1", "missing", &serde_json::json!({})).unwrap_err();
+        let err = rt
+            .invoke("p1", "missing", &serde_json::json!({}))
+            .unwrap_err();
         assert!(matches!(err, crate::Error::JsonRpc(_)));
     }
 
@@ -558,7 +554,10 @@ mod tests {
     fn test_iframe_unregistered_errors() {
         let rt = IframeRuntime::with_light_theme();
         let err = rt
-            .send("ghost", JsonRpcRequest::new(JsonRpcId::Num(1), "ping", None))
+            .send(
+                "ghost",
+                JsonRpcRequest::new(JsonRpcId::Num(1), "ping", None),
+            )
             .unwrap_err();
         assert!(matches!(err, crate::Error::NotFound(_)));
     }

@@ -89,27 +89,21 @@ impl AtomicTransaction {
         let tmp_path = self.tmp_path(rel_path, loro_op_id);
 
         // 1. 确保临时目录存在
-        fs::create_dir_all(&self.tmp_dir).map_err(|e| {
-            crate::Error::Internal(format!("create tmp_dir failed: {}", e))
-        })?;
+        fs::create_dir_all(&self.tmp_dir)
+            .map_err(|e| crate::Error::Internal(format!("create tmp_dir failed: {}", e)))?;
 
         // 确保目标父目录存在
         if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                crate::Error::Internal(format!("create data dir failed: {}", e))
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|e| crate::Error::Internal(format!("create data dir failed: {}", e)))?;
         }
 
         // 2. 写入临时文件
-        let mut tmp_file = fs::File::create(&tmp_path).map_err(|e| {
-            crate::Error::Io(e)
-        })?;
-        tmp_file.write_all(content).map_err(|e| {
-            crate::Error::Io(e)
-        })?;
-        tmp_file.sync_all().map_err(|e| {
-            crate::Error::Io(e)
-        })?;
+        let mut tmp_file = fs::File::create(&tmp_path).map_err(crate::Error::Io)?;
+        tmp_file
+            .write_all(content)
+            .map_err(crate::Error::Io)?;
+        tmp_file.sync_all().map_err(crate::Error::Io)?;
         let bytes_written = content.len();
 
         // 3. 计算校验和
@@ -154,11 +148,7 @@ impl AtomicTransaction {
     }
 
     /// 校验文件校验和，不匹配时返回 [`ChecksumMismatch`] 错误。
-    pub fn check_checksum(
-        &self,
-        rel_path: &str,
-        expected: &[u8; 32],
-    ) -> Result<(), crate::Error> {
+    pub fn check_checksum(&self, rel_path: &str, expected: &[u8; 32]) -> Result<(), crate::Error> {
         let actual = self.verify_checksum(rel_path)?;
         if actual != *expected {
             return Err(crate::Error::Internal(format!(
@@ -265,8 +255,7 @@ impl AtomicTransaction {
     fn tmp_path(&self, rel_path: &str, op_id: &str) -> PathBuf {
         // 将路径中的分隔符替换为 `_`，避免创建深层目录
         let safe_name = rel_path.replace(['/', '\\'], "_");
-        self.tmp_dir
-            .join(format!("{}_{}.tmp", safe_name, op_id))
+        self.tmp_dir.join(format!("{}_{}.tmp", safe_name, op_id))
     }
 
     /// 清理残留的 `.tmp` 文件（跳过 `except` 列表中的）。
@@ -275,9 +264,8 @@ impl AtomicTransaction {
             return Ok(());
         }
 
-        let entries = fs::read_dir(&self.tmp_dir).map_err(|e| {
-            crate::Error::Internal(format!("read tmp_dir failed: {}", e))
-        })?;
+        let entries = fs::read_dir(&self.tmp_dir)
+            .map_err(|e| crate::Error::Internal(format!("read tmp_dir failed: {}", e)))?;
 
         let mut count = 0;
         for entry in entries.flatten() {
@@ -329,7 +317,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let at = AtomicTransaction::new(tmp.path().to_path_buf());
 
-        at.atomic_write("notes/test.md", b"correct", "op-1").unwrap();
+        at.atomic_write("notes/test.md", b"correct", "op-1")
+            .unwrap();
         let wrong = [0u8; 32];
         assert!(at.check_checksum("notes/test.md", &wrong).is_err());
     }

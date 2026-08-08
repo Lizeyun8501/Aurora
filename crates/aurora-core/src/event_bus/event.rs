@@ -11,29 +11,18 @@ pub enum CoreEvent {
         change_summary: DocumentChangeSummary,
     },
     /// 同步进度更新
-    SyncProgress {
-        target_id: String,
-        progress: f32,
-    },
+    SyncProgress { target_id: String, progress: f32 },
     /// 任务到期提醒
-    TaskDue {
-        task_id: String,
-        due_time: u64,
-    },
+    TaskDue { task_id: String, due_time: u64 },
     /// AI 生成完成
-    AIGenerationComplete {
-        request_id: String,
-        output: String,
-    },
+    AIGenerationComplete { request_id: String, output: String },
     /// 权限变更
     PermissionChanged {
         resource_id: String,
         new_perms: PermissionSet,
     },
     /// 插件加载完成
-    PluginLoaded {
-        plugin_id: String,
-    },
+    PluginLoaded { plugin_id: String },
     /// 块变更事件（内容编辑 → 知识网络）
     BlockChanged {
         doc_id: String,
@@ -42,28 +31,18 @@ pub enum CoreEvent {
         content: serde_json::Value,
     },
     /// 反向链接更新（知识网络 → 内容编辑）
-    BacklinksUpdated {
-        doc_id: String,
-    },
+    BacklinksUpdated { doc_id: String },
     /// 任务创建（GTD → 内容编辑）
-    TaskCreated {
-        task_id: String,
-        title: String,
-    },
+    TaskCreated { task_id: String, title: String },
     /// 任务状态更新（内容编辑 → GTD）
-    TaskUpdated {
-        task_id: String,
-        status: String,
-    },
+    TaskUpdated { task_id: String, status: String },
     /// 素材添加
     AssetAdded {
         asset_hash: String,
         mime_type: String,
     },
     /// 索引重建请求
-    IndexRebuildRequest {
-        index_type: IndexType,
-    },
+    IndexRebuildRequest { index_type: IndexType },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

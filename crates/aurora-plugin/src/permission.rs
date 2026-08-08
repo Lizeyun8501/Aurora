@@ -224,7 +224,9 @@ impl DefaultGrantor {
 
     /// 撤回某插件某权限的预批准。
     pub fn disallow(&self, plugin_id: &str, perm: &Permission) {
-        self.allowed.write().remove(&(plugin_id.to_string(), perm.clone()));
+        self.allowed
+            .write()
+            .remove(&(plugin_id.to_string(), perm.clone()));
     }
 }
 
@@ -416,7 +418,9 @@ mod tests {
     #[test]
     fn test_permission_engine_grant_check() {
         let engine = PermissionEngine::with_default_grantor();
-        engine.grant("p1", Permission::Storage, Some("seed".into())).unwrap();
+        engine
+            .grant("p1", Permission::Storage, Some("seed".into()))
+            .unwrap();
         assert!(engine.check("p1", &Permission::Storage));
         assert!(!engine.check("p1", &Permission::Network));
         assert!(engine.ensure("p1", &Permission::Storage).is_ok());
@@ -443,11 +447,15 @@ mod tests {
         // 初始未授予 Fs
         assert!(!engine.check("p1", &Permission::Fs));
         // 运行时请求 → 授予者同意 → 升级
-        engine.request("p1", Permission::Fs, "need fs to export").unwrap();
+        engine
+            .request("p1", Permission::Fs, "need fs to export")
+            .unwrap();
         assert!(engine.check("p1", &Permission::Fs));
 
         // 审计记录应包含 Upgraded
-        let upgrades = engine.audit().count_by_decision(PermissionDecision::Upgraded);
+        let upgrades = engine
+            .audit()
+            .count_by_decision(PermissionDecision::Upgraded);
         assert_eq!(upgrades, 1);
     }
 
@@ -459,7 +467,10 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, crate::Error::PermissionDenied(_)));
         assert!(!engine.check("p1", &Permission::Network));
-        assert_eq!(engine.audit().count_by_decision(PermissionDecision::Denied), 1);
+        assert_eq!(
+            engine.audit().count_by_decision(PermissionDecision::Denied),
+            1
+        );
     }
 
     #[test]

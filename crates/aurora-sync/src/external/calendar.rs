@@ -101,7 +101,11 @@ pub struct CalendarEvent {
 
 impl CalendarEvent {
     /// 创建新事件 (默认 1 小时时长)。
-    pub fn new(uid: impl Into<String>, summary: impl Into<String>, dtstart: chrono::DateTime<chrono::Utc>) -> Self {
+    pub fn new(
+        uid: impl Into<String>,
+        summary: impl Into<String>,
+        dtstart: chrono::DateTime<chrono::Utc>,
+    ) -> Self {
         let dtend = dtstart + chrono::Duration::hours(1);
         let now = chrono::Utc::now();
         Self {
@@ -277,7 +281,11 @@ impl CalDavConnector {
 
     /// 列出全部事件。
     pub fn list_events(&self) -> Vec<CalendarEvent> {
-        self.events.read().values().map(|(e, _)| e.clone()).collect()
+        self.events
+            .read()
+            .values()
+            .map(|(e, _)| e.clone())
+            .collect()
     }
 
     /// 服务端事件总数。
@@ -551,7 +559,10 @@ impl CalendarSync {
             self.locally_modified.write().remove(&c.uid);
         }
         if conflict_count > 0 {
-            warn!("caldav full_sync: resolved {} conflicts (LWW)", conflict_count);
+            warn!(
+                "caldav full_sync: resolved {} conflicts (LWW)",
+                conflict_count
+            );
         }
         let pushed = self.push_local()?;
         let pulled = self.pull_remote()?;
@@ -564,8 +575,7 @@ mod tests {
     use super::*;
 
     fn dt(year: i32, month: u32, day: u32) -> chrono::DateTime<chrono::Utc> {
-        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, year, month, day, 9, 0, 0)
-            .unwrap()
+        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, year, month, day, 9, 0, 0).unwrap()
     }
 
     fn make_connector() -> CalDavConnector {
@@ -605,8 +615,7 @@ mod tests {
 
     #[test]
     fn test_event_to_gtd_task_mapping() {
-        let ev = CalendarEvent::new("evt-1", "Standup", dt(2026, 3, 1))
-            .with_description("daily");
+        let ev = CalendarEvent::new("evt-1", "Standup", dt(2026, 3, 1)).with_description("daily");
         let task = ev.to_gtd_task();
         assert_eq!(task.id, "caldav:evt-1");
         assert_eq!(task.title, "Standup");
@@ -832,7 +841,8 @@ mod tests {
         use super::super::{ConnectorRegistry, SyncConnector};
         let conn = Arc::new(make_connector());
         let reg = ConnectorRegistry::new();
-        reg.register("cal", conn.clone() as Arc<dyn SyncConnector>).unwrap();
+        reg.register("cal", conn.clone() as Arc<dyn SyncConnector>)
+            .unwrap();
         reg.connect("cal").unwrap();
         assert_eq!(reg.state("cal"), Some(ConnectorState::Connected));
         let s = reg.sync("cal").unwrap();

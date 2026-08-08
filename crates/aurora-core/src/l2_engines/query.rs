@@ -17,9 +17,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
 use crate::traits::storage::{QueryFilter as StorageFilter, Storage, StorageQuery};
-use crate::traits::vector_store::{
-    QueryFilter as VectorFilter, VectorStore,
-};
+use crate::traits::vector_store::{QueryFilter as VectorFilter, VectorStore};
 
 // ==================== Query DSL ====================
 
@@ -826,11 +824,9 @@ impl QueryEngine {
                 let mut map = serde_json::Map::new();
                 map.insert("id".to_string(), serde_json::Value::String(r.id));
                 map.insert("score".to_string(), serde_json::Value::from(r.score as f64));
-                if let Some(data) = r.data {
-                    if let serde_json::Value::Object(m) = data {
-                        for (k, v) in m {
-                            map.insert(k, v);
-                        }
+                if let Some(serde_json::Value::Object(m)) = r.data {
+                    for (k, v) in m {
+                        map.insert(k, v);
                     }
                 }
                 serde_json::Value::Object(map)
@@ -864,7 +860,9 @@ impl QueryEngine {
             .map(|p| p.offset + top_k)
             .unwrap_or(top_k);
 
-        let results = vector_store.search(&vector, adjusted_top_k, filter.as_ref()).await?;
+        let results = vector_store
+            .search(&vector, adjusted_top_k, filter.as_ref())
+            .await?;
 
         let mut items: Vec<serde_json::Value> = results
             .into_iter()
@@ -1178,7 +1176,7 @@ fn apply_pagination(
     }
 }
 
-fn apply_sort(items: &mut Vec<serde_json::Value>, sort: &[Sort]) {
+fn apply_sort(items: &mut [serde_json::Value], sort: &[Sort]) {
     if sort.is_empty() {
         return;
     }

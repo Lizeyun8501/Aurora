@@ -177,11 +177,10 @@ fn redact_field_in_string(input: &str, field: &str) -> String {
             let pos = search_from + rel;
             let after = pos + fl_bytes.len();
             // 边界检查：前一个字符必须是非字母数字（避免子串误匹配）
-            let before_ok = pos == 0
-                || {
-                    let prev = lower_bytes[pos - 1];
-                    !(prev.is_ascii_alphanumeric() || prev == b'_')
-                };
+            let before_ok = pos == 0 || {
+                let prev = lower_bytes[pos - 1];
+                !(prev.is_ascii_alphanumeric() || prev == b'_')
+            };
             if !before_ok || after >= lower_bytes.len() {
                 search_from = pos + 1;
                 continue;
@@ -269,9 +268,7 @@ fn redact_emails_in_string(input: &str) -> String {
             }
             let mut end = i + 1;
             while end < bytes.len()
-                && (bytes[end].is_ascii_alphanumeric()
-                    || bytes[end] == b'.'
-                    || bytes[end] == b'-')
+                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'.' || bytes[end] == b'-')
             {
                 end += 1;
             }
@@ -647,10 +644,18 @@ impl BusinessMetrics {
             "Current active users",
         )))?;
         // 分别注册不同类型的指标
-        registry.register(Box::new(notes_created.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
-        registry.register(Box::new(notes_deleted.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
-        registry.register(Box::new(sync_operations.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
-        registry.register(Box::new(active_users.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
+        registry
+            .register(Box::new(notes_created.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
+        registry
+            .register(Box::new(notes_deleted.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
+        registry
+            .register(Box::new(sync_operations.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
+        registry
+            .register(Box::new(active_users.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         Ok(Self {
             notes_created,
             notes_deleted,
@@ -688,15 +693,22 @@ impl PerformanceMetrics {
     }
     pub fn register(registry: &Registry) -> Result<Self> {
         let request_duration = Self::map_prom_err(Histogram::with_opts(
-            HistogramOpts::new("perf_request_duration_seconds", "Request duration in seconds")
-                .buckets(vec![0.01, 0.05, 0.1, 0.5, 1.0, 5.0]),
+            HistogramOpts::new(
+                "perf_request_duration_seconds",
+                "Request duration in seconds",
+            )
+            .buckets(vec![0.01, 0.05, 0.1, 0.5, 1.0, 5.0]),
         ))?;
         let db_query_duration = Self::map_prom_err(Histogram::with_opts(
             HistogramOpts::new("perf_db_query_seconds", "DB query duration in seconds")
                 .buckets(vec![0.001, 0.01, 0.1, 0.5, 1.0]),
         ))?;
-        registry.register(Box::new(request_duration.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
-        registry.register(Box::new(db_query_duration.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
+        registry
+            .register(Box::new(request_duration.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
+        registry
+            .register(Box::new(db_query_duration.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         Ok(Self {
             request_duration,
             db_query_duration,
@@ -724,13 +736,27 @@ impl ResourceMetrics {
         r.map_err(|e| Error::Metrics(e.to_string()))
     }
     pub fn register(registry: &Registry) -> Result<Self> {
-        let cpu_usage = Self::map_prom_err(Gauge::with_opts(Opts::new("resource_cpu_usage", "CPU usage ratio")))?;
-        let memory_bytes =
-            Self::map_prom_err(Gauge::with_opts(Opts::new("resource_memory_bytes", "Memory usage in bytes")))?;
-        let disk_usage = Self::map_prom_err(Gauge::with_opts(Opts::new("resource_disk_usage", "Disk usage ratio")))?;
-        registry.register(Box::new(cpu_usage.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
-        registry.register(Box::new(memory_bytes.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
-        registry.register(Box::new(disk_usage.clone())).map_err(|e| Error::Metrics(e.to_string()))?;
+        let cpu_usage = Self::map_prom_err(Gauge::with_opts(Opts::new(
+            "resource_cpu_usage",
+            "CPU usage ratio",
+        )))?;
+        let memory_bytes = Self::map_prom_err(Gauge::with_opts(Opts::new(
+            "resource_memory_bytes",
+            "Memory usage in bytes",
+        )))?;
+        let disk_usage = Self::map_prom_err(Gauge::with_opts(Opts::new(
+            "resource_disk_usage",
+            "Disk usage ratio",
+        )))?;
+        registry
+            .register(Box::new(cpu_usage.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
+        registry
+            .register(Box::new(memory_bytes.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
+        registry
+            .register(Box::new(disk_usage.clone()))
+            .map_err(|e| Error::Metrics(e.to_string()))?;
         Ok(Self {
             cpu_usage,
             memory_bytes,
@@ -762,7 +788,10 @@ impl QualityMetrics {
         r.map_err(|e| Error::Metrics(e.to_string()))
     }
     pub fn register(registry: &Registry) -> Result<Self> {
-        let error_rate = Self::map_prom_err(Gauge::with_opts(Opts::new("quality_error_rate", "Error rate ratio")))?;
+        let error_rate = Self::map_prom_err(Gauge::with_opts(Opts::new(
+            "quality_error_rate",
+            "Error rate ratio",
+        )))?;
         let crash_count = Self::map_prom_err(Counter::with_opts(Opts::new(
             "quality_crash_count_total",
             "Total crash count",
@@ -835,7 +864,9 @@ impl MetricsCollector {
             }
             MetricKind::Histogram => {
                 let buckets = def.buckets.clone().unwrap_or_else(|| {
-                    vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+                    vec![
+                        0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+                    ]
                 });
                 self.register_histogram(&def.name, &def.help, &buckets)?;
             }
@@ -849,8 +880,8 @@ impl MetricsCollector {
     }
 
     pub fn register_counter(&self, name: &str, help: &str) -> Result<()> {
-        let c = Counter::with_opts(Opts::new(name, help))
-            .map_err(|e| Error::Metrics(e.to_string()))?;
+        let c =
+            Counter::with_opts(Opts::new(name, help)).map_err(|e| Error::Metrics(e.to_string()))?;
         self.registry
             .inner()
             .register(Box::new(c.clone()))
@@ -860,8 +891,8 @@ impl MetricsCollector {
     }
 
     pub fn register_gauge(&self, name: &str, help: &str) -> Result<()> {
-        let g = Gauge::with_opts(Opts::new(name, help))
-            .map_err(|e| Error::Metrics(e.to_string()))?;
+        let g =
+            Gauge::with_opts(Opts::new(name, help)).map_err(|e| Error::Metrics(e.to_string()))?;
         self.registry
             .inner()
             .register(Box::new(g.clone()))
@@ -873,8 +904,7 @@ impl MetricsCollector {
     pub fn register_histogram(&self, name: &str, help: &str, buckets: &[f64]) -> Result<()> {
         let mut opts = HistogramOpts::new(name, help);
         opts = opts.buckets(buckets.to_vec());
-        let h = Histogram::with_opts(opts)
-            .map_err(|e| Error::Metrics(e.to_string()))?;
+        let h = Histogram::with_opts(opts).map_err(|e| Error::Metrics(e.to_string()))?;
         self.registry
             .inner()
             .register(Box::new(h.clone()))
@@ -883,12 +913,7 @@ impl MetricsCollector {
         Ok(())
     }
 
-    pub fn register_counter_vec(
-        &self,
-        name: &str,
-        help: &str,
-        labels: &[&str],
-    ) -> Result<()> {
+    pub fn register_counter_vec(&self, name: &str, help: &str, labels: &[&str]) -> Result<()> {
         let cv = CounterVec::new(Opts::new(name, help), labels)
             .map_err(|e| Error::Metrics(e.to_string()))?;
         self.registry
@@ -1219,7 +1244,11 @@ impl TailSampler {
     }
 
     pub fn sample(&self, spans: &[Span]) -> Vec<Span> {
-        spans.iter().filter(|s| self.should_keep(s)).cloned().collect()
+        spans
+            .iter()
+            .filter(|s| self.should_keep(s))
+            .cloned()
+            .collect()
     }
 }
 
@@ -1249,8 +1278,7 @@ impl OtlpExporter {
 
     pub fn export(&self, span: &Span) -> Result<()> {
         // mock：序列化为 JSON 验证可序列化性（真实 OTLP 使用 protobuf）
-        let _json =
-            serde_json::to_string(span).map_err(|e| Error::Tracing(e.to_string()))?;
+        let _json = serde_json::to_string(span).map_err(|e| Error::Tracing(e.to_string()))?;
         self.exported.write().push(TraceExport {
             span: span.clone(),
             exported_at: Utc::now(),
@@ -1902,8 +1930,8 @@ mod tests {
     fn test_tracer_context_set_and_clear() {
         Tracer::clear_context();
         assert!(Tracer::current_context().is_none());
-        let ctx = TraceContext::new(TraceId::generate(), SpanId::generate())
-            .with_baggage("env", "test");
+        let ctx =
+            TraceContext::new(TraceId::generate(), SpanId::generate()).with_baggage("env", "test");
         Tracer::set_context(ctx.clone());
         let current = Tracer::current_context().unwrap();
         assert_eq!(current.trace_id, ctx.trace_id);

@@ -2,10 +2,11 @@
 //!
 //! 实现任务状态机、项目层级嵌套、收件箱、重复任务、提醒、习惯追踪、自动化规则。
 
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use parking_lot::RwLock;
+use tracing::warn;
 use uuid::Uuid;
 
 /// 任务唯一标识
@@ -39,7 +40,11 @@ impl TaskStatus {
         match self {
             TaskStatus::Inbox => vec![TaskStatus::Clarified, TaskStatus::Archived],
             TaskStatus::Clarified => vec![TaskStatus::Organized, TaskStatus::Archived],
-            TaskStatus::Organized => vec![TaskStatus::Scheduled, TaskStatus::Doing, TaskStatus::Archived],
+            TaskStatus::Organized => vec![
+                TaskStatus::Scheduled,
+                TaskStatus::Doing,
+                TaskStatus::Archived,
+            ],
             TaskStatus::Scheduled => vec![TaskStatus::Doing, TaskStatus::Organized],
             TaskStatus::Doing => vec![TaskStatus::Done, TaskStatus::Organized],
             TaskStatus::Done => vec![TaskStatus::Archived, TaskStatus::Doing],
@@ -250,7 +255,10 @@ pub enum RecurrenceFrequency {
 
 impl RecurrenceRule {
     /// 计算下一次出现时间
-    pub fn next_occurrence(&self, from: chrono::DateTime<chrono::Utc>) -> Option<chrono::DateTime<chrono::Utc>> {
+    pub fn next_occurrence(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
         let next = match self.frequency {
             RecurrenceFrequency::Daily => from + chrono::Duration::days(self.interval as i64),
             RecurrenceFrequency::Weekly => from + chrono::Duration::weeks(self.interval as i64),
@@ -313,15 +321,13 @@ impl Habit {
 
         // 检查连续性
         let should_increment = match &self.frequency {
-            HabitFrequency::Daily => {
-                match self.last_completed {
-                    Some(last) => {
-                        let diff = now.date_naive().signed_duration_since(last.date_naive());
-                        diff.num_days() <= 1
-                    }
-                    None => true,
+            HabitFrequency::Daily => match self.last_completed {
+                Some(last) => {
+                    let diff = now.date_naive().signed_duration_since(last.date_naive());
+                    diff.num_days() <= 1
                 }
-            }
+                None => true,
+            },
             HabitFrequency::Weekly { .. } => true,
         };
 
@@ -361,10 +367,18 @@ pub struct AutomationRule {
 #[serde(rename_all = "snake_case")]
 pub enum Trigger {
     TaskCreated,
-    TaskStatusChanged { from: Option<TaskStatus>, to: Option<TaskStatus> },
-    TaskDueSoon { hours: u32 },
+    TaskStatusChanged {
+        from: Option<TaskStatus>,
+        to: Option<TaskStatus>,
+    },
+    TaskDueSoon {
+        hours: u32,
+    },
     TaskOverdue,
-    Daily { hour: u32, minute: u32 },
+    Daily {
+        hour: u32,
+        minute: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -437,7 +451,8 @@ impl GtdEngine {
 
         // 如果有父任务，继承父任务的所有祖先关系
         if let Some(ref parent_id) = task.parent_id {
-            let parent_entries: Vec<_> = closure.iter()
+            let parent_entries: Vec<_> = closure
+                .iter()
                 .filter(|e| e.descendant_id == *parent_id)
                 .map(|e| ClosureEntry {
                     ancestor_id: e.ancestor_id.clone(),
@@ -482,7 +497,8 @@ impl GtdEngine {
     }
 
     pub fn list_tasks_by_status(&self, status: TaskStatus) -> Vec<Task> {
-        self.tasks.read()
+        self.tasks
+            .read()
             .values()
             .filter(|t| t.status == status)
             .cloned()
@@ -500,7 +516,9 @@ impl GtdEngine {
 
         for id in task_ids {
             if let Some(task) = tasks.get_mut(id) {
-                if task.status == TaskStatus::Inbox && TaskStatus::Inbox.can_transition_to(&new_status) {
+                if task.status == TaskStatus::Inbox
+                    && TaskStatus::Inbox.can_transition_to(&new_status)
+                {
                     task.status = new_status.clone();
                     task.updated_at = chrono::Utc::now();
                     result.push(task.clone());
@@ -513,7 +531,8 @@ impl GtdEngine {
 
     /// 获取子任务（直接子级）
     pub fn get_direct_children(&self, task_id: &str) -> Vec<Task> {
-        self.tasks.read()
+        self.tasks
+            .read()
             .values()
             .filter(|t| t.parent_id.as_ref() == Some(&task_id.to_string()))
             .cloned()
@@ -525,12 +544,14 @@ impl GtdEngine {
         let closure = self.task_closure.read();
         let tasks = self.tasks.read();
 
-        let descendant_ids: HashSet<_> = closure.iter()
+        let descendant_ids: HashSet<_> = closure
+            .iter()
             .filter(|e| e.ancestor_id == task_id && e.depth > 0)
             .map(|e| e.descendant_id.clone())
             .collect();
 
-        descendant_ids.into_iter()
+        descendant_ids
+            .into_iter()
             .filter_map(|id| tasks.get(&id).cloned())
             .collect()
     }
@@ -540,7 +561,8 @@ impl GtdEngine {
         let closure = self.task_closure.read();
         let tasks = self.tasks.read();
 
-        let mut path: Vec<_> = closure.iter()
+        let mut path: Vec<_> = closure
+            .iter()
             .filter(|e| e.descendant_id == task_id)
             .map(|e| (e.depth, e.ancestor_id.clone()))
             .collect();
@@ -566,7 +588,8 @@ impl GtdEngine {
         });
 
         if let Some(ref parent_id) = project.parent_id {
-            let parent_entries: Vec<_> = closure.iter()
+            let parent_entries: Vec<_> = closure
+                .iter()
                 .filter(|e| e.descendant_id == *parent_id)
                 .map(|e| ClosureEntry {
                     ancestor_id: e.ancestor_id.clone(),
@@ -590,7 +613,8 @@ impl GtdEngine {
     }
 
     pub fn get_project_tasks(&self, project_id: &str) -> Vec<Task> {
-        self.tasks.read()
+        self.tasks
+            .read()
             .values()
             .filter(|t| t.project_id.as_ref() == Some(&project_id.to_string()))
             .cloned()
@@ -630,7 +654,8 @@ impl GtdEngine {
 
     pub fn get_pending_reminders(&self) -> Vec<Reminder> {
         let now = chrono::Utc::now();
-        self.reminders.read()
+        self.reminders
+            .read()
             .iter()
             .filter(|r| !r.dismissed && r.remind_at <= now)
             .cloned()
@@ -658,7 +683,10 @@ impl GtdEngine {
 
         for rule in rules.iter().filter(|r| r.enabled) {
             if std::mem::discriminant(&rule.trigger) == std::mem::discriminant(trigger) {
-                let all_match = rule.conditions.iter().all(|cond| Self::check_condition(task, cond));
+                let all_match = rule
+                    .conditions
+                    .iter()
+                    .all(|cond| Self::check_condition(task, cond));
                 if all_match {
                     actions.extend(rule.actions.clone());
                 }
@@ -674,12 +702,10 @@ impl GtdEngine {
             Condition::PriorityIs(p) => task.priority == *p,
             Condition::HasTag(tag) => task.tags.contains(tag),
             Condition::InProject(pid) => task.project_id.as_ref() == Some(pid),
-            Condition::DueWithinHours(hours) => {
-                task.due_date.is_some_and(|due| {
-                    let diff = due - chrono::Utc::now();
-                    diff.num_hours() <= *hours as i64 && diff.num_hours() >= 0
-                })
-            }
+            Condition::DueWithinHours(hours) => task.due_date.is_some_and(|due| {
+                let diff = due - chrono::Utc::now();
+                diff.num_hours() <= *hours as i64 && diff.num_hours() >= 0
+            }),
         }
     }
 
@@ -687,28 +713,45 @@ impl GtdEngine {
         let mut tasks = self.tasks.write();
         let task = tasks.get_mut(task_id)?;
 
+        // 仅当动作真正生效时才更新 updated_at：非法状态迁移（被状态机拒绝）
+        // 或空操作（未知动作 / 重复标签）此前也会触碰 updated_at 并返回
+        // Some，表现为“已应用”但实际未变，属于静默失败。
+        let mut changed = false;
         match action {
-            Action::ChangeStatus(s) => {
-                let _ = task.transition_to(s.clone());
+            Action::ChangeStatus(s) => match task.transition_to(s.clone()) {
+                Ok(()) => changed = true,
+                Err(e) => {
+                    warn!(task_id = %task.id, error = %e, "apply_action ChangeStatus rejected")
+                }
+            },
+            Action::SetPriority(p) => {
+                task.priority = p.clone();
+                changed = true;
             }
-            Action::SetPriority(p) => task.priority = p.clone(),
             Action::AddTag(tag) => {
                 if !task.tags.contains(tag) {
                     task.tags.push(tag.clone());
+                    changed = true;
                 }
             }
-            Action::MoveToProject(pid) => task.project_id = Some(pid.clone()),
+            Action::MoveToProject(pid) => {
+                task.project_id = Some(pid.clone());
+                changed = true;
+            }
             _ => {}
         }
 
-        task.updated_at = chrono::Utc::now();
+        if changed {
+            task.updated_at = chrono::Utc::now();
+        }
         Some(task.clone())
     }
 
     // === 查询与过滤 ===
 
     pub fn get_overdue_tasks(&self) -> Vec<Task> {
-        self.tasks.read()
+        self.tasks
+            .read()
             .values()
             .filter(|t| t.is_overdue())
             .cloned()
@@ -719,19 +762,20 @@ impl GtdEngine {
         let now = chrono::Utc::now();
         let deadline = now + chrono::Duration::hours(hours);
 
-        self.tasks.read()
+        self.tasks
+            .read()
             .values()
             .filter(|t| {
-                t.due_date.is_some_and(|due| {
-                    due > now && due <= deadline && t.status != TaskStatus::Done
-                })
+                t.due_date
+                    .is_some_and(|due| due > now && due <= deadline && t.status != TaskStatus::Done)
             })
             .cloned()
             .collect()
     }
 
     pub fn get_tasks_by_context(&self, context: &str) -> Vec<Task> {
-        self.tasks.read()
+        self.tasks
+            .read()
             .values()
             .filter(|t| t.context.as_ref() == Some(&context.to_string()))
             .cloned()
@@ -739,7 +783,8 @@ impl GtdEngine {
     }
 
     pub fn get_tasks_by_tag(&self, tag: &str) -> Vec<Task> {
-        self.tasks.read()
+        self.tasks
+            .read()
             .values()
             .filter(|t| t.tags.contains(&tag.to_string()))
             .cloned()
@@ -749,17 +794,20 @@ impl GtdEngine {
     /// 获取今日待办（Scheduled + Doing + 即将到期）
     pub fn get_today_tasks(&self) -> Vec<Task> {
         let now = chrono::Utc::now();
-        let today_start: chrono::DateTime<chrono::Utc> = now.date_naive()
+        let today_start: chrono::DateTime<chrono::Utc> = now
+            .date_naive()
             .and_hms_opt(0, 0, 0)
             .map(|naive| chrono::DateTime::from_naive_utc_and_offset(naive, chrono::Utc))
             .unwrap_or_else(chrono::Utc::now);
         let today_end = today_start + chrono::Duration::days(1);
 
-        self.tasks.read()
+        self.tasks
+            .read()
             .values()
             .filter(|t| {
                 matches!(t.status, TaskStatus::Scheduled | TaskStatus::Doing)
-                    || t.due_date.is_some_and(|due| due >= today_start && due < today_end)
+                    || t.due_date
+                        .is_some_and(|due| due >= today_start && due < today_end)
             })
             .cloned()
             .collect()
@@ -834,9 +882,7 @@ mod tests {
         let engine = GtdEngine::new();
 
         let project = engine.create_project(Project::new("Website Redesign"));
-        let task = engine.create_task(
-            Task::new("Design mockups").with_project(&project.id)
-        );
+        let task = engine.create_task(Task::new("Design mockups").with_project(&project.id));
 
         let project_tasks = engine.get_project_tasks(&project.id);
         assert_eq!(project_tasks.len(), 1);
@@ -848,13 +894,11 @@ mod tests {
         let engine = GtdEngine::new();
 
         let overdue = engine.create_task(
-            Task::new("Overdue task")
-                .with_due_date(chrono::Utc::now() - chrono::Duration::days(1))
+            Task::new("Overdue task").with_due_date(chrono::Utc::now() - chrono::Duration::days(1)),
         );
 
         let future = engine.create_task(
-            Task::new("Future task")
-                .with_due_date(chrono::Utc::now() + chrono::Duration::days(1))
+            Task::new("Future task").with_due_date(chrono::Utc::now() + chrono::Duration::days(1)),
         );
 
         assert!(overdue.is_overdue());
@@ -953,12 +997,12 @@ mod tests {
         engine.create_task(
             Task::new("Task 1")
                 .with_tags(vec!["work".to_string(), "urgent".to_string()])
-                .with_context("office")
+                .with_context("office"),
         );
         engine.create_task(
             Task::new("Task 2")
                 .with_tags(vec!["personal".to_string()])
-                .with_context("home")
+                .with_context("home"),
         );
 
         let work_tasks = engine.get_tasks_by_tag("work");

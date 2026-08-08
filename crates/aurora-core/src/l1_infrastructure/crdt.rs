@@ -71,7 +71,9 @@ impl CrdtEngine for LoroCrdtEngine {
         let doc = docs
             .get(doc_id)
             .ok_or_else(|| crate::Error::NotFound(format!("doc not found: {}", doc_id)))?;
-        let bytes = doc.export(loro::ExportMode::Snapshot).map_err(|e| crate::Error::Internal(format!("loro export failed: {:?}", e)))?;
+        let bytes = doc
+            .export(loro::ExportMode::Snapshot)
+            .map_err(|e| crate::Error::Internal(format!("loro export failed: {:?}", e)))?;
         Ok(bytes)
     }
 
@@ -88,7 +90,11 @@ impl CrdtEngine for LoroCrdtEngine {
         vec![]
     }
 
-    async fn merge_branch(&self, doc_id: &str, _branch_id: &str) -> Result<MergeResult, crate::Error> {
+    async fn merge_branch(
+        &self,
+        doc_id: &str,
+        _branch_id: &str,
+    ) -> Result<MergeResult, crate::Error> {
         let docs = self
             .docs
             .lock()

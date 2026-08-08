@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// 冲突解决策略枚举。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -48,6 +48,12 @@ pub struct SemanticConflict {
     pub resolution: Option<ConflictResolution>,
     /// 已选定的最终值。
     pub resolved_value: Option<serde_json::Value>,
+    /// 本地候选值的最后修改时间（LWW 判定依据；缺省则无法比较）。
+    #[serde(default)]
+    pub local_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// 远端候选值的最后修改时间（LWW 判定依据；缺省则无法比较）。
+    #[serde(default)]
+    pub remote_updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl SemanticConflict {
@@ -67,7 +73,20 @@ impl SemanticConflict {
             remote_value,
             resolution: None,
             resolved_value: None,
+            local_updated_at: None,
+            remote_updated_at: None,
         }
+    }
+
+    /// 附带双侧修改时间（供 LastWriteWins 真实按时间戳比较）。
+    pub fn with_timestamps(
+        mut self,
+        local_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+        remote_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Self {
+        self.local_updated_at = local_updated_at;
+        self.remote_updated_at = remote_updated_at;
+        self
     }
 
     /// 是否已解决。
@@ -180,7 +199,27 @@ impl ConflictResolver {
             let value = match resolution {
                 ConflictResolution::LocalWins => conflict.local_value.clone(),
                 ConflictResolution::RemoteWins => conflict.remote_value.clone(),
-                ConflictResolution::LastWriteWins => conflict.remote_value.clone(),
+                ConflictResolution::LastWriteWins => {
+                    // 真实 LWW：比较双侧修改时间，取较新者；时间戳相等时
+                    // 本地优先（确定性）。任一侧缺时间戳则无法判定“最新”，
+                    // 回退为远端优先并告警（此前无条件取远端，并非 LWW）。
+                    match (conflict.local_updated_at, conflict.remote_updated_at) {
+                        (Some(local_ts), Some(remote_ts)) => {
+                            if local_ts >= remote_ts {
+                                conflict.local_value.clone()
+                            } else {
+                                conflict.remote_value.clone()
+                            }
+                        }
+                        _ => {
+                            warn!(
+                                conflict_id = %conflict.conflict_id,
+                                "LastWriteWins without timestamps; falling back to remote"
+                            );
+                            conflict.remote_value.clone()
+                        }
+                    }
+                }
                 ConflictResolution::AutoMerge => conflict.local_value.clone(),
                 ConflictResolution::ManualSelect => {
                     return Err(crate::Error::Conflict(
@@ -202,12 +241,17 @@ impl ConflictResolver {
                 base_vv.insert("local".to_string(), 1);
                 let mut branch = Branch::new(
                     conflict.doc_id.clone(),
-                    format!("conflict-{}", &conflict.conflict_id[..8.min(conflict.conflict_id.len())]),
+                    format!(
+                        "conflict-{}",
+                        &conflict.conflict_id[..8.min(conflict.conflict_id.len())]
+                    ),
                     base_vv,
                 );
                 branch.advance("local", 1);
                 branch.advance("remote", 1);
-                self.branches.write().insert(branch.branch_id.clone(), branch);
+                self.branches
+                    .write()
+                    .insert(branch.branch_id.clone(), branch);
             }
         }
 
@@ -243,9 +287,9 @@ impl ConflictResolver {
     /// 归档分支。
     pub fn archive_branch(&self, branch_id: &str) -> crate::Result<()> {
         let mut branches = self.branches.write();
-        let branch = branches.get_mut(branch_id).ok_or_else(|| {
-            crate::Error::NotFound(format!("branch not found: {}", branch_id))
-        })?;
+        let branch = branches
+            .get_mut(branch_id)
+            .ok_or_else(|| crate::Error::NotFound(format!("branch not found: {}", branch_id)))?;
         branch.archive();
         Ok(())
     }
@@ -278,7 +322,9 @@ mod tests {
     fn test_conflict_resolve_local_wins() {
         let resolver = ConflictResolver::new(ConflictResolution::AutoMerge);
         let id = resolver.register(make_conflict());
-        let value = resolver.resolve(&id, ConflictResolution::LocalWins).expect("resolve");
+        let value = resolver
+            .resolve(&id, ConflictResolution::LocalWins)
+            .expect("resolve");
         assert_eq!(value, serde_json::json!("https://local/img.png"));
         // 已解决，不再出现在 pending
         assert_eq!(resolver.pending_conflicts().len(), 0);
@@ -288,7 +334,9 @@ mod tests {
     fn test_conflict_resolve_remote_wins() {
         let resolver = ConflictResolver::new(ConflictResolution::AutoMerge);
         let id = resolver.register(make_conflict());
-        let value = resolver.resolve(&id, ConflictResolution::RemoteWins).expect("resolve");
+        let value = resolver
+            .resolve(&id, ConflictResolution::RemoteWins)
+            .expect("resolve");
         assert_eq!(value, serde_json::json!("https://remote/img.png"));
     }
 
@@ -306,14 +354,19 @@ mod tests {
             conflicts[0].resolved_value,
             Some(serde_json::json!("https://custom/img.png"))
         );
-        assert_eq!(conflicts[0].resolution, Some(ConflictResolution::ManualSelect));
+        assert_eq!(
+            conflicts[0].resolution,
+            Some(ConflictResolution::ManualSelect)
+        );
     }
 
     #[test]
     fn test_conflict_resolve_creates_branch() {
         let resolver = ConflictResolver::new(ConflictResolution::AutoMerge);
         let id = resolver.register(make_conflict());
-        let _ = resolver.resolve(&id, ConflictResolution::Branch).expect("resolve");
+        let _ = resolver
+            .resolve(&id, ConflictResolution::Branch)
+            .expect("resolve");
         let branches = resolver.branches();
         assert_eq!(branches.len(), 1);
         assert!(branches[0].has_advanced());
@@ -337,10 +390,16 @@ mod tests {
         let resolver = ConflictResolver::new(ConflictResolution::AutoMerge);
         let id1 = resolver.register(make_conflict());
         let _id2 = resolver.register(SemanticConflict::new(
-            "doc2", "b2", "f2", serde_json::json!(1), serde_json::json!(2),
+            "doc2",
+            "b2",
+            "f2",
+            serde_json::json!(1),
+            serde_json::json!(2),
         ));
         assert_eq!(resolver.pending_conflicts().len(), 2);
-        resolver.resolve(&id1, ConflictResolution::LocalWins).unwrap();
+        resolver
+            .resolve(&id1, ConflictResolution::LocalWins)
+            .unwrap();
         assert_eq!(resolver.pending_conflicts().len(), 1);
     }
 
@@ -363,6 +422,41 @@ mod tests {
     #[test]
     fn test_default_strategy() {
         let resolver = ConflictResolver::new(ConflictResolution::LastWriteWins);
-        assert_eq!(resolver.default_strategy(), ConflictResolution::LastWriteWins);
+        assert_eq!(
+            resolver.default_strategy(),
+            ConflictResolution::LastWriteWins
+        );
+    }
+
+    #[test]
+    fn test_lww_prefers_newer_timestamp() {
+        use chrono::TimeZone;
+        let older = chrono::Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).unwrap();
+        let newer = chrono::Utc.with_ymd_and_hms(2026, 8, 7, 0, 0, 0).unwrap();
+        let resolver = ConflictResolver::new(ConflictResolution::LastWriteWins);
+
+        // 本地更新 → 取本地
+        let id = resolver.register(make_conflict().with_timestamps(Some(newer), Some(older)));
+        let value = resolver
+            .resolve(&id, ConflictResolution::LastWriteWins)
+            .expect("resolve");
+        assert_eq!(value, serde_json::json!("https://local/img.png"));
+
+        // 远端更新 → 取远端
+        let id = resolver.register(make_conflict().with_timestamps(Some(older), Some(newer)));
+        let value = resolver
+            .resolve(&id, ConflictResolution::LastWriteWins)
+            .expect("resolve");
+        assert_eq!(value, serde_json::json!("https://remote/img.png"));
+    }
+
+    #[test]
+    fn test_lww_without_timestamps_falls_back_to_remote() {
+        let resolver = ConflictResolver::new(ConflictResolution::LastWriteWins);
+        let id = resolver.register(make_conflict());
+        let value = resolver
+            .resolve(&id, ConflictResolution::LastWriteWins)
+            .expect("resolve");
+        assert_eq!(value, serde_json::json!("https://remote/img.png"));
     }
 }

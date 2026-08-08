@@ -306,7 +306,10 @@ impl LayeredEventBus {
                         warn!(seq, error = %e, "event_queue persist failed");
                     }
                 } else {
-                    debug!(seq, "no EventQueueStore configured; medium event not persisted");
+                    debug!(
+                        seq,
+                        "no EventQueueStore configured; medium event not persisted"
+                    );
                 }
                 self.medium_backlog.fetch_add(1, Ordering::SeqCst);
                 if self.medium_tx.send(envelope).is_err() {
@@ -346,7 +349,14 @@ impl LayeredEventBus {
 
     /// Medium 事件处理完成确认：更新水位线并标记持久化记录已消费。
     pub fn ack_medium(&self, seq: u64) {
-        self.medium_backlog.fetch_sub(1, Ordering::SeqCst);
+        // 饱和减法：崩溃恢复重放（backlog 从 0 开始）或重复 ack 时，
+        // 直接 fetch_sub 会下溢回绕到 u64::MAX，导致 low_channel_backpressure
+        // 永久返回 Some（Low 通道饥饿）。
+        let _ = self
+            .medium_backlog
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                Some(v.saturating_sub(1))
+            });
         self.medium_watermark.fetch_max(seq, Ordering::SeqCst);
         if let Some(store) = &self.store {
             if let Err(e) = store.mark_consumed(seq) {
@@ -516,5 +526,31 @@ mod tests {
             replayed[0].event,
             AppEvent::NoteMetadataChanged { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn ack_after_replay_does_not_underflow_backlog() {
+        // 模拟崩溃前持久化了一条 Medium 事件，重启后重放消费并 ack：
+        // backlog 计数从 0 开始，直接 fetch_sub 会下溢回绕，
+        // 导致 Low 通道背压永久生效（饥饿）。
+        let store = Arc::new(InMemoryEventQueue::new());
+        let event = AppEvent::TaskStatusChanged {
+            task_id: "t1".into(),
+            old_status: "inbox".into(),
+            new_status: "next".into(),
+        };
+        store
+            .enqueue(&QueuedEvent {
+                seq: 7,
+                channel: EventChannel::Medium,
+                event_type: event.event_type().to_string(),
+                payload: serde_json::to_string(&event).unwrap(),
+            })
+            .unwrap();
+        let bus = LayeredEventBus::new(Some(store));
+        let replayed = bus.replay_unconsumed().unwrap();
+        assert_eq!(replayed.len(), 1);
+        bus.ack_medium(replayed[0].seq);
+        assert!(bus.low_channel_backpressure().is_none());
     }
 }

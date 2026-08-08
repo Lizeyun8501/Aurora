@@ -7,11 +7,11 @@
 //! - 番茄钟使用 `tokio::time` 进行倒计时；测试中使用短周期以避免阻塞。
 //! - 虚拟列表（react-window）不真实渲染，仅返回切片数据 + 总数。
 
+use chrono::{DateTime, Duration, NaiveDate, Utc};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
-use chrono::{DateTime, Duration, NaiveDate, Utc};
 use tracing::{debug, info};
 use uuid::Uuid;
 
@@ -218,7 +218,13 @@ impl TimelineView {
             TimelineGranularity::Week => start + Duration::weeks(1),
             TimelineGranularity::Month => start + Duration::days(30),
         };
-        Self { granularity, start, end, items, total }
+        Self {
+            granularity,
+            start,
+            end,
+            items,
+            total,
+        }
     }
 
     /// 虚拟列表切片（模拟 react-window）
@@ -281,7 +287,9 @@ impl FocusStats {
         self.total_sessions += 1;
         if session.completed {
             self.completed_sessions += 1;
-            self.total_focus_minutes += session.actual_duration_minutes.unwrap_or(session.planned_duration_minutes);
+            self.total_focus_minutes += session
+                .actual_duration_minutes
+                .unwrap_or(session.planned_duration_minutes);
         }
     }
 
@@ -413,7 +421,11 @@ impl FocusMode {
     }
 
     /// 开始一次专注会话
-    pub fn start_session(&self, task_id: Option<String>, white_noise: WhiteNoiseKind) -> FocusSession {
+    pub fn start_session(
+        &self,
+        task_id: Option<String>,
+        white_noise: WhiteNoiseKind,
+    ) -> FocusSession {
         self.timer.start();
         let session = FocusSession {
             id: Uuid::new_v4().to_string(),
@@ -471,12 +483,10 @@ pub struct DailyReport {
 }
 
 /// 回顾历史
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ReviewHistory {
     pub reports: Vec<DailyReport>,
 }
-
 
 impl ReviewHistory {
     pub fn add(&mut self, report: DailyReport) {
@@ -505,13 +515,13 @@ impl DailyReview {
     pub fn generate(data: &TodayViewData) -> DailyReport {
         let completed = data.completed_todo_count();
         let total = data.todos.len();
-        let time_allocation: u32 = data
-            .todos
-            .iter()
-            .filter_map(|t| t.estimated_minutes)
-            .sum();
+        let time_allocation: u32 = data.todos.iter().filter_map(|t| t.estimated_minutes).sum();
         let habit_continuity = data.habit_streak_total();
-        let focus_sessions = data.focus_stats.as_ref().map(|s| s.total_sessions).unwrap_or(0);
+        let focus_sessions = data
+            .focus_stats
+            .as_ref()
+            .map(|s| s.total_sessions)
+            .unwrap_or(0);
 
         let mut highlights = Vec::new();
         if data.completion_rate() >= 0.8 {
@@ -617,8 +627,16 @@ mod tests {
     #[test]
     fn test_aggregator_incremental_update() {
         let agg = TodayViewAggregator::new();
-        agg.aggregate(today(), vec![make_todo("t1", false, None)], vec![], vec![], None);
-        let updated = agg.update_todos(today(), vec![make_todo("t1", true, None)]).unwrap();
+        agg.aggregate(
+            today(),
+            vec![make_todo("t1", false, None)],
+            vec![],
+            vec![],
+            None,
+        );
+        let updated = agg
+            .update_todos(today(), vec![make_todo("t1", true, None)])
+            .unwrap();
         assert!(updated.todos[0].completed);
         // 生成时间应刷新
         let cached = agg.get(today()).unwrap();
@@ -648,8 +666,18 @@ mod tests {
     fn test_today_view_habit_streak() {
         let mut data = TodayViewData::for_date(today());
         data.habits = vec![
-            TodayHabit { id: "h1".into(), name: "read".into(), completed: true, streak: 5 },
-            TodayHabit { id: "h2".into(), name: "run".into(), completed: false, streak: 3 },
+            TodayHabit {
+                id: "h1".into(),
+                name: "read".into(),
+                completed: true,
+                streak: 5,
+            },
+            TodayHabit {
+                id: "h2".into(),
+                name: "run".into(),
+                completed: false,
+                streak: 3,
+            },
         ];
         assert_eq!(data.habit_streak_total(), 8);
     }
@@ -657,7 +685,8 @@ mod tests {
     // --- Timeline ---
 
     fn make_item(id: &str, hour: i64, kind: TimelineItemKind) -> TimelineItem {
-        let start = Utc.from_utc_datetime(&today().and_hms_opt(0, 0, 0).unwrap()) + Duration::hours(hour);
+        let start =
+            Utc.from_utc_datetime(&today().and_hms_opt(0, 0, 0).unwrap()) + Duration::hours(hour);
         TimelineItem {
             id: id.to_string(),
             title: format!("item-{}", id),
@@ -675,7 +704,11 @@ mod tests {
             make_item("b", 2, TimelineItemKind::Todo),
             make_item("c", 5, TimelineItemKind::Event),
         ];
-        let tv = TimelineView::build(TimelineGranularity::Day, Utc.from_utc_datetime(&today().and_hms_opt(0, 0, 0).unwrap()), items);
+        let tv = TimelineView::build(
+            TimelineGranularity::Day,
+            Utc.from_utc_datetime(&today().and_hms_opt(0, 0, 0).unwrap()),
+            items,
+        );
         assert_eq!(tv.items.len(), 3);
         assert_eq!(tv.items[0].id, "b");
         assert_eq!(tv.items[1].id, "c");
@@ -685,7 +718,9 @@ mod tests {
 
     #[test]
     fn test_timeline_slice_virtual_list() {
-        let items: Vec<_> = (0..10).map(|i| make_item(&format!("i{}", i), i, TimelineItemKind::Event)).collect();
+        let items: Vec<_> = (0..10)
+            .map(|i| make_item(&format!("i{}", i), i, TimelineItemKind::Event))
+            .collect();
         let start = Utc.from_utc_datetime(&today().and_hms_opt(0, 0, 0).unwrap());
         let tv = TimelineView::build(TimelineGranularity::Day, start, items);
         let page = tv.slice(2, 3);

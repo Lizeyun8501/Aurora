@@ -43,3 +43,6 @@ uuid = { workspace = true }
 
 # Concurrency
 parking_lot = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

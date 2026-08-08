@@ -197,10 +197,22 @@ mod tests {
     #[test]
     fn test_get_events_since_timestamp() {
         let store = EventStore::new(":memory:").unwrap();
-        let e1 = Event::new("block-1", OpType::Create, serde_json::json!({"v": 1}), "u", "d");
+        let e1 = Event::new(
+            "block-1",
+            OpType::Create,
+            serde_json::json!({"v": 1}),
+            "u",
+            "d",
+        );
         store.append_event(&e1).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        let e2 = Event::new("block-1", OpType::Update, serde_json::json!({"v": 2}), "u", "d");
+        let e2 = Event::new(
+            "block-1",
+            OpType::Update,
+            serde_json::json!({"v": 2}),
+            "u",
+            "d",
+        );
         store.append_event(&e2).unwrap();
 
         let all = store.get_events("block-1", None).unwrap();
@@ -232,7 +244,13 @@ mod tests {
     #[test]
     fn test_get_events_since_snapshot() {
         let store = EventStore::new(":memory:").unwrap();
-        let e1 = Event::new("agg-1", OpType::Create, serde_json::json!({"v": 1}), "u", "d");
+        let e1 = Event::new(
+            "agg-1",
+            OpType::Create,
+            serde_json::json!({"v": 1}),
+            "u",
+            "d",
+        );
         store.append_event(&e1).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
 
@@ -246,7 +264,13 @@ mod tests {
         };
         store.save_snapshot(&snapshot).unwrap();
 
-        let e2 = Event::new("agg-1", OpType::Update, serde_json::json!({"v": 2}), "u", "d");
+        let e2 = Event::new(
+            "agg-1",
+            OpType::Update,
+            serde_json::json!({"v": 2}),
+            "u",
+            "d",
+        );
         store.append_event(&e2).unwrap();
 
         let (snap, events) = store.get_events_since_snapshot("agg-1").unwrap();

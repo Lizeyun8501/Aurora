@@ -63,8 +63,13 @@ impl MasterKey {
         let mut salt_arr = [0u8; SALT_LEN];
         salt_arr.copy_from_slice(&salt[..SALT_LEN]);
 
-        let params = Params::new(ARGON2_M_COST, ARGON2_T_COST, ARGON2_P_COST, Some(MASTER_KEY_LEN))
-            .map_err(|e| Error::Kdf(format!("argon2 params error: {}", e)))?;
+        let params = Params::new(
+            ARGON2_M_COST,
+            ARGON2_T_COST,
+            ARGON2_P_COST,
+            Some(MASTER_KEY_LEN),
+        )
+        .map_err(|e| Error::Kdf(format!("argon2 params error: {}", e)))?;
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
         let mut key = [0u8; MASTER_KEY_LEN];
@@ -73,7 +78,10 @@ impl MasterKey {
             .map_err(|e| Error::Kdf(format!("argon2 hash error: {}", e)))?;
 
         debug!("derived 256-bit master key via Argon2id");
-        Ok(Self { key, salt: salt_arr })
+        Ok(Self {
+            key,
+            salt: salt_arr,
+        })
     }
 
     /// 返回主密钥字节切片
@@ -236,7 +244,11 @@ mod tests {
         let salt = [0xABu8; SALT_LEN];
         let mk1 = MasterKey::derive_with_salt("correct horse battery", &salt).unwrap();
         let mk2 = MasterKey::derive_with_salt("correct horse battery", &salt).unwrap();
-        assert_eq!(mk1.as_bytes(), mk2.as_bytes(), "same password+salt must derive same key");
+        assert_eq!(
+            mk1.as_bytes(),
+            mk2.as_bytes(),
+            "same password+salt must derive same key"
+        );
         assert_eq!(mk1.salt(), &salt);
     }
 

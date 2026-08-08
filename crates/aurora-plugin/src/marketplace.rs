@@ -129,11 +129,7 @@ impl PluginSignature {
         pk.copy_from_slice(&self.public_key);
         let mut sig = [0u8; 64];
         sig.copy_from_slice(&self.signature);
-        let ok = crypto.ed25519_verify(
-            &Ed25519PublicKey(pk),
-            message,
-            &Ed25519Signature(sig),
-        );
+        let ok = crypto.ed25519_verify(&Ed25519PublicKey(pk), message, &Ed25519Signature(sig));
         if ok {
             Ok(())
         } else {
@@ -145,7 +141,9 @@ impl PluginSignature {
 
     /// 公钥是否与受信任集合匹配。
     pub fn is_trusted_by(&self, trusted: &[Vec<u8>]) -> bool {
-        trusted.iter().any(|k| k.as_slice() == self.public_key.as_slice())
+        trusted
+            .iter()
+            .any(|k| k.as_slice() == self.public_key.as_slice())
     }
 }
 
@@ -427,7 +425,9 @@ mod tests {
         let sig = PluginSignature::sign(message, &pkcs8).unwrap();
 
         // 篡改消息
-        let err = sig.verify_with_provider(b"tampered content", m.crypto()).unwrap_err();
+        let err = sig
+            .verify_with_provider(b"tampered content", m.crypto())
+            .unwrap_err();
         assert!(matches!(err, crate::Error::SignatureInvalid(_)));
 
         // 篡改签名
