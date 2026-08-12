@@ -5,11 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# CRDT engine
-loro = { workspace = true }
+# CRDT engine — loro 1.x 需 Rust 1.87+，可选依赖
+loro = { workspace = true, optional = true }
 
-# P2P sync
-iroh = { workspace = true }
+# P2P sync — iroh 移至 aurora-sync，aurora-core 不直接依赖
+# iroh = { workspace = true }
 
 # Full-text search
 tantivy = { workspace = true }
@@ -63,3 +63,8 @@ sled = { workspace = true }
 proptest = { workspace = true }
 # Temporary directories for atomic_transaction tests (ARCH-002)
 tempfile = "3"
+
+[features]
+default = []
+# 启用 Loro CRDT 引擎（需要 Rust 1.87+）
+loro-crdt = ["dep:loro"]

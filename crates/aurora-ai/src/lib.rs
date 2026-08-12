@@ -1,9 +1,14 @@
 //! Aurora AI 智能体网关 (Aurora AgentGateway)
 //!
 //! 为 Aurora Note 提供 AI Agent 通信、工具编排与会话管理能力，对应
-//! Phase 4 P2 的 Task 4.1（AgentGateway 智能体网关）。
+//! Phase 4 P2 的 Task 4.1（AgentGateway 智能体网关）；以及 V19 §7.2
+//! 「本地 AI（可选懒加载）」的两个真实 AIProvider 实现。
 //!
 //! # 模块组织
+//! - [`ollama`]：通过 Ollama HTTP API（`http://localhost:11434`）接入
+//!   本地 AI；本地不可达时可降级给 [`cloud`] 兜底（V19 §7.2）。
+//! - [`cloud`]：OpenAI 兼容端点（`/v1/chat/completions` + `/v1/embeddings`）
+//!   最小实现，专做 `OllamaProvider` 的 fallback。
 //! - [`mcp`]：MCP 协议（JSON-RPC 2.0 + initialize/tools.list/tools.call/
 //!   resources.list）与 stdio/SSE 传输抽象。
 //! - [`registry`]：基于 `aurora_core::AgentProtocol` 的工具注册与发现，
@@ -14,15 +19,14 @@
 //!   滑动窗口压缩。
 //! - [`sandbox`]：安全沙箱（权限校验 + 审计日志 + 只读模式）。
 
+pub mod cloud;
 pub mod context;
 pub mod mcp;
 pub mod mock_provider;
+pub mod ollama;
 pub mod orchestration;
 pub mod registry;
 pub mod sandbox;
-
-// 再导出常用类型。
-pub use mock_provider::MockAIProvider;
 
 use thiserror::Error;
 
@@ -79,6 +83,7 @@ impl From<Error> for aurora_core::Error {
 }
 
 // 顶层常用类型再导出，便于外部 `use aurora_ai::{...}`。
+pub use cloud::OpenAiCompatProvider;
 pub use context::{
     AgentContext, CompressedContext, ContextMessage, ContextStore, ContextWindow, SessionId,
     CONTEXT_DDL,
@@ -88,6 +93,7 @@ pub use mcp::{
     McpMethod, McpResource, McpServer, McpTool, McpTransport, ResourcesListResult, ServerInfo,
     SseTransport, StdioTransport, ToolsCallResult, ToolsListResult, MCP_PROTOCOL_VERSION,
 };
+pub use ollama::OllamaProvider;
 pub use orchestration::{
     AgentOrchestrator, DeterministicPlanner, OrchestrationMode, OrchestrationPlan,
     OrchestrationSummary, PlanEdge, PlanGraph, PlanNode, PlanStep, StepResult,
@@ -135,7 +141,8 @@ mod tests {
 
     #[test]
     fn test_error_from_aurora_core_serialization() {
-        let core_err = aurora_core::Error::Serialization(serde_json::from_str::<()>("bad").unwrap_err());
+        let core_err =
+            aurora_core::Error::Serialization(serde_json::from_str::<()>("bad").unwrap_err());
         let ai_err: Error = core_err.into();
         assert!(matches!(ai_err, Error::Serialization(_)));
     }

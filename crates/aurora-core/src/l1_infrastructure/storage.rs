@@ -7,6 +7,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use crate::traits::storage::{Record, Storage, StorageOp, StorageQuery};
+use crate::traits::kv_store::KVStore;
 use rusqlite::OptionalExtension;
 
 fn base64_encode(input: &[u8]) -> String {
@@ -248,6 +249,69 @@ impl Storage for SqliteStorage {
         tx.commit()
             .map_err(|e| crate::Error::Database(format!("sqlite transaction commit failed: {}", e)))?;
         Ok(())
+    }
+}
+
+/// SqliteStorage 同时实现 KVStore trait，通过 Storage::put/get/delete 代理。
+#[async_trait]
+impl KVStore for SqliteStorage {
+    async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, crate::Error> {
+        <Self as Storage>::get(self, key).await
+    }
+
+    async fn set(&self, key: &str, value: &[u8]) -> Result<(), crate::Error> {
+        <Self as Storage>::put(self, key, value).await
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), crate::Error> {
+        <Self as Storage>::delete(self, key).await
+    }
+
+    async fn exists(&self, key: &str) -> Result<bool, crate::Error> {
+        Ok(<Self as Storage>::get(self, key).await?.is_some())
+    }
+
+    async fn batch_get(&self, keys: &[&str]) -> Result<Vec<Option<Vec<u8>>>, crate::Error> {
+        let mut results = Vec::with_capacity(keys.len());
+        for key in keys {
+            results.push(<Self as Storage>::get(self, key).await?);
+        }
+        Ok(results)
+    }
+
+    async fn batch_set(&self, items: &[(&str, &[u8])]) -> Result<(), crate::Error> {
+        let ops: Vec<StorageOp> = items
+            .iter()
+            .map(|(k, v)| StorageOp::Put { key: k.to_string(), value: v.to_vec() })
+            .collect();
+        <Self as Storage>::transaction(self, &ops).await
+    }
+
+    async fn scan_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, crate::Error> {
+        // SQLite 不支持原生前缀扫描，使用 LIKE 模拟
+        let q = StorageQuery {
+            table: "kv_store".to_string(),
+            filters: vec![crate::traits::storage::QueryFilter {
+                field: "key".to_string(),
+                op: "like".to_string(),
+                value: serde_json::json!(format!("{}%", prefix)),
+            }],
+            order_by: None,
+            limit: None,
+            offset: None,
+        };
+        let records = <Self as Storage>::query(self, &q).await?;
+        Ok(records.into_iter()
+            .filter_map(|r| {
+                if let serde_json::Value::Object(map) = r.data {
+                    let key = map.get("key")?.as_str()?.to_string();
+                    let value = map.get("value")?.as_str()?.to_string();
+                    Some((key, value.into_bytes()))
+                } else {
+                    None
+                }
+            })
+            .collect())
     }
 }
 

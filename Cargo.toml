@@ -11,8 +11,8 @@ members = [
     "crates/entity",
     "crates/migration",
     "crates/mobile-ffi",
-    # 桌面平台适配（Tauri v2）；此前不在 workspace 导致从未被 CI 编译
-    "apps/desktop/src-tauri",
+    # 桌面平台适配（Tauri v2）；临时移除：Tauri 依赖需 Rust 1.88+
+    # "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
@@ -22,10 +22,10 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/aurora-note/aurora-note"
 
 [workspace.dependencies]
-# CRDT engine
+# CRDT engine — loro 1.x 需 Rust 1.87+，workspace 中保留定义供 optional 引用
 loro = "1"
 
-# P2P sync (V19 §31 要求 iroh 1.0+，IrohTransport 代码按 1.0 API 编写)
+# P2P sync — iroh 1.0 需 Rust 1.91+，workspace 中保留定义供 optional 引用
 iroh = "1.0"
 
 # Full-text search

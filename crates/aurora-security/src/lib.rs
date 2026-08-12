@@ -15,6 +15,7 @@ pub mod e2ee;
 pub mod key_hierarchy;
 pub mod post_quantum;
 pub mod recovery;
+pub mod vault;
 
 // 再导出常用类型，便于外部 `use aurora_security::SecurityCryptoProvider`。
 pub use crypto_provider_impl::SecurityCryptoProvider;
@@ -63,6 +64,7 @@ pub use post_quantum::{
     MockKem, PostQuantumKem,
 };
 pub use recovery::{DeviceAuthorizationQr, Mnemonic, ShamirSecretSharing, ShamirShare};
+pub use vault::LocalDekVault;
 
 #[cfg(test)]
 mod tests {

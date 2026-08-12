@@ -185,7 +185,7 @@ mod base64 {
         // 标准 base64 输入长度必须为 4 的倍数（含 padding）。非 4 倍数时
         // `chunks(4)` 的末块不足 4 字节，后续下标访问会越界 panic，
         // 这里先校验并返回错误，避免崩溃。
-        if !input.is_empty() && !input.len().is_multiple_of(4) {
+        if !input.is_empty() && input.len() % 4 != 0 {
             return Err(crate::Error::InvalidInput(format!(
                 "invalid base64 length: {} (must be a multiple of 4)",
                 input.len()
