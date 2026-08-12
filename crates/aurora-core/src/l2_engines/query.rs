@@ -16,8 +16,10 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
-use crate::traits::storage::{QueryFilter as StorageFilter, Storage, StorageQuery};
-use crate::traits::vector_store::{QueryFilter as VectorFilter, VectorStore};
+use crate::traits::storage::{QueryFilter as StorageFilter, Record, Storage, StorageQuery};
+use crate::traits::vector_store::{
+    QueryFilter as VectorFilter, VectorStore,
+};
 
 // ==================== Query DSL ====================
 
@@ -289,7 +291,6 @@ fn filter_contains_vector(filter: &Filter) -> bool {
     }
 }
 
-#[allow(dead_code)]
 fn has_only_fulltext(query: &Query) -> bool {
     match &query.filter {
         Some(f) => filter_is_only_fulltext(f),
@@ -297,7 +298,6 @@ fn has_only_fulltext(query: &Query) -> bool {
     }
 }
 
-#[allow(dead_code)]
 fn filter_is_only_fulltext(filter: &Filter) -> bool {
     match filter {
         Filter::FullText { .. } => true,
@@ -308,7 +308,6 @@ fn filter_is_only_fulltext(filter: &Filter) -> bool {
     }
 }
 
-#[allow(dead_code)]
 fn has_only_vector(query: &Query) -> bool {
     match &query.filter {
         Some(f) => filter_is_only_vector(f),
@@ -316,7 +315,6 @@ fn has_only_vector(query: &Query) -> bool {
     }
 }
 
-#[allow(dead_code)]
 fn filter_is_only_vector(filter: &Filter) -> bool {
     match filter {
         Filter::Vector { .. } => true,
@@ -745,7 +743,7 @@ impl QueryEngine {
 
         let mut result = match plan.path {
             ExecutionPath::Sqlite => self.execute_sqlite(query).await?,
-            ExecutionPath::Tantivy => self.execute_tantivy(query).await?,
+            ExecutionPath::Tantivy => self.execute_tantivy(query)?,
             ExecutionPath::LanceDb => self.execute_lancedb(query).await?,
             ExecutionPath::Hybrid => self.execute_hybrid(query).await?,
         };
@@ -810,7 +808,7 @@ impl QueryEngine {
         })
     }
 
-    async fn execute_tantivy(&self, query: &Query) -> Result<QueryResult, crate::Error> {
+    fn execute_tantivy(&self, query: &Query) -> Result<QueryResult, crate::Error> {
         let fulltext = self.fulltext_search.as_ref().ok_or_else(|| {
             crate::Error::InvalidInput("Tantivy fulltext backend not configured".to_string())
         })?;
@@ -824,9 +822,11 @@ impl QueryEngine {
                 let mut map = serde_json::Map::new();
                 map.insert("id".to_string(), serde_json::Value::String(r.id));
                 map.insert("score".to_string(), serde_json::Value::from(r.score as f64));
-                if let Some(serde_json::Value::Object(m)) = r.data {
-                    for (k, v) in m {
-                        map.insert(k, v);
+                if let Some(data) = r.data {
+                    if let serde_json::Value::Object(m) = data {
+                        for (k, v) in m {
+                            map.insert(k, v);
+                        }
                     }
                 }
                 serde_json::Value::Object(map)
@@ -860,9 +860,7 @@ impl QueryEngine {
             .map(|p| p.offset + top_k)
             .unwrap_or(top_k);
 
-        let results = vector_store
-            .search(&vector, adjusted_top_k, filter.as_ref())
-            .await?;
+        let results = vector_store.search(&vector, adjusted_top_k, filter.as_ref()).await?;
 
         let mut items: Vec<serde_json::Value> = results
             .into_iter()
@@ -892,7 +890,7 @@ impl QueryEngine {
     }
 
     async fn execute_hybrid(&self, query: &Query) -> Result<QueryResult, crate::Error> {
-        let mut tantivy_items = self.execute_tantivy(query).await?.items;
+        let mut tantivy_items = self.execute_tantivy(query)?.items;
         let mut lancedb_items = self.execute_lancedb(query).await?.items;
 
         // 使用简化 RRF (Reciprocal Rank Fusion) 合并结果
@@ -1176,7 +1174,7 @@ fn apply_pagination(
     }
 }
 
-fn apply_sort(items: &mut [serde_json::Value], sort: &[Sort]) {
+fn apply_sort(items: &mut Vec<serde_json::Value>, sort: &[Sort]) {
     if sort.is_empty() {
         return;
     }

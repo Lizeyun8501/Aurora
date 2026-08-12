@@ -10,7 +10,6 @@ use std::sync::Mutex;
 use crate::traits::plugin_runtime::{PluginHandle, PluginManifest, PluginRuntime, RuntimeType};
 
 /// 基于 Wasmtime 的 WASM 运行时实现。
-#[allow(dead_code)]
 pub struct WasmtimeRuntime {
     engine: wasmtime::Engine,
     modules: Mutex<HashMap<String, wasmtime::Module>>,
@@ -45,11 +44,7 @@ impl PluginRuntime for WasmtimeRuntime {
             )));
         }
         // TODO: 从 manifest.entry 路径读取 WASM 字节码并编译为 Module。
-        tracing::info!(
-            "wasmtime load plugin: id={}, entry={}",
-            manifest.id,
-            manifest.entry
-        );
+        tracing::info!("wasmtime load plugin: id={}, entry={}", manifest.id, manifest.entry);
         let handle = PluginHandle {
             id: manifest.id.clone(),
             manifest: manifest.clone(),
@@ -88,12 +83,13 @@ impl PluginRuntime for WasmtimeRuntime {
             .modules
             .lock()
             .map_err(|_| crate::Error::Internal("wasmtime modules mutex poisoned".to_string()))?;
+        modules.remove(&handle.id);
         let mut stores = self
             .stores
             .lock()
             .map_err(|_| crate::Error::Internal("wasmtime stores mutex poisoned".to_string()))?;
-        modules.remove(&handle.id);
         stores.remove(&handle.id);
+        tracing::info!("wasmtime unload: plugin={}", handle.id);
         Ok(())
     }
 

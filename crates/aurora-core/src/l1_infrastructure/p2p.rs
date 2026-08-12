@@ -7,17 +7,12 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use crate::traits::sync_target::{
-    Connection, DocSet, Endpoint, SyncEvent, SyncProtocol, SyncReport, SyncTarget,
-};
-
-/// 同步事件回调类型。
-type SyncEventCallback = Box<dyn Fn(SyncEvent) + Send + Sync>;
+use crate::traits::sync_target::{Connection, DocSet, Endpoint, SyncEvent, SyncProtocol, SyncReport, SyncTarget};
 
 /// 基于 iroh 的 P2P 同步目标实现。
 pub struct IrohSyncTarget {
     connections: Mutex<HashMap<String, Connection>>,
-    callback: Mutex<Option<SyncEventCallback>>,
+    callback: Mutex<Option<Box<dyn Fn(SyncEvent) + Send + Sync>>>,
 }
 
 impl IrohSyncTarget {
@@ -74,7 +69,11 @@ impl SyncTarget for IrohSyncTarget {
                 conn.id
             )));
         }
-        tracing::info!("iroh sync: conn={}, docs={:?}", conn.id, doc_set.doc_ids);
+        tracing::info!(
+            "iroh sync: conn={}, docs={:?}",
+            conn.id,
+            doc_set.doc_ids
+        );
         // TODO: 接入 iroh 真实的文档同步协议 (iroh-docs / iroh-blobs)。
         Ok(SyncReport {
             sent_ops: 0,
@@ -109,7 +108,7 @@ impl SyncTarget for IrohSyncTarget {
 /// 基于 WebSocket 的同步目标实现。
 pub struct WebSocketSyncTarget {
     connections: Mutex<HashMap<String, Connection>>,
-    callback: Mutex<Option<SyncEventCallback>>,
+    callback: Mutex<Option<Box<dyn Fn(SyncEvent) + Send + Sync>>>,
 }
 
 impl WebSocketSyncTarget {
@@ -207,7 +206,7 @@ impl SyncTarget for WebSocketSyncTarget {
 /// 通过本地网络广播或多播发现邻近节点，实现局域网内高速同步。
 pub struct LanSyncTarget {
     connections: Mutex<HashMap<String, Connection>>,
-    callback: Mutex<Option<SyncEventCallback>>,
+    callback: Mutex<Option<Box<dyn Fn(SyncEvent) + Send + Sync>>>,
 }
 
 impl LanSyncTarget {

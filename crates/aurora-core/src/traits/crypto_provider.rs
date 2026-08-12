@@ -20,6 +20,25 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 大数组 serde 辅助模块（[u8; 64] 超出 serde derive 默认支持范围）。
+mod array64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(arr: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(arr.as_slice(), s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
+        let v = Vec::<u8>::deserialize(d)?;
+        if v.len() != 64 {
+            return Err(serde::de::Error::custom("expected 64 bytes"));
+        }
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(&v);
+        Ok(arr)
+    }
+}
+
 /// AES-256-GCM 密文结构（nonce + data + tag 分离存储）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ciphertext {
@@ -57,37 +76,13 @@ pub struct Ed25519Signature(pub [u8; 64]);
 
 impl Serialize for Ed25519Signature {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeTuple;
-        let mut t = s.serialize_tuple(64)?;
-        for b in &self.0 {
-            t.serialize_element(b)?;
-        }
-        t.end()
+        array64::serialize(&self.0, s)
     }
 }
 
 impl<'de> Deserialize<'de> for Ed25519Signature {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = Ed25519Signature;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a tuple of 64 bytes")
-            }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut seq: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut arr = [0u8; 64];
-                for (i, b) in arr.iter_mut().enumerate() {
-                    *b = seq
-                        .next_element()?
-                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
-                }
-                Ok(Ed25519Signature(arr))
-            }
-        }
-        d.deserialize_tuple(64, Visitor)
+        array64::deserialize(d).map(Ed25519Signature)
     }
 }
 

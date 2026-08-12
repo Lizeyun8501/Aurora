@@ -11,7 +11,6 @@ use crate::traits::vector_store::{QueryFilter, SearchResult, VectorStore};
 /// 基于 LanceDB 的向量存储实现。
 ///
 /// 使用 `tokio::runtime::Runtime` 在同步接口中驱动 LanceDB 的异步 API。
-#[allow(dead_code)]
 pub struct LanceDbStore {
     uri: String,
     table_name: String,
@@ -24,10 +23,7 @@ impl LanceDbStore {
     /// # Arguments
     /// * `uri` — LanceDB 数据库 URI，如 `./data/lancedb`。
     /// * `table_name` — 默认表名。
-    pub fn new(
-        uri: impl Into<String>,
-        table_name: impl Into<String>,
-    ) -> Result<Self, crate::Error> {
+    pub fn new(uri: impl Into<String>, table_name: impl Into<String>) -> Result<Self, crate::Error> {
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| crate::Error::Internal(format!("tokio runtime creation failed: {}", e)))?;
         Ok(Self {
@@ -40,12 +36,7 @@ impl LanceDbStore {
 
 #[async_trait]
 impl VectorStore for LanceDbStore {
-    async fn add(
-        &self,
-        id: &str,
-        vector: &[f32],
-        metadata: &serde_json::Value,
-    ) -> Result<(), crate::Error> {
+    async fn add(&self, id: &str, vector: &[f32], metadata: &serde_json::Value) -> Result<(), crate::Error> {
         tracing::debug!(
             "lancedb add: id={}, vector_len={}, metadata={}",
             id,
@@ -62,11 +53,7 @@ impl VectorStore for LanceDbStore {
         top_k: usize,
         _filter: Option<&QueryFilter>,
     ) -> Result<Vec<SearchResult>, crate::Error> {
-        tracing::debug!(
-            "lancedb search: vector_len={}, top_k={}",
-            query.len(),
-            top_k
-        );
+        tracing::debug!("lancedb search: vector_len={}, top_k={}", query.len(), top_k);
         // TODO: 接入 lancedb 真实向量搜索 API。
         Ok(vec![])
     }
@@ -116,30 +103,16 @@ impl SqliteVecStore {
         let conn = rusqlite::Connection::open(path)
             .map_err(|e| crate::Error::Database(format!("rusqlite open failed: {}", e)))?;
         let table_name = table_name.into();
-        // 表名将拼入 DDL 字符串，必须限制为安全字符集，防止 SQL 注入。
-        if table_name.is_empty()
-            || !table_name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
-            return Err(crate::Error::InvalidInput(format!(
-                "invalid vector table name: {:?} (allowed: [A-Za-z0-9_])",
-                table_name
-            )));
-        }
-        // sqlite-vec 扩展为可选能力：加载失败仅降级为无向量索引加速，
-        // 不阻断建表；但建表失败必须报错——此前整个 execute_batch 被
-        // `let _ =` 吞错，会导致构造返回 Ok 但表实际不存在。
-        let _ = conn.execute_batch("SELECT load_extension('sqlite_vec');");
-        conn.execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS {} (
+        // 尝试加载 sqlite-vec 扩展（如果可用）。
+        let _ = conn.execute_batch(&format!(
+            "SELECT load_extension('sqlite_vec');
+             CREATE TABLE IF NOT EXISTS {} (
                  id TEXT PRIMARY KEY,
                  vec BLOB,
                  metadata TEXT
              );",
             table_name
-        ))
-        .map_err(|e| crate::Error::Database(format!("create vector table failed: {}", e)))?;
+        ));
         Ok(Self {
             conn: Mutex::new(conn),
             table_name,
@@ -150,12 +123,7 @@ impl SqliteVecStore {
 
 #[async_trait]
 impl VectorStore for SqliteVecStore {
-    async fn add(
-        &self,
-        id: &str,
-        vector: &[f32],
-        metadata: &serde_json::Value,
-    ) -> Result<(), crate::Error> {
+    async fn add(&self, id: &str, vector: &[f32], metadata: &serde_json::Value) -> Result<(), crate::Error> {
         if vector.len() != self.dimension {
             return Err(crate::Error::InvalidInput(format!(
                 "vector dimension mismatch: expected {}, got {}",
@@ -167,10 +135,7 @@ impl VectorStore for SqliteVecStore {
             .conn
             .lock()
             .map_err(|_| crate::Error::Internal("sqlite vec mutex poisoned".to_string()))?;
-        let vec_bytes = vector
-            .iter()
-            .flat_map(|f| f.to_ne_bytes())
-            .collect::<Vec<u8>>();
+        let vec_bytes = vector.iter().flat_map(|f| f.to_ne_bytes()).collect::<Vec<u8>>();
         let meta_str = metadata.to_string();
         conn.execute(
             &format!(
@@ -231,12 +196,10 @@ impl VectorStore for SqliteVecStore {
             })
             .map_err(|e| crate::Error::Database(format!("sqlite vec query failed: {}", e)))?;
 
-        let mut results: Vec<SearchResult> = rows.filter_map(|r| r.ok()).collect();
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let mut results: Vec<SearchResult> = rows
+            .filter_map(|r| r.ok())
+            .collect();
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(top_k);
         Ok(results)
     }

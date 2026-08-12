@@ -6,20 +6,22 @@
 //! # 模块组织
 //! - [`p2p`]: P2P 同步 (iroh + QUIC + NAT 穿透)
 //! - [`iroh_transport`]: iroh 真实传输层 (V19 §31 DEV-005，生产替代 MockTransport)
-//! - [`cloud`][]: 云端同步 (WebSocket 实时推送 + HTTPS 批量，零知识密文中转)
-//! - [`lan`][]: 局域网同步 (mDNS 自动发现 + LAN 直连 QUIC，优先于云端)
-//! - [`conflict`][]: 冲突解决 (CRDT 自动合并 + 语义冲突手动选择 + 分支模式)
-//! - [`incremental`][]: 增量同步 (CRDT ops 增量 + rsync 块级增量 + zstd 压缩)
-//! - [`offline_queue`][]: 离线队列 (SQLite 持久化 + 优先级 + 幂等键 + 批量压缩)
-//! - [`device`][]: 多设备管理 (Ed25519 设备 ID + QR 授权 + 远程吊销 + DEK 失效)
-//! - [`external`][]: 外部同步中心 (CalDAV 日历 + IMAP 邮件 + 云盘 + Webhook 接收)
+//! - [`cloud`]: 云端同步 (WebSocket 实时推送 + HTTPS 批量，零知识密文中转)
+//! - [`lan`]: 局域网同步 (mDNS 自动发现 + LAN 直连 QUIC，优先于云端)
+//! - [`conflict`]: 冲突解决 (CRDT 自动合并 + 语义冲突手动选择 + 分支模式)
+//! - [`incremental`]: 增量同步 (CRDT ops 增量 + rsync 块级增量 + zstd 压缩)
+//! - [`offline_queue`]: 离线队列 (SQLite 持久化 + 优先级 + 幂等键 + 批量压缩)
+//! - [`device`]: 多设备管理 (Ed25519 设备 ID + QR 授权 + 远程吊销 + DEK 失效)
+//! - [`external`]: 外部同步中心 (CalDAV 日历 + IMAP 邮件 + 云盘 + Webhook 接收)
 
 pub mod cloud;
 pub mod conflict;
 pub mod device;
 pub mod external;
 pub mod incremental;
-pub mod iroh_transport;
+// iroh_transport 模块需要 iroh 1.0+ (Rust 1.91+)，临时禁用
+// #[cfg(feature = "iroh-transport")]
+// pub mod iroh_transport;
 pub mod lan;
 pub mod offline_queue;
 pub mod p2p;
@@ -86,16 +88,16 @@ pub use conflict::{Branch, ConflictResolution, ConflictResolver, SemanticConflic
 pub use device::{Device, DeviceId, DeviceManager, DeviceStatus, QrAuthorization};
 pub use external::{
     CalDavConfig, CalDavConnector, CalendarEvent, CalendarSync, CloudDriveConnector,
-    ConnectorRegistry, ConnectorState, DriveFile, DriveProvider, DropboxConnector, EmailAttachment,
-    EmailDocument, EmailFilter, EmailMessage, EmailSync, GoogleDriveConnector, HmacVerifier,
-    ImapConfig, ImapConnector, OneDriveConnector, SelectiveSyncConfig, SyncConnector, SyncSession,
-    SyncSessionStatus, WebDavConnector, WebhookConfig, WebhookEvent, WebhookReceiver,
-    WebhookSource,
+    ConnectorRegistry, ConnectorState, DropboxConnector, DriveFile, DriveProvider,
+    EmailAttachment, EmailDocument, EmailFilter, EmailMessage, EmailSync, GoogleDriveConnector,
+    HmacVerifier, ImapConfig, ImapConnector, OneDriveConnector, SelectiveSyncConfig,
+    SyncConnector, SyncSession, SyncSessionStatus, WebDavConnector, WebhookConfig, WebhookEvent,
+    WebhookReceiver, WebhookSource,
 };
 pub use incremental::{BlockDelta, BlockSignature, IncrementalSync, RollingHash};
-pub use iroh_transport::{
-    run_accept_loop, IrohTransport, SyncReport, AURORA_ALPN, MAX_SYNC_MESSAGE_SIZE,
-};
 pub use lan::{LanPeer, LanSyncEngine, MdnsDiscovery, SyncRoute};
 pub use offline_queue::{OfflineQueue, Priority, QueueItem};
 pub use p2p::{P2pSyncEngine, PeerId, SyncMessage, VersionVector};
+// iroh_transport 类型重导出已随模块一起禁用
+// #[cfg(feature = "iroh-transport")]
+// pub use iroh_transport::{IrohTransport, SyncReport, run_accept_loop, AURORA_ALPN, MAX_SYNC_MESSAGE_SIZE};

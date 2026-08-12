@@ -47,7 +47,6 @@ impl OrchestrationMode {
         }
     }
 
-    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "sequential" => Some(OrchestrationMode::Sequential),
@@ -123,7 +122,12 @@ impl PlanNode {
 
     /// 递归深度。
     pub fn depth(&self) -> usize {
-        1 + self.children.iter().map(|c| c.depth()).max().unwrap_or(0)
+        1 + self
+            .children
+            .iter()
+            .map(|c| c.depth())
+            .max()
+            .unwrap_or(0)
     }
 }
 
@@ -229,9 +233,7 @@ impl OrchestrationPlan {
                         graph.root_id = Some(step.id.clone());
                     }
                     for dep in &step.depends_on {
-                        graph
-                            .edges
-                            .push(PlanEdge::new(dep.clone(), step.id.clone()));
+                        graph.edges.push(PlanEdge::new(dep.clone(), step.id.clone()));
                     }
                     graph.nodes.push(step.clone());
                 }
@@ -250,9 +252,7 @@ impl OrchestrationPlan {
 fn flatten_node(node: &PlanNode, graph: &mut PlanGraph) {
     graph.nodes.push(node.step.clone());
     for child in &node.children {
-        graph
-            .edges
-            .push(PlanEdge::new(node.step.id.clone(), child.step.id.clone()));
+        graph.edges.push(PlanEdge::new(node.step.id.clone(), child.step.id.clone()));
         flatten_node(child, graph);
     }
 }
@@ -300,10 +300,7 @@ impl AgentOrchestrator {
     }
 
     /// 执行一个计划，返回总结。
-    pub async fn execute(
-        &self,
-        plan: &OrchestrationPlan,
-    ) -> Result<OrchestrationSummary, crate::Error> {
+    pub async fn execute(&self, plan: &OrchestrationPlan) -> Result<OrchestrationSummary, crate::Error> {
         info!(
             "orchestrator: execute plan mode={:?} steps={}",
             plan.mode,
@@ -339,11 +336,12 @@ impl AgentOrchestrator {
         for step in &plan.steps {
             // 将上一步输出注入到当前参数（若占位 "$prev" 存在）
             let arguments = inject_prev(&step.arguments, prev_output.as_ref());
-            let inv = ToolInvocation::new(step.tool_name.clone(), arguments, &plan.session_id);
-            debug!(
-                "orchestrator[seq]: step {} tool {}",
-                step.id, step.tool_name
+            let inv = ToolInvocation::new(
+                step.tool_name.clone(),
+                arguments,
+                &plan.session_id,
             );
+            debug!("orchestrator[seq]: step {} tool {}", step.id, step.tool_name);
             let tr = self.registry.invoke(&inv).await?;
             results.push(StepResult {
                 step_id: step.id.clone(),
@@ -373,10 +371,7 @@ impl AgentOrchestrator {
                 step.arguments.clone(),
                 &plan.session_id,
             );
-            debug!(
-                "orchestrator[par]: step {} tool {}",
-                step.id, step.tool_name
-            );
+            debug!("orchestrator[par]: step {} tool {}", step.id, step.tool_name);
             let tr = self.registry.invoke(&inv).await?;
             results.push(StepResult {
                 step_id: step.id.clone(),
@@ -412,39 +407,46 @@ impl AgentOrchestrator {
         }
     }
 
-    async fn execute_node(
-        &self,
-        node: &PlanNode,
-        plan: &OrchestrationPlan,
-        results: &mut Vec<StepResult>,
-        parent_output: Option<&serde_json::Value>,
-    ) -> Result<Option<serde_json::Value>, crate::Error> {
-        let arguments = inject_prev(&node.step.arguments, parent_output);
-        let inv = ToolInvocation::new(node.step.tool_name.clone(), arguments, &plan.session_id);
-        debug!(
-            "orchestrator[hier]: node {} tool {}",
-            node.step.id, node.step.tool_name
-        );
-        let tr = self.registry.invoke(&inv).await?;
-        let output = tr.output.clone();
-        let is_err = tr.is_err();
-        results.push(StepResult {
-            step_id: node.step.id.clone(),
-            tool_name: node.step.tool_name.clone(),
-            result: tr,
-        });
-        if is_err {
-            warn!(
-                "orchestrator[hier]: node {} failed, skipping children",
-                node.step.id
+    /// 递归执行节点（使用 Box::pin 避免 async fn 递归的无限大小问题）。
+    fn execute_node<'a>(
+        &'a self,
+        node: &'a PlanNode,
+        plan: &'a OrchestrationPlan,
+        results: &'a mut Vec<StepResult>,
+        parent_output: Option<&'a serde_json::Value>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<serde_json::Value>, crate::Error>> + Send + 'a>> {
+        Box::pin(async move {
+            let arguments = inject_prev(&node.step.arguments, parent_output);
+            let inv = ToolInvocation::new(
+                node.step.tool_name.clone(),
+                arguments,
+                &plan.session_id,
             );
-            return Ok(None);
-        }
-        // 递归执行子节点
-        for child in &node.children {
-            Box::pin(self.execute_node(child, plan, results, Some(&output))).await?;
-        }
-        Ok(Some(output))
+            debug!(
+                "orchestrator[hier]: node {} tool {}",
+                node.step.id, node.step.tool_name
+            );
+            let tr = self.registry.invoke(&inv).await?;
+            let output = tr.output.clone();
+            let is_err = tr.is_err();
+            results.push(StepResult {
+                step_id: node.step.id.clone(),
+                tool_name: node.step.tool_name.clone(),
+                result: tr,
+            });
+            if is_err {
+                warn!(
+                    "orchestrator[hier]: node {} failed, skipping children",
+                    node.step.id
+                );
+                return Ok(None);
+            }
+            // 递归执行子节点
+            for child in &node.children {
+                self.execute_node(child, plan, results, Some(&output)).await?;
+            }
+            Ok(Some(output))
+        })
     }
 
     /// 历史执行快照。
@@ -459,7 +461,10 @@ impl AgentOrchestrator {
 }
 
 /// 把 `{"$prev": true}` 占位替换为上一步输出，递归处理对象/数组。
-fn inject_prev(args: &serde_json::Value, prev: Option<&serde_json::Value>) -> serde_json::Value {
+fn inject_prev(
+    args: &serde_json::Value,
+    prev: Option<&serde_json::Value>,
+) -> serde_json::Value {
     match args {
         serde_json::Value::Object(map) => {
             // 整体替换：若对象只包含 "$prev": true
@@ -548,26 +553,15 @@ impl DeterministicPlanner {
     fn classify_plan(&self, session_id: &str) -> OrchestrationPlan {
         let root = PlanNode::new(PlanStep::new("root", "classify", serde_json::json!({})))
             .with_children(vec![
-                PlanNode::new(PlanStep::new(
-                    "c1",
-                    "enrich",
-                    serde_json::json!({"$prev": true}),
-                )),
-                PlanNode::new(PlanStep::new(
-                    "c2",
-                    "tag",
-                    serde_json::json!({"$prev": true}),
-                )),
+                PlanNode::new(PlanStep::new("c1", "enrich", serde_json::json!({"$prev": true}))),
+                PlanNode::new(PlanStep::new("c2", "tag", serde_json::json!({"$prev": true}))),
             ]);
-        OrchestrationPlan::new(OrchestrationMode::Hierarchical, session_id).with_root(root)
+        OrchestrationPlan::new(OrchestrationMode::Hierarchical, session_id)
+            .with_root(root)
     }
 
     fn default_plan(&self, session_id: &str) -> OrchestrationPlan {
-        let steps = vec![PlanStep::new(
-            "s1",
-            "default",
-            serde_json::json!({"task": "auto"}),
-        )];
+        let steps = vec![PlanStep::new("s1", "default", serde_json::json!({"task": "auto"}))];
         OrchestrationPlan::new(OrchestrationMode::Sequential, session_id).with_steps(steps)
     }
 }
@@ -584,7 +578,7 @@ mod tests {
     use crate::registry::MockAgent;
     use aurora_core::traits::agent_protocol::AgentProtocol;
 
-    async fn make_orchestrator_with_tools() -> (AgentOrchestrator, Arc<ToolRegistry>) {
+    fn make_orchestrator_with_tools() -> (AgentOrchestrator, Arc<ToolRegistry>) {
         let registry = Arc::new(ToolRegistry::new());
         let agent = Arc::new(MockAgent::new("a1"));
         // 注册一组工具处理器
@@ -620,14 +614,9 @@ mod tests {
         ] {
             registry
                 .register_tool(
-                    crate::registry::Tool::new(
-                        name,
-                        format!("{} tool", name),
-                        serde_json::json!({}),
-                    )
-                    .with_agent("a1"),
+                    crate::registry::Tool::new(name, format!("{} tool", name), serde_json::json!({}))
+                        .with_agent("a1"),
                 )
-                .await
                 .unwrap();
         }
         let orch = AgentOrchestrator::new(registry.clone());
@@ -648,21 +637,23 @@ mod tests {
 
     #[test]
     fn test_plan_step_with_depends_on() {
-        let step =
-            PlanStep::new("s1", "echo", serde_json::json!({})).with_depends_on(vec!["s0".into()]);
+        let step = PlanStep::new("s1", "echo", serde_json::json!({}))
+            .with_depends_on(vec!["s0".into()]);
         assert_eq!(step.id, "s1");
         assert_eq!(step.depends_on, vec!["s0".to_string()]);
     }
 
     #[test]
     fn test_plan_node_total_nodes_and_depth() {
-        let root =
-            PlanNode::new(PlanStep::new("r", "t", serde_json::json!({}))).with_children(vec![
-                PlanNode::new(PlanStep::new("c1", "t", serde_json::json!({}))),
-                PlanNode::new(PlanStep::new("c2", "t", serde_json::json!({}))).with_children(vec![
-                    PlanNode::new(PlanStep::new("g1", "t", serde_json::json!({}))),
-                ]),
-            ]);
+        let root = PlanNode::new(PlanStep::new("r", "t", serde_json::json!({}))).with_children(vec![
+            PlanNode::new(PlanStep::new("c1", "t", serde_json::json!({}))),
+            PlanNode::new(PlanStep::new("c2", "t", serde_json::json!({})))
+                .with_children(vec![PlanNode::new(PlanStep::new(
+                    "g1",
+                    "t",
+                    serde_json::json!({}),
+                ))]),
+        ]);
         assert_eq!(root.child_count(), 2);
         assert_eq!(root.total_nodes(), 4);
         assert_eq!(root.depth(), 3);
@@ -679,9 +670,7 @@ mod tests {
     #[test]
     fn test_plan_graph_to_json() {
         let mut graph = PlanGraph::new(OrchestrationMode::Sequential);
-        graph
-            .nodes
-            .push(PlanStep::new("s1", "echo", serde_json::json!({})));
+        graph.nodes.push(PlanStep::new("s1", "echo", serde_json::json!({})));
         let json = graph.to_json().unwrap();
         assert!(json.contains("\"mode\""));
         assert!(json.contains("\"s1\""));
@@ -689,11 +678,12 @@ mod tests {
 
     #[test]
     fn test_orchestration_plan_to_graph_sequential() {
-        let plan = OrchestrationPlan::new(OrchestrationMode::Sequential, "s1").with_steps(vec![
-            PlanStep::new("s1", "a", serde_json::json!({})),
-            PlanStep::new("s2", "b", serde_json::json!({})).with_depends_on(vec!["s1".into()]),
-            PlanStep::new("s3", "c", serde_json::json!({})).with_depends_on(vec!["s2".into()]),
-        ]);
+        let plan = OrchestrationPlan::new(OrchestrationMode::Sequential, "s1")
+            .with_steps(vec![
+                PlanStep::new("s1", "a", serde_json::json!({})),
+                PlanStep::new("s2", "b", serde_json::json!({})).with_depends_on(vec!["s1".into()]),
+                PlanStep::new("s3", "c", serde_json::json!({})).with_depends_on(vec!["s2".into()]),
+            ]);
         let graph = plan.to_graph();
         assert_eq!(graph.node_count(), 3);
         assert_eq!(graph.edge_count(), 2);
@@ -702,10 +692,11 @@ mod tests {
 
     #[test]
     fn test_orchestration_plan_to_graph_parallel() {
-        let plan = OrchestrationPlan::new(OrchestrationMode::Parallel, "s1").with_steps(vec![
-            PlanStep::new("s1", "a", serde_json::json!({})),
-            PlanStep::new("s2", "b", serde_json::json!({})),
-        ]);
+        let plan = OrchestrationPlan::new(OrchestrationMode::Parallel, "s1")
+            .with_steps(vec![
+                PlanStep::new("s1", "a", serde_json::json!({})),
+                PlanStep::new("s2", "b", serde_json::json!({})),
+            ]);
         let graph = plan.to_graph();
         assert_eq!(graph.node_count(), 2);
         assert_eq!(graph.edge_count(), 0);
@@ -713,8 +704,8 @@ mod tests {
 
     #[test]
     fn test_orchestration_plan_to_graph_hierarchical() {
-        let root =
-            PlanNode::new(PlanStep::new("r", "t", serde_json::json!({}))).with_children(vec![
+        let root = PlanNode::new(PlanStep::new("r", "t", serde_json::json!({})))
+            .with_children(vec![
                 PlanNode::new(PlanStep::new("c1", "t", serde_json::json!({}))),
                 PlanNode::new(PlanStep::new("c2", "t", serde_json::json!({}))),
             ]);
@@ -809,7 +800,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_execute_sequential() {
-        let (orch, _) = make_orchestrator_with_tools().await;
+        let (orch, _) = make_orchestrator_with_tools();
         let plan = DeterministicPlanner.plan("translate this", "s1");
         let summary = orch.execute(&plan).await.unwrap();
         assert!(summary.success);
@@ -822,7 +813,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_execute_parallel() {
-        let (orch, _) = make_orchestrator_with_tools().await;
+        let (orch, _) = make_orchestrator_with_tools();
         let plan = DeterministicPlanner.plan("search it", "s1");
         let summary = orch.execute(&plan).await.unwrap();
         assert!(summary.success);
@@ -834,7 +825,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_execute_hierarchical() {
-        let (orch, _) = make_orchestrator_with_tools().await;
+        let (orch, _) = make_orchestrator_with_tools();
         let plan = DeterministicPlanner.plan("classify this", "s1");
         let summary = orch.execute(&plan).await.unwrap();
         assert!(summary.success);
@@ -846,7 +837,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_hierarchical_without_root_fails() {
-        let (orch, _) = make_orchestrator_with_tools().await;
+        let (orch, _) = make_orchestrator_with_tools();
         let plan = OrchestrationPlan::new(OrchestrationMode::Hierarchical, "s1");
         let err = orch.execute(&plan).await.unwrap_err();
         assert!(matches!(err, crate::Error::InvalidInput(_)));
@@ -854,7 +845,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_sequential_failure_aborts_chain() {
-        let (orch, _) = make_orchestrator_with_tools().await;
+        let (orch, _) = make_orchestrator_with_tools();
         let plan = OrchestrationPlan::new(OrchestrationMode::Sequential, "s1").with_steps(vec![
             PlanStep::new("s1", "fail", serde_json::json!({})),
             PlanStep::new("s2", "echo", serde_json::json!({})).with_depends_on(vec!["s1".into()]),
@@ -868,11 +859,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_hierarchical_node_failure_skips_children() {
-        let (orch, _) = make_orchestrator_with_tools().await;
-        let root =
-            PlanNode::new(PlanStep::new("r", "fail", serde_json::json!({}))).with_children(vec![
-                PlanNode::new(PlanStep::new("c1", "echo", serde_json::json!({}))),
-            ]);
+        let (orch, _) = make_orchestrator_with_tools();
+        let root = PlanNode::new(PlanStep::new("r", "fail", serde_json::json!({})))
+            .with_children(vec![PlanNode::new(PlanStep::new(
+                "c1",
+                "echo",
+                serde_json::json!({}),
+            ))]);
         let plan = OrchestrationPlan::new(OrchestrationMode::Hierarchical, "s1").with_root(root);
         let summary = orch.execute(&plan).await.unwrap();
         assert!(!summary.success);
@@ -882,7 +875,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_history_recorded() {
-        let (orch, _) = make_orchestrator_with_tools().await;
+        let (orch, _) = make_orchestrator_with_tools();
         let plan = DeterministicPlanner.plan("search it", "s1");
         orch.execute(&plan).await.unwrap();
         orch.execute(&plan).await.unwrap();
@@ -891,9 +884,9 @@ mod tests {
         assert_eq!(history[0].mode, OrchestrationMode::Parallel);
     }
 
-    #[tokio::test]
-    async fn test_orchestrator_registry_accessor() {
-        let (orch, registry) = make_orchestrator_with_tools().await;
+    #[test]
+    fn test_orchestrator_registry_accessor() {
+        let (orch, registry) = make_orchestrator_with_tools();
         let r = orch.registry();
         // 同一 Arc
         assert!(Arc::ptr_eq(r, &registry));
@@ -916,8 +909,7 @@ mod tests {
     #[test]
     fn test_plan_graph_node_edge_counts() {
         let mut g = PlanGraph::new(OrchestrationMode::Parallel);
-        g.nodes
-            .push(PlanStep::new("s1", "t", serde_json::json!({})));
+        g.nodes.push(PlanStep::new("s1", "t", serde_json::json!({})));
         g.edges.push(PlanEdge::new("s1", "s2"));
         assert_eq!(g.node_count(), 1);
         assert_eq!(g.edge_count(), 1);
