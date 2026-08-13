@@ -28,7 +28,7 @@ use aurora_core::traits::ai_provider::{
     AIProvider, ChatOptions, CompletionOptions, Message, Tool, ToolCall,
 };
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// OpenAI 兼容云端 AIProvider（最小实现，专做 OllamaProvider 的 fallback）。
 pub struct OpenAiCompatProvider {

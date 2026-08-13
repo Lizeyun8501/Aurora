@@ -1177,12 +1177,15 @@ impl Tracer {
         let new_ctx = CURRENT_TRACE.with(|c| {
             let ctx_opt = c.borrow().clone();
             match &ctx_opt {
-                Some(ctx) if ctx.parent_span_id.is_some() => {
-                    let parent = ctx.parent_span_id.clone().unwrap();
-                    let mut restored = ctx.clone();
-                    restored.span_id = parent;
-                    restored.parent_span_id = None;
-                    Some(restored)
+                Some(ctx) => {
+                    if let Some(parent) = ctx.parent_span_id.clone() {
+                        let mut restored = ctx.clone();
+                        restored.span_id = parent;
+                        restored.parent_span_id = None;
+                        Some(restored)
+                    } else {
+                        ctx_opt
+                    }
                 }
                 _ => None,
             }

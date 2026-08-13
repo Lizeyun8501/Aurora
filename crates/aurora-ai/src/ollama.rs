@@ -47,7 +47,7 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(30);
 /// 本地 Ollama 探测超时。
 const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 /// 默认推理调用超时。
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// 不可用且无 fallback 时统一返回的 Err 文案。
 const NO_PROVIDER_MSG: &str = "Ollama not running and no cloud provider configured";
 

@@ -85,6 +85,12 @@ impl AtomicTransaction {
         content: &[u8],
         loro_op_id: &str,
     ) -> Result<WriteResult, crate::Error> {
+        // 安全校验：拒绝包含 .. 的路径穿越攻击
+        if rel_path.contains("..") {
+            return Err(crate::Error::InvalidInput(format!(
+                "rel_path contains '..' (path traversal blocked): {}", rel_path
+            )));
+        }
         let target = self.data_dir.join(rel_path);
         let tmp_path = self.tmp_path(rel_path, loro_op_id);
 
@@ -178,6 +184,14 @@ impl AtomicTransaction {
 
         // 2. 处理 pending_writes
         for pw in pending_writes {
+            // 路径穿越校验
+            if pw.file_path.contains("..") || pw.tmp_path.contains("..") {
+                warn!(
+                    path = %pw.file_path,
+                    "skipping pending write with path traversal attempt"
+                );
+                continue;
+            }
             let target = self.data_dir.join(&pw.file_path);
             let tmp = self.tmp_dir.join(&pw.tmp_path);
 

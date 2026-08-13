@@ -103,6 +103,12 @@ impl SqliteVecStore {
         let conn = rusqlite::Connection::open(path)
             .map_err(|e| crate::Error::Database(format!("rusqlite open failed: {}", e)))?;
         let table_name = table_name.into();
+        // 验证表名为合法标识符（防 SQL 注入）
+        if !table_name.chars().all(|c| c.is_alphanumeric() || c == '_') || table_name.is_empty() {
+            return Err(crate::Error::InvalidInput(format!(
+                "invalid table name: '{}'", table_name
+            )));
+        }
         // 尝试加载 sqlite-vec 扩展（如果可用）。
         let _ = conn.execute_batch(&format!(
             "SELECT load_extension('sqlite_vec');

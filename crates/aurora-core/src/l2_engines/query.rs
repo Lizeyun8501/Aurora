@@ -1120,7 +1120,10 @@ fn extract_vector_params(query: &Query) -> Result<(Vec<f32>, usize), crate::Erro
         ));
     }
 
-    Ok((vectors.into_iter().next().unwrap(), top_k))
+    let vector = vectors.into_iter().next().ok_or_else(|| {
+        crate::Error::Internal("extract_vector_params: vector list unexpectedly empty".to_string())
+    })?;
+    Ok((vector, top_k))
 }
 
 fn extract_vector_inner(
