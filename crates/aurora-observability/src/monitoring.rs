@@ -714,18 +714,25 @@ impl AlertManager {
                 }
             } else {
                 // 指标恢复正常，自动解决相关告警
-                let mut guard = self.alerts.write();
-                for alert in guard.iter_mut() {
-                    if alert.rule_name == rule.name && alert.status == AlertStatus::Firing {
-                        alert.status = AlertStatus::Resolved;
-                        info!(
-                            alert_id = %alert.id,
-                            rule = %rule.name,
-                            "alert auto-resolved"
-                        );
-                        if let Some(ref wh) = *self.webhook.read() {
-                            let _ = wh.push(alert).await;
+                let mut resolved_alerts = Vec::new();
+                {
+                    let mut guard = self.alerts.write();
+                    for alert in guard.iter_mut() {
+                        if alert.rule_name == rule.name && alert.status == AlertStatus::Firing {
+                            alert.status = AlertStatus::Resolved;
+                            info!(
+                                alert_id = %alert.id,
+                                rule = %rule.name,
+                                "alert auto-resolved"
+                            );
+                            resolved_alerts.push(alert.clone());
                         }
+                    }
+                } // guard dropped here — 释放锁后再 await
+                // 推送已解决的告警
+                if let Some(ref wh) = *self.webhook.read() {
+                    for alert in &resolved_alerts {
+                        let _ = wh.push(alert).await;
                     }
                 }
             }
