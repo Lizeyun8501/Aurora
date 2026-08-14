@@ -41,17 +41,21 @@ impl DocumentAggregate {
 
 impl Aggregate for DocumentAggregate {
     fn apply_event(&mut self, event: &Event) {
-        match event.op_type.as_str() {
+        let applied = match event.op_type.as_str() {
             "create" | "update" => {
                 self.blocks
                     .insert(event.block_id.clone(), event.payload.clone());
+                true
             }
             "delete" => {
                 self.blocks.remove(&event.block_id);
+                true
             }
-            _ => {}
+            _ => false,
+        };
+        if applied {
+            self.version += 1;
         }
-        self.version += 1;
     }
 
     fn get_state(&self) -> serde_json::Value {
@@ -94,19 +98,24 @@ impl BlockAggregate {
 
 impl Aggregate for BlockAggregate {
     fn apply_event(&mut self, event: &Event) {
-        match event.op_type.as_str() {
+        let applied = match event.op_type.as_str() {
             "create" | "update" => {
                 self.content = event.payload.clone();
+                true
             }
             "property_change" => {
                 self.properties = event.payload.clone();
+                true
             }
             "delete" => {
                 self.content = serde_json::Value::Null;
+                true
             }
-            _ => {}
+            _ => false,
+        };
+        if applied {
+            self.version += 1;
         }
-        self.version += 1;
     }
 
     fn get_state(&self) -> serde_json::Value {
@@ -147,18 +156,22 @@ impl WorkspaceAggregate {
 
 impl Aggregate for WorkspaceAggregate {
     fn apply_event(&mut self, event: &Event) {
-        match event.op_type.as_str() {
+        let applied = match event.op_type.as_str() {
             "create" => {
                 if !self.documents.contains(&event.block_id) {
                     self.documents.push(event.block_id.clone());
                 }
+                true
             }
             "delete" => {
                 self.documents.retain(|d| d != &event.block_id);
+                true
             }
-            _ => {}
+            _ => false,
+        };
+        if applied {
+            self.version += 1;
         }
-        self.version += 1;
     }
 
     fn get_state(&self) -> serde_json::Value {

@@ -733,7 +733,10 @@ impl QueryEngine {
             return Ok(cached);
         }
 
-        self.cache.stats.write().miss_count += 1;
+        {
+            let mut stats = self.cache.stats.write();
+            stats.miss_count += 1;
+        } // stats guard dropped here — 释放锁后再 await
 
         trace!(
             "Executing query on source '{}' via {:?}",
