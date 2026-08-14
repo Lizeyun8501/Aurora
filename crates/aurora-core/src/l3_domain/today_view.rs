@@ -503,7 +503,9 @@ impl ReviewHistory {
         }
         let mut dates: Vec<NaiveDate> = self.reports.iter().map(|r| r.date).collect();
         dates.sort();
-        Some((*dates.first().unwrap(), *dates.last().unwrap()))
+        let first = *dates.first().expect("dates non-empty (checked above)");
+        let last = *dates.last().expect("dates non-empty (checked above)");
+        Some((first, last))
     }
 }
 
