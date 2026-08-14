@@ -78,6 +78,15 @@ impl LocalDekVault {
     }
 }
 
+impl Drop for LocalDekVault {
+    fn drop(&mut self) {
+        // 安全擦除内存中的 DEK
+        for byte in self.dek.iter_mut() {
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+    }
+}
+
 /// Unix 下以 0600 权限写入（仅属主可读写）。
 #[cfg(unix)]
 fn write_vault_file(path: &Path, dek: &[u8; 32]) -> Result<(), Error> {

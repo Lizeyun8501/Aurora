@@ -93,6 +93,23 @@ impl MasterKey {
     pub fn salt(&self) -> &[u8; SALT_LEN] {
         &self.salt
     }
+
+    /// 安全擦除密钥材料
+    fn zeroize(&mut self) {
+        // 使用 volatile 写入擦除密钥材料，防止编译器优化
+        for byte in self.key.iter_mut() {
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+        for byte in self.salt.iter_mut() {
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+    }
+}
+
+impl Drop for MasterKey {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
 }
 
 /// 工作区数据加密密钥 (DEK)
@@ -132,6 +149,13 @@ impl WorkspaceDek {
         &self.key
     }
 
+    /// 安全擦除密钥材料
+    fn zeroize(&mut self) {
+        for byte in self.key.iter_mut() {
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+    }
+
     /// 返回 DEK 长度
     pub fn len(&self) -> usize {
         DEK_LEN
@@ -140,6 +164,12 @@ impl WorkspaceDek {
     /// 是否为空（DEK 恒为 32 字节，始终返回 false）
     pub fn is_empty(&self) -> bool {
         false
+    }
+}
+
+impl Drop for WorkspaceDek {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 

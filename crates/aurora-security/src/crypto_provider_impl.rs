@@ -96,14 +96,16 @@ impl CryptoProvider for SecurityCryptoProvider {
 
     fn derive_key(&self, password: &str, salt: &[u8]) -> Result<[u8; 32], aurora_core::Error> {
         use argon2::{password_hash::SaltString, Argon2, Params};
-        use rand::rngs::OsRng;
 
-        let salt_str = if salt.len() >= 8 {
-            SaltString::encode_b64(salt)
-                .map_err(|e| aurora_core::Error::Crypto(format!("salt encoding failed: {}", e)))?
-        } else {
-            SaltString::generate(&mut OsRng)
-        };
+        // 安全校验：salt 必须至少 8 字节，否则返回错误（不静默降级）
+        if salt.len() < 8 {
+            return Err(aurora_core::Error::Crypto(format!(
+                "salt too short: {} bytes (minimum 8 required for Argon2id)",
+                salt.len()
+            )));
+        }
+        let salt_str = SaltString::encode_b64(salt)
+            .map_err(|e| aurora_core::Error::Crypto(format!("salt encoding failed: {}", e)))?;
         let argon2 = Argon2::new(
             argon2::Algorithm::Argon2id,
             argon2::Version::V0x13,
