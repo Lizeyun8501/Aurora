@@ -68,7 +68,9 @@ impl UniffiAppCore {
     /// 创建新笔记。
     pub fn create_note(self: Arc<Self>, title: String) -> Result<String, MobileError> {
         let id = uuid::Uuid::new_v4().to_string();
-        let mut notes = self.notes.lock().unwrap();
+        let mut notes = self.notes.lock().map_err(|_| MobileError::OperationFailed {
+            message: "notes mutex poisoned".to_string(),
+        })?;
         notes.push(NoteSummary {
             id: id.clone(),
             title,
@@ -79,13 +81,15 @@ impl UniffiAppCore {
 
     /// 列出所有笔记。
     pub fn list_notes(self: Arc<Self>) -> Vec<NoteSummary> {
-        let notes = self.notes.lock().unwrap();
-        notes.clone()
+        self.notes.lock().map(|n| n.clone()).unwrap_or_default()
     }
 
     /// 搜索笔记（FTS 简化版本）。
     pub fn search_notes(self: Arc<Self>, query: String) -> Vec<SearchResult> {
-        let notes = self.notes.lock().unwrap();
+        let notes = match self.notes.lock() {
+            Ok(n) => n,
+            Err(_) => return Vec::new(),
+        };
         notes
             .iter()
             .filter(|n| n.title.to_lowercase().contains(&query.to_lowercase()))
@@ -100,7 +104,9 @@ impl UniffiAppCore {
 
     /// 删除笔记。
     pub fn delete_note(self: Arc<Self>, note_id: String) -> Result<(), MobileError> {
-        let mut notes = self.notes.lock().unwrap();
+        let mut notes = self.notes.lock().map_err(|_| MobileError::OperationFailed {
+            message: "notes mutex poisoned".to_string(),
+        })?;
         let pos = notes.iter().position(|n| n.id == note_id);
         match pos {
             Some(i) => {

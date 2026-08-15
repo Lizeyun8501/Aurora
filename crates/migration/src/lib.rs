@@ -54,7 +54,9 @@ impl MigrationManager {
 
     /// 运行所有待执行迁移到最新版本。
     pub fn migrate(&self) -> Result<(), MigrationError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().map_err(|e| {
+            MigrationError::Exec(format!("migration mutex poisoned: {}", e))
+        })?;
         let current = Self::current_version(&conn)?;
         info!(
             current,
@@ -373,8 +375,10 @@ impl MigrationManager {
     }
 
     /// 获取底层连接（用于应用层复用同一数据库）。
-    pub fn into_inner(self) -> rusqlite::Connection {
-        self.conn.into_inner().unwrap()
+    pub fn into_inner(self) -> Result<rusqlite::Connection, MigrationError> {
+        self.conn.into_inner().map_err(|e| {
+            MigrationError::Exec(format!("migration mutex poisoned: {}", e))
+        })
     }
 }
 
@@ -398,7 +402,7 @@ mod tests {
     fn v1_migration_runs() {
         let mgr = MigrationManager::new_in_memory().unwrap();
         mgr.migrate().unwrap();
-        let conn = mgr.into_inner();
+        let conn = mgr.into_inner().unwrap();
         let tables: Vec<String> = conn
             .prepare("SELECT name FROM sqlite_master WHERE type='table'")
             .unwrap()
