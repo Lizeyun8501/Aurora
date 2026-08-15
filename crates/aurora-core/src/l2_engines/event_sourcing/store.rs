@@ -87,8 +87,15 @@ impl EventStore {
         let events = stmt
             .query_map(params![aggregate_id, since_i64], |row| {
                 let payload_str: String = row.get(3)?;
-                let payload: serde_json::Value =
-                    serde_json::from_str(&payload_str).unwrap_or(serde_json::Value::Null);
+                let payload: serde_json::Value = serde_json::from_str(&payload_str)
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(
+                            payload = %payload_str,
+                            error = %e,
+                            "failed to deserialize event payload, falling back to null"
+                        );
+                        serde_json::Value::Null
+                    });
                 let block_id: Option<String> = row.get(1)?;
                 let user_id: Option<String> = row.get(5)?;
                 let device_id: Option<String> = row.get(6)?;
@@ -141,8 +148,11 @@ impl EventStore {
         let snapshot = stmt
             .query_row(params![aggregate_id], |row| {
                 let state_str: String = row.get(3)?;
-                let state: serde_json::Value =
-                    serde_json::from_str(&state_str).unwrap_or(serde_json::Value::Null);
+                let state: serde_json::Value = serde_json::from_str(&state_str)
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(error = %e, "failed to deserialize snapshot state");
+                        serde_json::Value::Null
+                    });
                 Ok(Snapshot {
                     snapshot_id: row.get(0)?,
                     aggregate_id: row.get(1)?,

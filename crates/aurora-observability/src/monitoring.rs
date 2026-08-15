@@ -553,6 +553,14 @@ impl WebhookPusher {
         if alert.severity < self.config.min_severity {
             return Ok(());
         }
+        // SSRF 防护：仅允许 http/https scheme
+        let url_lower = self.config.url.to_lowercase();
+        if !url_lower.starts_with("http://") && !url_lower.starts_with("https://") {
+            return Err(Error::InvalidInput(format!(
+                "webhook URL must start with http:// or https://, got: {}",
+                self.config.url
+            )));
+        }
         let payload = serde_json::to_string(alert).map_err(Error::Serialization)?;
 
         let mut req = self

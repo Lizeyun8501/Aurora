@@ -133,6 +133,21 @@ impl OpenAiCompatProvider {
         let base_url = base_url.into();
         let api_key = api_key.into();
         let model = model.into();
+        // SSRF 防护：仅允许 http/https scheme
+        let lower = base_url.to_lowercase();
+        if !lower.starts_with("http://") && !lower.starts_with("https://") {
+            tracing::warn!(
+                "cloud base_url SSRF check failed: {} — provider disabled",
+                base_url
+            );
+            return Self {
+                base_url,
+                api_key: String::new(), // 清空 key 使 available=false
+                model,
+                client: reqwest::Client::new(),
+                available: AtomicBool::new(false),
+            };
+        }
         let available = AtomicBool::new(!api_key.is_empty() && !base_url.trim().is_empty());
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)

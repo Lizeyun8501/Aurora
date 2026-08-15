@@ -191,8 +191,11 @@ impl VectorStore for SqliteVecStore {
                     .chunks_exact(4)
                     .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
                     .collect();
-                let metadata: serde_json::Value =
-                    serde_json::from_str(&metadata_str).unwrap_or(serde_json::Value::Null);
+                let metadata: serde_json::Value = serde_json::from_str(&metadata_str)
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(error = %e, "failed to deserialize vector metadata");
+                        serde_json::Value::Null
+                    });
                 let score = cosine_similarity(query, &vector);
                 Ok(SearchResult {
                     id,

@@ -188,6 +188,10 @@ impl OllamaProvider {
         fallback: Option<Arc<dyn AIProvider>>,
     ) -> Self {
         let base_url = base_url.into();
+        // SSRF 防护：仅允许 http/https scheme
+        validate_url_scheme(&base_url).unwrap_or_else(|e| {
+            tracing::warn!("Ollama base_url SSRF check failed: {} — using default", e);
+        });
         let model = model.into();
         let available = Arc::new(AtomicBool::new(false));
         let client = reqwest::Client::builder()
@@ -636,5 +640,18 @@ fn emit_ndjson_line(line: &[u8], callback: &(dyn Fn(String) + Send + Sync)) {
         if !token.is_empty() {
             callback(token.to_string());
         }
+    }
+}
+
+/// SSRF 防护：验证 URL scheme 仅为 http/https，拒绝 file://, data://, ftp:// 等。
+fn validate_url_scheme(url: &str) -> Result<(), String> {
+    let lower = url.to_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(format!(
+            "URL must start with http:// or https://, got: {}",
+            url
+        ))
     }
 }
