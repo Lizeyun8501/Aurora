@@ -6,19 +6,30 @@ on:
   pull_request:
     branches: [ main ]
 
-jobs:
-  build:
-    name: Build & Test
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust: [stable, beta, nightly]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
-      # Tauri v2 Linux 构建依赖（workspace 已纳入 apps/desktop/src-tauri）
-      - name: Install Tauri system dependencies
+jobs:
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -30,24 +41,51 @@ jobs:
             libssl-dev \
             libxdo-dev \
             patchelf
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust }}
-          components: rustfmt, clippy
-          override: true
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Build (all targets)
-        run: cargo build --workspace --all-targets --verbose
-
-      - name: Run tests
+  test:
+    name: Test (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            libxdo-dev \
+            patchelf
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace --verbose
+      - name: Test
         run: cargo test --workspace --verbose
 
-      - name: Run clippy
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Install system dependencies
         run: |
-          # clippy is noisy on beta/nightly for some lints; allow it to run but fail on warnings
-          cargo clippy --workspace --all-targets -- -D warnings
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            libxdo-dev \
+            patchelf
+      - uses: Swatinem/rust-cache@v2
+      - name: Check (MSRV)
+        run: cargo check --workspace
