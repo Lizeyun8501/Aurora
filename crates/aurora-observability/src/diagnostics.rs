@@ -123,12 +123,23 @@ impl Default for RedactionConfig {
 }
 
 impl RedactionConfig {
-    /// 对文本执行子串替换脱敏。
+    /// 对文本执行脱敏：匹配 `key=` 或 `key ` 模式时，替换其后的值为 [REDACTED]。
+    ///
+    /// 支持两种模式：
+    /// - `key=xxx` → `key=[REDACTED]`（值到下一个空白或行尾）
+    /// - `Bearer xxx` → `Bearer [REDACTED]`（值到下一个空白或行尾）
     pub fn redact(&self, text: &str) -> String {
         let mut out = text.to_string();
         for p in &self.patterns {
-            if !p.is_empty() {
-                out = out.replace(p, &self.replacement);
+            if p.is_empty() {
+                continue;
+            }
+            // 检查 pattern 是 "key=" 形式（值跟在 = 后面）
+            if p.ends_with('=') {
+                out = redact_key_value(&out, p, &self.replacement);
+            } else {
+                // "Bearer " 形式：替换到下一个空白
+                out = redact_prefix_value(&out, p, &self.replacement);
             }
         }
         out
@@ -369,6 +380,54 @@ fn redact_json(cfg: &RedactionConfig, value: &serde_json::Value) -> serde_json::
         }
         other => other.clone(),
     }
+}
+
+/// 脱敏 `key=value` 模式：将 `key=` 后面的值替换为 replacement，值到下一个空白或行尾。
+/// 例: `token=abc123 data` → `token=[REDACTED] data`
+fn redact_key_value(text: &str, key_pattern: &str, replacement: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some(pos) = remaining.find(key_pattern) {
+        // 添加 pattern 之前的内容
+        result.push_str(&remaining[..pos]);
+        // 添加 key_pattern 本身（如 "token="）
+        result.push_str(key_pattern);
+        // 跳过 pattern 后面的值，直到空白或行尾
+        let after = &remaining[pos + key_pattern.len()..];
+        let value_end = after
+            .char_indices()
+            .take_while(|(_, c)| !c.is_whitespace())
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        // 添加 replacement
+        result.push_str(replacement);
+        // 跳过 value，继续处理剩余
+        remaining = &after[value_end..];
+    }
+    result.push_str(remaining);
+    result
+}
+
+/// 脱敏前缀+值模式（如 `Bearer xxx`）：将前缀后面的值替换为 replacement。
+fn redact_prefix_value(text: &str, prefix: &str, replacement: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some(pos) = remaining.find(prefix) {
+        result.push_str(&remaining[..pos]);
+        result.push_str(prefix);
+        let after = &remaining[pos + prefix.len()..];
+        let value_end = after
+            .char_indices()
+            .take_while(|(_, c)| !c.is_whitespace())
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        result.push_str(replacement);
+        remaining = &after[value_end..];
+    }
+    result.push_str(remaining);
+    result
 }
 
 // ===========================================================================
@@ -1098,11 +1157,15 @@ mod tests {
         let cfg = RedactionConfig::default();
         let out = cfg.redact("token=abc123 password=secret Bearer xyz api_key=k");
         assert!(out.contains("[REDACTED]"));
-        // 子串模式本身应被全部替换
-        assert!(!out.contains("token="));
-        assert!(!out.contains("password="));
-        assert!(!out.contains("Bearer "));
-        assert!(!out.contains("api_key="));
+        // key= 前缀保留，值被替换
+        assert!(out.contains("token=[REDACTED]"));
+        assert!(out.contains("password=[REDACTED]"));
+        assert!(out.contains("Bearer [REDACTED]"));
+        assert!(out.contains("api_key=[REDACTED]"));
+        // 敏感值不残留
+        assert!(!out.contains("abc123"));
+        assert!(!out.contains("secret"));
+        assert!(!out.contains("xyz"));
         // 替换次数 = 4
         assert_eq!(out.matches("[REDACTED]").count(), 4);
     }
@@ -1113,7 +1176,9 @@ mod tests {
         let mut logs = vec![LogEntry::new("INFO", "auth token=sensitive data here")];
         cfg.redact_logs(&mut logs);
         assert!(logs[0].message.contains("[REDACTED]"));
-        assert!(!logs[0].message.contains("token="));
+        assert!(logs[0].message.contains("token=[REDACTED]"));
+        // 敏感值不残留
+        assert!(!logs[0].message.contains("sensitive"));
         // 模式之外的内容保留
         assert!(logs[0].message.contains("data here"));
     }
@@ -1121,10 +1186,13 @@ mod tests {
     #[test]
     fn redaction_custom_config() {
         let cfg = RedactionConfig {
-            patterns: vec!["email@".into()],
+            patterns: vec!["email=".into()],
             replacement: "***".into(),
         };
-        assert_eq!(cfg.redact("contact email@x.com"), "contact ***x.com");
+        // "email=x.com" → "email=***" (值 x.com 被替换)
+        let out = cfg.redact("contact email=x.com");
+        assert!(out.contains("email=***"));
+        assert!(!out.contains("x.com"));
     }
 
     // ---- Diagnostic exporter ----

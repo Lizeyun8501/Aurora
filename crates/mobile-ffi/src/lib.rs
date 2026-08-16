@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn note_lifecycle() {
         let core = UniffiAppCore::new("/tmp/aurora-test".into()).unwrap();
-        let id = core.create_note("Test Note".into()).unwrap();
+        let id = core.clone().create_note("Test Note".into()).unwrap();
         let notes = core.list_notes();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].id, id);
@@ -135,7 +135,7 @@ mod tests {
         let results = core.search_notes("test".into());
         assert_eq!(results.len(), 1);
 
-        core.delete_note(id).unwrap();
+        core.clone().delete_note(id).unwrap();
         assert!(core.list_notes().is_empty());
     }
 }

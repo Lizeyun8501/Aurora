@@ -10,7 +10,8 @@
 //! 触发密钥重包装，被吊销设备无法解密后续同步数据。
 //!
 //! # 实现说明
-//! [`DeviceId::random`] 模拟 Ed25519 公钥的 hex 编码 (真实实现使用 `ring::signature::Ed25519KeyPair`)。
+//! [`DeviceId::random`] 使用 `ring::signature::Ed25519KeyPair` 生成真实 Ed25519 密钥对，
+//! 公钥 32 字节 hex 编码为 DeviceId。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,16 +29,16 @@ impl DeviceId {
         Self(id.into())
     }
 
-    /// 模拟 Ed25519 公钥派生 (真实实现使用 ring::signature::Ed25519KeyPair)。
+    /// 生成真实 Ed25519 密钥对，公钥 hex 编码为 DeviceId。
     pub fn random() -> Self {
-        // 64 字符 hex (32 字节)
-        let uuid = uuid::Uuid::new_v4();
-        let bytes = uuid.as_bytes();
-        let hex: String = bytes
-            .iter()
-            .chain(bytes.iter())
-            .map(|b| format!("{:02x}", b))
-            .collect();
+        use ring::signature::KeyPair;
+        let rng = ring::rand::SystemRandom::new();
+        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng)
+            .expect("Ed25519 key generation should not fail with SystemRandom");
+        let keypair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
+            .expect("Generated PKCS8 must be valid");
+        let pk_bytes = keypair.public_key().as_ref();
+        let hex: String = pk_bytes.iter().map(|b| format!("{:02x}", b)).collect();
         Self(hex)
     }
 

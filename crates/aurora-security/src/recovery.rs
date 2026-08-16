@@ -10,13 +10,13 @@
 //!   SHA3-256 校验和，仅用于演示编码/校验流程。
 //! - **Shamir 秘密分享**：基于 GF(2^8)（AES 不可约多项式 0x11b）的多项式
 //!   插值，默认 3-of-2（拆成 3 份，需 2 份重建）。
-//! - **种子派生**：使用迭代 SHA3-512 近似 PBKDF2 拉伸（真实 BIP39 使用
-//!   PBKDF2-HMAC-SHA512，2048 轮）。
+//! - **种子派生**：使用 PBKDF2-HMAC-SHA512（2048 轮迭代），与 BIP39 标准对齐。
 
 use bincode;
+use hmac::Mac;
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Sha3_256, Sha3_512};
+use sha3::{Digest, Sha3_256};
 use tracing::{debug, info, warn};
 
 use crate::Error;
@@ -115,19 +115,42 @@ impl Mnemonic {
         Ok(entropy)
     }
 
-    /// 派生 512-bit 种子（迭代 SHA3-512 近似 PBKDF2，2048 轮）
+    /// 派生 512-bit 种子（PBKDF2-HMAC-SHA512，2048 轮迭代）
+    ///
+    /// 与 BIP39 标准对齐：使用 PBKDF2-HMAC-SHA512 派生，盐值
+    /// 为 `"mnemonic" + passphrase`，迭代 2048 轮。
     pub fn to_seed(&self, passphrase: Option<&str>) -> [u8; 64] {
-        let mut state = Vec::new();
-        state.extend_from_slice(self.to_string().as_bytes());
-        if let Some(p) = passphrase {
-            state.extend_from_slice(p.as_bytes());
-        }
-        let mut acc = Sha3_512::digest(&state).to_vec();
-        for _ in 0..2048 {
-            acc = Sha3_512::digest(&acc).to_vec();
+        use sha2::Sha512;
+        let salt = match passphrase {
+            Some(p) => format!("mnemonic{}", p),
+            None => "mnemonic".to_string(),
+        };
+        let mnemonic_bytes = self.to_string().into_bytes();
+
+        // PBKDF2-HMAC-SHA512: DK = T1 (64 bytes for 512-bit output)
+        // T1 = U1 ^ U2 ^ ... ^ Uc
+        // U1 = HMAC-SHA512(salt, mnemonic || 0x00000001)
+        // Uj = HMAC-SHA512(salt, U(j-1))
+        type HmacSha512 = hmac::Hmac<Sha512>;
+        let mut u: Vec<u8> = {
+            let mut mac = HmacSha512::new_from_slice(salt.as_bytes())
+                .expect("HMAC accepts any key length");
+            mac.update(&mnemonic_bytes);
+            mac.update(&1u32.to_be_bytes());
+            mac.finalize().into_bytes().to_vec()
+        };
+        let mut dk = u.clone();
+        for _ in 1..2048 {
+            let mut mac = HmacSha512::new_from_slice(salt.as_bytes())
+                .expect("HMAC accepts any key length");
+            mac.update(&u);
+            u = mac.finalize().into_bytes().to_vec();
+            for (d, u_byte) in dk.iter_mut().zip(u.iter()) {
+                *d ^= u_byte;
+            }
         }
         let mut out = [0u8; 64];
-        out.copy_from_slice(&acc[..64]);
+        out.copy_from_slice(&dk[..64]);
         out
     }
 }
