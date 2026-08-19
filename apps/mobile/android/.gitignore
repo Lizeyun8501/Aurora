@@ -1,0 +1,14 @@
+# Android build artifacts
+.gradle/
+build/
+local.properties
+
+# Rust build artifacts (already in root .gitignore but be safe)
+target/
+
+# IDE
+.idea/
+*.iml
+
+# JNI libs (built from Rust, not checked in)
+app/src/main/jniLibs/

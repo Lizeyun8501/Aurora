@@ -1,0 +1,18 @@
+# Android NDK cross-compilation config
+# Auto-generated for Aurora APK build
+
+[target.aarch64-linux-android]
+linker = "/home/z/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+ar = "/home/z/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+
+[target.armv7-linux-androideabi]
+linker = "/home/z/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi24-clang"
+ar = "/home/z/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+
+[target.x86_64-linux-android]
+linker = "/home/z/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang"
+ar = "/home/z/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+
+[target.i686-linux-android]
+linker = "/home/z/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android24-clang"
+ar = "/home/z/android-sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"

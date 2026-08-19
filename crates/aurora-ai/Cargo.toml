@@ -42,7 +42,8 @@ parking_lot = { workspace = true }
 # streaming. 选 0.11 而非 0.13 以对齐 aurora-observability 既有选型，
 # 避免引入第二套 hyper 主版本。Availability probe + periodic re-probe
 # 直接用 tokio（已是 dep）。
-reqwest = { version = "0.11", features = ["json", "stream"] }
+# 使用 rustls-tls 避免对 OpenSSL 的依赖（Android 交叉编译更友好）。
+reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "rustls-tls"] }
 
 # `bytes::Bytes` 用于 stream_complete 的 NDJSON 行拆分（reqwest::stream
 # 产出的 `Bytes` chunk 顺序拼接后按 \n 切行）。

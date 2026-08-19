@@ -18,11 +18,13 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
+jni = { version = "0.21", default-features = false }
 
 # 共享启动装配（迁移 + DEK 保险库 + AppCore DI）
 aurora-bootstrap = { path = "../aurora-bootstrap" }
 aurora-core = { path = "../aurora-core" }
 aurora-security = { path = "../aurora-security" }
+aurora-ai = { path = "../aurora-ai" }
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }

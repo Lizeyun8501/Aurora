@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.aurora.note'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.aurora.note"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+            java.srcDirs = ['src/main/java']
+        }
+    }
+}
+
+dependencies {
+}
