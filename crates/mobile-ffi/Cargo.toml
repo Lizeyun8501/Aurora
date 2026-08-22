@@ -20,6 +20,9 @@ uuid = { workspace = true }
 tokio = { workspace = true }
 jni = { version = "0.21", default-features = false }
 
+# CRDT 文档模型 — V19 §36.3 移动端使用原生 Loro 绑定
+loro = { workspace = true }
+
 # 共享启动装配（迁移 + DEK 保险库 + AppCore DI）
 aurora-bootstrap = { path = "../aurora-bootstrap" }
 aurora-core = { path = "../aurora-core" }

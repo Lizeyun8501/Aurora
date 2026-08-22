@@ -76,15 +76,20 @@ impl NoteRecord {
 }
 
 // ===========================================================================
-// UniffiAppCore — 真实实现（接入 bootstrap + KVStore + SearchBackend）
+// UniffiAppCore — 真实实现（接入 bootstrap + KVStore + SearchBackend + Loro）
 // ===========================================================================
 
+/// 每条笔记的正文存储在独立的 LoroDoc（LoroText 容器）中，
+/// 快照持久化到 KVStore（`notesnap:{id}`），元数据存 `note:{id}`。
+/// V19 §36.3: 移动端使用原生 Loro 绑定 — CRDT 语义，支持未来多端合并。
 #[derive(uniffi::Object)]
 pub struct UniffiAppCore {
     core: Option<Arc<aurora_core::app_core::AppCore>>,
     runtime: tokio::runtime::Runtime,
     data_dir: PathBuf,
     fallback_notes: Mutex<Vec<NoteRecord>>,
+    /// Loro 文档缓存（note_id → LoroDoc）
+    docs: Mutex<std::collections::HashMap<String, loro::LoroDoc>>,
     is_fallback: bool,
 }
 
@@ -101,12 +106,13 @@ impl UniffiAppCore {
         // 尝试完整 bootstrap 装配
         match aurora_bootstrap::bootstrap(&data_dir) {
             Ok(booted) => {
-                tracing::info!("bootstrap success — full mode");
+                tracing::info!("bootstrap success — full mode (loro CRDT enabled)");
                 Ok(Arc::new(Self {
                     core: Some(booted.core),
                     runtime,
                     data_dir,
                     fallback_notes: Mutex::new(Vec::new()),
+                    docs: Mutex::new(std::collections::HashMap::new()),
                     is_fallback: false,
                 }))
             }
@@ -117,14 +123,60 @@ impl UniffiAppCore {
                     runtime,
                     data_dir,
                     fallback_notes: Mutex::new(Vec::new()),
+                    docs: Mutex::new(std::collections::HashMap::new()),
                     is_fallback: true,
                 }))
             }
         }
     }
 
+    /// 创建（或从 KVStore 恢复）笔记的 LoroDoc 并放入缓存。
+    fn doc_for_note(&self, note_id: &str) -> loro::LoroDoc {
+        // 缓存命中
+        if let Some(doc) = self.docs.lock().unwrap().get(note_id) {
+            return doc.clone();
+        }
+
+        // 尝试从 KVStore 恢复快照
+        let doc = loro::LoroDoc::new();
+        if let Some(core) = &self.core {
+            let kv = core.kv_store.clone();
+            let key = format!("notesnap:{note_id}");
+            let snapshot = self.runtime.block_on(async { kv.get(&key).await.ok().flatten() });
+            if let Some(bytes) = snapshot {
+                if doc.import(&bytes).is_ok() {
+                    tracing::debug!(note_id, "loro doc restored from snapshot");
+                }
+            }
+        }
+
+        self.docs.lock().unwrap().insert(note_id.to_string(), doc.clone());
+        doc
+    }
+
+    /// 导出 Loro 快照并持久化到 KVStore。
+    fn persist_doc(&self, note_id: &str, doc: &loro::LoroDoc) -> Result<(), MobileError> {
+        if let Some(core) = &self.core {
+            let snapshot = doc.export(loro::ExportMode::Snapshot).map_err(|e| MobileError::OperationFailed {
+                message: format!("loro export: {e}"),
+            })?;
+            let kv = core.kv_store.clone();
+            let key = format!("notesnap:{note_id}");
+            self.runtime.block_on(async { kv.set(&key, &snapshot).await })
+                .map_err(|e| MobileError::OperationFailed {
+                    message: format!("kv set snapshot: {e}"),
+                })?;
+        }
+        Ok(())
+    }
+
     fn create_note_impl(self: &Arc<Self>, title: String) -> Result<String, MobileError> {
         let note = NoteRecord::new(title);
+
+        // 创建 Loro 文档（LoroText 容器承载正文）
+        let doc = loro::LoroDoc::new();
+        let _text = doc.get_text("content");
+        doc.commit();
 
         if let Some(core) = &self.core {
             // 真实模式：KVStore 持久化 + SearchBackend 索引
@@ -139,6 +191,9 @@ impl UniffiAppCore {
             }).map_err(|e| MobileError::OperationFailed {
                 message: format!("kv set: {e}"),
             })?;
+
+            // 持久化 Loro 快照
+            self.persist_doc(&note.id, &doc)?;
 
             // 索引笔记（忽略错误，搜索索引是可选的）
             let search = core.search.clone();
@@ -155,8 +210,12 @@ impl UniffiAppCore {
                 };
                 search.index_note(&note_clone.id, &note_clone.content, &metadata).await
             }).ok();
+
+            // 缓存 LoroDoc
+            self.docs.lock().unwrap().insert(note.id.clone(), doc);
         } else {
-            // Fallback 模式：内存存储
+            // Fallback 模式：内存存储（LoroDoc 仍然提供 CRDT 语义）
+            self.docs.lock().unwrap().insert(note.id.clone(), doc);
             self.fallback_notes.lock().unwrap().push(note.clone());
         }
 
@@ -249,13 +308,32 @@ impl UniffiAppCore {
         Ok(())
     }
 
-    /// V19 §36.3: saveNote(noteId, content) — 保存笔记内容
+    /// V19 §36.3: saveNote(noteId, content) — 保存笔记内容（Loro CRDT）
     fn save_note_content_impl(self: &Arc<Self>, note_id: String, content: String) -> Result<(), MobileError> {
+        // 通过 LoroText 容器写入（CRDT 语义：可多端合并）
+        let doc = self.doc_for_note(&note_id);
+        let text = doc.get_text("content");
+        let old_len = text.len_unicode();
+        if old_len > 0 {
+            text.delete(0, old_len).map_err(|e| MobileError::OperationFailed {
+                message: format!("loro delete: {e}"),
+            })?;
+        }
+        if !content.is_empty() {
+            text.insert(0, &content).map_err(|e| MobileError::OperationFailed {
+                message: format!("loro insert: {e}"),
+            })?;
+        }
+        doc.commit();
+
+        // 持久化 Loro 快照
+        self.persist_doc(&note_id, &doc)?;
+
         if let Some(core) = &self.core {
             let kv = core.kv_store.clone();
             let key = format!("note:{}", note_id);
 
-            // 读取现有笔记
+            // 同步元数据 JSON（updated_at）
             let existing = self.runtime.block_on(async {
                 kv.get(&key).await
             }).map_err(|e| MobileError::OperationFailed {
@@ -311,9 +389,10 @@ impl UniffiAppCore {
         Ok(())
     }
 
-    /// V19 §36.3: getNoteContent(noteId) — 获取笔记内容
+    /// V19 §36.3: getNoteContent(noteId) — 获取笔记内容（从 LoroText 读取）
     fn get_note_content_impl(self: &Arc<Self>, note_id: String) -> Result<String, MobileError> {
-        if let Some(core) = &self.core {
+        // 验证笔记存在（元数据）
+        let exists = if let Some(core) = &self.core {
             let kv = core.kv_store.clone();
             let key = format!("note:{}", note_id);
             let result = self.runtime.block_on(async {
@@ -321,25 +400,20 @@ impl UniffiAppCore {
             }).map_err(|e| MobileError::OperationFailed {
                 message: format!("get: {e}"),
             })?;
-
-            match result {
-                Some(bytes) => {
-                    let note: NoteRecord = serde_json::from_slice(&bytes).map_err(|e| MobileError::OperationFailed {
-                        message: format!("deserialize: {e}"),
-                    })?;
-                    Ok(note.content)
-                }
-                None => Err(MobileError::NotFound { resource: note_id }),
-            }
+            result.is_some()
         } else {
             let notes = self.fallback_notes.lock().unwrap();
-            for n in notes.iter() {
-                if n.id == note_id {
-                    return Ok(n.content.clone());
-                }
-            }
-            Err(MobileError::NotFound { resource: note_id })
+            notes.iter().any(|n| n.id == note_id)
+        };
+
+        if !exists {
+            return Err(MobileError::NotFound { resource: note_id });
         }
+
+        // 从 Loro 文档读取正文（缓存命中或从快照恢复）
+        let doc = self.doc_for_note(&note_id);
+        let text = doc.get_text("content");
+        Ok(text.to_string())
     }
 }
 
@@ -632,12 +706,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
         let id = core.clone().create_note("Test Note".into()).unwrap();
-        let notes = core.list_notes();
+        let notes = core.clone().list_notes();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].id, id);
 
+        // Loro 内容读写（真实模式）
+        core.clone().save_note_content(id.clone(), "Hello Loro 世界".into()).unwrap();
+        let content = core.clone().get_note_content(id.clone()).unwrap();
+        assert_eq!(content, "Hello Loro 世界");
+
+        // 再写一次（覆盖路径）
+        core.clone().save_note_content(id.clone(), "Updated".into()).unwrap();
+        assert_eq!(core.clone().get_note_content(id.clone()).unwrap(), "Updated");
+
         core.clone().delete_note(id).unwrap();
-        assert!(core.list_notes().is_empty());
+        assert!(core.clone().list_notes().is_empty());
     }
 
     #[test]
@@ -645,8 +728,13 @@ mod tests {
         let core = UniffiAppCore::new("/dev/null/aurora-test".into()).unwrap();
         assert!(core.is_fallback);
         let id = core.clone().create_note("Fallback".into()).unwrap();
-        assert_eq!(core.list_notes().len(), 1);
+        assert_eq!(core.clone().list_notes().len(), 1);
+
+        // Fallback 模式下 Loro 内存 CRDT 同样可用
+        core.clone().save_note_content(id.clone(), "fallback content".into()).unwrap();
+        assert_eq!(core.clone().get_note_content(id.clone()).unwrap(), "fallback content");
+
         core.clone().delete_note(id).unwrap();
-        assert!(core.list_notes().is_empty());
+        assert!(core.clone().list_notes().is_empty());
     }
 }

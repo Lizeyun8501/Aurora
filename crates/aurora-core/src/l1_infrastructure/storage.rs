@@ -288,30 +288,30 @@ impl KVStore for SqliteStorage {
     }
 
     async fn scan_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, crate::Error> {
-        // SQLite 不支持原生前缀扫描，使用 LIKE 模拟
-        let q = StorageQuery {
-            table: "kv_store".to_string(),
-            filters: vec![crate::traits::storage::QueryFilter {
-                field: "key".to_string(),
-                op: "like".to_string(),
-                value: serde_json::json!(format!("{}%", prefix)),
-            }],
-            order_by: None,
-            limit: None,
-            offset: None,
-        };
-        let records = <Self as Storage>::query(self, &q).await?;
-        Ok(records.into_iter()
-            .filter_map(|r| {
-                if let serde_json::Value::Object(map) = r.data {
-                    let key = map.get("key")?.as_str()?.to_string();
-                    let value = map.get("value")?.as_str()?.to_string();
-                    Some((key, value.into_bytes()))
-                } else {
-                    None
-                }
+        // 直接 SQL 前缀扫描。
+        // 注意：不能走通用 Storage::query —— 那条路径会把 BLOB 列转成
+        // base64 字符串，破坏二进制值（Loro 快照等）。此处必须返回原始字节。
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite storage mutex poisoned".to_string()))?;
+        let mut stmt = conn
+            .prepare("SELECT key, value FROM kv_store WHERE key LIKE ?1 ORDER BY key")
+            .map_err(|e| crate::Error::Database(format!("sqlite scan prepare failed: {}", e)))?;
+        let pattern = format!("{}%", prefix);
+        let rows = stmt
+            .query_map(rusqlite::params![pattern], |row| {
+                let key: String = row.get(0)?;
+                let value: Vec<u8> = row.get(1)?;
+                Ok((key, value))
             })
-            .collect())
+            .map_err(|e| crate::Error::Database(format!("sqlite scan failed: {}", e)))?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (k, v) = r.map_err(|e| crate::Error::Database(format!("sqlite scan row failed: {}", e)))?;
+            out.push((k, v));
+        }
+        Ok(out)
     }
 }
 

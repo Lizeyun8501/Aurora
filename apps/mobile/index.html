@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#6c8eef" />
+    <title>Aurora Note</title>
+    <style>
+      /* V15 §2.1 设计令牌 — CSS 变量注入（WebView 全局） */
+      :root {
+        --brand: #6c8eef;
+        --brand-pressed: #5a7be0;
+        --bg-primary: #ffffff;
+        --bg-secondary: #f7f8fa;
+        --bg-card: #ffffff;
+        --text-primary: #1f2329;
+        --text-secondary: #646a73;
+        --text-tertiary: #8f959e;
+        --border: #e5e6eb;
+        --success: #34c724;
+        --warning: #ff8800;
+        --danger: #f54a45;
+        --radius-card: 12px;
+        --radius-btn: 8px;
+      }
+      [data-theme='dark'] {
+        --bg-primary: #0f1117;
+        --bg-secondary: #1a1d27;
+        --bg-card: #1a1d27;
+        --text-primary: #e8eaed;
+        --text-secondary: #9aa0a6;
+        --text-tertiary: #5f6368;
+        --border: #2a2d3a;
+      }
+      html, body, #root {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overscroll-behavior-y: contain;
+      }
+      body {
+        font-family: -apple-system, 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        font-size: 16px;
+        -webkit-tap-highlight-color: transparent;
+      }
+      /* 安全区域 — V15 §4.4 底部导航避开手势条 */
+      .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

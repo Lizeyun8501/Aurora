@@ -377,6 +377,7 @@ dependencies = [
  "aurora-security",
  "chrono",
  "jni",
+ "loro",
  "serde",
  "serde_json",
  "tempfile",
