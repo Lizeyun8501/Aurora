@@ -790,11 +790,9 @@ mod tests {
             ..Default::default()
         };
         // UTC 2024-07-14 00:00 是周日 (weekday=7)，条件 [1..5] 不满足
-        assert!(
-            !engine
-                .check("u1", &res_ws("ws1"), Permission::Write, &weekday_ctx)
-                .is_allowed()
-        );
+        assert!(!engine
+            .check("u1", &res_ws("ws1"), Permission::Write, &weekday_ctx)
+            .is_allowed());
 
         // 构造一个周一的上下文
         let monday_ctx = AccessContext {

@@ -7,8 +7,10 @@
 //! 方法均为同步阻塞式（符合 V19 保留同步签名的决策）。
 //! async Trait 方法（KVStore / SearchBackend）通过内部 tokio runtime 驱动。
 
-use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use aurora_core::l1_infrastructure::note_doc::NoteDoc;
 
 uniffi::setup_scaffolding!();
 
@@ -79,7 +81,7 @@ impl NoteRecord {
 // UniffiAppCore — 真实实现（接入 bootstrap + KVStore + SearchBackend + Loro）
 // ===========================================================================
 
-/// 每条笔记的正文存储在独立的 LoroDoc（LoroText 容器）中，
+/// 每条笔记对应一个独立的 `NoteDoc`（V19 §30.1 五容器模型），
 /// 快照持久化到 KVStore（`notesnap:{id}`），元数据存 `note:{id}`。
 /// V19 §36.3: 移动端使用原生 Loro 绑定 — CRDT 语义，支持未来多端合并。
 #[derive(uniffi::Object)]
@@ -88,8 +90,8 @@ pub struct UniffiAppCore {
     runtime: tokio::runtime::Runtime,
     data_dir: PathBuf,
     fallback_notes: Mutex<Vec<NoteRecord>>,
-    /// Loro 文档缓存（note_id → LoroDoc）
-    docs: Mutex<std::collections::HashMap<String, loro::LoroDoc>>,
+    /// Loro 文档缓存（note_id → NoteDoc 五容器模型）
+    docs: Mutex<std::collections::HashMap<String, NoteDoc>>,
     is_fallback: bool,
 }
 
@@ -130,39 +132,49 @@ impl UniffiAppCore {
         }
     }
 
-    /// 创建（或从 KVStore 恢复）笔记的 LoroDoc 并放入缓存。
-    fn doc_for_note(&self, note_id: &str) -> loro::LoroDoc {
+    /// 创建（或从 KVStore 恢复）笔记的 NoteDoc 并放入缓存。
+    fn doc_for_note(&self, note_id: &str) -> NoteDoc {
         // 缓存命中
         if let Some(doc) = self.docs.lock().unwrap().get(note_id) {
             return doc.clone();
         }
 
         // 尝试从 KVStore 恢复快照
-        let doc = loro::LoroDoc::new();
+        let mut note_doc =
+            NoteDoc::new("", "").unwrap_or_else(|_| NoteDoc::from_doc(loro::LoroDoc::new()));
         if let Some(core) = &self.core {
             let kv = core.kv_store.clone();
             let key = format!("notesnap:{note_id}");
-            let snapshot = self.runtime.block_on(async { kv.get(&key).await.ok().flatten() });
+            let snapshot = self
+                .runtime
+                .block_on(async { kv.get(&key).await.ok().flatten() });
             if let Some(bytes) = snapshot {
-                if doc.import(&bytes).is_ok() {
+                if let Ok(d) = NoteDoc::from_snapshot(&bytes) {
+                    note_doc = d;
                     tracing::debug!(note_id, "loro doc restored from snapshot");
                 }
             }
         }
 
-        self.docs.lock().unwrap().insert(note_id.to_string(), doc.clone());
-        doc
+        self.docs
+            .lock()
+            .unwrap()
+            .insert(note_id.to_string(), note_doc.clone());
+        note_doc
     }
 
     /// 导出 Loro 快照并持久化到 KVStore。
-    fn persist_doc(&self, note_id: &str, doc: &loro::LoroDoc) -> Result<(), MobileError> {
+    fn persist_doc(&self, note_id: &str, doc: &NoteDoc) -> Result<(), MobileError> {
         if let Some(core) = &self.core {
-            let snapshot = doc.export(loro::ExportMode::Snapshot).map_err(|e| MobileError::OperationFailed {
-                message: format!("loro export: {e}"),
-            })?;
+            let snapshot = doc
+                .export_snapshot()
+                .map_err(|e| MobileError::OperationFailed {
+                    message: format!("loro export: {e}"),
+                })?;
             let kv = core.kv_store.clone();
             let key = format!("notesnap:{note_id}");
-            self.runtime.block_on(async { kv.set(&key, &snapshot).await })
+            self.runtime
+                .block_on(async { kv.set(&key, &snapshot).await })
                 .map_err(|e| MobileError::OperationFailed {
                     message: format!("kv set snapshot: {e}"),
                 })?;
@@ -173,10 +185,15 @@ impl UniffiAppCore {
     fn create_note_impl(self: &Arc<Self>, title: String) -> Result<String, MobileError> {
         let note = NoteRecord::new(title);
 
-        // 创建 Loro 文档（LoroText 容器承载正文）
-        let doc = loro::LoroDoc::new();
-        let _text = doc.get_text("content");
-        doc.commit();
+        // 创建五容器 Loro 文档（meta/body/blocks/tasks/backlinks）
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let doc = NoteDoc::new(&note.title, "").map_err(|e| MobileError::OperationFailed {
+            message: format!("note doc init: {e}"),
+        })?;
+        doc.set_timestamps(now_ms, now_ms)
+            .map_err(|e| MobileError::OperationFailed {
+                message: format!("note doc timestamps: {e}"),
+            })?;
 
         if let Some(core) = &self.core {
             // 真实模式：KVStore 持久化 + SearchBackend 索引
@@ -186,11 +203,11 @@ impl UniffiAppCore {
                 message: format!("serialize: {e}"),
             })?;
 
-            self.runtime.block_on(async {
-                kv.set(&key, &value).await
-            }).map_err(|e| MobileError::OperationFailed {
-                message: format!("kv set: {e}"),
-            })?;
+            self.runtime
+                .block_on(async { kv.set(&key, &value).await })
+                .map_err(|e| MobileError::OperationFailed {
+                    message: format!("kv set: {e}"),
+                })?;
 
             // 持久化 Loro 快照
             self.persist_doc(&note.id, &doc)?;
@@ -198,18 +215,24 @@ impl UniffiAppCore {
             // 索引笔记（忽略错误，搜索索引是可选的）
             let search = core.search.clone();
             let note_clone = note.clone();
-            self.runtime.block_on(async {
-                use aurora_core::traits::search_backend::NoteMetadata;
-                let metadata = NoteMetadata {
-                    title: note_clone.title.clone(),
-                    tags: vec![],
-                    workspace_id: String::new(),
-                    updated_at: Some(chrono::DateTime::parse_from_rfc3339(&note_clone.updated_at)
-                        .map(|dt| dt.with_timezone(&chrono::Utc))
-                        .unwrap_or_else(|_| chrono::Utc::now())),
-                };
-                search.index_note(&note_clone.id, &note_clone.content, &metadata).await
-            }).ok();
+            self.runtime
+                .block_on(async {
+                    use aurora_core::traits::search_backend::NoteMetadata;
+                    let metadata = NoteMetadata {
+                        title: note_clone.title.clone(),
+                        tags: vec![],
+                        workspace_id: String::new(),
+                        updated_at: Some(
+                            chrono::DateTime::parse_from_rfc3339(&note_clone.updated_at)
+                                .map(|dt| dt.with_timezone(&chrono::Utc))
+                                .unwrap_or_else(|_| chrono::Utc::now()),
+                        ),
+                    };
+                    search
+                        .index_note(&note_clone.id, &note_clone.content, &metadata)
+                        .await
+                })
+                .ok();
 
             // 缓存 LoroDoc
             self.docs.lock().unwrap().insert(note.id.clone(), doc);
@@ -225,9 +248,9 @@ impl UniffiAppCore {
     fn list_notes_impl(self: &Arc<Self>) -> Vec<NoteSummary> {
         if let Some(core) = &self.core {
             let kv = core.kv_store.clone();
-            let entries = self.runtime.block_on(async {
-                kv.scan_prefix("note:").await
-            });
+            let entries = self
+                .runtime
+                .block_on(async { kv.scan_prefix("note:").await });
 
             match entries {
                 Ok(pairs) => pairs
@@ -238,7 +261,9 @@ impl UniffiAppCore {
                 Err(_) => Vec::new(),
             }
         } else {
-            self.fallback_notes.lock().unwrap()
+            self.fallback_notes
+                .lock()
+                .unwrap()
                 .iter()
                 .map(|n| n.to_summary())
                 .collect()
@@ -249,17 +274,21 @@ impl UniffiAppCore {
         if let Some(core) = &self.core {
             use aurora_core::traits::search_backend::SearchOptions;
             let search = core.search.clone();
-            let result = self.runtime.block_on(async {
-                search.search(&query, &SearchOptions::default()).await
-            });
+            let result = self
+                .runtime
+                .block_on(async { search.search(&query, &SearchOptions::default()).await });
 
             match result {
-                Ok(search_result) => search_result.hits.iter().map(|h| SearchResult {
-                    note_id: h.note_id.clone(),
-                    title: h.title.clone(),
-                    snippet: h.snippet.clone(),
-                    score: h.score as f64,
-                }).collect(),
+                Ok(search_result) => search_result
+                    .hits
+                    .iter()
+                    .map(|h| SearchResult {
+                        note_id: h.note_id.clone(),
+                        title: h.title.clone(),
+                        snippet: h.snippet.clone(),
+                        score: h.score as f64,
+                    })
+                    .collect(),
                 Err(_) => {
                     // 搜索后端失败时，降级到简单的标题匹配
                     self.simple_title_search(&query)
@@ -289,17 +318,17 @@ impl UniffiAppCore {
         if let Some(core) = &self.core {
             let kv = core.kv_store.clone();
             let key = format!("note:{}", note_id);
-            self.runtime.block_on(async {
-                kv.delete(&key).await
-            }).map_err(|e| MobileError::OperationFailed {
-                message: format!("delete: {e}"),
-            })?;
+            self.runtime
+                .block_on(async { kv.delete(&key).await })
+                .map_err(|e| MobileError::OperationFailed {
+                    message: format!("delete: {e}"),
+                })?;
 
             // 从搜索索引中移除
             if let Some(search) = self.core.as_ref().map(|c| c.search.clone()) {
-                let _ = self.runtime.block_on(async {
-                    search.remove_index(&note_id).await
-                });
+                let _ = self
+                    .runtime
+                    .block_on(async { search.remove_index(&note_id).await });
             }
         } else {
             let mut notes = self.fallback_notes.lock().unwrap();
@@ -309,22 +338,18 @@ impl UniffiAppCore {
     }
 
     /// V19 §36.3: saveNote(noteId, content) — 保存笔记内容（Loro CRDT）
-    fn save_note_content_impl(self: &Arc<Self>, note_id: String, content: String) -> Result<(), MobileError> {
-        // 通过 LoroText 容器写入（CRDT 语义：可多端合并）
+    fn save_note_content_impl(
+        self: &Arc<Self>,
+        note_id: String,
+        content: String,
+    ) -> Result<(), MobileError> {
+        // 通过五容器模型的 body 容器写入（CRDT 语义：可多端合并）
         let doc = self.doc_for_note(&note_id);
-        let text = doc.get_text("content");
-        let old_len = text.len_unicode();
-        if old_len > 0 {
-            text.delete(0, old_len).map_err(|e| MobileError::OperationFailed {
-                message: format!("loro delete: {e}"),
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        doc.set_body(&content, now_ms)
+            .map_err(|e| MobileError::OperationFailed {
+                message: format!("loro set_body: {e}"),
             })?;
-        }
-        if !content.is_empty() {
-            text.insert(0, &content).map_err(|e| MobileError::OperationFailed {
-                message: format!("loro insert: {e}"),
-            })?;
-        }
-        doc.commit();
 
         // 持久化 Loro 快照
         self.persist_doc(&note_id, &doc)?;
@@ -334,16 +359,19 @@ impl UniffiAppCore {
             let key = format!("note:{}", note_id);
 
             // 同步元数据 JSON（updated_at）
-            let existing = self.runtime.block_on(async {
-                kv.get(&key).await
-            }).map_err(|e| MobileError::OperationFailed {
-                message: format!("get: {e}"),
-            })?;
+            let existing = self
+                .runtime
+                .block_on(async { kv.get(&key).await })
+                .map_err(|e| MobileError::OperationFailed {
+                    message: format!("get: {e}"),
+                })?;
 
             let mut note: NoteRecord = match existing {
-                Some(bytes) => serde_json::from_slice(&bytes).map_err(|e| MobileError::OperationFailed {
-                    message: format!("deserialize: {e}"),
-                })?,
+                Some(bytes) => {
+                    serde_json::from_slice(&bytes).map_err(|e| MobileError::OperationFailed {
+                        message: format!("deserialize: {e}"),
+                    })?
+                }
                 None => return Err(MobileError::NotFound { resource: note_id }),
             };
 
@@ -354,27 +382,33 @@ impl UniffiAppCore {
                 message: format!("serialize: {e}"),
             })?;
 
-            self.runtime.block_on(async {
-                kv.set(&key, &value).await
-            }).map_err(|e| MobileError::OperationFailed {
-                message: format!("set: {e}"),
-            })?;
+            self.runtime
+                .block_on(async { kv.set(&key, &value).await })
+                .map_err(|e| MobileError::OperationFailed {
+                    message: format!("set: {e}"),
+                })?;
 
             // 更新搜索索引
             let search = core.search.clone();
             let note_clone = note.clone();
-            self.runtime.block_on(async {
-                use aurora_core::traits::search_backend::NoteMetadata;
-                let metadata = NoteMetadata {
-                    title: note_clone.title.clone(),
-                    tags: vec![],
-                    workspace_id: String::new(),
-                    updated_at: Some(chrono::DateTime::parse_from_rfc3339(&note_clone.updated_at)
-                        .map(|dt| dt.with_timezone(&chrono::Utc))
-                        .unwrap_or_else(|_| chrono::Utc::now())),
-                };
-                search.index_note(&note_clone.id, &note_clone.content, &metadata).await
-            }).ok();
+            self.runtime
+                .block_on(async {
+                    use aurora_core::traits::search_backend::NoteMetadata;
+                    let metadata = NoteMetadata {
+                        title: note_clone.title.clone(),
+                        tags: vec![],
+                        workspace_id: String::new(),
+                        updated_at: Some(
+                            chrono::DateTime::parse_from_rfc3339(&note_clone.updated_at)
+                                .map(|dt| dt.with_timezone(&chrono::Utc))
+                                .unwrap_or_else(|_| chrono::Utc::now()),
+                        ),
+                    };
+                    search
+                        .index_note(&note_clone.id, &note_clone.content, &metadata)
+                        .await
+                })
+                .ok();
         } else {
             let mut notes = self.fallback_notes.lock().unwrap();
             for n in notes.iter_mut() {
@@ -395,11 +429,12 @@ impl UniffiAppCore {
         let exists = if let Some(core) = &self.core {
             let kv = core.kv_store.clone();
             let key = format!("note:{}", note_id);
-            let result = self.runtime.block_on(async {
-                kv.get(&key).await
-            }).map_err(|e| MobileError::OperationFailed {
-                message: format!("get: {e}"),
-            })?;
+            let result = self
+                .runtime
+                .block_on(async { kv.get(&key).await })
+                .map_err(|e| MobileError::OperationFailed {
+                    message: format!("get: {e}"),
+                })?;
             result.is_some()
         } else {
             let notes = self.fallback_notes.lock().unwrap();
@@ -410,10 +445,9 @@ impl UniffiAppCore {
             return Err(MobileError::NotFound { resource: note_id });
         }
 
-        // 从 Loro 文档读取正文（缓存命中或从快照恢复）
+        // 从五容器模型读取正文 body（缓存命中或从快照恢复）
         let doc = self.doc_for_note(&note_id);
-        let text = doc.get_text("content");
-        Ok(text.to_string())
+        Ok(doc.body())
     }
 }
 
@@ -421,9 +455,9 @@ impl UniffiAppCore {
 // JNI 桥接层 — Android Java native 方法
 // ===========================================================================
 
+use jni::objects::{JClass, JObject, JString, JValue};
+use jni::sys::{jint, jlong, jobject, jstring};
 use jni::JNIEnv;
-use jni::objects::{JClass, JString, JObject, JValue};
-use jni::sys::{jlong, jint, jstring, jobject};
 
 fn rust_str_to_jstring(env: &mut JNIEnv, s: &str) -> jstring {
     match env.new_string(s) {
@@ -604,7 +638,11 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeIsFallback(
     handle: jlong,
 ) -> jint {
     let core = unsafe { core_from_handle(handle) };
-    if core.is_fallback { 1 } else { 0 }
+    if core.is_fallback {
+        1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
@@ -688,7 +726,11 @@ impl UniffiAppCore {
         Self::delete_note_impl(&self, note_id)
     }
 
-    pub fn save_note_content(self: Arc<Self>, note_id: String, content: String) -> Result<(), MobileError> {
+    pub fn save_note_content(
+        self: Arc<Self>,
+        note_id: String,
+        content: String,
+    ) -> Result<(), MobileError> {
         Self::save_note_content_impl(&self, note_id, content)
     }
 
@@ -711,13 +753,20 @@ mod tests {
         assert_eq!(notes[0].id, id);
 
         // Loro 内容读写（真实模式）
-        core.clone().save_note_content(id.clone(), "Hello Loro 世界".into()).unwrap();
+        core.clone()
+            .save_note_content(id.clone(), "Hello Loro 世界".into())
+            .unwrap();
         let content = core.clone().get_note_content(id.clone()).unwrap();
         assert_eq!(content, "Hello Loro 世界");
 
         // 再写一次（覆盖路径）
-        core.clone().save_note_content(id.clone(), "Updated".into()).unwrap();
-        assert_eq!(core.clone().get_note_content(id.clone()).unwrap(), "Updated");
+        core.clone()
+            .save_note_content(id.clone(), "Updated".into())
+            .unwrap();
+        assert_eq!(
+            core.clone().get_note_content(id.clone()).unwrap(),
+            "Updated"
+        );
 
         core.clone().delete_note(id).unwrap();
         assert!(core.clone().list_notes().is_empty());
@@ -731,8 +780,13 @@ mod tests {
         assert_eq!(core.clone().list_notes().len(), 1);
 
         // Fallback 模式下 Loro 内存 CRDT 同样可用
-        core.clone().save_note_content(id.clone(), "fallback content".into()).unwrap();
-        assert_eq!(core.clone().get_note_content(id.clone()).unwrap(), "fallback content");
+        core.clone()
+            .save_note_content(id.clone(), "fallback content".into())
+            .unwrap();
+        assert_eq!(
+            core.clone().get_note_content(id.clone()).unwrap(),
+            "fallback content"
+        );
 
         core.clone().delete_note(id).unwrap();
         assert!(core.clone().list_notes().is_empty());

@@ -4,11 +4,13 @@
 
 pub mod atomic_transaction; // V19 ARCH-002 原子事务恢复
 #[cfg(feature = "loro-crdt")]
-pub mod crdt;               // Loro CRDT 引擎
-pub mod p2p;                // iroh P2P 同步
-pub mod search;             // Tantivy 全文检索
-pub mod vector_db;          // LanceDB 向量数据库
-pub mod storage;            // SQLite 存储
-pub mod wasm;               // Wasmtime WASM 运行时
-pub mod crypto;             // 密码学
-pub mod ocr;                // OCR 引擎
+pub mod crdt; // Loro CRDT 引擎
+pub mod crypto; // 密码学
+#[cfg(feature = "loro-crdt")]
+pub mod note_doc; // V19 §30.1 五容器笔记文档模型 (DEV-004)
+pub mod ocr;
+pub mod p2p; // iroh P2P 同步
+pub mod search; // Tantivy 全文检索
+pub mod storage; // SQLite 存储
+pub mod vector_db; // LanceDB 向量数据库
+pub mod wasm; // Wasmtime WASM 运行时 // OCR 引擎

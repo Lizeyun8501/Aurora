@@ -25,7 +25,7 @@ loro = { workspace = true }
 
 # 共享启动装配（迁移 + DEK 保险库 + AppCore DI）
 aurora-bootstrap = { path = "../aurora-bootstrap" }
-aurora-core = { path = "../aurora-core" }
+aurora-core = { path = "../aurora-core", features = ["loro-crdt"] }
 aurora-security = { path = "../aurora-security" }
 aurora-ai = { path = "../aurora-ai" }
 

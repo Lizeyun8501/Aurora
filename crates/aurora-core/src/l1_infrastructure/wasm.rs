@@ -44,7 +44,11 @@ impl PluginRuntime for WasmtimeRuntime {
             )));
         }
         // TODO: 从 manifest.entry 路径读取 WASM 字节码并编译为 Module。
-        tracing::info!("wasmtime load plugin: id={}, entry={}", manifest.id, manifest.entry);
+        tracing::info!(
+            "wasmtime load plugin: id={}, entry={}",
+            manifest.id,
+            manifest.entry
+        );
         let handle = PluginHandle {
             id: manifest.id.clone(),
             manifest: manifest.clone(),

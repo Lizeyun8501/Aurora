@@ -3,12 +3,14 @@
 //! 实现混合推理架构、智能续写、内容摘要、问答对话、混合搜索、语义搜索、自动标签、任务分解。
 
 use async_trait::async_trait;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use parking_lot::RwLock;
 
-use crate::traits::ai_provider::{AIProvider, ChatOptions, CompletionOptions, Message, Tool, ToolCall};
+use crate::traits::ai_provider::{
+    AIProvider, ChatOptions, CompletionOptions, Message, Tool, ToolCall,
+};
 
 /// 推理策略
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -50,36 +52,54 @@ impl AIProviderRouter {
 
     fn select_provider(&self) -> Option<Arc<dyn AIProvider>> {
         match self.strategy {
-            InferenceStrategy::LocalFirst => {
-                self.local.as_ref().filter(|p| p.is_available()).cloned()
-                    .or_else(|| self.cloud.clone())
-            }
+            InferenceStrategy::LocalFirst => self
+                .local
+                .as_ref()
+                .filter(|p| p.is_available())
+                .cloned()
+                .or_else(|| self.cloud.clone()),
             InferenceStrategy::CloudOnly => self.cloud.clone(),
-            InferenceStrategy::Auto => {
-                self.local.as_ref().filter(|p| p.is_available()).cloned()
-                    .or_else(|| self.cloud.clone())
-            }
+            InferenceStrategy::Auto => self
+                .local
+                .as_ref()
+                .filter(|p| p.is_available())
+                .cloned()
+                .or_else(|| self.cloud.clone()),
         }
     }
 
-    pub async fn complete(&self, prompt: &str, opts: &CompletionOptions) -> Result<String, crate::Error> {
+    pub async fn complete(
+        &self,
+        prompt: &str,
+        opts: &CompletionOptions,
+    ) -> Result<String, crate::Error> {
         match self.select_provider() {
             Some(provider) => provider.complete(prompt, opts).await,
-            None => Err(crate::Error::Internal("No AI provider available".to_string())),
+            None => Err(crate::Error::Internal(
+                "No AI provider available".to_string(),
+            )),
         }
     }
 
-    pub async fn chat(&self, messages: &[Message], opts: &ChatOptions) -> Result<String, crate::Error> {
+    pub async fn chat(
+        &self,
+        messages: &[Message],
+        opts: &ChatOptions,
+    ) -> Result<String, crate::Error> {
         match self.select_provider() {
             Some(provider) => provider.chat(messages, opts).await,
-            None => Err(crate::Error::Internal("No AI provider available".to_string())),
+            None => Err(crate::Error::Internal(
+                "No AI provider available".to_string(),
+            )),
         }
     }
 
     pub async fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, crate::Error> {
         match self.select_provider() {
             Some(provider) => provider.embed(texts).await,
-            None => Err(crate::Error::Internal("No AI provider available".to_string())),
+            None => Err(crate::Error::Internal(
+                "No AI provider available".to_string(),
+            )),
         }
     }
 }
@@ -100,8 +120,14 @@ impl MockAIProvider {
         }
     }
 
-    pub fn with_response(self, prompt_keyword: impl Into<String>, response: impl Into<String>) -> Self {
-        self.responses.write().insert(prompt_keyword.into(), response.into());
+    pub fn with_response(
+        self,
+        prompt_keyword: impl Into<String>,
+        response: impl Into<String>,
+    ) -> Self {
+        self.responses
+            .write()
+            .insert(prompt_keyword.into(), response.into());
         self
     }
 
@@ -131,30 +157,52 @@ impl AIProvider for MockAIProvider {
         let embeddings = self.embeddings.read();
         let mut result = Vec::new();
         for text in texts {
-            let vec = embeddings.get(*text).cloned()
+            let vec = embeddings
+                .get(*text)
+                .cloned()
                 .unwrap_or_else(|| vec![0.0; 384]);
             result.push(vec);
         }
         Ok(result)
     }
 
-    async fn complete(&self, prompt: &str, _opts: &CompletionOptions) -> Result<String, crate::Error> {
+    async fn complete(
+        &self,
+        prompt: &str,
+        _opts: &CompletionOptions,
+    ) -> Result<String, crate::Error> {
         Ok(self.find_response(prompt))
     }
 
-    fn stream_complete(&self, prompt: &str, _opts: &CompletionOptions, callback: Box<dyn Fn(String) + Send + Sync>) {
+    fn stream_complete(
+        &self,
+        prompt: &str,
+        _opts: &CompletionOptions,
+        callback: Box<dyn Fn(String) + Send + Sync>,
+    ) {
         let response = self.find_response(prompt);
         for word in response.split_whitespace() {
             callback(format!("{} ", word));
         }
     }
 
-    async fn chat(&self, messages: &[Message], _opts: &ChatOptions) -> Result<String, crate::Error> {
-        let last = messages.last().map(|m| m.content.clone()).unwrap_or_default();
+    async fn chat(
+        &self,
+        messages: &[Message],
+        _opts: &ChatOptions,
+    ) -> Result<String, crate::Error> {
+        let last = messages
+            .last()
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
         Ok(self.find_response(&last))
     }
 
-    async fn function_call(&self, _prompt: &str, _tools: &[Tool]) -> Result<ToolCall, crate::Error> {
+    async fn function_call(
+        &self,
+        _prompt: &str,
+        _tools: &[Tool],
+    ) -> Result<ToolCall, crate::Error> {
         Ok(ToolCall {
             tool_name: "mock_tool".to_string(),
             arguments: serde_json::json!({}),
@@ -209,7 +257,8 @@ impl RagEngine {
     /// 检索相关片段
     pub fn retrieve(&self, query_embedding: &[f32], top_k: usize) -> Vec<(DocumentChunk, f32)> {
         let chunks = self.chunks.read();
-        let mut scored: Vec<_> = chunks.iter()
+        let mut scored: Vec<_> = chunks
+            .iter()
             .filter_map(|chunk| {
                 chunk.embedding.as_ref().map(|emb| {
                     let score = Self::cosine_similarity(query_embedding, emb);
@@ -232,7 +281,8 @@ impl RagEngine {
         let retrieved = self.retrieve(&query_embedding, top_k);
 
         // 3. 构建上下文
-        let context = retrieved.iter()
+        let context = retrieved
+            .iter()
             .map(|(chunk, _)| chunk.content.clone())
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
@@ -243,12 +293,17 @@ impl RagEngine {
             context, question
         );
 
-        self.router.complete(&prompt, &CompletionOptions {
-            max_tokens: Some(1024),
-            temperature: Some(0.3),
-            top_p: None,
-            stop: None,
-        }).await
+        self.router
+            .complete(
+                &prompt,
+                &CompletionOptions {
+                    max_tokens: Some(1024),
+                    temperature: Some(0.3),
+                    top_p: None,
+                    stop: None,
+                },
+            )
+            .await
     }
 }
 
@@ -275,28 +330,42 @@ impl Summarizer {
     }
 
     /// 生成摘要
-    pub async fn summarize(&self, texts: &[String], level: SummaryLevel) -> Result<String, crate::Error> {
+    pub async fn summarize(
+        &self,
+        texts: &[String],
+        level: SummaryLevel,
+    ) -> Result<String, crate::Error> {
         match level {
             SummaryLevel::Paragraph => {
                 let prompt = format!("请用一句话总结以下段落：\n\n{}", texts.join("\n\n"));
-                self.router.complete(&prompt, &CompletionOptions {
-                    max_tokens: Some(100),
-                    temperature: Some(0.3),
-                    top_p: None,
-                    stop: None,
-                }).await
+                self.router
+                    .complete(
+                        &prompt,
+                        &CompletionOptions {
+                            max_tokens: Some(100),
+                            temperature: Some(0.3),
+                            top_p: None,
+                            stop: None,
+                        },
+                    )
+                    .await
             }
             SummaryLevel::Document => {
                 let prompt = format!(
                     "请用 3-5 句话总结以下文档的核心内容：\n\n{}",
                     texts.join("\n\n")
                 );
-                self.router.complete(&prompt, &CompletionOptions {
-                    max_tokens: Some(300),
-                    temperature: Some(0.3),
-                    top_p: None,
-                    stop: None,
-                }).await
+                self.router
+                    .complete(
+                        &prompt,
+                        &CompletionOptions {
+                            max_tokens: Some(300),
+                            temperature: Some(0.3),
+                            top_p: None,
+                            stop: None,
+                        },
+                    )
+                    .await
             }
             SummaryLevel::MultiDocument => {
                 // Map-Reduce 策略：先分别摘要，再合并
@@ -307,12 +376,18 @@ impl Summarizer {
                         chunk.len(),
                         chunk.join("\n\n---\n\n")
                     );
-                    let summary = self.router.complete(&prompt, &CompletionOptions {
-                        max_tokens: Some(200),
-                        temperature: Some(0.3),
-                        top_p: None,
-                        stop: None,
-                    }).await?;
+                    let summary = self
+                        .router
+                        .complete(
+                            &prompt,
+                            &CompletionOptions {
+                                max_tokens: Some(200),
+                                temperature: Some(0.3),
+                                top_p: None,
+                                stop: None,
+                            },
+                        )
+                        .await?;
                     partial_summaries.push(summary);
                 }
 
@@ -320,12 +395,17 @@ impl Summarizer {
                     "基于以下各组文档的摘要，生成一个综合摘要：\n\n{}",
                     partial_summaries.join("\n\n")
                 );
-                self.router.complete(&final_prompt, &CompletionOptions {
-                    max_tokens: Some(400),
-                    temperature: Some(0.3),
-                    top_p: None,
-                    stop: None,
-                }).await
+                self.router
+                    .complete(
+                        &final_prompt,
+                        &CompletionOptions {
+                            max_tokens: Some(400),
+                            temperature: Some(0.3),
+                            top_p: None,
+                            stop: None,
+                        },
+                    )
+                    .await
             }
         }
     }
@@ -342,12 +422,18 @@ impl AutoTagger {
         let word_freq = Self::compute_tf(&words);
 
         // 停用词过滤
-        let stop_words: HashSet<&str> = ["the", "a", "an", "is", "are", "was", "were",
-            "this", "that", "these", "those", "and", "or", "but", "in", "on", "at", "to", "for",
-            "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一", "一个", "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好", "自己", "这"]
-            .iter().cloned().collect();
+        let stop_words: HashSet<&str> = [
+            "the", "a", "an", "is", "are", "was", "were", "this", "that", "these", "those", "and",
+            "or", "but", "in", "on", "at", "to", "for", "的", "了", "在", "是", "我", "有", "和",
+            "就", "不", "人", "都", "一", "一个", "上", "也", "很", "到", "说", "要", "去", "你",
+            "会", "着", "没有", "看", "好", "自己", "这",
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
-        let mut keywords: Vec<_> = word_freq.into_iter()
+        let mut keywords: Vec<_> = word_freq
+            .into_iter()
             .filter(|(word, _)| {
                 let word_lower = word.to_lowercase();
                 !stop_words.contains(word_lower.as_str()) && word.len() > 1
@@ -400,14 +486,21 @@ impl TaskDecomposer {
             task_description
         );
 
-        let response = self.router.complete(&prompt, &CompletionOptions {
-            max_tokens: Some(500),
-            temperature: Some(0.5),
-            top_p: None,
-            stop: None,
-        }).await?;
+        let response = self
+            .router
+            .complete(
+                &prompt,
+                &CompletionOptions {
+                    max_tokens: Some(500),
+                    temperature: Some(0.5),
+                    top_p: None,
+                    stop: None,
+                },
+            )
+            .await?;
 
-        let subtasks: Vec<String> = response.lines()
+        let subtasks: Vec<String> = response
+            .lines()
             .map(|line| line.trim())
             .filter(|line| !line.is_empty())
             .map(|line| {
@@ -452,12 +545,17 @@ impl ContinuationEngine {
             preceding_text
         );
 
-        self.router.complete(&prompt, &CompletionOptions {
-            max_tokens: Some(100),
-            temperature: Some(0.4),
-            top_p: Some(0.9),
-            stop: None,
-        }).await
+        self.router
+            .complete(
+                &prompt,
+                &CompletionOptions {
+                    max_tokens: Some(100),
+                    temperature: Some(0.4),
+                    top_p: Some(0.9),
+                    stop: None,
+                },
+            )
+            .await
     }
 }
 
@@ -492,7 +590,8 @@ impl HybridSearcher {
         let query_embedding = self.router.embed(&[query]).await?;
         let query_embedding = query_embedding.into_iter().next().unwrap_or_default();
 
-        let query_terms: HashSet<String> = query.to_lowercase()
+        let query_terms: HashSet<String> = query
+            .to_lowercase()
             .split_whitespace()
             .map(|s| s.to_string())
             .collect();
@@ -501,7 +600,9 @@ impl HybridSearcher {
 
         for doc in documents {
             // 关键词分数（简单 Jaccard 相似度）
-            let doc_terms: HashSet<String> = doc.content.to_lowercase()
+            let doc_terms: HashSet<String> = doc
+                .content
+                .to_lowercase()
                 .split_whitespace()
                 .map(|s| s.to_string())
                 .collect();
@@ -514,7 +615,9 @@ impl HybridSearcher {
             };
 
             // 向量分数
-            let vector_score = doc.embedding.as_ref()
+            let vector_score = doc
+                .embedding
+                .as_ref()
                 .map(|emb| RagEngine::cosine_similarity(&query_embedding, emb))
                 .unwrap_or(0.0);
 
@@ -574,7 +677,8 @@ impl AISystemEngine {
         let query_embedding = self.router.embed(&[query]).await?;
         let query_embedding = query_embedding.into_iter().next().unwrap_or_default();
 
-        let mut scored: Vec<_> = documents.iter()
+        let mut scored: Vec<_> = documents
+            .iter()
             .filter_map(|doc| {
                 doc.embedding.as_ref().map(|emb| {
                     let score = RagEngine::cosine_similarity(&query_embedding, emb);
@@ -593,27 +697,33 @@ mod tests {
     use super::*;
 
     fn create_mock_router() -> Arc<AIProviderRouter> {
-        let mock = Arc::new(MockAIProvider::new()
-            .with_response("summary", "This is a summary.")
-            .with_response("question", "Based on the context, the answer is 42.")
-            .with_response("子任务", "Research topic\nGather materials\nWrite draft")
-            .with_response("continue", "continuing the thought further."));
+        let mock = Arc::new(
+            MockAIProvider::new()
+                .with_response("summary", "This is a summary.")
+                .with_response("question", "Based on the context, the answer is 42.")
+                .with_response("子任务", "Research topic\nGather materials\nWrite draft")
+                .with_response("continue", "continuing the thought further."),
+        );
 
-        Arc::new(AIProviderRouter::new(InferenceStrategy::Auto)
-            .with_local(mock))
+        Arc::new(AIProviderRouter::new(InferenceStrategy::Auto).with_local(mock))
     }
 
     #[tokio::test]
     async fn test_mock_provider() {
-        let mock = MockAIProvider::new()
-            .with_response("hello", "Hi there!");
+        let mock = MockAIProvider::new().with_response("hello", "Hi there!");
 
-        let result = mock.complete("Say hello", &CompletionOptions {
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            stop: None,
-        }).await.unwrap();
+        let result = mock
+            .complete(
+                "Say hello",
+                &CompletionOptions {
+                    max_tokens: None,
+                    temperature: None,
+                    top_p: None,
+                    stop: None,
+                },
+            )
+            .await
+            .unwrap();
 
         assert_eq!(result, "Hi there!");
     }
@@ -624,19 +734,24 @@ mod tests {
         local.set_available(false);
         let local = Arc::new(local);
 
-        let cloud = Arc::new(MockAIProvider::new()
-            .with_response("test", "cloud response"));
+        let cloud = Arc::new(MockAIProvider::new().with_response("test", "cloud response"));
 
         let router = AIProviderRouter::new(InferenceStrategy::Auto)
             .with_local(local)
             .with_cloud(cloud);
 
-        let result = router.complete("test", &CompletionOptions {
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            stop: None,
-        }).await.unwrap();
+        let result = router
+            .complete(
+                "test",
+                &CompletionOptions {
+                    max_tokens: None,
+                    temperature: None,
+                    top_p: None,
+                    stop: None,
+                },
+            )
+            .await
+            .unwrap();
 
         assert_eq!(result, "cloud response");
     }
@@ -673,10 +788,13 @@ mod tests {
         let router = create_mock_router();
         let summarizer = Summarizer::new(router);
 
-        let result = summarizer.summarize(
-            &["Long text about something important.".to_string()],
-            SummaryLevel::Paragraph,
-        ).await.unwrap();
+        let result = summarizer
+            .summarize(
+                &["Long text about something important.".to_string()],
+                SummaryLevel::Paragraph,
+            )
+            .await
+            .unwrap();
 
         assert!(!result.is_empty());
     }
@@ -724,7 +842,10 @@ mod tests {
             },
         ];
 
-        let results = searcher.search("rust safety", &docs, 0.5, 0.5).await.unwrap();
+        let results = searcher
+            .search("rust safety", &docs, 0.5, 0.5)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert!(results[0].final_score >= results[1].final_score);
     }

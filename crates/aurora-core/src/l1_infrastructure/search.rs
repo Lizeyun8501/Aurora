@@ -20,7 +20,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Field, Schema, STORED, STRING, TEXT, Value};
+use tantivy::schema::{Field, Schema, Value, STORED, STRING, TEXT};
 use tantivy::tokenizer::{LowerCaser, SimpleTokenizer, TextAnalyzer};
 use tantivy::{doc, Index, TantivyDocument, Term};
 

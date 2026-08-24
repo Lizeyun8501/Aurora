@@ -5,9 +5,9 @@
 
 use std::sync::Mutex;
 
-use async_trait::async_trait;
-use crate::traits::storage::{Record, Storage, StorageOp, StorageQuery};
 use crate::traits::kv_store::KVStore;
+use crate::traits::storage::{Record, Storage, StorageOp, StorageQuery};
+use async_trait::async_trait;
 use rusqlite::OptionalExtension;
 
 fn base64_encode(input: &[u8]) -> String {
@@ -59,8 +59,9 @@ impl SqliteStorage {
 
     /// 在内存中创建 SQLite 存储实例（用于测试）。
     pub fn new_in_memory() -> Result<Self, crate::Error> {
-        let conn = rusqlite::Connection::open_in_memory()
-            .map_err(|e| crate::Error::Database(format!("rusqlite in-memory open failed: {}", e)))?;
+        let conn = rusqlite::Connection::open_in_memory().map_err(|e| {
+            crate::Error::Database(format!("rusqlite in-memory open failed: {}", e))
+        })?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value BLOB)",
             [],
@@ -119,12 +120,15 @@ impl Storage for SqliteStorage {
         /// 验证 SQL 标识符（表名/列名）：仅允许字母、数字、下划线
         fn validate_identifier(s: &str) -> Result<(), crate::Error> {
             if s.is_empty() {
-                return Err(crate::Error::InvalidInput("empty SQL identifier".to_string()));
+                return Err(crate::Error::InvalidInput(
+                    "empty SQL identifier".to_string(),
+                ));
             }
             let valid = s.chars().all(|c| c.is_alphanumeric() || c == '_');
             if !valid {
                 return Err(crate::Error::InvalidInput(format!(
-                    "invalid SQL identifier: '{}'", s
+                    "invalid SQL identifier: '{}'",
+                    s
                 )));
             }
             Ok(())
@@ -194,15 +198,14 @@ impl Storage for SqliteStorage {
             .query_map(rusqlite::params_from_iter(params.iter()), |row| {
                 let mut map = serde_json::Map::new();
                 for (i, name) in column_names.iter().enumerate() {
-                    let value: rusqlite::types::Value = row.get(i).unwrap_or(rusqlite::types::Value::Null);
+                    let value: rusqlite::types::Value =
+                        row.get(i).unwrap_or(rusqlite::types::Value::Null);
                     let json_value = match value {
                         rusqlite::types::Value::Null => serde_json::Value::Null,
                         rusqlite::types::Value::Integer(v) => serde_json::Value::Number(v.into()),
-                        rusqlite::types::Value::Real(v) => {
-                            serde_json::Number::from_f64(v)
-                                .map(serde_json::Value::Number)
-                                .unwrap_or(serde_json::Value::Null)
-                        }
+                        rusqlite::types::Value::Real(v) => serde_json::Number::from_f64(v)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null),
                         rusqlite::types::Value::Text(v) => serde_json::Value::String(v),
                         rusqlite::types::Value::Blob(v) => {
                             serde_json::Value::String(base64_encode(&v))
@@ -225,9 +228,9 @@ impl Storage for SqliteStorage {
             .conn
             .lock()
             .map_err(|_| crate::Error::Internal("sqlite storage mutex poisoned".to_string()))?;
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::Error::Database(format!("sqlite transaction begin failed: {}", e)))?;
+        let tx = conn.transaction().map_err(|e| {
+            crate::Error::Database(format!("sqlite transaction begin failed: {}", e))
+        })?;
         for op in ops {
             match op {
                 StorageOp::Put { key, value } => {
@@ -246,8 +249,9 @@ impl Storage for SqliteStorage {
                 }
             }
         }
-        tx.commit()
-            .map_err(|e| crate::Error::Database(format!("sqlite transaction commit failed: {}", e)))?;
+        tx.commit().map_err(|e| {
+            crate::Error::Database(format!("sqlite transaction commit failed: {}", e))
+        })?;
         Ok(())
     }
 }
@@ -282,7 +286,10 @@ impl KVStore for SqliteStorage {
     async fn batch_set(&self, items: &[(&str, &[u8])]) -> Result<(), crate::Error> {
         let ops: Vec<StorageOp> = items
             .iter()
-            .map(|(k, v)| StorageOp::Put { key: k.to_string(), value: v.to_vec() })
+            .map(|(k, v)| StorageOp::Put {
+                key: k.to_string(),
+                value: v.to_vec(),
+            })
             .collect();
         <Self as Storage>::transaction(self, &ops).await
     }
@@ -308,7 +315,8 @@ impl KVStore for SqliteStorage {
             .map_err(|e| crate::Error::Database(format!("sqlite scan failed: {}", e)))?;
         let mut out = Vec::new();
         for r in rows {
-            let (k, v) = r.map_err(|e| crate::Error::Database(format!("sqlite scan row failed: {}", e)))?;
+            let (k, v) =
+                r.map_err(|e| crate::Error::Database(format!("sqlite scan row failed: {}", e)))?;
             out.push((k, v));
         }
         Ok(out)
@@ -367,7 +375,8 @@ impl Storage for SledStorage {
         // 回退到遍历所有键值对并在内存中过滤。
         let mut records = vec![];
         for item in self.db.iter() {
-            let (key, value) = item.map_err(|e| crate::Error::Database(format!("sled iter failed: {}", e)))?;
+            let (key, value) =
+                item.map_err(|e| crate::Error::Database(format!("sled iter failed: {}", e)))?;
             let key_str = String::from_utf8_lossy(&key);
             // 仅返回以 table 名为前缀的键作为简单过滤策略
             if !key_str.starts_with(&format!("{}:", q.table)) {
@@ -397,9 +406,9 @@ impl Storage for SledStorage {
                         .map_err(|e| crate::Error::Database(format!("sled put failed: {}", e)))?;
                 }
                 StorageOp::Delete { key } => {
-                    self.db
-                        .remove(key.as_str())
-                        .map_err(|e| crate::Error::Database(format!("sled delete failed: {}", e)))?;
+                    self.db.remove(key.as_str()).map_err(|e| {
+                        crate::Error::Database(format!("sled delete failed: {}", e))
+                    })?;
                 }
             }
         }

@@ -88,7 +88,8 @@ impl AtomicTransaction {
         // 安全校验：拒绝包含 .. 的路径穿越攻击
         if rel_path.contains("..") {
             return Err(crate::Error::InvalidInput(format!(
-                "rel_path contains '..' (path traversal blocked): {}", rel_path
+                "rel_path contains '..' (path traversal blocked): {}",
+                rel_path
             )));
         }
         let target = self.data_dir.join(rel_path);
@@ -106,9 +107,7 @@ impl AtomicTransaction {
 
         // 2. 写入临时文件
         let mut tmp_file = fs::File::create(&tmp_path).map_err(crate::Error::Io)?;
-        tmp_file
-            .write_all(content)
-            .map_err(crate::Error::Io)?;
+        tmp_file.write_all(content).map_err(crate::Error::Io)?;
         tmp_file.sync_all().map_err(crate::Error::Io)?;
         let bytes_written = content.len();
 

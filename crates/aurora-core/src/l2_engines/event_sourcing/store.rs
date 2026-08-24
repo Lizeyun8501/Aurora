@@ -87,8 +87,8 @@ impl EventStore {
         let events = stmt
             .query_map(params![aggregate_id, since_i64], |row| {
                 let payload_str: String = row.get(3)?;
-                let payload: serde_json::Value = serde_json::from_str(&payload_str)
-                    .unwrap_or_else(|e| {
+                let payload: serde_json::Value =
+                    serde_json::from_str(&payload_str).unwrap_or_else(|e| {
                         tracing::warn!(
                             payload = %payload_str,
                             error = %e,
@@ -148,8 +148,8 @@ impl EventStore {
         let snapshot = stmt
             .query_row(params![aggregate_id], |row| {
                 let state_str: String = row.get(3)?;
-                let state: serde_json::Value = serde_json::from_str(&state_str)
-                    .unwrap_or_else(|e| {
+                let state: serde_json::Value =
+                    serde_json::from_str(&state_str).unwrap_or_else(|e| {
                         tracing::warn!(error = %e, "failed to deserialize snapshot state");
                         serde_json::Value::Null
                     });

@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use crate::traits::sync_target::{Connection, DocSet, Endpoint, SyncEvent, SyncProtocol, SyncReport, SyncTarget};
+use crate::traits::sync_target::{
+    Connection, DocSet, Endpoint, SyncEvent, SyncProtocol, SyncReport, SyncTarget,
+};
 
 /// 基于 iroh 的 P2P 同步目标实现。
 pub struct IrohSyncTarget {
@@ -69,11 +71,7 @@ impl SyncTarget for IrohSyncTarget {
                 conn.id
             )));
         }
-        tracing::info!(
-            "iroh sync: conn={}, docs={:?}",
-            conn.id,
-            doc_set.doc_ids
-        );
+        tracing::info!("iroh sync: conn={}, docs={:?}", conn.id, doc_set.doc_ids);
         // TODO: 接入 iroh 真实的文档同步协议 (iroh-docs / iroh-blobs)。
         Ok(SyncReport {
             sent_ops: 0,
