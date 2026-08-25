@@ -23,6 +23,33 @@ pub struct Note {
     pub version: i64,
     pub loro_doc_id: Option<String>,
     pub metadata: serde_json::Value,
+    // ── V19 §11 设计字段（v2 迁移补齐，DEV-003） ──
+    /// 内容文件系统路径（外部同步模式；空 = content 内联）。
+    #[serde(default)]
+    pub file_path: String,
+    /// 内容 SHA-256 校验和（外部同步完整性）。
+    #[serde(default)]
+    pub file_hash: Option<String>,
+    /// Lamport 时间戳（外部同步冲突解决）。
+    #[serde(default)]
+    pub lamport_ts: i64,
+    /// 同步状态: syncing | synced | conflict。
+    #[serde(default = "default_sync_state")]
+    pub sync_state: String,
+    /// 加密级别: none | shared | private（工作区分级）。
+    #[serde(default = "default_encryption")]
+    pub encryption: String,
+    /// 软删除标志（V19 命名；与 deleted_at 并存，语义一致）。
+    #[serde(default)]
+    pub is_deleted: bool,
+}
+
+fn default_sync_state() -> String {
+    "synced".into()
+}
+
+fn default_encryption() -> String {
+    "none".into()
 }
 
 impl Note {
@@ -41,6 +68,12 @@ impl Note {
             version: 1,
             loro_doc_id: None,
             metadata: serde_json::Value::Object(Default::default()),
+            file_path: String::new(),
+            file_hash: None,
+            lamport_ts: 0,
+            sync_state: "synced".into(),
+            encryption: "none".into(),
+            is_deleted: false,
         }
     }
 }
@@ -282,6 +315,8 @@ impl ToSqlParams for AuditLog {
 // ── 从 rusqlite Row 解析实体 ───────────────────────────────────
 
 /// 从 `rusqlite::Row` 解析 `Note`。
+///
+/// v2 列（file_path 等）在旧库/查询未选时走默认值（`unwrap_or`），保持向后兼容。
 pub fn note_from_row(row: &rusqlite::Row) -> Result<Note, rusqlite::Error> {
     let metadata_str: String = row.get("metadata")?;
     let metadata = serde_json::from_str(&metadata_str).unwrap_or_default();
@@ -301,6 +336,34 @@ pub fn note_from_row(row: &rusqlite::Row) -> Result<Note, rusqlite::Error> {
         version: row.get("version")?,
         loro_doc_id: row.get("loro_doc_id")?,
         metadata,
+        // V19 §11 v2 字段: 旧查询未选列时用 row.get 的 rusqlite::Error 兜底默认
+        file_path: row
+            .get::<_, Option<String>>("file_path")
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
+        file_hash: row.get::<_, Option<String>>("file_hash").ok().flatten(),
+        lamport_ts: row
+            .get::<_, Option<i64>>("lamport_ts")
+            .ok()
+            .flatten()
+            .unwrap_or(0),
+        sync_state: row
+            .get::<_, Option<String>>("sync_state")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "synced".into()),
+        encryption: row
+            .get::<_, Option<String>>("encryption")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "none".into()),
+        is_deleted: row
+            .get::<_, Option<i64>>("is_deleted")
+            .ok()
+            .flatten()
+            .map(|v| v != 0)
+            .unwrap_or(false),
     })
 }
 

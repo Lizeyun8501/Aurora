@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use tracing::{error, info, warn};
 
 /// 当前数据库 Schema 版本。
-pub const CURRENT_SCHEMA_VERSION: i64 = 1;
+pub const CURRENT_SCHEMA_VERSION: i64 = 2;
 
 /// 迁移管理器。
 pub struct MigrationManager {
@@ -54,9 +54,10 @@ impl MigrationManager {
 
     /// 运行所有待执行迁移到最新版本。
     pub fn migrate(&self) -> Result<(), MigrationError> {
-        let mut conn = self.conn.lock().map_err(|e| {
-            MigrationError::Exec(format!("migration mutex poisoned: {}", e))
-        })?;
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| MigrationError::Exec(format!("migration mutex poisoned: {}", e)))?;
         let current = Self::current_version(&conn)?;
         info!(
             current,
@@ -67,9 +68,10 @@ impl MigrationManager {
         if current < 1 {
             Self::apply_v1(&mut conn)?;
         }
-
-        // 未来版本依次添加：
-        // if current < 2 { Self::apply_v2(&mut conn)?; }
+        // V2: notes 表对齐 V19 §11 设计字段（DEV-003）
+        if current < 2 {
+            Self::apply_v2(&mut conn)?;
+        }
 
         info!(version = CURRENT_SCHEMA_VERSION, "migration completed");
         Ok(())
@@ -376,9 +378,76 @@ impl MigrationManager {
 
     /// 获取底层连接（用于应用层复用同一数据库）。
     pub fn into_inner(self) -> Result<rusqlite::Connection, MigrationError> {
-        self.conn.into_inner().map_err(|e| {
-            MigrationError::Exec(format!("migration mutex poisoned: {}", e))
-        })
+        self.conn
+            .into_inner()
+            .map_err(|e| MigrationError::Exec(format!("migration mutex poisoned: {}", e)))
+    }
+
+    // ── V2: notes 表对齐 V19 §11 设计字段（DEV-003） ────────────
+
+    /// 补齐 V19 设计中 notes 表缺失的 6 个列 + 复合索引：
+    /// - `file_path` / `file_hash`: 内容文件系统路径与 SHA-256 校验和（外部同步）
+    /// - `lamport_ts`: Lamport 时间戳（外部同步冲突解决）
+    /// - `sync_state`: syncing | synced | conflict
+    /// - `encryption`: none | shared | private（工作区分级加密）
+    /// - `is_deleted`: 与既有 `deleted_at` 并存（V19 命名，软删除标志）
+    ///
+    /// 兼容性: 全部带默认值，既有行自动回填；`is_deleted` 从 `deleted_at` 回推。
+    fn apply_v2(conn: &mut rusqlite::Connection) -> Result<(), MigrationError> {
+        let tx = conn
+            .transaction()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
+
+        let ddl: &[&str] = &[
+            // 1. file_path: 既有行走 content 内联的旧模式，置空表示未落盘
+            "ALTER TABLE notes ADD COLUMN file_path TEXT NOT NULL DEFAULT ''",
+            // 2. file_hash: SHA-256 校验和（外部同步完整性）
+            "ALTER TABLE notes ADD COLUMN file_hash TEXT",
+            // 3. lamport_ts: Lamport 时间戳（外部同步冲突解决，V19 §11）
+            "ALTER TABLE notes ADD COLUMN lamport_ts INTEGER NOT NULL DEFAULT 0",
+            // 4. sync_state: syncing | synced | conflict（V19 §11）
+            "ALTER TABLE notes ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'synced'",
+            // 5. encryption: none | shared | private（V19 §11 工作区分级）
+            "ALTER TABLE notes ADD COLUMN encryption TEXT NOT NULL DEFAULT 'none'",
+            // 6. is_deleted: V19 命名的软删除标志
+            "ALTER TABLE notes ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0",
+        ];
+        for sql in ddl {
+            tx.execute(sql, [])
+                .map_err(|e| MigrationError::Exec(format!("v2 notes: {e}")))?;
+        }
+
+        // 回填: deleted_at 非空的行 → is_deleted = 1
+        tx.execute(
+            "UPDATE notes SET is_deleted = 1 WHERE deleted_at IS NOT NULL",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+
+        // V19 §11 索引: 复合索引（workspace + 最近更新）
+        // v1 的旧单列索引同名（idx_notes_workspace），先删再建复合版
+        tx.execute("DROP INDEX IF EXISTS idx_notes_workspace", [])
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_workspace ON notes(workspace_id, updated_at DESC)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        // sync_state 部分索引: 冲突检测查询
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_sync_state ON notes(sync_state) WHERE sync_state != 'synced'",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+
+        tx.commit()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        Self::record_version(conn, 2)
     }
 }
 
@@ -397,6 +466,18 @@ pub enum MigrationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(test)]
+    impl MigrationManager {
+        /// 测试专用: 在可变连接上执行 v1（跳过 v2），用于构造旧版本库。
+        pub(crate) fn apply_v1_on(conn: &mut rusqlite::Connection) -> Result<(), MigrationError> {
+            Self::apply_v1(conn)
+        }
+    }
+
+    #[cfg(test)]
+    #[path = "tests_v2.rs"]
+    mod tests_v2;
 
     #[test]
     fn v1_migration_runs() {
