@@ -11,7 +11,6 @@ use async_trait::async_trait;
 use rusqlite::OptionalExtension;
 
 fn base64_encode(input: &[u8]) -> String {
-    use std::fmt::Write;
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
     for chunk in input.chunks(3) {

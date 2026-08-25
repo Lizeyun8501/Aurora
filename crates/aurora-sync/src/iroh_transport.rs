@@ -65,11 +65,21 @@ fn decode_frame(buf: &[u8]) -> Option<(&[u8], &[u8])> {
 /// iroh 真实传输层 — 封装 iroh Endpoint，提供 QUIC 双向流同步。
 ///
 /// 对应 V19 §31.2 `IrohSyncTarget`，使用 iroh 1.0 API。
+/// `Clone`: Endpoint 内部为 Arc 句柄，克隆廉价，供多笔记并发同步。
 pub struct IrohTransport {
     /// iroh Endpoint（QUIC 监听器 + NAT 穿透）。
     endpoint: Endpoint,
     /// 本节点的 PeerId（映射到 iroh NodeId）。
     peer_id: Mutex<PeerId>,
+}
+
+impl Clone for IrohTransport {
+    fn clone(&self) -> Self {
+        Self {
+            endpoint: self.endpoint.clone(),
+            peer_id: Mutex::new(self.peer_id()),
+        }
+    }
 }
 
 /// 同步结果报告。

@@ -19,9 +19,9 @@ pub mod conflict;
 pub mod device;
 pub mod external;
 pub mod incremental;
-// iroh_transport 模块需要 iroh 1.0+ (Rust 1.91+)，临时禁用
-// #[cfg(feature = "iroh-transport")]
-// pub mod iroh_transport;
+// iroh 真实传输层 — 需要 iroh 1.0+ (Rust 1.91+)，2026-08-24 工具链就绪后启用
+#[cfg(feature = "iroh-transport")]
+pub mod iroh_transport;
 pub mod lan;
 pub mod offline_queue;
 pub mod p2p;
@@ -88,16 +88,17 @@ pub use conflict::{Branch, ConflictResolution, ConflictResolver, SemanticConflic
 pub use device::{Device, DeviceId, DeviceManager, DeviceStatus, QrAuthorization};
 pub use external::{
     CalDavConfig, CalDavConnector, CalendarEvent, CalendarSync, CloudDriveConnector,
-    ConnectorRegistry, ConnectorState, DropboxConnector, DriveFile, DriveProvider,
-    EmailAttachment, EmailDocument, EmailFilter, EmailMessage, EmailSync, GoogleDriveConnector,
-    HmacVerifier, ImapConfig, ImapConnector, OneDriveConnector, SelectiveSyncConfig,
-    SyncConnector, SyncSession, SyncSessionStatus, WebDavConnector, WebhookConfig, WebhookEvent,
-    WebhookReceiver, WebhookSource,
+    ConnectorRegistry, ConnectorState, DriveFile, DriveProvider, DropboxConnector, EmailAttachment,
+    EmailDocument, EmailFilter, EmailMessage, EmailSync, GoogleDriveConnector, HmacVerifier,
+    ImapConfig, ImapConnector, OneDriveConnector, SelectiveSyncConfig, SyncConnector, SyncSession,
+    SyncSessionStatus, WebDavConnector, WebhookConfig, WebhookEvent, WebhookReceiver,
+    WebhookSource,
 };
 pub use incremental::{BlockDelta, BlockSignature, IncrementalSync, RollingHash};
+#[cfg(feature = "iroh-transport")]
+pub use iroh_transport::{
+    run_accept_loop, IrohTransport, SyncReport, AURORA_ALPN, MAX_SYNC_MESSAGE_SIZE,
+};
 pub use lan::{LanPeer, LanSyncEngine, MdnsDiscovery, SyncRoute};
 pub use offline_queue::{OfflineQueue, Priority, QueueItem};
 pub use p2p::{P2pSyncEngine, PeerId, SyncMessage, VersionVector};
-// iroh_transport 类型重导出已随模块一起禁用
-// #[cfg(feature = "iroh-transport")]
-// pub use iroh_transport::{IrohTransport, SyncReport, run_accept_loop, AURORA_ALPN, MAX_SYNC_MESSAGE_SIZE};

@@ -29,6 +29,21 @@ interface AndroidBridge {
   deleteNote(noteId: string): number;
   searchNotes(query: string): string;
   isFallback(): boolean;
+  // P2P 同步（V19 §31 DEV-005 — iroh QUIC + NAT 穿透）
+  startSyncEngine(): string;
+  getSyncLocalAddr(): string;
+  syncNote(peerAddrJson: string, noteId: string): string;
+  startAcceptSync(noteId: string): boolean;
+  closeSyncEngine(): void;
+}
+
+/** P2P 同步结果报告。 */
+export interface P2pSyncReport {
+  success: boolean;
+  sentBytes: number;
+  receivedBytes: number;
+  remotePeer: string;
+  error: string;
 }
 
 declare global {
@@ -159,5 +174,40 @@ export const platform = {
         snippet: n.content.slice(0, 80),
         score: 1,
       }));
+  },
+
+  // -------------------------------------------------------------------------
+  // P2P 同步（V19 §31 DEV-005）— 仅 Android 桥可用；浏览器 mock 不支持
+  // -------------------------------------------------------------------------
+
+  /** 启动同步引擎，返回本机端点地址 JSON（null = 不可用/启动失败）。 */
+  startSyncEngine(): string | null {
+    return bridge()?.startSyncEngine() ?? null;
+  },
+
+  /** 获取本机端点地址 JSON。 */
+  getSyncLocalAddr(): string | null {
+    return bridge()?.getSyncLocalAddr() ?? null;
+  },
+
+  /** 与对端同步指定笔记（阻塞直至完成）。 */
+  syncNote(peerAddrJson: string, noteId: string): P2pSyncReport | null {
+    const b = bridge();
+    if (!b) return null;
+    try {
+      return JSON.parse(b.syncNote(peerAddrJson, noteId)) as P2pSyncReport;
+    } catch {
+      return null;
+    }
+  },
+
+  /** 启动接收循环（对端发起时自动合并+持久化）。 */
+  startAcceptSync(noteId: string): boolean {
+    return bridge()?.startAcceptSync(noteId) ?? false;
+  },
+
+  /** 关闭同步引擎。 */
+  closeSyncEngine(): void {
+    bridge()?.closeSyncEngine();
   },
 };

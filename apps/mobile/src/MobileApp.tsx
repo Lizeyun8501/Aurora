@@ -260,6 +260,7 @@ function NotesView() {
 function NoteEditor({ noteId, title, onClose }: { noteId: string; title: string; onClose: () => void }) {
   const [content, setContent] = useState('');
   const [saved, setSaved] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
 
   useEffect(() => {
     setContent(platform.getNoteContent(noteId));
@@ -276,6 +277,7 @@ function NoteEditor({ noteId, title, onClose }: { noteId: string; title: string;
       <header className="view-header">
         <button className="header-btn" onClick={onClose}>‹ 返回</button>
         <h1 className="view-title editor-title">{title}</h1>
+        <button className="header-btn" onClick={() => setSyncOpen(!syncOpen)}>同步</button>
         <button className="header-btn primary" onClick={save}>保存</button>
       </header>
       <textarea
@@ -285,7 +287,66 @@ function NoteEditor({ noteId, title, onClose }: { noteId: string; title: string;
         placeholder="开始写作…"
         autoFocus
       />
+      {syncOpen && <SyncPanel noteId={noteId} />}
       {saved && <div className="toast">已保存 ✓</div>}
+    </div>
+  );
+}
+
+// ===========================================================================
+// P2P 同步面板 — V19 §31 DEV-005（iroh QUIC + NAT 穿透，端点地址 JSON 交换）
+// ===========================================================================
+
+function SyncPanel({ noteId }: { noteId: string }) {
+  const [localAddr, setLocalAddr] = useState<string | null>(null);
+  const [peerAddr, setPeerAddr] = useState('');
+  const [status, setStatus] = useState('');
+
+  const startEngine = () => {
+    const addr = platform.startSyncEngine();
+    setLocalAddr(addr);
+    if (addr) {
+      platform.startAcceptSync(noteId);
+      setStatus('引擎已启动，接收循环已开启');
+    } else {
+      setStatus('引擎启动失败（可能无网络权限）');
+    }
+  };
+
+  const doSync = () => {
+    if (!peerAddr.trim()) {
+      setStatus('请输入对端地址');
+      return;
+    }
+    setStatus('同步中…');
+    const report = platform.syncNote(peerAddr.trim(), noteId);
+    if (!report) {
+      setStatus('同步不可用（仅真机 Android）');
+      return;
+    }
+    setStatus(
+      report.success
+        ? `同步成功：↑${report.sentBytes}B ↓${report.receivedBytes}B`
+        : `同步失败: ${report.error || '未知错误'}`
+    );
+  };
+
+  return (
+    <div className="sync-panel">
+      <div className="sync-row">
+        <button className="header-btn" onClick={startEngine}>启动引擎</button>
+        {localAddr && <span className="sync-addr" title={localAddr}>{localAddr.slice(0, 48)}…</span>}
+      </div>
+      <div className="sync-row">
+        <input
+          className="sync-input"
+          value={peerAddr}
+          onChange={(e) => setPeerAddr(e.target.value)}
+          placeholder='粘贴对端地址 JSON {"id":"…","addrs":[…]}'
+        />
+        <button className="header-btn primary" onClick={doSync}>同步</button>
+      </div>
+      {status && <div className="sync-status">{status}</div>}
     </div>
   );
 }

@@ -30,6 +30,8 @@ public class MainActivity extends Activity {
 
     private WebView webView;
     private UniffiAppCore core;
+    /** P2P 同步引擎（懒启动，V19 §31 DEV-005） */
+    private SyncEngine syncEngine;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
@@ -164,6 +166,83 @@ public class MainActivity extends Activity {
         public boolean isFallback() {
             return core.isFallback();
         }
+
+        // ------------------------------------------------------------------
+        // P2P 同步（V19 §31 DEV-005 — iroh QUIC + NAT 穿透）
+        // ------------------------------------------------------------------
+
+        /** 启动同步引擎，返回本机端点地址 JSON（供对端 QR/输入交换）。 */
+        @JavascriptInterface
+        public String startSyncEngine() {
+            try {
+                if (syncEngine == null) {
+                    syncEngine = SyncEngine.start();
+                }
+                return syncEngine != null ? syncEngine.localAddr() : null;
+            } catch (Throwable e) {
+                return null;
+            }
+        }
+
+        /** 获取本机端点地址 JSON（未启动时启动）。 */
+        @JavascriptInterface
+        public String getSyncLocalAddr() {
+            try {
+                if (syncEngine == null) {
+                    syncEngine = SyncEngine.start();
+                }
+                return syncEngine != null ? syncEngine.localAddr() : null;
+            } catch (Throwable e) {
+                return null;
+            }
+        }
+
+        /**
+         * 与对端同步指定笔记。
+         * @param peerAddrJson 对端端点地址 JSON
+         * @return 结果 JSON {success, sentBytes, receivedBytes, remotePeer, error}
+         */
+        @JavascriptInterface
+        public String syncNote(String peerAddrJson, String noteId) {
+            try {
+                if (syncEngine == null) {
+                    syncEngine = SyncEngine.start();
+                }
+                if (syncEngine == null) return "{\"success\":false,\"error\":\"engine start failed\"}";
+                SyncEngine.SyncReport r = syncEngine.syncNote(core, peerAddrJson, noteId);
+                JSONObject o = new JSONObject();
+                o.put("success", r.success);
+                o.put("sentBytes", r.sentBytes);
+                o.put("receivedBytes", r.receivedBytes);
+                o.put("remotePeer", r.remotePeer);
+                o.put("error", r.error == null ? "" : r.error);
+                return o.toString();
+            } catch (Throwable e) {
+                return "{\"success\":false,\"error\":\"" + e.getMessage() + "\"}";
+            }
+        }
+
+        /** 启动指定笔记的接收循环（服务端角色，对端发起时自动合并+持久化）。 */
+        @JavascriptInterface
+        public boolean startAcceptSync(String noteId) {
+            try {
+                if (syncEngine == null) {
+                    syncEngine = SyncEngine.start();
+                }
+                return syncEngine != null && syncEngine.startAcceptLoop(core, noteId);
+            } catch (Throwable e) {
+                return false;
+            }
+        }
+
+        /** 关闭同步引擎。 */
+        @JavascriptInterface
+        public void closeSyncEngine() {
+            if (syncEngine != null) {
+                syncEngine.close();
+                syncEngine = null;
+            }
+        }
     }
 
     @Override
@@ -176,6 +255,10 @@ public class MainActivity extends Activity {
         if (core != null) {
             core.destroy();
             core = null;
+        }
+        if (syncEngine != null) {
+            syncEngine.close();
+            syncEngine = null;
         }
     }
 

@@ -14,6 +14,10 @@ use aurora_core::l1_infrastructure::note_doc::NoteDoc;
 
 uniffi::setup_scaffolding!();
 
+// V19 §31 DEV-005: iroh P2P 同步引擎（feature-gated）
+#[cfg(feature = "p2p-sync")]
+pub mod p2p_sync;
+
 // ===========================================================================
 // 类型定义（UniFFI 兼容）
 // ===========================================================================
@@ -180,6 +184,41 @@ impl UniffiAppCore {
                 })?;
         }
         Ok(())
+    }
+
+    /// P2P 同步用：公开访问指定笔记的 NoteDoc（缓存/快照恢复）。
+    #[cfg(feature = "p2p-sync")]
+    pub fn doc_for_note_public(&self, note_id: &str) -> Result<NoteDoc, MobileError> {
+        // 验证笔记存在（与 get_note_content 一致的语义）
+        let exists = if let Some(core) = &self.core {
+            let kv = core.kv_store.clone();
+            let key = format!("note:{note_id}");
+            self.runtime
+                .block_on(async { kv.get(&key).await })
+                .map_err(|e| MobileError::OperationFailed {
+                    message: format!("get: {e}"),
+                })?
+                .is_some()
+        } else {
+            self.fallback_notes
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|n| n.id == note_id)
+        };
+        if !exists {
+            return Err(MobileError::NotFound {
+                resource: note_id.to_string(),
+            });
+        }
+        Ok(self.doc_for_note(note_id))
+    }
+
+    /// P2P 同步用：公开持久化指定笔记当前缓存快照。
+    #[cfg(feature = "p2p-sync")]
+    pub fn persist_note_snapshot(&self, note_id: &str) -> Result<(), MobileError> {
+        let doc = self.doc_for_note(note_id);
+        self.persist_doc(note_id, &doc)
     }
 
     fn create_note_impl(self: &Arc<Self>, title: String) -> Result<String, MobileError> {

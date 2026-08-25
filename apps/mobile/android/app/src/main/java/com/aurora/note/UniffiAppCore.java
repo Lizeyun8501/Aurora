@@ -48,6 +48,11 @@ public class UniffiAppCore {
         }
     }
 
+    /** native 句柄（供 SyncEngine JNI 桥使用）。 */
+    long handle() {
+        return handle;
+    }
+
     public String createNote(String title) throws Exception {
         String id = nativeCreateNote(handle, title);
         if (id == null) {

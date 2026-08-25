@@ -23,11 +23,21 @@ jni = { version = "0.21", default-features = false }
 # CRDT 文档模型 — V19 §36.3 移动端使用原生 Loro 绑定
 loro = { workspace = true }
 
+# iroh EndpointAddr 类型（p2p-sync 特性需要，V19 §31 DEV-005）
+iroh = { workspace = true, optional = true }
+
 # 共享启动装配（迁移 + DEK 保险库 + AppCore DI）
 aurora-bootstrap = { path = "../aurora-bootstrap" }
 aurora-core = { path = "../aurora-core", features = ["loro-crdt"] }
 aurora-security = { path = "../aurora-security" }
 aurora-ai = { path = "../aurora-ai" }
+# P2P 同步 — iroh 1.0 真实传输层（V19 §31 DEV-005，需要 Rust 1.91+）
+aurora-sync = { path = "../aurora-sync", optional = true }
+
+[features]
+default = []
+# 启用 iroh P2P 同步引擎（V19 §31 DEV-005）
+p2p-sync = ["dep:aurora-sync", "aurora-sync/iroh-transport", "dep:iroh"]
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }

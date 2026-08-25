@@ -11,8 +11,8 @@ aurora-core = { path = "../aurora-core" }
 # CRDT engine — loro 1.x 需 Rust 1.87+，可选依赖
 loro = { workspace = true, optional = true }
 
-# P2P sync — iroh 1.0 需 Rust 1.91+，临时移除
-# iroh = { workspace = true }
+# P2P sync — iroh 1.0 需 Rust 1.91+（工具链已就绪，2026-08-24 启用）
+iroh = { workspace = true, optional = true }
 
 # Async traits
 async-trait = { workspace = true }
@@ -50,3 +50,6 @@ ring = { workspace = true }
 default = []
 # 启用 Loro CRDT 引擎（需要 Rust 1.87+）
 loro-crdt = ["dep:loro"]
+# 启用 iroh 真实传输层（需要 Rust 1.91+）— V19 §31 DEV-005
+# 依赖 loro: iroh_transport.rs 直接操作 LoroDoc（版本向量交换 + 增量导入）
+iroh-transport = ["dep:iroh", "loro-crdt"]

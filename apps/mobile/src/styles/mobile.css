@@ -259,3 +259,22 @@
 }
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---- P2P 同步面板 — V19 §31 DEV-005 ---- */
+.sync-panel {
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.sync-row { display: flex; align-items: center; gap: 8px; }
+.sync-addr {
+  flex: 1; font-size: 11px; color: var(--text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sync-input {
+  flex: 1; padding: 8px 12px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 12px; background: var(--bg-primary);
+  color: var(--text-primary); min-width: 0;
+}
+.sync-status { font-size: 12px; color: var(--text-secondary); }
