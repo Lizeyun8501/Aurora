@@ -13,6 +13,13 @@
     "@aurora/ui-components": "*",
     "@capacitor/core": "^6.0.0",
     "clsx": "^2.1.1",
+    "loro-crdt": "^1.14.1",
+    "loro-prosemirror": "^0.4.4",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.11",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-transform": "^1.12.0",
+    "prosemirror-view": "^1.42.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^4.5.0"

@@ -278,3 +278,41 @@
   color: var(--text-primary); min-width: 0;
 }
 .sync-status { font-size: 12px; color: var(--text-secondary); }
+
+/* ---- ProseMirror 编辑器 — V19 §35 DEV-009 ---- */
+.rich-editor-host {
+  flex: 1; overflow-y: auto; min-height: 0;
+  background: var(--bg-primary); color: var(--text-primary);
+  font-size: 16px; line-height: 1.6;
+}
+.rich-editor-host.loading { display: flex; align-items: center; justify-content: center;
+  color: var(--text-secondary); }
+.rich-editor-host .ProseMirror {
+  min-height: 100%; padding: 16px 20px; outline: none;
+}
+.rich-editor-host .ProseMirror:focus { outline: none; }
+.rich-editor-host .ProseMirror h1 { font-size: 1.6em; font-weight: 700; margin: 0.6em 0 0.3em; }
+.rich-editor-host .ProseMirror h2 { font-size: 1.4em; font-weight: 700; margin: 0.6em 0 0.3em; }
+.rich-editor-host .ProseMirror h3 { font-size: 1.2em; font-weight: 600; margin: 0.6em 0 0.3em; }
+.rich-editor-host .ProseMirror h4,
+.rich-editor-host .ProseMirror h5,
+.rich-editor-host .ProseMirror h6 { font-size: 1.05em; font-weight: 600; margin: 0.6em 0 0.3em; }
+.rich-editor-host .ProseMirror p { margin: 0.4em 0; }
+.rich-editor-host .ProseMirror pre {
+  background: var(--bg-secondary); padding: 12px 14px; border-radius: 8px;
+  overflow-x: auto; font-family: monospace; font-size: 14px; margin: 0.6em 0;
+}
+.rich-editor-host .ProseMirror code {
+  background: var(--bg-secondary); padding: 2px 5px; border-radius: 4px;
+  font-family: monospace; font-size: 14px;
+}
+.rich-editor-host .ProseMirror pre code { background: none; padding: 0; }
+.rich-editor-host .ProseMirror .task-block { display: flex; align-items: center; gap: 8px; }
+.rich-editor-host .ProseMirror .task-block input[type="checkbox"] { margin: 0; }
+.rich-editor-host .ProseMirror .embed-placeholder {
+  border: 1px dashed var(--border); padding: 16px; border-radius: 8px;
+  text-align: center; color: var(--text-secondary); margin: 0.6em 0;
+}
+.rich-editor-host .ProseMirror a { color: var(--brand); text-decoration: underline; }
+.rich-editor-host .ProseMirror strong { font-weight: 700; }
+.rich-editor-host .ProseMirror em { font-style: italic; }

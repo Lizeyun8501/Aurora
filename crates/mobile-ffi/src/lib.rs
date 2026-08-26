@@ -488,6 +488,65 @@ impl UniffiAppCore {
         let doc = self.doc_for_note(&note_id);
         Ok(doc.body())
     }
+
+    /// 导出笔记的完整 Loro 快照（base64）— ProseMirror 编辑器初始化用（DEV-009）。
+    ///
+    /// 返回 Rust 侧 NoteDoc 当前状态的快照（含 P2P 合并结果）。
+    fn get_note_snapshot_impl(self: &Arc<Self>, note_id: String) -> Result<String, MobileError> {
+        let exists = if let Some(core) = &self.core {
+            let kv = core.kv_store.clone();
+            let key = format!("note:{}", note_id);
+            self.runtime
+                .block_on(async { kv.get(&key).await })
+                .map_err(|e| MobileError::OperationFailed {
+                    message: format!("get: {e}"),
+                })?
+                .is_some()
+        } else {
+            self.fallback_notes
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|n| n.id == note_id)
+        };
+        if !exists {
+            return Err(MobileError::NotFound { resource: note_id });
+        }
+
+        let doc = self.doc_for_note(&note_id);
+        let snapshot = doc
+            .export_snapshot()
+            .map_err(|e| MobileError::OperationFailed {
+                message: format!("loro export: {e}"),
+            })?;
+        Ok(base64_encode(&snapshot))
+    }
+
+    /// 将 JS 侧 Loro 快照（base64）合并进 Rust 侧 NoteDoc 并持久化（DEV-009）。
+    ///
+    /// 合并语义（CRDT）: import 合并而非替换 — P2P 对端修改不丢失。
+    fn save_note_snapshot_impl(
+        self: &Arc<Self>,
+        note_id: String,
+        snapshot_b64: String,
+    ) -> Result<(), MobileError> {
+        let bytes = base64_decode(&snapshot_b64).ok_or_else(|| MobileError::OperationFailed {
+            message: "invalid base64 snapshot".into(),
+        })?;
+        if bytes.is_empty() {
+            return Ok(()); // 空快照视为无操作
+        }
+
+        // 合并进缓存文档（快照 blob 与 update 均可 import）
+        let doc = self.doc_for_note(&note_id);
+        doc.apply_update(&bytes)
+            .map_err(|e| MobileError::OperationFailed {
+                message: format!("loro import: {e}"),
+            })?;
+
+        // 持久化
+        self.persist_doc(&note_id, &doc)
+    }
 }
 
 // ===========================================================================
@@ -495,7 +554,7 @@ impl UniffiAppCore {
 // ===========================================================================
 
 use jni::objects::{JClass, JObject, JString, JValue};
-use jni::sys::{jint, jlong, jobject, jstring};
+use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 use jni::JNIEnv;
 
 fn rust_str_to_jstring(env: &mut JNIEnv, s: &str) -> jstring {
@@ -507,6 +566,63 @@ fn rust_str_to_jstring(env: &mut JNIEnv, s: &str) -> jstring {
 
 fn jstring_to_rust(env: &mut JNIEnv, js: &JString) -> Option<String> {
     env.get_string(js).ok().map(|s| s.into())
+}
+
+/// base64 编码（标准字母表，无换行）— Loro 快照跨 JNI 传输。
+fn base64_encode(input: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(CHARS[(n >> 18) as usize & 63] as char);
+        out.push(CHARS[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            CHARS[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            CHARS[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// base64 解码（容忍空白字符）。失败返回 None。
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
+    let mut buf: u32 = 0;
+    let mut bits = 0u32;
+    for &c in input.as_bytes() {
+        if c.is_ascii_whitespace() || c == b'=' {
+            continue;
+        }
+        let v = val(c)?;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Some(out)
 }
 
 unsafe fn core_from_handle(handle: jlong) -> Arc<UniffiAppCore> {
@@ -722,6 +838,50 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeGetNoteContent(
     match core.get_note_content_impl(note_id) {
         Ok(content) => rust_str_to_jstring(&mut env, &content),
         Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// 获取笔记 Loro 快照（base64）— ProseMirror 编辑器初始化（DEV-009）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeGetNoteSnapshot(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    note_id: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let note_id = match jstring_to_rust(&mut env, &note_id) {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    match core.get_note_snapshot_impl(note_id) {
+        Ok(b64) => rust_str_to_jstring(&mut env, &b64),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// 保存 JS 侧 Loro 快照（base64，CRDT 合并）+ 持久化（DEV-009）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeSaveNoteSnapshot(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    note_id: JString,
+    snapshot_b64: JString,
+) -> jboolean {
+    let core = unsafe { core_from_handle(handle) };
+    let (Some(note_id), Some(snapshot_b64)) = (
+        jstring_to_rust(&mut env, &note_id),
+        jstring_to_rust(&mut env, &snapshot_b64),
+    ) else {
+        return 0;
+    };
+    match core.save_note_snapshot_impl(note_id, snapshot_b64) {
+        Ok(()) => 1,
+        Err(e) => {
+            tracing::warn!("save note snapshot failed: {e}");
+            0
+        }
     }
 }
 

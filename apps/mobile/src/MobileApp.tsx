@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { platform, type NoteSummary, type SearchResult } from './adapters/androidPlatform';
+import { RichEditor } from './editor/RichEditor';
 
 // ===========================================================================
 // V15 §2.1 设计令牌（从 index.html CSS 变量读取，保持单一来源）
@@ -280,13 +281,7 @@ function NoteEditor({ noteId, title, onClose }: { noteId: string; title: string;
         <button className="header-btn" onClick={() => setSyncOpen(!syncOpen)}>同步</button>
         <button className="header-btn primary" onClick={save}>保存</button>
       </header>
-      <textarea
-        className="editor-textarea"
-        value={content}
-        onChange={(e) => setContent(e.target.value)}
-        placeholder="开始写作…"
-        autoFocus
-      />
+      <RichEditor noteId={noteId} fallbackText={content} />
       {syncOpen && <SyncPanel noteId={noteId} />}
       {saved && <div className="toast">已保存 ✓</div>}
     </div>

@@ -21,6 +21,10 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    target: 'es2020',
+    // esnext: loro-crdt (wasm-bindgen bundler) 使用 top-level await
+    target: 'esnext',
+    // 内联 wasm (3.2MB) 为 data: URL — file:// WebView 无法 fetch 本地 wasm 资产，
+    // data URL 走 fetch + instantiateStreaming 路径（loro bundler 初始化已支持）
+    assetsInlineLimit: 4_000_000,
   },
 });

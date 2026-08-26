@@ -114,6 +114,16 @@ public class UniffiAppCore {
         }
     }
 
+    /** 获取笔记 Loro 快照（base64）— ProseMirror 编辑器初始化（DEV-009）。 */
+    public String getNoteSnapshot(String noteId) {
+        return nativeGetNoteSnapshot(handle, noteId);
+    }
+
+    /** 保存 JS 侧 Loro 快照（base64，CRDT 合并语义）。失败返回 false。 */
+    public boolean saveNoteSnapshot(String noteId, String snapshotBase64) {
+        return nativeSaveNoteSnapshot(handle, noteId, snapshotBase64) != 0;
+    }
+
     public boolean isFallback() {
         if (handle == 0) return true;
         return nativeIsFallback(handle) != 0;
@@ -141,5 +151,7 @@ public class UniffiAppCore {
     private static native int nativeIsFallback(long handle);
     private static native int nativeSaveNoteContent(long handle, String noteId, String content);
     private static native String nativeGetNoteContent(long handle, String noteId);
+    private static native String nativeGetNoteSnapshot(long handle, String noteId);
+    private static native int nativeSaveNoteSnapshot(long handle, String noteId, String snapshotBase64);
     private static native void nativeDestroy(long handle);
 }

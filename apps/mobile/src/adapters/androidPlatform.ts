@@ -29,6 +29,9 @@ interface AndroidBridge {
   deleteNote(noteId: string): number;
   searchNotes(query: string): string;
   isFallback(): boolean;
+  // ProseMirror + Loro 编辑器（V19 §35 DEV-009）
+  getNoteSnapshot(noteId: string): string;
+  saveNoteSnapshot(noteId: string, snapshotBase64: string): boolean;
   // P2P 同步（V19 §31 DEV-005 — iroh QUIC + NAT 穿透）
   startSyncEngine(): string;
   getSyncLocalAddr(): string;
@@ -174,6 +177,20 @@ export const platform = {
         snippet: n.content.slice(0, 80),
         score: 1,
       }));
+  },
+
+  // -------------------------------------------------------------------------
+  // ProseMirror + Loro 编辑器（V19 §35 DEV-009）
+  // -------------------------------------------------------------------------
+
+  /** 获取笔记 Loro 快照（base64）。无桥/失败返回 null。 */
+  getNoteSnapshot(noteId: string): string | null {
+    return bridge()?.getNoteSnapshot(noteId) ?? null;
+  },
+
+  /** 保存 Loro 快照（base64，CRDT 合并语义）。 */
+  saveNoteSnapshot(noteId: string, snapshotBase64: string): boolean {
+    return bridge()?.saveNoteSnapshot(noteId, snapshotBase64) ?? false;
   },
 
   // -------------------------------------------------------------------------

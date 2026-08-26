@@ -168,6 +168,30 @@ public class MainActivity extends Activity {
         }
 
         // ------------------------------------------------------------------
+        // ProseMirror + Loro 编辑器（V19 §35 DEV-009）
+        // ------------------------------------------------------------------
+
+        /** 获取笔记 Loro 快照（base64）— 编辑器初始化。失败返回 null。 */
+        @JavascriptInterface
+        public String getNoteSnapshot(String noteId) {
+            try {
+                return core.getNoteSnapshot(noteId);
+            } catch (Throwable e) {
+                return null;
+            }
+        }
+
+        /** 保存 Loro 快照（base64，CRDT 合并）+ 持久化。 */
+        @JavascriptInterface
+        public boolean saveNoteSnapshot(String noteId, String snapshotBase64) {
+            try {
+                return core.saveNoteSnapshot(noteId, snapshotBase64);
+            } catch (Throwable e) {
+                return false;
+            }
+        }
+
+        // ------------------------------------------------------------------
         // P2P 同步（V19 §31 DEV-005 — iroh QUIC + NAT 穿透）
         // ------------------------------------------------------------------
 
