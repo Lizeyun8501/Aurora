@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { platform, type NoteSummary, type SearchResult } from './adapters/androidPlatform';
-import { RichEditor } from './editor/RichEditor';
+
+// 编辑器懒加载 — schema/wasm 初始化失败不拖垮整个应用（白屏防御）
+const RichEditor = React.lazy(() =>
+  import('./editor/RichEditor').then((m) => ({ default: m.RichEditor })),
+);
 
 // ===========================================================================
 // V15 §2.1 设计令牌（从 index.html CSS 变量读取，保持单一来源）
@@ -281,7 +285,9 @@ function NoteEditor({ noteId, title, onClose }: { noteId: string; title: string;
         <button className="header-btn" onClick={() => setSyncOpen(!syncOpen)}>同步</button>
         <button className="header-btn primary" onClick={save}>保存</button>
       </header>
-      <RichEditor noteId={noteId} fallbackText={content} />
+      <React.Suspense fallback={<div className="editor-loading">编辑器加载中…</div>}>
+        <RichEditor noteId={noteId} fallbackText={content} />
+      </React.Suspense>
       {syncOpen && <SyncPanel noteId={noteId} />}
       {saved && <div className="toast">已保存 ✓</div>}
     </div>

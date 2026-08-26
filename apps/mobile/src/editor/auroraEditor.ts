@@ -12,6 +12,7 @@
 import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { keymap } from 'prosemirror-keymap';
+import { baseKeymap } from 'prosemirror-commands';
 import { LoroDoc } from 'loro-crdt';
 import {
   LoroSyncPlugin,
@@ -56,9 +57,11 @@ export function createAuroraEditor(
 ): AuroraEditorHandle {
   const { loroDoc, onSave, exportSnapshot } = options;
 
+  // 初始内容: loro-prosemirror 的 view 钩子（setTimeout 0）会做初始同步 —
+  // map.size>0 时自动 createNodeFromLoroObj 转换；空文档走 delete 分支。
+  // 此处按官方示例用 PM 默认空文档（避免提前触碰 "doc" 容器产生副作用）。
   const state = EditorState.create({
     schema: auroraSchema,
-    doc: undefined, // LoroSyncPlugin 会从 LoroDoc 初始化
     plugins: [
       LoroSyncPlugin({ doc: loroDoc }),
       LoroUndoPlugin({ doc: loroDoc }),
@@ -67,6 +70,7 @@ export function createAuroraEditor(
         'Mod-y': redo,
         'Mod-Shift-z': redo,
       }),
+      keymap(baseKeymap), // Enter/Backspace/方向键等基础编辑行为
     ],
   });
 

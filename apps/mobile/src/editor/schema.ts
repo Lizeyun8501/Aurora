@@ -98,7 +98,7 @@ export const auroraSchema = new Schema({
       ],
     },
 
-    text: { inline: true },
+    text: { group: 'inline', inline: true },
   },
 
   marks: {

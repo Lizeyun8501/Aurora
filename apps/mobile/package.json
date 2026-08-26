@@ -15,6 +15,7 @@
     "clsx": "^2.1.1",
     "loro-crdt": "^1.14.1",
     "loro-prosemirror": "^0.4.4",
+    "prosemirror-commands": "^1.7.2",
     "prosemirror-keymap": "^1.2.3",
     "prosemirror-model": "^1.25.11",
     "prosemirror-state": "^1.4.4",

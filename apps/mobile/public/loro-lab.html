@@ -1,0 +1,22 @@
+<!doctype html><html><body><script type="module">
+import { LoroDoc } from '/node_modules/loro-crdt/bundler/loro_wasm.js';
+import { LoroSyncPlugin, LoroUndoPlugin, ROOT_DOC_KEY } from '/node_modules/loro-prosemirror/dist/index.js';
+import { EditorState } from '/node_modules/prosemirror-state/dist/index.js';
+import { EditorView } from '/node_modules/prosemirror-view/dist/index.js';
+import { Schema, DOMParser } from '/node_modules/prosemirror-model/dist/index.js';
+import { schema as basic } from '/node_modules/prosemirror-schema-basic/dist/index.js';
+
+const dom = document.createElement('div');
+document.body.appendChild(dom);
+const loro = new LoroDoc();
+const plugins = [
+  LoroSyncPlugin({ doc: loro }),
+  LoroUndoPlugin({ doc: loro }),
+];
+const pmDoc = DOMParser.fromSchema(basic).parse(document.createElement('div'));
+const view = new EditorView(dom, { state: EditorState.create({ doc: pmDoc, plugins }) });
+console.log('view created, loro doc map size =', loro.getMap('doc').size);
+setTimeout(() => {
+  console.log('after MU: editable =', view.editable, 'html =', dom.innerHTML.slice(0, 100));
+}, 100);
+</script></body></html>

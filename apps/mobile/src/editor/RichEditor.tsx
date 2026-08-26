@@ -49,18 +49,15 @@ export function RichEditor({ noteId, fallbackText, onDirty }: RichEditorProps) {
         return;
       }
 
-      const handle = createAuroraEditor({
-        doc,
-        host: hostRef.current,
-        onSave: (b64) => {
+      const handle = createAuroraEditor(hostRef.current, {
+        loroDoc: doc,
+        onSave: (snapshotBytes) => {
+          // Uint8Array → base64 → JNI（CRDT 合并到 Rust 侧 NoteDoc）
+          const b64 = bytesToBase64(snapshotBytes);
           if (!platform.saveNoteSnapshot(noteId, b64)) {
             console.warn('saveNoteSnapshot failed for', noteId);
           }
           dirtyRef.current = false;
-        },
-        onDirty: () => {
-          dirtyRef.current = true;
-          onDirty?.();
         },
       });
       if (cancelled) {
