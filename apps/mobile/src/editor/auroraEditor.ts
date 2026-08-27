@@ -41,6 +41,8 @@ export interface CreateAuroraEditorOptions {
   onSave: (snapshot: Uint8Array) => void;
   /** 快照导出工厂（默认 doc.export({ mode: 'snapshot' })）。 */
   exportSnapshot?: (doc: LoroDoc) => Uint8Array;
+  /** 每次事务后回调（工具栏刷新激活态用）。 */
+  onUpdate?: () => void;
 }
 
 /**
@@ -55,7 +57,7 @@ export function createAuroraEditor(
   dom: HTMLElement,
   options: CreateAuroraEditorOptions,
 ): AuroraEditorHandle {
-  const { loroDoc, onSave, exportSnapshot } = options;
+  const { loroDoc, onSave, exportSnapshot, onUpdate } = options;
 
   // 初始内容: loro-prosemirror 的 view 钩子（setTimeout 0）会做初始同步 —
   // map.size>0 时自动 createNodeFromLoroObj 转换；空文档走 delete 分支。
@@ -99,6 +101,7 @@ export function createAuroraEditor(
       view.updateState(view.state.apply(tx));
       // debounce 保存
       scheduleSave();
+      onUpdate?.();
     },
   });
 

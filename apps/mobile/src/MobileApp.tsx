@@ -7,56 +7,42 @@ const RichEditor = React.lazy(() =>
 );
 
 // ===========================================================================
-// V15 §2.1 设计令牌（从 index.html CSS 变量读取，保持单一来源）
+// V12 导航 — 抽屉 + AppBar（替代底部 5-Tab）
 // ===========================================================================
 
-// ===========================================================================
-// V15 §4.1 底部 5-Tab 导航
-// ===========================================================================
+type ViewId = 'notes' | 'search' | 'ai' | 'flashcards' | 'canvas' | 'settings';
 
-type TabId = 'notes' | 'ai' | 'flashcards' | 'canvas' | 'settings';
-
-const TABS: Array<{ id: TabId; icon: string; label: string }> = [
-  { id: 'notes', icon: '📝', label: '笔记' },
-  { id: 'ai', icon: '✨', label: 'AI' },
-  { id: 'flashcards', icon: '🎴', label: '闪卡' },
-  { id: 'canvas', icon: '🗺️', label: '画布' },
-  { id: 'settings', icon: '⚙️', label: '设置' },
+const NAV_ITEMS: Array<{ id: ViewId; icon: string; label: string; desc: string }> = [
+  { id: 'notes', icon: '📝', label: '全部笔记', desc: '浏览与管理笔记' },
+  { id: 'search', icon: '🔍', label: '搜索', desc: '全文检索（Tantivy）' },
+  { id: 'ai', icon: '✨', label: 'AI 助手', desc: '总结 / 大纲 / 问答' },
+  { id: 'flashcards', icon: '🎴', label: '闪卡复习', desc: '间隔重复记忆' },
+  { id: 'canvas', icon: '🗺️', label: '无限画布', desc: '知识图谱视图' },
+  { id: 'settings', icon: '⚙️', label: '设置', desc: '外观 / 同步 / 关于' },
 ];
 
-// V15 §4.6 四档断点
-type Breakpoint = 'compact' | 'medium' | 'expanded' | 'large';
-
-function useBreakpoint(): Breakpoint {
-  const [bp, setBp] = useState<Breakpoint>(() => calcBreakpoint());
-  useEffect(() => {
-    const onResize = () => setBp(calcBreakpoint());
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-  return bp;
-}
-
-function calcBreakpoint(): Breakpoint {
-  const w = typeof window !== 'undefined' ? window.innerWidth : 360;
-  if (w < 600) return 'compact';   // 手机竖屏 — 单列
-  if (w < 840) return 'medium';    // 手机横屏/小平板 — 双列
-  if (w < 1200) return 'expanded'; // 平板 — 三列
-  return 'large';                  // 桌面 — 侧栏导航
-}
+const VIEW_TITLES: Record<ViewId, string> = {
+  notes: '全部笔记',
+  search: '搜索',
+  ai: 'AI 助手',
+  flashcards: '闪卡复习',
+  canvas: '无限画布',
+  settings: '设置',
+};
 
 // ===========================================================================
 // 主应用
 // ===========================================================================
 
 export function MobileApp() {
-  const [tab, setTab] = useState<TabId>('notes');
+  const [view, setView] = useState<ViewId>('notes');
+  const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     (localStorage.getItem('aurora.theme') as 'light' | 'dark') ?? 'light',
   );
   const [ready, setReady] = useState(false);
   const [fallback, setFallback] = useState(false);
-  const bp = useBreakpoint();
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -72,27 +58,154 @@ export function MobileApp() {
 
   if (!ready) return <SplashScreen />;
 
-  // V15 §4.6: large 断点切换为侧栏导航
-  if (bp === 'large') {
-    return <LargeLayout tab={tab} onTab={setTab} theme={theme} onTheme={setTheme} fallback={fallback} />;
-  }
+  const goto = (v: ViewId) => {
+    setView(v);
+    setEditing(null);
+    setDrawerOpen(false);
+  };
 
   return (
     <div className="app-shell">
-      {fallback && (
-        <div className="fallback-banner">⚠️ 数据库不可用，已切换到内存模式（数据不会持久化）</div>
+      {/* 编辑页全屏（无 AppBar） */}
+      {editing ? (
+        <NoteEditor
+          noteId={editing.id}
+          title={editing.title}
+          onClose={() => {
+            snippetCache.delete(editing.id); // 摘要缓存失效
+            setEditing(null);
+          }}
+          onDeleted={() => setEditing(null)}
+        />
+      ) : (
+        <>
+          <AppBar
+            title={VIEW_TITLES[view]}
+            onMenu={() => setDrawerOpen(true)}
+            onSearch={() => goto('search')}
+            fallback={fallback}
+          />
+          <main className="content safe-bottom">
+            {view === 'notes' && (
+              <NotesView onOpen={(id, title) => setEditing({ id, title })} />
+            )}
+            {view === 'search' && (
+              <SearchView onOpen={(id, title) => setEditing({ id, title })} />
+            )}
+            {view === 'ai' && <AIView />}
+            {view === 'flashcards' && <FlashcardsView />}
+            {view === 'canvas' && <CanvasView />}
+            {view === 'settings' && <SettingsView theme={theme} onTheme={setTheme} />}
+          </main>
+        </>
       )}
-      <main className="content safe-bottom">
-        {tab === 'notes' && <NotesView />}
-        {tab === 'ai' && <AIView />}
-        {tab === 'flashcards' && <FlashcardsView />}
-        {tab === 'canvas' && <CanvasView />}
-        {tab === 'settings' && <SettingsView theme={theme} onTheme={setTheme} />}
-      </main>
-      <BottomNav current={tab} onTab={setTab} />
+
+      <Drawer
+        open={drawerOpen}
+        current={view}
+        onNavigate={goto}
+        onClose={() => setDrawerOpen(false)}
+        theme={theme}
+        onTheme={setTheme}
+      />
     </div>
   );
 }
+
+// ===========================================================================
+// 顶栏
+// ===========================================================================
+
+function AppBar({
+  title, onMenu, onSearch, fallback,
+}: {
+  title: string;
+  onMenu: () => void;
+  onSearch: () => void;
+  fallback: boolean;
+}) {
+  return (
+    <header className="app-bar">
+      <button className="icon-btn" onClick={onMenu} aria-label="打开菜单">
+        <span className="menu-lines"><i /><i /><i /></span>
+      </button>
+      <h1 className="app-bar-title">{title}</h1>
+      <button className="icon-btn" onClick={onSearch} aria-label="搜索">
+        <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" strokeLinecap="round" />
+        </svg>
+      </button>
+      {fallback && <span className="fallback-dot" title="内存模式（数据不持久化）" />}
+    </header>
+  );
+}
+
+// ===========================================================================
+// 侧边抽屉
+// ===========================================================================
+
+function Drawer({
+  open, current, onNavigate, onClose, theme, onTheme,
+}: {
+  open: boolean;
+  current: ViewId;
+  onNavigate: (v: ViewId) => void;
+  onClose: () => void;
+  theme: 'light' | 'dark';
+  onTheme: (t: 'light' | 'dark') => void;
+}) {
+  return (
+    <>
+      <div
+        className={`drawer-mask ${open ? 'show' : ''}`}
+        onClick={onClose}
+        aria-hidden={!open}
+      />
+      <aside className={`drawer ${open ? 'open' : ''}`} aria-hidden={!open}>
+        <div className="drawer-header">
+          <div className="drawer-logo">
+            <span className="drawer-logo-ring" />
+            <span className="drawer-logo-core" />
+          </div>
+          <div className="drawer-brand">
+            <div className="drawer-brand-name">Aurora Note</div>
+            <div className="drawer-brand-sub">本地优先 · P2P 同步</div>
+          </div>
+        </div>
+
+        <nav className="drawer-nav">
+          {NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              className={`drawer-item ${current === item.id ? 'active' : ''}`}
+              onClick={() => onNavigate(item.id)}
+            >
+              <span className="drawer-item-icon">{item.icon}</span>
+              <span className="drawer-item-text">
+                <span className="drawer-item-label">{item.label}</span>
+                <span className="drawer-item-desc">{item.desc}</span>
+              </span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="drawer-footer">
+          <button
+            className="drawer-theme-btn"
+            onClick={() => onTheme(theme === 'dark' ? 'light' : 'dark')}
+          >
+            {theme === 'dark' ? '☀️ 亮色模式' : '🌙 暗色模式'}
+          </button>
+          <div className="drawer-version">v0.12 · Rust Core + React</div>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+// ===========================================================================
+// 启动屏
+// ===========================================================================
 
 function SplashScreen() {
   return (
@@ -104,36 +217,12 @@ function SplashScreen() {
 }
 
 // ===========================================================================
-// V15 §4.1 底部导航（触控热区 48px）
+// 笔记视图 — 卡片列表 + FAB + 左滑删除
 // ===========================================================================
 
-function BottomNav({ current, onTab }: { current: TabId; onTab: (t: TabId) => void }) {
-  return (
-    <nav className="bottom-nav safe-bottom">
-      {TABS.map((t) => (
-        <button
-          key={t.id}
-          className={`nav-tab ${current === t.id ? 'active' : ''}`}
-          onClick={() => onTab(t.id)}
-        >
-          <span className="nav-icon">{t.icon}</span>
-          <span className="nav-label">{t.label}</span>
-        </button>
-      ))}
-    </nav>
-  );
-}
-
-// ===========================================================================
-// §4.2 笔记视图 — 顶部搜索 + 笔记卡片 + FAB + 下拉刷新/左滑删除
-// ===========================================================================
-
-function NotesView() {
+function NotesView({ onOpen }: { onOpen: (id: string, title: string) => void }) {
   const [notes, setNotes] = useState<NoteSummary[]>([]);
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [swipingId, setSwipingId] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -142,10 +231,9 @@ function NotesView() {
 
   useEffect(refresh, [refresh]);
 
-  // V15 §4.5 下拉刷新手势
   const pullStart = useRef(0);
   const onTouchStart = (e: React.TouchEvent) => {
-    if ((e.target as HTMLElement).closest('.note-card')) return; // 卡片触摸不走下拉
+    if ((e.target as HTMLElement).closest('.note-card')) return;
     pullStart.current = e.touches[0].clientY;
   };
   const onTouchMove = (e: React.TouchEvent) => {
@@ -159,7 +247,6 @@ function NotesView() {
     }
   };
 
-  // V15 §4.5 卡片左滑删除
   const cardTouchStart = useRef<{ x: number; y: number } | null>(null);
   const onCardTouchStart = (e: React.TouchEvent) => {
     cardTouchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -176,96 +263,155 @@ function NotesView() {
     refresh();
   };
 
-  const doSearch = (q: string) => {
-    setQuery(q);
-    setResults(q.trim() ? platform.searchNotes(q) : null);
-  };
-
   const doCreate = () => {
     const title = `笔记 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
-    platform.createNote(title);
+    const id = platform.createNote(title);
     refresh();
+    // 直接进入编辑器（新笔记立即写作）
+    const note = id || `new-${Date.now()}`;
+    onOpen(String(note), title);
   };
 
-  if (editing) {
-    return <NoteEditor noteId={editing.id} title={editing.title} onClose={() => setEditing(null)} />;
-  }
-
   return (
-    <div
-      className="view"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-    >
-      <header className="view-header">
-        <h1 className="view-title">笔记</h1>
-        <input
-          className="search-input"
-          placeholder="搜索笔记…"
-          value={query}
-          onChange={(e) => doSearch(e.target.value)}
-        />
-      </header>
-
+    <div className="view" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
       {refreshing && <div className="refresh-indicator">刷新中…</div>}
 
-      {results !== null ? (
-        <div className="note-list">
-          {results.length === 0 && <EmptyState text={`没有找到“${query}”相关笔记`} />}
-          {results.map((r) => (
-            <div key={r.noteId} className="note-card search-hit">
-              <div className="note-title">{r.title}</div>
-              <div className="note-snippet">{r.snippet}</div>
-              <div className="note-meta">相关度 {(r.score * 100).toFixed(0)}%</div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="note-list">
-          {notes.length === 0 && (
-            <EmptyState text="还没有笔记，点击右下角 + 创建第一篇" />
-          )}
-          {notes.map((n) => (
-            <div
-              key={n.id}
-              className={`note-card ${swipingId === n.id ? 'swiped' : ''}`}
-              onTouchStart={onCardTouchStart}
-              onTouchMove={(e) => onCardTouchMove(e, n.id)}
-              onClick={() => swipingId !== n.id && setEditing({ id: n.id, title: n.title })}
-            >
+      <div className="note-list">
+        {notes.length === 0 && (
+          <EmptyState text="还没有笔记
+点击右下角 + 创建第一篇" />
+        )}
+        {notes.map((n) => (
+          <div
+            key={n.id}
+            className={`note-card ${swipingId === n.id ? 'swiped' : ''}`}
+            onTouchStart={onCardTouchStart}
+            onTouchMove={(e) => onCardTouchMove(e, n.id)}
+            onClick={() => swipingId !== n.id && onOpen(n.id, n.title)}
+          >
+            <div className="note-card-body">
               <div className="note-title">{n.title}</div>
-              <div className="note-meta">
-                {new Date(n.updatedAt).toLocaleString('zh-CN', { hour12: false })}
-              </div>
-              {swipingId === n.id && (
-                <button
-                  className="swipe-delete"
-                  onClick={(e) => { e.stopPropagation(); doDelete(n.id); }}
-                >
-                  删除
-                </button>
-              )}
+              <div className="note-snippet">{noteSnippet(n.id)}</div>
+              <div className="note-meta">{relativeTime(n.updatedAt)}</div>
             </div>
-          ))}
-        </div>
-      )}
+            <span className="note-card-chevron">›</span>
+            {swipingId === n.id && (
+              <button
+                className="swipe-delete"
+                onClick={(e) => { e.stopPropagation(); doDelete(n.id); }}
+              >
+                删除
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
 
-      {/* V15 §4.2 FAB 悬浮按钮 — 56dp */}
       <button className="fab" onClick={doCreate} aria-label="新建笔记">
-        +
+        <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
       </button>
     </div>
   );
 }
 
+/** 笔记摘要: 取 body 纯文本前 60 字（NoteDoc body 容器，Rust 侧维护）。 */
+const snippetCache = new Map<string, string>();
+function noteSnippet(id: string): string {
+  const cached = snippetCache.get(id);
+  if (cached !== undefined) return cached;
+  let s = '';
+  try {
+    s = platform.getNoteContent(id).replace(/\s+/g, ' ').trim().slice(0, 60);
+  } catch { /* JNI 异常兜底 */ }
+  snippetCache.set(id, s);
+  return s;
+}
+
+/** 相对时间（"3 分钟前"）。 */
+function relativeTime(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return iso;
+  const diff = Date.now() - t;
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
+  return new Date(t).toLocaleDateString('zh-CN');
+}
+
 // ===========================================================================
-// 笔记编辑器 — V19 §36.3 saveNote/getNoteContent
+// 搜索视图
 // ===========================================================================
 
-function NoteEditor({ noteId, title, onClose }: { noteId: string; title: string; onClose: () => void }) {
+function SearchView({ onOpen }: { onOpen: (id: string, title: string) => void }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<SearchResult[] | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const doSearch = (q: string) => {
+    setQuery(q);
+    setResults(q.trim() ? platform.searchNotes(q) : null);
+  };
+
+  return (
+    <div className="view search-view">
+      <div className="search-box">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" strokeLinecap="round" />
+        </svg>
+        <input
+          ref={inputRef}
+          className="search-box-input"
+          placeholder="搜索笔记标题与正文…"
+          value={query}
+          onChange={(e) => doSearch(e.target.value)}
+        />
+        {query && (
+          <button className="search-clear" onClick={() => doSearch('')}>✕</button>
+        )}
+      </div>
+
+      {results !== null && (
+        <div className="note-list">
+          {results.length === 0 && <EmptyState text={`没有找到“${query}”相关笔记`} />}
+          {results.map((r) => (
+            <div key={r.noteId} className="note-card search-hit" onClick={() => onOpen(r.noteId, r.title)}>
+              <div className="note-card-body">
+                <div className="note-title">{r.title}</div>
+                <div className="note-snippet">{r.snippet}</div>
+                <div className="note-meta">相关度 {(r.score * 100).toFixed(0)}%</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===========================================================================
+// 笔记编辑页 — V12: 顶栏 + 保存状态 + 更多菜单（同步/删除）+ 工具栏
+// ===========================================================================
+
+function NoteEditor({
+  noteId, title, onClose, onDeleted,
+}: {
+  noteId: string;
+  title: string;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
   const [content, setContent] = useState('');
   const [saved, setSaved] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     setContent(platform.getNoteContent(noteId));
@@ -277,18 +423,68 @@ function NoteEditor({ noteId, title, onClose }: { noteId: string; title: string;
     setTimeout(onClose, 500);
   };
 
+  const doDelete = () => {
+    platform.deleteNote(noteId);
+    onDeleted();
+  };
+
   return (
     <div className="view editor-view">
-      <header className="view-header">
-        <button className="header-btn" onClick={onClose}>‹ 返回</button>
-        <h1 className="view-title editor-title">{title}</h1>
-        <button className="header-btn" onClick={() => setSyncOpen(!syncOpen)}>同步</button>
-        <button className="header-btn primary" onClick={save}>保存</button>
+      <header className="editor-bar">
+        <button className="icon-btn" onClick={onClose} aria-label="返回">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+        <div className="editor-bar-title">
+          <div className="editor-bar-name">{title}</div>
+          <div className="editor-bar-status">
+            {saved ? '已保存' : '自动保存已开启'}
+          </div>
+        </div>
+        <button className="icon-btn" onClick={() => setMenuOpen(!menuOpen)} aria-label="更多">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" />
+          </svg>
+        </button>
       </header>
+
+      {menuOpen && (
+        <>
+          <div className="menu-mask" onClick={() => setMenuOpen(false)} />
+          <div className="editor-menu">
+            <button className="menu-item" onClick={() => { setSyncOpen(!syncOpen); setMenuOpen(false); }}>
+              🔄 P2P 同步
+            </button>
+            <button className="menu-item" onClick={() => { setMenuOpen(false); setConfirmDelete(true); }}>
+              🗑️ 删除笔记
+            </button>
+            <button className="menu-item" onClick={() => { setMenuOpen(false); save(); }}>
+              💾 保存并返回
+            </button>
+          </div>
+        </>
+      )}
+
       <React.Suspense fallback={<div className="editor-loading">编辑器加载中…</div>}>
         <RichEditor noteId={noteId} fallbackText={content} />
       </React.Suspense>
+
       {syncOpen && <SyncPanel noteId={noteId} />}
+
+      {confirmDelete && (
+        <div className="dialog-mask" onClick={() => setConfirmDelete(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-title">删除笔记？</div>
+            <div className="dialog-text">「{title}」将被永久删除，无法恢复。</div>
+            <div className="dialog-actions">
+              <button className="dialog-btn" onClick={() => setConfirmDelete(false)}>取消</button>
+              <button className="dialog-btn danger" onClick={doDelete}>删除</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {saved && <div className="toast">已保存 ✓</div>}
     </div>
   );
@@ -328,14 +524,15 @@ function SyncPanel({ noteId }: { noteId: string }) {
     setStatus(
       report.success
         ? `同步成功：↑${report.sentBytes}B ↓${report.receivedBytes}B`
-        : `同步失败: ${report.error || '未知错误'}`
+        : `同步失败: ${report.error || '未知错误'}`,
     );
   };
 
   return (
     <div className="sync-panel">
+      <div className="sync-panel-title">P2P 同步（iroh QUIC）</div>
       <div className="sync-row">
-        <button className="header-btn" onClick={startEngine}>启动引擎</button>
+        <button className="sync-btn" onClick={startEngine}>启动引擎</button>
         {localAddr && <span className="sync-addr" title={localAddr}>{localAddr.slice(0, 48)}…</span>}
       </div>
       <div className="sync-row">
@@ -343,9 +540,9 @@ function SyncPanel({ noteId }: { noteId: string }) {
           className="sync-input"
           value={peerAddr}
           onChange={(e) => setPeerAddr(e.target.value)}
-          placeholder='粘贴对端地址 JSON {"id":"…","addrs":[…]}'
+          placeholder='粘贴对端地址 {"id":"…","addrs":[…]}'
         />
-        <button className="header-btn primary" onClick={doSync}>同步</button>
+        <button className="sync-btn primary" onClick={doSync}>同步</button>
       </div>
       {status && <div className="sync-status">{status}</div>}
     </div>
@@ -353,7 +550,7 @@ function SyncPanel({ noteId }: { noteId: string }) {
 }
 
 // ===========================================================================
-// §3.8 AI 助手视图（本地 Ollama 占位对话）
+// AI 助手视图（本地 Ollama 占位对话）
 // ===========================================================================
 
 function AIView() {
@@ -367,7 +564,6 @@ function AIView() {
     if (!text) return;
     setMessages((m) => [...m, { role: 'user', text }]);
     setInput('');
-    // 本地模型未接入时回显提示
     setTimeout(() => {
       setMessages((m) => [
         ...m,
@@ -378,9 +574,6 @@ function AIView() {
 
   return (
     <div className="view chat-view">
-      <header className="view-header">
-        <h1 className="view-title">AI 助手</h1>
-      </header>
       <div className="chat-list">
         {messages.map((m, i) => (
           <div key={i} className={`chat-bubble ${m.role}`}>
@@ -403,7 +596,7 @@ function AIView() {
 }
 
 // ===========================================================================
-// §3.9 闪卡复习视图
+// 闪卡复习视图
 // ===========================================================================
 
 function FlashcardsView() {
@@ -419,14 +612,7 @@ function FlashcardsView() {
 
   return (
     <div className="view">
-      <header className="view-header">
-        <h1 className="view-title">闪卡复习</h1>
-        <span className="view-subtitle">{index + 1} / {cards.length}</span>
-      </header>
-      <div
-        className={`flashcard ${flipped ? 'flipped' : ''}`}
-        onClick={() => setFlipped(!flipped)}
-      >
+      <div className={`flashcard ${flipped ? 'flipped' : ''}`} onClick={() => setFlipped(!flipped)}>
         <div className="flashcard-inner">
           <div className="flashcard-face front">
             <div className="flashcard-label">问题</div>
@@ -458,7 +644,7 @@ function FlashcardsView() {
 }
 
 // ===========================================================================
-// §3.7 无限画布视图（SVG 简化版）
+// 无限画布视图（SVG 简化版）
 // ===========================================================================
 
 function CanvasView() {
@@ -474,14 +660,11 @@ function CanvasView() {
 
   return (
     <div className="view">
-      <header className="view-header">
-        <h1 className="view-title">无限画布</h1>
-      </header>
       {nodes.length === 0 ? (
         <EmptyState text="创建笔记后，这里会展示知识图谱" />
       ) : (
         <svg className="canvas-svg" viewBox="0 0 300 260">
-          {nodes.map((n, i) => (
+          {nodes.map((n) => (
             <line
               key={`l-${n.id}`}
               x1="150" y1="130" x2={n.x + 30} y2={n.y + 12}
@@ -509,9 +692,6 @@ function CanvasView() {
 function SettingsView({ theme, onTheme }: { theme: 'light' | 'dark'; onTheme: (t: 'light' | 'dark') => void }) {
   return (
     <div className="view">
-      <header className="view-header">
-        <h1 className="view-title">设置</h1>
-      </header>
       <div className="settings-group">
         <div className="settings-group-title">外观</div>
         <div className="settings-row">
@@ -529,7 +709,7 @@ function SettingsView({ theme, onTheme }: { theme: 'light' | 'dark'; onTheme: (t
       </div>
       <div className="settings-group">
         <div className="settings-group-title">关于</div>
-        <div className="settings-row"><span>版本</span><span className="settings-value">0.1.0</span></div>
+        <div className="settings-row"><span>版本</span><span className="settings-value">0.12.0</span></div>
         <div className="settings-row"><span>架构</span><span className="settings-value">Rust Core + React</span></div>
         <div className="settings-row"><span>引擎</span><span className="settings-value">SQLite · Tantivy · Tokio</span></div>
       </div>
@@ -545,53 +725,15 @@ function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   );
 }
 
-// ===========================================================================
-// 大屏布局 — V15 §4.6 large 断点侧栏导航
-// ===========================================================================
-
-function LargeLayout({
-  tab, onTab, theme, onTheme, fallback,
-}: {
-  tab: TabId;
-  onTab: (t: TabId) => void;
-  theme: 'light' | 'dark';
-  onTheme: (t: 'light' | 'dark') => void;
-  fallback: boolean;
-}) {
-  return (
-    <div className="large-layout">
-      <aside className="large-sidebar">
-        <div className="large-logo">Aurora</div>
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            className={`large-nav-item ${tab === t.id ? 'active' : ''}`}
-            onClick={() => onTab(t.id)}
-          >
-            <span>{t.icon}</span> {t.label}
-          </button>
-        ))}
-      </aside>
-      <main className="large-content">
-        {fallback && <div className="fallback-banner">⚠️ 内存模式（数据不持久化）</div>}
-        {tab === 'notes' && <NotesView />}
-        {tab === 'ai' && <AIView />}
-        {tab === 'flashcards' && <FlashcardsView />}
-        {tab === 'canvas' && <CanvasView />}
-        {tab === 'settings' && <SettingsView theme={theme} onTheme={setThemeSafe(onTheme)} />}
-      </main>
-    </div>
-  );
-}
-
-function setThemeSafe(onTheme: (t: 'light' | 'dark') => void) {
-  return onTheme;
-}
-
 function EmptyState({ text }: { text: string }) {
   return (
     <div className="empty-state">
-      <div className="empty-icon">🗒️</div>
+      <div className="empty-icon">
+        <svg viewBox="0 0 48 48" width="56" height="56" fill="none">
+          <rect x="10" y="6" width="28" height="36" rx="4" stroke="currentColor" strokeWidth="2.4" opacity="0.5" />
+          <path d="M17 16h14M17 23h14M17 30h9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" opacity="0.5" />
+        </svg>
+      </div>
       <div className="empty-text">{text}</div>
     </div>
   );
