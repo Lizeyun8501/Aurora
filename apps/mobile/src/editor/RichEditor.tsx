@@ -30,6 +30,8 @@ interface RichEditorProps {
   /** 降级用纯文本初值（无桥时）。 */
   fallbackText: string;
   onDirty?: () => void;
+  /** 保存完成回调（外层显示"已保存"）。 */
+  onSaved?: () => void;
   /** 状态回调（外层显示"编辑器加载中/降级"）。 */
   onStatus?: (s: EditorStatus) => void;
 }
@@ -234,7 +236,7 @@ function EditorToolbar({ view, tick }: { view: EditorView | null; tick: number }
 // 主组件
 // ---------------------------------------------------------------------------
 
-export function RichEditor({ noteId, fallbackText, onDirty, onStatus }: RichEditorProps) {
+export function RichEditor({ noteId, fallbackText, onDirty, onSaved, onStatus }: RichEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<AuroraEditorHandle | null>(null);
   const dirtyRef = useRef(false);
@@ -274,6 +276,8 @@ export function RichEditor({ noteId, fallbackText, onDirty, onStatus }: RichEdit
           const b64 = bytesToBase64(snapshotBytes);
           if (!platform.saveNoteSnapshot(noteId, b64)) {
             console.warn('saveNoteSnapshot failed for', noteId);
+          } else {
+            onSaved?.();
           }
           dirtyRef.current = false;
         },

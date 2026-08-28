@@ -11,32 +11,36 @@
     <style>
       /* V15 §2.1 设计令牌 — CSS 变量注入（WebView 全局） */
       :root {
-        --brand: #6366f1;
-        --brand-2: #22d3ee;
-        --brand-pressed: #5a7be0;
+        --brand: #4755B8;
+        --brand-pressed: #3B479C;
+        --brand-soft: rgba(71, 85, 184, 0.09);
         --bg-primary: #ffffff;
-        --bg-secondary: #f7f8fa;
-        --bg-card: #ffffff;
-        --text-primary: #1f2329;
-        --text-secondary: #646a73;
-        --text-tertiary: #8f959e;
-        --border: #e5e6eb;
-        --success: #34c724;
-        --warning: #ff8800;
-        --danger: #f54a45;
-        --radius-card: 12px;
+        --bg-secondary: #F9FAFB;
+        --bg-card: #F9FAFB;
+        --text-primary: #1F2937;
+        --text-secondary: #6B7280;
+        --text-tertiary: #9CA3AF;
+        --border: #E5E7EB;
+        --success: #36A36F;
+        --warning: #E09F3E;
+        --danger: #D64646;
+        --radius-card: 8px;
         --radius-btn: 8px;
       }
       [data-theme='dark'] {
-        --brand: #818cf8;
-        --brand-2: #67e8f9;
-        --bg-primary: #0f1117;
-        --bg-secondary: #1a1d27;
-        --bg-card: #1a1d27;
+        --brand: #6372E0;
+        --brand-pressed: #5563CC;
+        --brand-soft: rgba(99, 114, 224, 0.14);
+        --bg-primary: #111827;
+        --bg-secondary: #1F2937;
+        --bg-card: #1F2937;
         --text-primary: #e8eaed;
         --text-secondary: #9aa0a6;
-        --text-tertiary: #5f6368;
-        --border: #2a2d3a;
+        --text-tertiary: #9CA3AF;
+        --border: #374151;
+        --success: #42B980;
+        --warning: #F0B85F;
+        --danger: #E85C5C;
       }
       html, body, #root {
         height: 100%;
@@ -45,7 +49,7 @@
         overscroll-behavior-y: contain;
       }
       body {
-        font-family: -apple-system, 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+        font-family: Inter, -apple-system, 'PingFang SC', 'Source Han Sans SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
         background: var(--bg-primary);
         color: var(--text-primary);
         font-size: 16px;

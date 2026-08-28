@@ -1,6 +1,6 @@
 import { Component, StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MobileApp } from './MobileApp';
+import MobileApp from './MobileApp';
 import './styles/mobile.css';
 
 const rootElement = document.getElementById('root');
