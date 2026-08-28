@@ -83,16 +83,61 @@ const I = {
   focus: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
   ),
+  menu: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  ),
+  star: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></svg>
+  ),
+  book: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+  ),
+  calendar: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+  ),
+  taskSquare: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/></svg>
+  ),
+  user: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4"/><path d="M5 21a7 7 0 0 1 14 0"/></svg>
+  ),
+  restore: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+  ),
+  diaryPen: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+  ),
 };
 
 // ===========================================================================
 // 全局状态
 // ===========================================================================
 
-type ViewId = 'today' | 'notes' | 'search' | 'agent' | 'settings';
+type ViewId = 'today' | 'notes' | 'search' | 'agent' | 'settings'
+  | 'favorites' | 'recent' | 'tasks' | 'diary' | 'trash';
 const VIEW_TITLES: Record<ViewId, string> = {
   today: '今日', notes: '知识库', search: '搜索', agent: 'Agent', settings: '设置',
+  favorites: '我的收藏', recent: '最近浏览', tasks: '任务中心', diary: '日记本', trash: '回收站',
 };
+/** 次级视图 → Tab 高亮映射（抽屉导航进入次级页时保持主 Tab 语境）。 */
+const TAB_OF_VIEW: Record<ViewId, string> = {
+  today: 'today', notes: 'notes', search: 'search', agent: 'agent', settings: 'settings',
+  favorites: 'notes', recent: 'notes', diary: 'notes', trash: 'notes', tasks: 'today',
+};
+
+/** 收藏 / 最近浏览 / 回收站 — localStorage（Rust 侧元数据表落地后迁移 platform API）。 */
+interface TrashItem { id: string; title: string; text: string; deletedAt: number; }
+interface RecentItem { id: string; title: string; at: number; }
+
+function loadList<T>(k: string): T[] {
+  try { return JSON.parse(localStorage.getItem(k) ?? '[]'); } catch { return []; }
+}
+function saveList<T>(k: string, v: T[]) {
+  localStorage.setItem(k, JSON.stringify(v));
+}
+const K_FAVS = 'aurora.favs';
+const K_RECENT = 'aurora.recent';
+const K_TRASH = 'aurora.trash';
 
 /** 任务 — GTD2.0 四分区（V19 §二页面1）。localStorage 演示级存储，
  *  Rust 侧任务表落地后切换 platform API。 */
@@ -136,9 +181,13 @@ export default function App() {
   const [view, setView] = useState<ViewId>('today'); // V19: TodayView 默认启动页
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     (localStorage.getItem('aurora.theme') as 'light' | 'dark') ?? 'light');
   const [tasks, setTasks] = useState<Task[]>(loadTasks);
+  const [favs, setFavs] = useState<string[]>(() => loadList<string>(K_FAVS));
+  const [recents, setRecents] = useState<RecentItem[]>(() => loadList<RecentItem>(K_RECENT));
+  const [trash, setTrash] = useState<TrashItem[]>(() => loadList<TrashItem>(K_TRASH));
   const { msg: toastMsg, show: showToast } = useToast();
 
   useEffect(() => {
@@ -156,38 +205,97 @@ export default function App() {
 
   const updateTasks = (ts: Task[]) => { setTasks(ts); saveTasks(ts); };
 
+  /** 打开笔记 — 记录最近浏览。 */
+  const openNote = (id: string, title: string) => {
+    setRecents((prev) => {
+      const next = [{ id, title, at: Date.now() }, ...prev.filter((r) => r.id !== id)].slice(0, 20);
+      saveList(K_RECENT, next);
+      return next;
+    });
+    setEditing({ id, title });
+  };
+
+  /** 收藏切换。 */
+  const toggleFav = (id: string) => {
+    setFavs((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      saveList(K_FAVS, next);
+      showToast(prev.includes(id) ? '已取消收藏' : '已收藏');
+      return next;
+    });
+  };
+
+  /** 软删除 — 内容存入回收站后调 Rust 删除（回收站可恢复文本）。 */
+  const softDelete = (id: string, title: string) => {
+    let text = '';
+    try { text = platform.getNoteContent(id); } catch { /* ignore */ }
+    setTrash((prev) => {
+      const next = [{ id, title, text, deletedAt: Date.now() }, ...prev.filter((t) => t.id !== id)];
+      saveList(K_TRASH, next);
+      return next;
+    });
+    setFavs((prev) => { const n = prev.filter((x) => x !== id); saveList(K_FAVS, n); return n; });
+    setRecents((prev) => { const n = prev.filter((r) => r.id !== id); saveList(K_RECENT, n); return n; });
+    platform.deleteNote(id);
+    snippetCache.delete(id);
+  };
+
+  const goto = (v: ViewId) => { setView(v); setDrawerOpen(false); };
+
   return (
     <div className="app-shell">
       {editing ? (
         <NoteEditor
           noteId={editing.id}
           title={editing.title}
-          onClose={() => setEditing(null)}
-          onDeleted={() => { showToast('笔记已删除'); setEditing(null); }}
+          isFav={favs.includes(editing.id)}
+          onToggleFav={() => toggleFav(editing.id)}
+          onClose={() => {
+            snippetCache.delete(editing.id);
+            setEditing(null);
+          }}
+          onDeleted={() => { softDelete(editing.id, editing.title); showToast('已移入回收站'); setEditing(null); }}
         />
       ) : (
         <>
+          <AppBar
+            title={VIEW_TITLES[view]}
+            fallback={fallback}
+            onMenu={() => setDrawerOpen(true)}
+            onSearch={() => goto('search')}
+          />
           <main className="content">
-            {fallback && <div className="settings-hint" style={{ padding: '8px 16px 0' }}>⚠️ 内存模式（数据不持久化）</div>}
             {view === 'today' && (
               <TodayView
                 tasks={tasks}
                 onTasks={updateTasks}
-                onOpenNote={(id, title) => setEditing({ id, title })}
+                onOpenNote={openNote}
                 showToast={showToast}
               />
             )}
             {view === 'notes' && (
               <NotesView
-                onOpen={(id, title) => setEditing({ id, title })}
+                onOpen={openNote}
                 showToast={showToast}
                 onNewNote={() => setCaptureOpen(true)}
+                onSoftDelete={softDelete}
+                favs={favs}
+                onToggleFav={toggleFav}
               />
             )}
-            {view === 'search' && <SearchView onOpen={(id, title) => setEditing({ id, title })} />}
+            {view === 'search' && <SearchView onOpen={openNote} />}
             {view === 'agent' && <AgentView theme={theme} />}
             {view === 'settings' && (
               <SettingsView theme={theme} onTheme={setTheme} showToast={showToast} />
+            )}
+            {view === 'favorites' && <FavoritesView favs={favs} onOpen={openNote} />}
+            {view === 'recent' && <RecentView recents={recents} onOpen={openNote} />}
+            {view === 'tasks' && (
+              <TasksView tasks={tasks} onTasks={updateTasks} showToast={showToast} />
+            )}
+            {view === 'diary' && <DiaryView onOpen={openNote} showToast={showToast} />}
+            {view === 'trash' && (
+              <TrashView trash={trash} onTrash={setTrash} showToast={showToast} />
             )}
           </main>
 
@@ -196,7 +304,18 @@ export default function App() {
             {I.plus}
           </button>
 
-          <TabBar current={view} onChange={setView} />
+          <TabBar current={view} onChange={(v) => setView(v as ViewId)} />
+
+          {drawerOpen && (
+            <Drawer2
+              current={view}
+              onNavigate={goto}
+              onClose={() => setDrawerOpen(false)}
+              tasks={tasks}
+              favs={favs}
+              trash={trash}
+            />
+          )}
         </>
       )}
 
@@ -205,6 +324,7 @@ export default function App() {
           onClose={() => setCaptureOpen(false)}
           onNewNote={(title, body) => {
             const id = platform.createNote(title);
+            if (!id) return;
             if (body) platform.saveNoteContent(id, body);
             setCaptureOpen(false);
             setEditing({ id, title });
@@ -220,6 +340,23 @@ export default function App() {
 
       {toastMsg && <div className="toast">{toastMsg}</div>}
     </div>
+  );
+}
+
+// ===========================================================================
+// AppBar — 汉堡 + 标题 + 搜索
+// ===========================================================================
+
+function AppBar({ title, fallback, onMenu, onSearch }: {
+  title: string; fallback: boolean; onMenu: () => void; onSearch: () => void;
+}) {
+  return (
+    <header className="app-bar">
+      <button className="icon-btn" onClick={onMenu} aria-label="菜单">{I.menu}</button>
+      <h1 className="app-bar-title">{title}</h1>
+      {fallback && <span className="app-bar-warn">内存模式</span>}
+      <button className="icon-btn" onClick={onSearch} aria-label="搜索">{I.search}</button>
+    </header>
   );
 }
 
@@ -245,7 +382,7 @@ function TabBar({ current, onChange }: { current: ViewId; onChange: (v: ViewId) 
       {items.map((t) => (
         <button
           key={t.id}
-          className={`tab-item ${current === t.id ? 'active' : ''}`}
+          className={`tab-item ${TAB_OF_VIEW[current] === t.id ? 'active' : ''}`}
           onClick={() => onChange(t.id)}
         >
           {t.icon}
@@ -541,10 +678,13 @@ function noteSnippet(id: string): string {
   return s;
 }
 
-function NotesView({ onOpen, showToast, onNewNote }: {
+function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleFav }: {
   onOpen: (id: string, title: string) => void;
   showToast: (t: string) => void;
   onNewNote: () => void;
+  onSoftDelete: (id: string, title: string) => void;
+  favs: string[];
+  onToggleFav: (id: string) => void;
 }) {
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [query, setQuery] = useState('');
@@ -603,14 +743,19 @@ function NotesView({ onOpen, showToast, onNewNote }: {
                   <span className="tag">Inbox</span>
                 </div>
               </div>
+              <button
+                className={`fav-btn ${favs.includes(n.id) ? 'on' : ''}`}
+                onClick={(e) => { e.stopPropagation(); onToggleFav(n.id); }}
+                aria-label="收藏"
+              >{I.star}</button>
               <span className="note-card-chevron">{I.chev}</span>
               {swipingId === n.id && (
                 <button
                   className="swipe-delete"
                   onClick={(e) => {
                     e.stopPropagation();
-                    platform.deleteNote(n.id);
-                    snippetCache.delete(n.id);
+                    onSoftDelete(n.id, n.title);
+                    showToast('已移入回收站');
                     setSwipingId(null);
                     refresh();
                     showToast('笔记已删除');
@@ -901,9 +1046,11 @@ function SyncPanel({ noteId }: { noteId: string }) {
 // 编辑页 — V19 移动端页面4（全屏沉浸 · 顶部返回+标题+工具菜单 · 专注模式）
 // ===========================================================================
 
-function NoteEditor({ noteId, title, onClose, onDeleted }: {
+function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted }: {
   noteId: string;
   title: string;
+  isFav: boolean;
+  onToggleFav: () => void;
   onClose: () => void;
   onDeleted: () => void;
 }) {
@@ -928,6 +1075,9 @@ function NoteEditor({ noteId, title, onClose, onDeleted }: {
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 65 }} onClick={() => setMenuOpen(false)} />
           <div className="menu-pop">
+            <button className="menu-item" onClick={() => { onToggleFav(); setMenuOpen(false); }}>
+              {I.star} {isFav ? '取消收藏' : '收藏笔记'}
+            </button>
             <button className="menu-item" onClick={() => { setSyncOpen(!syncOpen); setMenuOpen(false); }}>
               {I.sync} P2P 同步
             </button>
@@ -936,11 +1086,10 @@ function NoteEditor({ noteId, title, onClose, onDeleted }: {
             </button>
             {confirmDel ? (
               <button className="menu-item danger" onClick={() => {
-                platform.deleteNote(noteId);
                 snippetCache.delete(noteId);
-                onDeleted();
+                onDeleted(); // 软删除 — 内容进回收站
               }}>
-                {I.trash} 确认删除
+                {I.trash} 确认删除（移入回收站）
               </button>
             ) : (
               <button className="menu-item danger" onClick={() => setConfirmDel(true)}>
@@ -970,8 +1119,358 @@ function NoteEditor({ noteId, title, onClose, onDeleted }: {
 }
 
 // ===========================================================================
-// 工具
+// Drawer2 — 参考图3 抽屉: 标题+关闭(无logo) · 统计卡 · 分组导航 · 数字角标
 // ===========================================================================
+
+function Drawer2({ current, onNavigate, onClose, tasks, favs, trash }: {
+  current: ViewId;
+  onNavigate: (v: ViewId) => void;
+  onClose: () => void;
+  tasks: Task[];
+  favs: string[];
+  trash: TrashItem[];
+}) {
+  const notes = platform.listNotes();
+  const openTasks = tasks.filter((t) => t.status !== 'done').length;
+  const doneTasks = tasks.filter((t) => t.status === 'done').length;
+
+  const item = (v: ViewId, icon: React.ReactNode, label: string, badge?: number, badgeTone?: 'brand' | 'warn') => (
+    <button
+      className={`d-item ${current === v ? 'active' : ''}`}
+      onClick={() => onNavigate(v)}
+    >
+      <span className="d-item-icon">{icon}</span>
+      <span className="d-item-label">{label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className={`d-badge ${badgeTone === 'warn' ? 'warn' : ''}`}>{badge}</span>
+      )}
+    </button>
+  );
+
+  return (
+    <>
+      <div className="drawer-mask" onClick={onClose} />
+      <aside className="drawer2">
+        {/* 顶部: 标题 + 关闭（无 logo — 用户要求） */}
+        <div className="d-head">
+          <span className="d-head-title">功能导航</span>
+          <button className="icon-btn" onClick={onClose} aria-label="关闭">{I.x}</button>
+        </div>
+
+        {/* 统计卡 — 头像 + 三列数据（参考图1） */}
+        <div className="d-profile" onClick={() => onNavigate('settings')}>
+          <div className="d-avatar">A</div>
+          <div className="d-profile-info">
+            <div className="d-profile-name">Aurora 用户</div>
+            <div className="d-profile-sub">本地优先 · 免费版</div>
+          </div>
+        </div>
+        <div className="d-stats">
+          <button className="d-stat" onClick={() => onNavigate('notes')}>
+            <span className="d-stat-num">{notes.length}</span>
+            <span className="d-stat-label">笔记</span>
+          </button>
+          <button className="d-stat" onClick={() => onNavigate('tasks')}>
+            <span className="d-stat-num ok">{doneTasks}</span>
+            <span className="d-stat-label">已完成</span>
+          </button>
+          <button className="d-stat" onClick={() => onNavigate('tasks')}>
+            <span className="d-stat-num warn">{openTasks}</span>
+            <span className="d-stat-label">进行中</span>
+          </button>
+        </div>
+
+        <div className="d-scroll">
+          <div className="d-group-title">快捷操作</div>
+          {item('notes', I.notes, '全部笔记', notes.length)}
+          {item('recent', I.clock, '最近浏览')}
+          {item('favorites', I.star, '我的收藏', favs.length)}
+
+          <div className="d-group-title">事务管理</div>
+          {item('today', I.today, '今日视图')}
+          {item('tasks', I.taskSquare, '任务中心', openTasks, 'warn')}
+          {item('diary', I.book, '日记本')}
+
+          <div className="d-group-title">更多</div>
+          {item('trash', I.trash, '回收站', trash.length)}
+          {item('settings', I.gear, '设置')}
+
+          <div className="d-footer">Aurora Note · v0.14 · 本地优先</div>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+// ===========================================================================
+// 收藏 / 最近浏览 / 回收站 / 任务中心 / 日记本
+// ===========================================================================
+
+function FavoritesView({ favs, onOpen }: { favs: string[]; onOpen: (id: string, title: string) => void }) {
+  const notes = platform.listNotes().filter((n) => favs.includes(n.id));
+  return (
+    <div className="view">
+      {notes.length === 0 ? (
+        <EmptyState text="还没有收藏的笔记。在笔记编辑页菜单中点击「收藏」即可添加。" />
+      ) : (
+        <div className="note-list">
+          {notes.map((n) => (
+            <NoteCard key={n.id} note={n} onOpen={onOpen} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RecentView({ recents, onOpen }: { recents: RecentItem[]; onOpen: (id: string, title: string) => void }) {
+  return (
+    <div className="view">
+      {recents.length === 0 ? (
+        <EmptyState text="最近浏览记录将出现在这里。" />
+      ) : (
+        <div className="note-list">
+          {recents.map((r) => (
+            <div key={r.id} className="note-card" onClick={() => onOpen(r.id, r.title)}>
+              <div className="note-card-body">
+                <div className="note-title">{r.title}</div>
+                <div className="note-meta">{relativeTime(new Date(r.at).toISOString())}浏览</div>
+              </div>
+              <span className="note-card-chevron">›</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrashView({ trash, onTrash, showToast }: {
+  trash: TrashItem[];
+  onTrash: React.Dispatch<React.SetStateAction<TrashItem[]>>;
+  showToast: (m: string) => void;
+}) {
+  const restore = (t: TrashItem) => {
+    const id = platform.createNote(t.title);
+    if (!id) return;
+    if (t.text) platform.saveNoteContent(id, t.text);
+    onTrash((prev) => { const n = prev.filter((x) => x.id !== t.id); saveList(K_TRASH, n); return n; });
+    showToast('已恢复');
+  };
+  const purge = (t: TrashItem) => {
+    onTrash((prev) => { const n = prev.filter((x) => x.id !== t.id); saveList(K_TRASH, n); return n; });
+    showToast('已彻底删除');
+  };
+  const clearAll = () => {
+    onTrash(() => { saveList(K_TRASH, []); return []; });
+    showToast('回收站已清空');
+  };
+
+  return (
+    <div className="view">
+      {trash.length === 0 ? (
+        <EmptyState text="回收站是空的。删除的笔记会在这里保留，可随时恢复。" />
+      ) : (
+        <>
+          <button className="btn btn-text btn-block" style={{ marginBottom: 8 }} onClick={clearAll}>
+            清空回收站（{trash.length}）
+          </button>
+          <div className="note-list">
+            {trash.map((t) => (
+              <div key={t.id} className="note-card">
+                <div className="note-card-body">
+                  <div className="note-title">{t.title}</div>
+                  <div className="note-snippet">{t.text.slice(0, 50) || '（无文本内容）'}</div>
+                  <div className="note-meta">删除于 {relativeTime(new Date(t.deletedAt).toISOString())}</div>
+                </div>
+                <div className="trash-actions">
+                  <button className="btn btn-secondary btn-sm" onClick={() => restore(t)}>
+                    {I.restore} 恢复
+                  </button>
+                  <button className="btn btn-text btn-sm danger-text" onClick={() => purge(t)}>删除</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TasksView({ tasks, onTasks, showToast }: {
+  tasks: Task[];
+  onTasks: (ts: Task[]) => void;
+  showToast: (m: string) => void;
+}) {
+  const [filter, setFilter] = useState<'all' | 'open' | 'done'>('all');
+  const open = tasks.filter((t) => t.status !== 'done');
+  const done = tasks.filter((t) => t.status === 'done');
+  const shown = filter === 'all' ? tasks : filter === 'open' ? open : done;
+
+  const toggle = (id: string) =>
+    onTasks(tasks.map((t) => t.id === id
+      ? { ...t, status: t.status === 'done' ? 'next' : 'done' } : t));
+
+  const remove = (id: string) => {
+    onTasks(tasks.filter((t) => t.id !== id));
+    showToast('任务已删除');
+  };
+
+  return (
+    <div className="view">
+      <div className="chip-row">
+        <button className={`chip ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
+          全部 {tasks.length}
+        </button>
+        <button className={`chip ${filter === 'open' ? 'active' : ''}`} onClick={() => setFilter('open')}>
+          进行中 {open.length}
+        </button>
+        <button className={`chip ${filter === 'done' ? 'active' : ''}`} onClick={() => setFilter('done')}>
+          已完成 {done.length}
+        </button>
+      </div>
+
+      {shown.length === 0 ? (
+        <EmptyState text="暂无任务。点右下角 + 捕获，加入今日任务。" />
+      ) : (
+        <div className="card" style={{ padding: 4 }}>
+          {shown.map((t) => (
+            <div key={t.id} className="task-item">
+              <button
+                className={`task-check ${t.status === 'done' ? 'checked' : ''}`}
+                onClick={() => toggle(t.id)}
+                aria-label="完成"
+              >{I.check}</button>
+              <div className="task-body">
+                <div className="task-text">{t.text}</div>
+                <div className="task-meta">
+                  <span className="task-status-tag">{TASK_GROUPS.find((g) => g.id === t.status)?.label}</span>
+                  <span className="task-meta-time">{relativeTime(new Date(t.createdAt).toISOString())}</span>
+                </div>
+              </div>
+              <button className="icon-btn" onClick={() => remove(t.id)} aria-label="删除任务">{I.x}</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {done.length > 0 && (
+        <button
+          className="btn btn-text btn-block"
+          style={{ marginTop: 8 }}
+          onClick={() => { onTasks(open); showToast('已清除完成任务'); }}
+        >
+          清除全部已完成
+        </button>
+      )}
+    </div>
+  );
+}
+
+function DiaryView({ onOpen, showToast }: {
+  onOpen: (id: string, title: string) => void;
+  showToast: (m: string) => void;
+}) {
+  const [monthOffset, setMonthOffset] = useState(0);
+  const [refresh, setRefresh] = useState(0);
+  const diaries = platform.listNotes()
+    .filter((n) => /日记/.test(n.title))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+  const now = new Date();
+  const view = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+  const y = view.getFullYear();
+  const m = view.getMonth();
+  const firstDay = new Date(y, m, 1).getDay(); // 0=周日
+  const lead = (firstDay + 6) % 7; // 周一起始
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const fmt = (d: number) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const dayHas = (d: number) => diaries.some((n) => n.title.includes(fmt(d)));
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  const writeToday = () => {
+    const title = `日记 ${todayStr}`;
+    const exist = diaries.find((n) => n.title.includes(todayStr));
+    if (exist) { onOpen(exist.id, exist.title); return; }
+    const id = platform.createNote(title);
+    if (!id) return;
+    showToast('开始写今天的日记');
+    onOpen(id, title);
+    setRefresh((r) => r + 1);
+  };
+
+  return (
+    <div className="view">
+      <div className="card">
+        <div className="cal-head">
+          <button className="icon-btn" onClick={() => setMonthOffset((o) => o - 1)} aria-label="上月">{I.back}</button>
+          <span className="cal-title">{y} 年 {m + 1} 月</span>
+          <button className="icon-btn" onClick={() => setMonthOffset((o) => o + 1)} aria-label="下月">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
+        </div>
+        <div className="cal-grid">
+          {['一', '二', '三', '四', '五', '六', '日'].map((w) => (
+            <span key={w} className="cal-week">{w}</span>
+          ))}
+          {Array.from({ length: lead }, (_, i) => <span key={`e${i}`} />)}
+          {Array.from({ length: daysInMonth }, (_, i) => {
+            const d = i + 1;
+            const isToday = fmt(d) === todayStr;
+            const has = dayHas(d);
+            return (
+              <span key={d} className={`cal-day ${isToday ? 'today' : ''} ${has ? 'has' : ''}`}>
+                {d}
+              </span>
+            );
+          })}
+        </div>
+        <button className="btn btn-primary btn-block" style={{ marginTop: 8 }} onClick={writeToday}>
+          {I.diaryPen} {diaries.some((n) => n.title.includes(todayStr)) ? '继续写今天日记' : '写今日日记'}
+        </button>
+      </div>
+
+      <div className="result-section-title" style={{ marginTop: 12 }}>全部日记 · {diaries.length}</div>
+      {diaries.length === 0 ? (
+        <EmptyState text="写第一篇日记，记录今天的心情与思考。" />
+      ) : (
+        <div className="note-list">
+          {diaries.map((n) => (
+            <NoteCard key={n.id} note={n} onOpen={onOpen} />
+          ))}
+        </div>
+      )}
+      <span style={{ display: 'none' }}>{refresh}</span>
+    </div>
+  );
+}
+
+/** 通用笔记卡片（收藏/日记列表复用）。 */
+function NoteCard({ note: n, onOpen }: {
+  note: NoteSummary;
+  onOpen: (id: string, title: string) => void;
+}) {
+  return (
+    <div className="note-card" onClick={() => onOpen(n.id, n.title)}>
+      <div className="note-card-body">
+        <div className="note-title">{n.title}</div>
+        <div className="note-snippet">{noteSnippet(n.id)}</div>
+        <div className="note-meta">{relativeTime(n.updatedAt)}</div>
+      </div>
+      <span className="note-card-chevron">›</span>
+    </div>
+  );
+}
+
+/** 空状态 — V19 §3.3 极简文案，无多余装饰。 */
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="empty-state">
+      <div className="empty-text">{text}</div>
+    </div>
+  );
+}
 
 function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
