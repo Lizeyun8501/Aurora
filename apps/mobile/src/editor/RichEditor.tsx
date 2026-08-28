@@ -10,7 +10,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import type { EditorState } from 'prosemirror-state';
 import { toggleMark, setBlockType, wrapIn } from 'prosemirror-commands';
-import { wrapInList, liftListItem, type ListItem } from 'prosemirror-schema-list';
+import { wrapInList, liftListItem } from 'prosemirror-schema-list';
 
 import { platform } from '../adapters/androidPlatform';
 import {
@@ -61,21 +61,35 @@ function insertHorizontalRule(view: EditorView | null) {
 }
 // 注: hr 按钮经 btn() 的 onClick 调 insertHorizontalRule(view)，与 runCmd 分离
 
-/** 列表切换: 在列表内 → lift 退出；否则 wrapInList（schema-list 1.5 无 toggleList）。 */
+/**
+ * 列表切换 — 主流编辑器语义（非嵌套）:
+ *  1. 光标已在目标类型列表内 → liftListItem 退出列表
+ *  2. 光标在另一类型列表内（ul↔ol）→ setNodeMarkup 就地切换列表类型
+ *  3. 非列表 → wrapInList 包裹
+ * （prosemirror-schema-list 1.5 无 toggleList，自行组合）
+ */
 function makeToggleListCmd(
   listType: 'bullet_list' | 'ordered_list',
 ): PMCommand {
-  const itemType = auroraSchema.nodes.list_item as ListItem;
-  const list = auroraSchema.nodes[listType];
+  const itemType = auroraSchema.nodes.list_item;
+  const target = auroraSchema.nodes[listType];
   return (state, dispatch) => {
     const { $from } = state.selection;
-    // 光标祖先是否已是该列表
     for (let d = $from.depth; d >= 0; d--) {
-      if ($from.node(d).type === list) {
+      const n = $from.node(d);
+      if (n.type === target) {
+        // 同类型 → 退出
         return liftListItem(itemType)(state, dispatch);
       }
+      if (n.type.name === 'bullet_list' || n.type.name === 'ordered_list') {
+        // 异类型 → 就地切换（bullet_list/ordered_list 的 content 均为 list_item+，兼容）
+        if (dispatch) {
+          dispatch(state.tr.setNodeMarkup($from.before(d), target).scrollIntoView());
+        }
+        return true;
+      }
     }
-    return wrapInList(list)(state, dispatch);
+    return wrapInList(target)(state, dispatch);
   };
 }
 

@@ -2,11 +2,11 @@
 // 节点: doc/paragraph/heading/code_block/task_block/embed/blockquote/lists/hr
 // 标记: strong/em/underline/strikethrough/code/link
 
-import { Schema } from 'prosemirror-model';
+import { Schema, type NodeSpec, type MarkSpec } from 'prosemirror-model';
 import OrderedMap from 'orderedmap';
 import { addListNodes } from 'prosemirror-schema-list';
 
-const baseNodes = {
+const baseNodes: Record<string, NodeSpec> = {
   doc: { content: 'block+' },
 
   paragraph: {
@@ -117,7 +117,7 @@ const baseNodes = {
   text: { group: 'inline', inline: true },
 };
 
-const baseMarks = {
+const baseMarks: Record<string, MarkSpec> = {
   strong: {
     toDOM: () => ['strong', 0],
     parseDOM: [

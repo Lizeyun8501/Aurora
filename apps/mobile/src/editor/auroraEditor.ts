@@ -13,6 +13,7 @@ import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap } from 'prosemirror-commands';
+import { splitListItem } from 'prosemirror-schema-list';
 import { LoroDoc } from 'loro-crdt';
 import {
   LoroSyncPlugin,
@@ -65,12 +66,17 @@ export function createAuroraEditor(
   const state = EditorState.create({
     schema: auroraSchema,
     plugins: [
-      LoroSyncPlugin({ doc: loroDoc }),
+      // loro-prosemirror 的类型签名固定了容器形状，与通用 LoroDoc 泛型不兼容（运行时无差异）
+      LoroSyncPlugin({ doc: loroDoc as unknown as Parameters<typeof LoroSyncPlugin>[0]['doc'] }),
       LoroUndoPlugin({ doc: loroDoc }),
       keymap({
         'Mod-z': undo,
         'Mod-y': redo,
         'Mod-Shift-z': redo,
+        // 列表内 Enter = 拆分列表项（空项 Enter = 提升退出）— 标准列表行为，
+        // 必须置于 baseKeymap 之前（keymap 先绑定优先级高），
+        // 否则 Enter 拆的是 li 内段落，产生 li>p+p 的非预期结构
+        Enter: splitListItem(auroraSchema.nodes.list_item),
       }),
       keymap(baseKeymap), // Enter/Backspace/方向键等基础编辑行为
     ],
@@ -128,6 +134,12 @@ export function createAuroraEditor(
         /* noop */
       }
       view.destroy();
+      // 释放 WASM 侧 LoroDoc — 每次打开笔记 new LoroDoc，不 free 会累积泄漏
+      try {
+        loroDoc.free?.();
+      } catch {
+        /* 已释放（StrictMode 双执行） */
+      }
     },
   };
 }

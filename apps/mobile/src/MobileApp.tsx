@@ -133,7 +133,7 @@ function loadList<T>(k: string): T[] {
   try { return JSON.parse(localStorage.getItem(k) ?? '[]'); } catch { return []; }
 }
 function saveList<T>(k: string, v: T[]) {
-  localStorage.setItem(k, JSON.stringify(v));
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 配额满/隐私模式 */ }
 }
 const K_FAVS = 'aurora.favs';
 const K_RECENT = 'aurora.recent';
@@ -157,17 +157,18 @@ function loadTasks(): Task[] {
   try { return JSON.parse(localStorage.getItem('aurora.tasks') ?? '[]'); } catch { return []; }
 }
 function saveTasks(ts: Task[]) {
-  localStorage.setItem('aurora.tasks', JSON.stringify(ts));
+  try { localStorage.setItem('aurora.tasks', JSON.stringify(ts)); } catch { /* 配额满/隐私模式 */ }
 }
 
-let toastTimer: ReturnType<typeof setTimeout> | undefined;
 function useToast() {
   const [msg, setMsg] = useState<string | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const show = useCallback((t: string) => {
     setMsg(t);
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => setMsg(null), 2200);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setMsg(null), 2200);
   }, []);
+  useEffect(() => () => clearTimeout(timerRef.current), []);
   return { msg, show };
 }
 
@@ -191,7 +192,7 @@ export default function App() {
   const { msg: toastMsg, show: showToast } = useToast();
 
   useEffect(() => {
-    localStorage.setItem('aurora.theme', theme);
+    try { localStorage.setItem('aurora.theme', theme); } catch { /* 防御 */ }
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
@@ -330,7 +331,7 @@ export default function App() {
             setEditing({ id, title });
           }}
           onNewTask={(text, status) => {
-            updateTasks([...tasks, { id: `t-${Date.now()}`, text, status, createdAt: Date.now() }]);
+            updateTasks([...tasks, { id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text, status, createdAt: Date.now() }]);
             setCaptureOpen(false);
             setView('today');
             showToast('已添加到今日任务');
@@ -407,17 +408,20 @@ function TodayView({ tasks, onTasks, onOpenNote, showToast }: {
   const [pomoRunning, setPomoRunning] = useState(false);
   const [pomoSec, setPomoSec] = useState(25 * 60);
 
-  // 番茄钟
+  // 番茄钟 — 计时纯减法，完成判定移出 updater（副作用归 effect）
   useEffect(() => {
     if (!pomoRunning) return;
-    const t = setInterval(() => {
-      setPomoSec((s) => {
-        if (s <= 1) { setPomoRunning(false); showToast('番茄钟完成 🍅'); return 25 * 60; }
-        return s - 1;
-      });
-    }, 1000);
+    const t = setInterval(() => setPomoSec((s) => Math.max(0, s - 1)), 1000);
     return () => clearInterval(t);
-  }, [pomoRunning, showToast]);
+  }, [pomoRunning]);
+
+  useEffect(() => {
+    if (pomoRunning && pomoSec === 0) {
+      setPomoRunning(false);
+      setPomoSec(25 * 60);
+      showToast('番茄钟完成 🍅');
+    }
+  }, [pomoRunning, pomoSec, showToast]);
 
   const today = new Date();
   const dateStr = `${today.getMonth() + 1} 月 ${today.getDate()} 日`;
@@ -755,10 +759,9 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
                   onClick={(e) => {
                     e.stopPropagation();
                     onSoftDelete(n.id, n.title);
-                    showToast('已移入回收站');
                     setSwipingId(null);
                     refresh();
-                    showToast('笔记已删除');
+                    showToast('已移入回收站');
                   }}
                 >删除</button>
               )}
@@ -788,7 +791,7 @@ function SearchView({ onOpen }: { onOpen: (id: string, title: string) => void })
     setResults(platform.searchNotes(t));
     const h = [t, ...history.filter((x) => x !== t)].slice(0, 8);
     setHistory(h);
-    localStorage.setItem('aurora.searchHistory', JSON.stringify(h));
+    try { localStorage.setItem('aurora.searchHistory', JSON.stringify(h)); } catch { /* 防御 */ }
   };
 
   return (
@@ -1373,7 +1376,6 @@ function DiaryView({ onOpen, showToast }: {
   showToast: (m: string) => void;
 }) {
   const [monthOffset, setMonthOffset] = useState(0);
-  const [refresh, setRefresh] = useState(0);
   const diaries = platform.listNotes()
     .filter((n) => /日记/.test(n.title))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -1397,7 +1399,6 @@ function DiaryView({ onOpen, showToast }: {
     if (!id) return;
     showToast('开始写今天的日记');
     onOpen(id, title);
-    setRefresh((r) => r + 1);
   };
 
   return (
@@ -1441,7 +1442,6 @@ function DiaryView({ onOpen, showToast }: {
           ))}
         </div>
       )}
-      <span style={{ display: 'none' }}>{refresh}</span>
     </div>
   );
 }
