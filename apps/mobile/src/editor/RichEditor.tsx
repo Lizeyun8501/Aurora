@@ -340,8 +340,8 @@ export function RichEditor({ noteId, fallbackText, onDirty, onSaved, onStatus }:
 
   return (
     <div className={`rich-editor-wrap ${status === 'loading' ? 'loading' : ''}`}>
-      {status === 'rich' && <EditorToolbar view={handleRef.current?.view ?? null} tick={tick} />}
       <div className="rich-editor-host" ref={hostRef} />
+      {status === 'rich' && <EditorToolbar view={handleRef.current?.view ?? null} tick={tick} />}
       {status === 'loading' && (
         <div className="editor-loading-tip">
           <span className="spinner" />

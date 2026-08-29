@@ -125,6 +125,18 @@ const TAB_OF_VIEW: Record<ViewId, string> = {
   calendar: 'calendar', favorites: 'notes', recent: 'notes', diary: 'notes', trash: 'notes', tasks: 'today',
 };
 
+/** 笔记标题 overlay — 编辑页改标题时覆盖显示（Rust rename API 落地前的前端方案）。 */
+function getTitleOverlay(id: string): string | null {
+  try { return localStorage.getItem(`aurora.title.${id}`); } catch { return null; }
+}
+function setTitleOverlay(id: string, title: string) {
+  try { localStorage.setItem(`aurora.title.${id}`, title); } catch { /* 防御 */ }
+}
+/** 统一列表入口 — 原始 listNotes + 标题 overlay 合并。 */
+function listNotesTitled(): NoteSummary[] {
+  return platform.listNotes().map((n) => ({ ...n, title: getTitleOverlay(n.id) || n.title }));
+}
+
 /** 收藏 / 最近浏览 / 回收站 — localStorage（Rust 侧元数据表落地后迁移 platform API）。 */
 interface TrashItem { id: string; title: string; text: string; deletedAt: number; }
 interface RecentItem { id: string; title: string; at: number; }
@@ -441,7 +453,7 @@ function TodayView({ tasks, onTasks, onOpenNote, showToast }: {
   const doneToday = tasks.filter((t) => t.status === 'done').length;
   const openCount = tasks.filter((t) => t.status !== 'done').length;
 
-  const notes = platform.listNotes();
+  const notes = listNotesTitled();
   const weekNotes = notes.slice(0, 3);
 
   const toggle = (id: string) => {
@@ -520,7 +532,7 @@ function TodayView({ tasks, onTasks, onOpenNote, showToast }: {
                       {t.due && <span className="task-due">{t.due}</span>}
                       {t.noteId && (
                         <button className="task-note-link" onClick={() => {
-                          const n = platform.listNotes().find((x) => x.id === t.noteId);
+                          const n = listNotesTitled().find((x) => x.id === t.noteId);
                           if (n) onOpenNote(n.id, n.title);
                         }}>{I.note} 关联笔记</button>
                       )}
@@ -706,7 +718,7 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
   const [query, setQuery] = useState('');
   const [swipingId, setSwipingId] = useState<string | null>(null);
 
-  const refresh = useCallback(() => setNotes(platform.listNotes()), []);
+  const refresh = useCallback(() => setNotes(listNotesTitled()), []);
   useEffect(refresh, [refresh]);
 
   const shown = query.trim()
@@ -1074,16 +1086,33 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted }: {
   const [focusMode, setFocusMode] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [status, setStatus] = useState<'dirty' | 'saved' | null>(null);
+  // 大标题可编辑（参考图布局）— overlay 存储，所有列表同步
+  const [docTitle, setDocTitle] = useState(() => getTitleOverlay(noteId) || title);
+
+  const onTitleChange = (v: string) => {
+    setDocTitle(v);
+    setTitleOverlay(noteId, v.trim() || title);
+  };
 
   return (
     <div className={`editor-page ${focusMode ? 'focus' : ''}`}>
       <div className="editor-bar">
         <button className="icon-btn" onClick={onClose} aria-label="返回">{I.back}</button>
-        <span className="editor-bar-title">{title}</span>
         <span className={`editor-bar-status ${status ?? ''}`}>
           {status === 'dirty' ? '保存中…' : status === 'saved' ? '已保存' : ''}
         </span>
         <button className="icon-btn" onClick={() => setMenuOpen(!menuOpen)} aria-label="更多">{I.more}</button>
+      </div>
+
+      {/* 大标题区 — 参考图: 独立行 + 可编辑 + 分割线 */}
+      <div className="editor-head">
+        <input
+          className="editor-title-input"
+          value={docTitle}
+          onChange={(e) => onTitleChange(e.target.value)}
+          placeholder="无标题"
+          aria-label="笔记标题"
+        />
       </div>
 
       {menuOpen && (
@@ -1145,7 +1174,7 @@ function Drawer2({ current, onNavigate, onClose, tasks, favs, trash }: {
   favs: string[];
   trash: TrashItem[];
 }) {
-  const notes = platform.listNotes();
+  const notes = listNotesTitled();
   const openTasks = tasks.filter((t) => t.status !== 'done').length;
   const doneTasks = tasks.filter((t) => t.status === 'done').length;
 
@@ -1222,7 +1251,7 @@ function Drawer2({ current, onNavigate, onClose, tasks, favs, trash }: {
 // ===========================================================================
 
 function FavoritesView({ favs, onOpen }: { favs: string[]; onOpen: (id: string, title: string) => void }) {
-  const notes = platform.listNotes().filter((n) => favs.includes(n.id));
+  const notes = listNotesTitled().filter((n) => favs.includes(n.id));
   return (
     <div className="view">
       {notes.length === 0 ? (
@@ -1404,7 +1433,7 @@ function CalendarView({ tasks, onOpenNote, onNewTask }: {
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   const fmt = (d: number) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
-  const notes = platform.listNotes();
+  const notes = listNotesTitled();
   /** 当日数据: 笔记（updatedAt 日期匹配）+ 任务（due 匹配）+ 日记（title 含日期） */
   const dayData = (d: number) => {
     const key = fmt(d);
@@ -1503,7 +1532,7 @@ function DiaryView({ onOpen, showToast }: {
   showToast: (m: string) => void;
 }) {
   const [monthOffset, setMonthOffset] = useState(0);
-  const diaries = platform.listNotes()
+  const diaries = listNotesTitled()
     .filter((n) => /日记/.test(n.title))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
