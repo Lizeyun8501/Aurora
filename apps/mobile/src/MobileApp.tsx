@@ -113,16 +113,16 @@ const I = {
 // 全局状态
 // ===========================================================================
 
-type ViewId = 'today' | 'notes' | 'search' | 'agent' | 'settings'
+type ViewId = 'today' | 'notes' | 'search' | 'agent' | 'settings' | 'calendar'
   | 'favorites' | 'recent' | 'tasks' | 'diary' | 'trash';
 const VIEW_TITLES: Record<ViewId, string> = {
-  today: '今日', notes: '知识库', search: '搜索', agent: 'Agent', settings: '设置',
+  today: '今日', notes: '知识库', search: '搜索', agent: 'Agent', settings: '设置', calendar: '日历',
   favorites: '我的收藏', recent: '最近浏览', tasks: '任务中心', diary: '日记本', trash: '回收站',
 };
 /** 次级视图 → Tab 高亮映射（抽屉导航进入次级页时保持主 Tab 语境）。 */
 const TAB_OF_VIEW: Record<ViewId, string> = {
   today: 'today', notes: 'notes', search: 'search', agent: 'agent', settings: 'settings',
-  favorites: 'notes', recent: 'notes', diary: 'notes', trash: 'notes', tasks: 'today',
+  calendar: 'calendar', favorites: 'notes', recent: 'notes', diary: 'notes', trash: 'notes', tasks: 'today',
 };
 
 /** 收藏 / 最近浏览 / 回收站 — localStorage（Rust 侧元数据表落地后迁移 platform API）。 */
@@ -182,6 +182,7 @@ export default function App() {
   const [view, setView] = useState<ViewId>('today'); // V19: TodayView 默认启动页
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [captureDue, setCaptureDue] = useState<string | undefined>(undefined); // 日历入口预置日期
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     (localStorage.getItem('aurora.theme') as 'light' | 'dark') ?? 'light');
@@ -285,6 +286,13 @@ export default function App() {
               />
             )}
             {view === 'search' && <SearchView onOpen={openNote} />}
+            {view === 'calendar' && (
+              <CalendarView
+              tasks={tasks}
+              onOpenNote={openNote}
+              onNewTask={(due) => { setCaptureDue(due); setCaptureOpen(true); }}
+            />
+            )}
             {view === 'agent' && <AgentView theme={theme} />}
             {view === 'settings' && (
               <SettingsView theme={theme} onTheme={setTheme} showToast={showToast} />
@@ -322,7 +330,7 @@ export default function App() {
 
       {captureOpen && (
         <CaptureSheet
-          onClose={() => setCaptureOpen(false)}
+          onClose={() => { setCaptureOpen(false); setCaptureDue(undefined); }}
           onNewNote={(title, body) => {
             const id = platform.createNote(title);
             if (!id) return;
@@ -331,10 +339,14 @@ export default function App() {
             setEditing({ id, title });
           }}
           onNewTask={(text, status) => {
-            updateTasks([...tasks, { id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text, status, createdAt: Date.now() }]);
+            updateTasks([...tasks, {
+              id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              text, status, createdAt: Date.now(), due: captureDue,
+            }]);
             setCaptureOpen(false);
+            setCaptureDue(undefined);
             setView('today');
-            showToast('已添加到今日任务');
+            showToast(captureDue ? `任务已计划到 ${captureDue}` : '已添加到今日任务');
           }}
         />
       )}
@@ -376,7 +388,7 @@ function TabBar({ current, onChange }: { current: ViewId; onChange: (v: ViewId) 
     { id: 'notes', icon: I.notes, label: '知识库' },
     { id: 'search', icon: I.search, label: '搜索' },
     { id: 'agent', icon: I.agent, label: 'Agent' },
-    { id: 'settings', icon: I.gear, label: '设置' },
+    { id: 'calendar', icon: I.calendar, label: '日历' },
   ];
   return (
     <nav className="tab-bar">
@@ -1367,6 +1379,121 @@ function TasksView({ tasks, onTasks, showToast }: {
           清除全部已完成
         </button>
       )}
+    </div>
+  );
+}
+
+// ===========================================================================
+// CalendarView — 底部 Tab「日历」（月历 + 当日任务/笔记聚合）
+// ===========================================================================
+
+function CalendarView({ tasks, onOpenNote, onNewTask }: {
+  tasks: Task[];
+  onOpenNote: (id: string, title: string) => void;
+  onNewTask: (due: string) => void;
+}) {
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const [monthOffset, setMonthOffset] = useState(0);
+  const [selected, setSelected] = useState<string>(todayStr);
+
+  const view = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+  const y = view.getFullYear();
+  const m = view.getMonth();
+  const lead = (new Date(y, m, 1).getDay() + 6) % 7; // 周一起始
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const fmt = (d: number) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+  const notes = platform.listNotes();
+  /** 当日数据: 笔记（updatedAt 日期匹配）+ 任务（due 匹配）+ 日记（title 含日期） */
+  const dayData = (d: number) => {
+    const key = fmt(d);
+    const dayNotes = notes.filter((n) => n.updatedAt.startsWith(key));
+    const dayDiary = notes.filter((n) => n.title.includes(key) && n.title.includes('日记'));
+    const dayTasks = tasks.filter((t) => t.due === key);
+    return { dayNotes, dayDiary, dayTasks };
+  };
+  const hasMark = (d: number) => {
+    const { dayNotes, dayDiary, dayTasks } = dayData(d);
+    return dayNotes.length > 0 || dayDiary.length > 0 || dayTasks.length > 0;
+  };
+
+  const selD = parseInt(selected.slice(8), 10);
+  const selData = dayData(selD);
+  const isSelInMonth = selected.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`);
+
+  return (
+    <div className="view">
+      <div className="card">
+        <div className="cal-head">
+          <button className="icon-btn" onClick={() => setMonthOffset((o) => o - 1)} aria-label="上月">{I.back}</button>
+          <span className="cal-title">{y} 年 {m + 1} 月</span>
+          <button className="icon-btn" onClick={() => setMonthOffset((o) => o + 1)} aria-label="下月">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
+        </div>
+        <div className="cal-grid">
+          {['一', '二', '三', '四', '五', '六', '日'].map((w) => (
+            <span key={w} className="cal-week">{w}</span>
+          ))}
+          {Array.from({ length: lead }, (_, i) => <span key={`e${i}`} />)}
+          {Array.from({ length: daysInMonth }, (_, i) => {
+            const d = i + 1;
+            const key = fmt(d);
+            const isToday = key === todayStr;
+            const isSel = key === selected;
+            return (
+              <button
+                key={d}
+                className={`cal-day cal-day-btn ${isToday ? 'today' : ''} ${isSel ? 'sel' : ''} ${hasMark(d) ? 'has' : ''}`}
+                onClick={() => setSelected(key)}
+              >
+                {d}
+              </button>
+            );
+          })}
+        </div>
+        {selected !== todayStr && (
+          <button className="btn btn-text btn-block" style={{ marginTop: 4 }} onClick={() => setSelected(todayStr)}>
+            回到今天
+          </button>
+        )}
+      </div>
+
+      {/* 当日聚合 */}
+      <div className="result-section-title" style={{ marginTop: 12 }}>
+        {selected.replace(/^(\d+)-(\d+)-(\d+)$/, '$1 年 $2 月 $3 日')}
+      </div>
+
+      {isSelInMonth && (selData.dayTasks.length > 0 || (selData.dayNotes.length + selData.dayDiary.length) > 0) === false && (
+        <EmptyState text="这一天没有任务或笔记记录。点右下角 + 捕获。" />
+      )}
+
+      {selData.dayTasks.length > 0 && (
+        <div className="card" style={{ padding: 4, marginBottom: 8 }}>
+          {selData.dayTasks.map((t) => (
+            <div key={t.id} className="task-item">
+              <span className={`task-check ${t.status === 'done' ? 'checked' : ''}`}>{I.check}</span>
+              <div className="task-body">
+                <div className="task-text">{t.text}</div>
+                <div className="task-meta"><span className="task-status-tag">{TASK_GROUPS.find((g) => g.id === t.status)?.label}</span></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isSelInMonth && [...selData.dayDiary, ...selData.dayNotes].length > 0 && (
+        <div className="note-list">
+          {[...selData.dayDiary, ...selData.dayNotes.filter((n) => !selData.dayDiary.some((x) => x.id === n.id))].map((n) => (
+            <NoteCard key={n.id} note={n} onOpen={onOpenNote} />
+          ))}
+        </div>
+      )}
+
+      <button className="btn btn-secondary btn-block" style={{ marginTop: 8 }} onClick={() => onNewTask(selected)}>
+        {I.plus} 为这一天添加任务
+      </button>
     </div>
   );
 }

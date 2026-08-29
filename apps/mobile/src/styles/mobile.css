@@ -742,3 +742,11 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 
 .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
+/* 日历 Tab — 可点选日期 */
+.cal-day-btn {
+  background: none; border: none; cursor: pointer;
+  position: relative; font-family: inherit;
+}
+.cal-day-btn.sel { background: var(--brand); color: #fff; border-radius: 50%; }
+.cal-day-btn.sel::after { background: #fff; }
