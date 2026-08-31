@@ -339,6 +339,20 @@ impl LayeredEventBus {
                 }
             }
             EventChannel::Low => {
+                // V20 §3.2/§4.5: Low 事件同步持久化（channel='low'）—
+                // 投影（搜索索引/版本）崩溃后按自身水位线增量追赶。
+                // 注意：Low 不参与 Medium 重放语义（pending() 只返回 medium）。
+                if let Some(store) = &self.store {
+                    let record = QueuedEvent {
+                        seq,
+                        channel: EventChannel::Low,
+                        event_type: event.event_type().to_string(),
+                        payload: serde_json::to_string(&event).unwrap_or_default(),
+                    };
+                    if let Err(e) = store.enqueue(&record) {
+                        warn!(seq, error = %e, "low event persist failed");
+                    }
+                }
                 // 有界队列满 → 批量模式：尝试非阻塞发送，失败则告警丢弃
                 // （低频事件幂等，可由每日全量补偿恢复）。
                 if let Err(e) = self.low_tx.try_send(envelope) {
@@ -415,6 +429,21 @@ impl LayeredEventBus {
     /// 启动时重放未消费的 Medium 事件（ARCH-003 崩溃恢复）。
     ///
     /// 返回按 `seq` 升序排列的待重放事件；调用方负责重新走消费流程。
+    /// 重启后恢复全局序列号 — 从持久化队列读取 max(seq)，新事件从其之后
+    /// 继续递增。**必须在发布任何事件之前调用**（通常与 replay_unconsumed
+    /// 一起在启动期执行），否则新实例 seq 从 1 重新计数会与历史事件冲突，
+    /// 导致投影水位线错乱（seq=4 的新事件被 watermark=3 的追赶误判为旧事件）。
+    pub fn restore_seq(&self) -> Result<u64, crate::Error> {
+        let Some(store) = &self.store else {
+            return Ok(0);
+        };
+        // 扫全部事件（含已消费）取 max seq
+        let all = store.events_after(0)?;
+        let max = all.iter().map(|r| r.seq).max().unwrap_or(0);
+        let prev = self.seq.fetch_max(max + 1, Ordering::SeqCst);
+        Ok(prev.max(max))
+    }
+
     pub fn replay_unconsumed(&self) -> Result<Vec<SequencedEvent>, crate::Error> {
         let store = match &self.store {
             Some(s) => s,
@@ -468,10 +497,11 @@ impl EventQueueStore for InMemoryEventQueue {
     }
 
     fn pending(&self) -> Result<Vec<QueuedEvent>, crate::Error> {
+        // 仅 Medium 未消费（与 SqliteEventQueue 语义一致）
         let guard = self.inner.read();
         Ok(guard
             .iter()
-            .filter(|(_, consumed)| !consumed)
+            .filter(|(r, consumed)| !consumed && r.channel == EventChannel::Medium)
             .map(|(r, _)| r.clone())
             .collect())
     }

@@ -43,6 +43,8 @@ pub struct AppCore {
     pub plugin: Arc<dyn plugin_runtime::PluginRuntime>,
     /// 分层事件总线（High/Medium/Low 三通道）。
     pub event_bus: Arc<LayeredEventBus>,
+    /// 已注册投影（V20 §4.5 读模型; 启动时 catch_up 增量追赶）。
+    projections: Vec<Arc<dyn crate::event_bus::projection::Projection>>,
 }
 
 /// AppCore 构建器（依赖注入容器）。
@@ -55,6 +57,7 @@ pub struct AppCoreBuilder {
     ocr: Option<Arc<dyn ocr_provider::OcrProvider>>,
     plugin: Option<Arc<dyn plugin_runtime::PluginRuntime>>,
     event_bus_store: Option<Arc<dyn crate::event_bus::layered::EventQueueStore>>,
+    projections: Vec<Arc<dyn crate::event_bus::projection::Projection>>,
 }
 
 impl AppCoreBuilder {
@@ -69,6 +72,7 @@ impl AppCoreBuilder {
             ocr: None,
             plugin: None,
             event_bus_store: None,
+            projections: Vec::new(),
         }
     }
 
@@ -115,13 +119,20 @@ impl AppCoreBuilder {
         self
     }
 
+    /// 注册读模型投影（V20 §4.5）。注册顺序即启动追赶顺序。
+    pub fn projection(mut self, p: Arc<dyn crate::event_bus::projection::Projection>) -> Self {
+        self.projections.push(p);
+        self
+    }
+
     /// 构建 `AppCore`。
     ///
     /// # Panics
     ///
     /// 任一必需 Trait 未注入时 panic（启动期校验，早失败）。
-    pub fn build(self) -> AppCore {
+    pub fn build(mut self) -> AppCore {
         let event_bus = Arc::new(LayeredEventBus::new(self.event_bus_store));
+        let projections = std::mem::take(&mut self.projections);
 
         AppCore {
             sync_target: self.sync_target.expect("SyncTarget must be provided"),
@@ -132,6 +143,7 @@ impl AppCoreBuilder {
             ocr: self.ocr.expect("OcrProvider must be provided"),
             plugin: self.plugin.expect("PluginRuntime must be provided"),
             event_bus,
+            projections,
         }
     }
 }
@@ -146,7 +158,28 @@ impl AppCore {
     /// 启动时恢复流程（V19 ARCH-003）：
     /// 1. 重放未消费的 Medium 通道事件
     /// 2. 日志记录启动信息
+    /// 投影增量追赶（V20 §4.5）— 启动时把全部注册投影从各自水位线
+    /// 追赶到最新。幂等；verify 失败的投影自动全量重建（自愈）。
+    ///
+    /// async：由平台层在运行时（tokio block_on / spawn）调用。
+    pub async fn catch_up_projections(&self) -> Result<(), Error> {
+        for p in &self.projections {
+            let n = self.event_bus.catch_up(p.as_ref()).await?;
+            if n > 0 {
+                info!(projection = p.name(), applied = n, "projection catch_up");
+            }
+        }
+        Ok(())
+    }
+
+    /// 已注册投影列表（诊断 / 测试用）。
+    pub fn projections(&self) -> &[Arc<dyn crate::event_bus::projection::Projection>] {
+        &self.projections
+    }
+
     pub fn startup(&self) -> Result<(), Error> {
+        // V20 Phase 1: 先恢复全局 seq（防重启后新事件 seq 撞历史）
+        self.event_bus.restore_seq()?;
         // ARCH-003：重放未消费事件
         match self.event_bus.replay_unconsumed() {
             Ok(events) => {

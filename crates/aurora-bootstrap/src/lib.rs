@@ -139,6 +139,16 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
         aurora_core::event_bus::sqlite_queue::SqliteEventQueue::new(db_path)?,
     );
 
+    // V20 Phase 1 §4.5: 搜索索引投影（读模型）— 消费事件投影到 Tantivy，
+    // 水位线存 KVStore；启动 catch_up 增量追赶，verify 失败自动全量重建。
+    // 全量数据源：暂时为空（笔记主存储接入 NoteDoc 后由存储层提供回调）。
+    let search_projection: Arc<aurora_core::l2_engines::search_projection::SearchIndexProjection> =
+        Arc::new(aurora_core::l2_engines::search_projection::SearchIndexProjection::new(
+            search.clone(),
+            kv_store.clone(),
+            Box::new(Vec::new),
+        ));
+
     Ok(AppCoreBuilder::new()
         .kv_store(kv_store)
         .search(search)
@@ -148,6 +158,7 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
         .ocr(ocr)
         .plugin(plugin)
         .event_bus_store(event_bus_store)
+        .projection(search_projection)
         .build())
 }
 
@@ -162,6 +173,67 @@ mod tests {
         assert_eq!(app.core.crypto.algorithm_version(), 1);
         assert!(dir.path().join("aurora.db").exists());
         assert!(dir.path().join("keys").join("dek.bin").exists());
+    }
+
+    /// V20 Phase 1 退出条件: 杀进程后索引自动补齐（投影水位线增量追赶）。
+    #[tokio::test]
+    async fn bootstrap_projection_catch_up_across_restart() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // ── 第一次启动: 发事件 → 投影追赶 ──
+        {
+            let app = bootstrap(dir.path()).unwrap();
+            app.core.startup().unwrap();
+            app.core.event_bus.publish(
+                aurora_core::event_bus::layered::AppEvent::NoteCreated {
+                    note_id: "n1".into(),
+                    title: "projection verify note".into(),
+                    content: "V20 Phase 1".into(),
+                },
+            );
+            app.core.catch_up_projections().await.unwrap();
+
+            let hits = app
+                .core
+                .search
+                .search("projection", &aurora_core::traits::search_backend::SearchOptions::default())
+                .await
+                .unwrap();
+            assert_eq!(hits.hits.len(), 1, "事件应已投影到索引");
+        } // core drop = 模拟杀进程
+
+        // ── 第二次启动: seq 恢复 + 新事件 + 增量追赶 ──
+        {
+            let app2 = bootstrap(dir.path()).unwrap();
+            app2.core.startup().unwrap(); // restore_seq + replay
+            app2.core.event_bus.publish(
+                aurora_core::event_bus::layered::AppEvent::NoteCreated {
+                    note_id: "n2".into(),
+                    title: "after restart".into(),
+                    content: String::new(),
+                },
+            );
+            app2.core.catch_up_projections().await.unwrap();
+
+            // 分开查询两篇（空查询在 QueryParser 下不可靠）
+            let old = app2
+                .core
+                .search
+                .search("projection", &aurora_core::traits::search_backend::SearchOptions::default())
+                .await
+                .unwrap();
+            let ids: Vec<&str> = old.hits.iter().map(|h| h.note_id.as_str()).collect();
+            assert!(ids.contains(&"n1"), "旧索引跨重启保留: {ids:?}");
+
+            let new = app2
+                .core
+                .search
+                .search("restart", &aurora_core::traits::search_backend::SearchOptions::default())
+                .await
+                .unwrap();
+            let ids2: Vec<&str> = new.hits.iter().map(|h| h.note_id.as_str()).collect();
+            assert!(ids2.contains(&"n2"), "新事件增量投影: {ids2:?}");
+        }
     }
 
     #[test]

@@ -149,12 +149,14 @@ impl EventQueueStore for SqliteEventQueue {
     }
 
     fn pending(&self) -> Result<Vec<QueuedEvent>, crate::Error> {
+        // 仅 Medium 通道未消费事件（Medium 重放语义 §32.2）；
+        // Low 事件虽持久化（投影追赶用）但不参与此语义。
         let conn = self
             .conn
             .lock()
             .map_err(|_| crate::Error::Internal("sqlite queue mutex poisoned".into()))?;
         let mut stmt = conn
-            .prepare("SELECT seq, channel, event_type, payload FROM event_queue WHERE consumed_at IS NULL ORDER BY seq")
+            .prepare("SELECT seq, channel, event_type, payload FROM event_queue WHERE consumed_at IS NULL AND channel = 'medium' ORDER BY seq")
             .map_err(|e| crate::Error::Database(format!("sqlite queue prepare failed: {}", e)))?;
         let rows = stmt
             .query_map([], |row| {
@@ -214,13 +216,33 @@ mod tests {
         assert!(pending.is_empty());
     }
 
+    /// V20 Phase 1 语义: pending() 只返回 Medium 未消费；
+    /// Low 事件经 events_after() 供投影追赶（含已消费）。
     #[test]
     fn sqlite_channel_roundtrip() {
         let queue = SqliteEventQueue::new_in_memory().unwrap();
-        let mut ev = make_event(1);
-        ev.channel = EventChannel::High;
-        queue.enqueue(&ev).unwrap();
+        let mut low = make_event(1);
+        low.channel = EventChannel::Low;
+        queue.enqueue(&low).unwrap();
+        let mut med = make_event(2);
+        med.channel = EventChannel::Medium;
+        queue.enqueue(&med).unwrap();
+
+        // pending: 仅 Medium
         let pending = queue.pending().unwrap();
-        assert_eq!(pending[0].channel, EventChannel::High);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].seq, 2);
+        assert_eq!(pending[0].channel, EventChannel::Medium);
+
+        // events_after: 全部（投影追赶，含 Low）
+        let all = queue.events_after(0).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].channel, EventChannel::Low);
+        assert_eq!(all[1].channel, EventChannel::Medium);
+
+        // 已消费后 events_after 仍可见（水位线语义），pending 不见
+        queue.mark_consumed(2).unwrap();
+        assert!(queue.pending().unwrap().is_empty());
+        assert_eq!(queue.events_after(0).unwrap().len(), 2);
     }
 }

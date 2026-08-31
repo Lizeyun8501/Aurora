@@ -86,10 +86,8 @@ impl LayeredEventBus {
                     continue;
                 }
             };
-            // 投影消费 Low 通道事件（索引/视图类）；Medium 由专属消费者处理
-            if event.channel() != crate::event_bus::layered::EventChannel::Low {
-                continue;
-            }
+            // 投影接收全部通道事件（含 Medium）— 由投影 apply 自行
+            // 过滤无关事件。搜索索引投影只关心 NoteCreated/Deleted/Metadata。
             projection.apply(&event).await?;
             projection.set_watermark(rec.seq).await?;
             applied += 1;
