@@ -19,6 +19,8 @@ tantivy = { workspace = true }
 
 # SQLite (including sqlite-vec for vector search)
 rusqlite = { workspace = true }
+# 中文分词（V20: jieba 接入 Tantivy 自定义 tokenizer）
+jieba-rs = "0.7"
 # Note: sqlite-vec is a loadable extension, not a direct crate dependency
 
 # WASM runtime

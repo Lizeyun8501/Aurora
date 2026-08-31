@@ -187,7 +187,7 @@ mod tests {
             app.core.event_bus.publish(
                 aurora_core::event_bus::layered::AppEvent::NoteCreated {
                     note_id: "n1".into(),
-                    title: "projection verify note".into(),
+                    title: "架构投影验证".into(),
                     content: "V20 Phase 1".into(),
                 },
             );
@@ -196,10 +196,10 @@ mod tests {
             let hits = app
                 .core
                 .search
-                .search("projection", &aurora_core::traits::search_backend::SearchOptions::default())
+                .search("架构", &aurora_core::traits::search_backend::SearchOptions::default())
                 .await
                 .unwrap();
-            assert_eq!(hits.hits.len(), 1, "事件应已投影到索引");
+            assert_eq!(hits.hits.len(), 1, "中文事件应已投影到索引（jieba）");
         } // core drop = 模拟杀进程
 
         // ── 第二次启动: seq 恢复 + 新事件 + 增量追赶 ──
@@ -209,7 +209,7 @@ mod tests {
             app2.core.event_bus.publish(
                 aurora_core::event_bus::layered::AppEvent::NoteCreated {
                     note_id: "n2".into(),
-                    title: "after restart".into(),
+                    title: "重启后新增笔记".into(),
                     content: String::new(),
                 },
             );
@@ -219,7 +219,7 @@ mod tests {
             let old = app2
                 .core
                 .search
-                .search("projection", &aurora_core::traits::search_backend::SearchOptions::default())
+                .search("架构", &aurora_core::traits::search_backend::SearchOptions::default())
                 .await
                 .unwrap();
             let ids: Vec<&str> = old.hits.iter().map(|h| h.note_id.as_str()).collect();
@@ -228,7 +228,7 @@ mod tests {
             let new = app2
                 .core
                 .search
-                .search("restart", &aurora_core::traits::search_backend::SearchOptions::default())
+                .search("重启", &aurora_core::traits::search_backend::SearchOptions::default())
                 .await
                 .unwrap();
             let ids2: Vec<&str> = new.hits.iter().map(|h| h.note_id.as_str()).collect();
