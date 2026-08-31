@@ -59,10 +59,17 @@ parking_lot = { workspace = true }
 sled = { workspace = true }
 
 [dev-dependencies]
+mockall = "0.13"
 # Property-based testing harness (Task 6.3 test quality assurance)
 proptest = { workspace = true }
 # Temporary directories for atomic_transaction tests (ARCH-002)
 tempfile = "3"
+# V20 §6.2 性能门禁基准（P1: criterion 接入）
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "perf_bench"
+harness = false
 
 [features]
 default = []

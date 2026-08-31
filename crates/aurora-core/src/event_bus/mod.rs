@@ -9,6 +9,7 @@ pub mod event;
 #[allow(clippy::module_inception)]
 pub mod event_bus;
 pub mod layered;
+pub mod projection; // V20 P0-5 投影重放（§4.5 catch_up）
 pub mod serialization;
 pub mod sqlite_queue;
 

@@ -11,8 +11,23 @@ members = [
     "crates/entity",
     "crates/migration",
     "crates/mobile-ffi",
-    # 桌面平台适配（Tauri v2）；临时移除：Tauri 依赖需 Rust 1.88+
-    # "apps/desktop/src-tauri",
+    # 桌面平台适配（Tauri v2）— Rust 1.91 工具链已就绪，V20 GAP-01 关闭
+    "apps/desktop/src-tauri",
+]
+
+# 默认编译集 — headless 服务器/CI（无 GTK/WebKit 系统库）不编译桌面端；
+# 桌面端验证在装齐系统库的开发机/CI job 执行: cargo check -p aurora-desktop
+default-members = [
+    "crates/aurora-core",
+    "crates/aurora-sync",
+    "crates/aurora-ai",
+    "crates/aurora-security",
+    "crates/aurora-plugin",
+    "crates/aurora-observability",
+    "crates/aurora-bootstrap",
+    "crates/entity",
+    "crates/migration",
+    "crates/mobile-ffi",
 ]
 
 [workspace.package]

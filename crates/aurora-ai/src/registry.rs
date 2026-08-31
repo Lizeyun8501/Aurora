@@ -581,13 +581,13 @@ mod tests {
         assert_eq!(r.agent_count(), 1);
     }
 
-    #[test]
-    fn test_registry_unregister_agent_removes_tools() {
+    #[tokio::test]
+    async fn test_registry_unregister_agent_removes_tools() {
         let r = ToolRegistry::new();
         let agent = make_agent("a1");
         r.register_agent("a1", agent as Arc<dyn AgentProtocol>);
-        r.register_tool(make_tool("t1", "a1", &[])).unwrap();
-        r.register_tool(make_tool("t2", "a1", &[])).unwrap();
+        r.register_tool(make_tool("t1", "a1", &[])).await.unwrap();
+        r.register_tool(make_tool("t2", "a1", &[])).await.unwrap();
         assert_eq!(r.tool_count(), 2);
 
         r.unregister_agent("a1");
@@ -595,49 +595,49 @@ mod tests {
         assert_eq!(r.tool_count(), 0);
     }
 
-    #[test]
-    fn test_registry_register_tool_without_agent_id_fails() {
+    #[tokio::test]
+    async fn test_registry_register_tool_without_agent_id_fails() {
         let r = ToolRegistry::new();
         let tool = Tool::new("t", "d", serde_json::json!({}));
-        let err = r.register_tool(tool).unwrap_err();
+        let err = r.register_tool(tool).await.unwrap_err();
         assert!(matches!(err, crate::Error::InvalidInput(_)));
     }
 
-    #[test]
-    fn test_registry_register_tool_with_unknown_agent_fails() {
+    #[tokio::test]
+    async fn test_registry_register_tool_with_unknown_agent_fails() {
         let r = ToolRegistry::new();
-        let err = r.register_tool(make_tool("t", "ghost", &[])).unwrap_err();
+        let err = r.register_tool(make_tool("t", "ghost", &[])).await.unwrap_err();
         assert!(matches!(err, crate::Error::NotFound(_)));
     }
 
-    #[test]
-    fn test_registry_list_all() {
+    #[tokio::test]
+    async fn test_registry_list_all() {
         let r = ToolRegistry::new();
         let agent = make_agent("a1");
         r.register_agent("a1", agent as Arc<dyn AgentProtocol>);
-        r.register_tool(make_tool("t1", "a1", &[])).unwrap();
-        r.register_tool(make_tool("t2", "a1", &[])).unwrap();
+        r.register_tool(make_tool("t1", "a1", &[])).await.unwrap();
+        r.register_tool(make_tool("t2", "a1", &[])).await.unwrap();
         assert_eq!(r.list_all().len(), 2);
     }
 
-    #[test]
-    fn test_registry_find_by_name() {
+    #[tokio::test]
+    async fn test_registry_find_by_name() {
         let r = ToolRegistry::new();
         let agent = make_agent("a1");
         r.register_agent("a1", agent as Arc<dyn AgentProtocol>);
-        r.register_tool(make_tool("t1", "a1", &[])).unwrap();
+        r.register_tool(make_tool("t1", "a1", &[])).await.unwrap();
         assert!(r.find_by_name("t1").is_some());
         assert!(r.find_by_name("ghost").is_none());
     }
 
-    #[test]
-    fn test_registry_find_by_capability() {
+    #[tokio::test]
+    async fn test_registry_find_by_capability() {
         let r = ToolRegistry::new();
         let agent = make_agent("a1");
         r.register_agent("a1", agent as Arc<dyn AgentProtocol>);
-        r.register_tool(make_tool("t1", "a1", &["network"])).unwrap();
-        r.register_tool(make_tool("t2", "a1", &["io", "network"])).unwrap();
-        r.register_tool(make_tool("t3", "a1", &["math"])).unwrap();
+        r.register_tool(make_tool("t1", "a1", &["network"])).await.unwrap();
+        r.register_tool(make_tool("t2", "a1", &["io", "network"])).await.unwrap();
+        r.register_tool(make_tool("t3", "a1", &["math"])).await.unwrap();
 
         let net = r.find_by_capability("network");
         assert_eq!(net.len(), 2);
@@ -647,26 +647,28 @@ mod tests {
         assert_eq!(math.len(), 1);
     }
 
-    #[test]
-    fn test_registry_search() {
+    #[tokio::test]
+    async fn test_registry_search() {
         let r = ToolRegistry::new();
         let agent = make_agent("a1");
         r.register_agent("a1", agent as Arc<dyn AgentProtocol>);
         r.register_tool(Tool::new("echo", "echo tool", serde_json::json!({})).with_agent("a1"))
+            .await
             .unwrap();
         r.register_tool(Tool::new("calc", "calculator tool", serde_json::json!({})).with_agent("a1"))
+            .await
             .unwrap();
         assert_eq!(r.search("echo").len(), 1);
         assert_eq!(r.search("tool").len(), 2);
         assert_eq!(r.search("nothing").len(), 0);
     }
 
-    #[test]
-    fn test_registry_unregister_tool() {
+    #[tokio::test]
+    async fn test_registry_unregister_tool() {
         let r = ToolRegistry::new();
         let agent = make_agent("a1");
         r.register_agent("a1", agent as Arc<dyn AgentProtocol>);
-        r.register_tool(make_tool("t1", "a1", &[])).unwrap();
+        r.register_tool(make_tool("t1", "a1", &[])).await.unwrap();
         let removed = r.unregister_tool("t1");
         assert!(removed.is_some());
         assert_eq!(r.tool_count(), 0);
@@ -722,20 +724,20 @@ mod tests {
         assert!(result.error.unwrap().contains("not implemented"));
     }
 
-    #[test]
-    fn test_mock_agent_register_tool() {
+    #[tokio::test]
+    async fn test_mock_agent_register_tool() {
         let agent = MockAgent::new("a1");
         let def = ToolDefinition {
             name: "t".into(),
             description: "d".into(),
             input_schema: serde_json::json!({}),
         };
-        agent.register_tool(&def).unwrap();
+        agent.register_tool(&def).await.unwrap();
         assert_eq!(agent.tool_count(), 1);
     }
 
-    #[test]
-    fn test_mock_agent_execute_with_handler() {
+    #[tokio::test]
+    async fn test_mock_agent_execute_with_handler() {
         let agent = MockAgent::new("a1");
         agent.register_handler("echo", |args| Ok(args.clone()));
         let req = AgentRequest {
@@ -743,32 +745,32 @@ mod tests {
             method: "echo".into(),
             params: serde_json::json!({"x": 1}),
         };
-        let resp = agent.execute(&req).unwrap();
+        let resp = agent.execute(&req).await.unwrap();
         assert!(resp.error.is_none());
         assert_eq!(resp.result["x"], 1);
     }
 
-    #[test]
-    fn test_mock_agent_execute_without_handler() {
+    #[tokio::test]
+    async fn test_mock_agent_execute_without_handler() {
         let agent = MockAgent::new("a1");
         let req = AgentRequest {
             session_id: "s1".into(),
             method: "ghost".into(),
             params: serde_json::json!({}),
         };
-        let resp = agent.execute(&req).unwrap();
+        let resp = agent.execute(&req).await.unwrap();
         assert!(resp.error.is_some());
     }
 
-    #[test]
-    fn test_mock_agent_get_context_missing() {
+    #[tokio::test]
+    async fn test_mock_agent_get_context_missing() {
         let agent = MockAgent::new("a1");
-        let result = agent.get_context("ghost");
+        let result = agent.get_context("ghost").await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_mock_agent_get_context_present() {
+    #[tokio::test]
+    async fn test_mock_agent_get_context_present() {
         let agent = MockAgent::new("a1");
         let ctx = Context {
             session_id: "s1".into(),
@@ -777,7 +779,7 @@ mod tests {
             user_preferences: serde_json::json!({}),
         };
         agent.put_context(ctx);
-        let got = agent.get_context("s1").unwrap();
+        let got = agent.get_context("s1").await.unwrap();
         assert_eq!(got.session_id, "s1");
     }
 

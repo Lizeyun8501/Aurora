@@ -578,7 +578,7 @@ mod tests {
     use crate::registry::MockAgent;
     use aurora_core::traits::agent_protocol::AgentProtocol;
 
-    fn make_orchestrator_with_tools() -> (AgentOrchestrator, Arc<ToolRegistry>) {
+    async fn make_orchestrator_with_tools() -> (AgentOrchestrator, Arc<ToolRegistry>) {
         let registry = Arc::new(ToolRegistry::new());
         let agent = Arc::new(MockAgent::new("a1"));
         // 注册一组工具处理器
@@ -616,8 +616,7 @@ mod tests {
                 .register_tool(
                     crate::registry::Tool::new(name, format!("{} tool", name), serde_json::json!({}))
                         .with_agent("a1"),
-                )
-                .unwrap();
+                ).await.unwrap();
         }
         let orch = AgentOrchestrator::new(registry.clone());
         (orch, registry)
@@ -800,7 +799,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_execute_sequential() {
-        let (orch, _) = make_orchestrator_with_tools();
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = DeterministicPlanner.plan("translate this", "s1");
         let summary = orch.execute(&plan).await.unwrap();
         assert!(summary.success);
@@ -813,7 +812,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_execute_parallel() {
-        let (orch, _) = make_orchestrator_with_tools();
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = DeterministicPlanner.plan("search it", "s1");
         let summary = orch.execute(&plan).await.unwrap();
         assert!(summary.success);
@@ -825,7 +824,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_execute_hierarchical() {
-        let (orch, _) = make_orchestrator_with_tools();
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = DeterministicPlanner.plan("classify this", "s1");
         let summary = orch.execute(&plan).await.unwrap();
         assert!(summary.success);
@@ -837,7 +836,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_hierarchical_without_root_fails() {
-        let (orch, _) = make_orchestrator_with_tools();
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = OrchestrationPlan::new(OrchestrationMode::Hierarchical, "s1");
         let err = orch.execute(&plan).await.unwrap_err();
         assert!(matches!(err, crate::Error::InvalidInput(_)));
@@ -845,7 +844,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_sequential_failure_aborts_chain() {
-        let (orch, _) = make_orchestrator_with_tools();
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = OrchestrationPlan::new(OrchestrationMode::Sequential, "s1").with_steps(vec![
             PlanStep::new("s1", "fail", serde_json::json!({})),
             PlanStep::new("s2", "echo", serde_json::json!({})).with_depends_on(vec!["s1".into()]),
@@ -859,7 +858,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_hierarchical_node_failure_skips_children() {
-        let (orch, _) = make_orchestrator_with_tools();
+        let (orch, _) = make_orchestrator_with_tools().await;
         let root = PlanNode::new(PlanStep::new("r", "fail", serde_json::json!({})))
             .with_children(vec![PlanNode::new(PlanStep::new(
                 "c1",
@@ -875,7 +874,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_history_recorded() {
-        let (orch, _) = make_orchestrator_with_tools();
+        let (orch, _) = make_orchestrator_with_tools().await;
         let plan = DeterministicPlanner.plan("search it", "s1");
         orch.execute(&plan).await.unwrap();
         orch.execute(&plan).await.unwrap();
@@ -884,9 +883,9 @@ mod tests {
         assert_eq!(history[0].mode, OrchestrationMode::Parallel);
     }
 
-    #[test]
-    fn test_orchestrator_registry_accessor() {
-        let (orch, registry) = make_orchestrator_with_tools();
+    #[tokio::test]
+    async fn test_orchestrator_registry_accessor() {
+        let (orch, registry) = make_orchestrator_with_tools().await;
         let r = orch.registry();
         // 同一 Arc
         assert!(Arc::ptr_eq(r, &registry));

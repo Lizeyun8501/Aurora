@@ -12,5 +12,6 @@ pub mod ocr;
 pub mod p2p; // iroh P2P 同步
 pub mod search; // Tantivy 全文检索
 pub mod storage; // SQLite 存储
+pub mod storage_engine; // V20 P0-4 三步原子事务编排器（GAP-04）
 pub mod vector_db; // LanceDB 向量数据库
 pub mod wasm; // Wasmtime WASM 运行时 // OCR 引擎

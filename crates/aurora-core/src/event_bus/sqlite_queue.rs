@@ -116,6 +116,38 @@ impl EventQueueStore for SqliteEventQueue {
         Ok(())
     }
 
+    /// 投影 catch_up 重放：读取 seq > from 的全部事件（含已消费）。
+    fn events_after(&self, from: u64) -> Result<Vec<QueuedEvent>, crate::Error> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite queue mutex poisoned".into()))?;
+        let mut stmt = conn
+            .prepare("SELECT seq, channel, event_type, payload FROM event_queue WHERE seq > ?1 ORDER BY seq ASC")
+            .map_err(|e| crate::Error::Database(format!("events_after prepare: {}", e)))?;
+        let rows = stmt
+            .query_map([from as i64], |row| {
+                let seq: i64 = row.get(0)?;
+                let channel_str: String = row.get(1)?;
+                let event_type: String = row.get(2)?;
+                let payload: String = row.get(3)?;
+                Ok(QueuedEvent {
+                    seq: seq as u64,
+                    channel: Self::str_to_channel(&channel_str),
+                    event_type,
+                    payload,
+                })
+            })
+            .map_err(|e| crate::Error::Database(format!("events_after query: {}", e)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| {
+                crate::Error::Database(format!("events_after row parse failed: {}", e))
+            })?);
+        }
+        Ok(out)
+    }
+
     fn pending(&self) -> Result<Vec<QueuedEvent>, crate::Error> {
         let conn = self
             .conn

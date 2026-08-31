@@ -7,7 +7,9 @@ license.workspace = true
 description = "Aurora Note Desktop (Tauri v2)"
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# V20 P0-1: 默认 headless 编译模式（无 wry/WebView）— 服务器 CI 无 GTK/WebKit 也可
+# 参与 workspace 编译验证；完整桌面构建在装齐系统库的开发机启用 "full" feature。
+tauri = { version = "2", default-features = false, features = [] }
 tauri-plugin-shell = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -29,3 +31,5 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 default = []
+# 完整桌面构建（WebView 窗口 + 托盘）— 需 libgtk-3-dev / libwebkit2gtk-4.1-dev
+full = ["tauri/wry"]

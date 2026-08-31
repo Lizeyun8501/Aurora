@@ -207,6 +207,13 @@ impl AppEvent {
 pub struct SequencedEvent {
     /// 全局递增序列号（跨通道顺序约束依据）。
     pub seq: u64,
+    /// 本事件发布前，Medium 通道已发布到的最大 seq。
+    ///
+    /// §32.2 跨通道顺序：Low 消费者处理 seq=s 的事件前，须确认
+    /// 所有 seq' < s 的 Medium 事件已 ack（即 watermark ≥ 本字段）。
+    /// 兼容旧序列化数据：缺省 0（无前序 Medium，直接放行）。
+    #[serde(default)]
+    pub pre_medium_seq: u64,
     /// 事件本体。
     pub event: AppEvent,
 }
@@ -235,6 +242,11 @@ pub trait EventQueueStore: Send + Sync {
     fn mark_consumed(&self, seq: u64) -> Result<(), crate::Error>;
     /// 读取全部未消费事件（启动重放用，按 `seq` 升序）。
     fn pending(&self) -> Result<Vec<QueuedEvent>, crate::Error>;
+    /// 读取 `seq > from` 的全部事件（含已消费；投影 catch_up 重放用，
+    /// 按 `seq` 升序）。默认空实现（无持久化的内存总线）。
+    fn events_after(&self, _from: u64) -> Result<Vec<QueuedEvent>, crate::Error> {
+        Ok(Vec::new())
+    }
 }
 
 /// 分层事件总线。
@@ -258,8 +270,10 @@ pub struct LayeredEventBus {
     medium_backlog: Arc<AtomicU64>,
     /// Medium 已处理完成的最大序列号（Low 通道放行依据）。
     medium_watermark: Arc<AtomicU64>,
+    /// Medium 通道已发布到的最大 seq（发布期快照进 pre_medium_seq）。
+    last_medium_seq: Arc<AtomicU64>,
     /// 持久化存储（可选；缺省时 Medium 事件崩溃后丢失并告警）。
-    store: Option<Arc<dyn EventQueueStore>>,
+    pub(crate) store: Option<Arc<dyn EventQueueStore>>,
 }
 
 impl LayeredEventBus {
@@ -277,6 +291,7 @@ impl LayeredEventBus {
             seq: Arc::new(AtomicU64::new(1)),
             medium_backlog: Arc::new(AtomicU64::new(0)),
             medium_watermark: Arc::new(AtomicU64::new(0)),
+            last_medium_seq: Arc::new(AtomicU64::new(0)),
             store,
         }
     }
@@ -284,8 +299,15 @@ impl LayeredEventBus {
     /// 发布事件：按 [`AppEvent::channel`] 自动路由到对应通道。
     pub fn publish(&self, event: AppEvent) {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst);
+        // §32.2 放行快照：本事件发布前 Medium 通道已发布到的 seq。
+        // Medium 自身事件的前序快照同样记录（ack 语义下自身放行恒真）。
+        let pre_medium = self.last_medium_seq.load(Ordering::SeqCst);
+        if event.channel() == EventChannel::Medium {
+            self.last_medium_seq.store(seq, Ordering::SeqCst);
+        }
         let envelope = SequencedEvent {
             seq,
+            pre_medium_seq: pre_medium,
             event: event.clone(),
         };
         match event.channel() {
@@ -376,6 +398,15 @@ impl LayeredEventBus {
         }
     }
 
+    /// §32.2 跨通道顺序放行判定：Low 事件可否立即消费。
+    ///
+    /// 返回 `true` 表示该 Low 事件之前的全部 Medium 事件已 ack
+    /// （watermark ≥ pre_medium_seq），可安全消费；
+    /// `false` 表示应等待 Medium 追赶（配合 [`Self::low_channel_backpressure`]）。
+    pub fn low_ready(&self, ev: &SequencedEvent) -> bool {
+        self.medium_watermark.load(Ordering::SeqCst) >= ev.pre_medium_seq
+    }
+
     /// 当前 Medium 水位线（已完成处理的最大序列号）。
     pub fn medium_watermark(&self) -> u64 {
         self.medium_watermark.load(Ordering::SeqCst)
@@ -395,6 +426,7 @@ impl LayeredEventBus {
             match serde_json::from_str::<AppEvent>(&record.payload) {
                 Ok(event) => events.push(SequencedEvent {
                     seq: record.seq,
+                    pre_medium_seq: 0, // 重放事件由 Medium 消费者按 seq 有序处理
                     event,
                 }),
                 Err(e) => warn!(seq = record.seq, error = %e, "skip undecodable queued event"),
@@ -409,9 +441,9 @@ impl LayeredEventBus {
 }
 
 /// 内存版 [`EventQueueStore`]（测试 / 开发用）。
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct InMemoryEventQueue {
-    inner: RwLock<VecDeque<(QueuedEvent, bool)>>,
+    inner: Arc<RwLock<VecDeque<(QueuedEvent, bool)>>>,
 }
 
 impl InMemoryEventQueue {
@@ -440,6 +472,15 @@ impl EventQueueStore for InMemoryEventQueue {
         Ok(guard
             .iter()
             .filter(|(_, consumed)| !consumed)
+            .map(|(r, _)| r.clone())
+            .collect())
+    }
+
+    fn events_after(&self, from: u64) -> Result<Vec<QueuedEvent>, crate::Error> {
+        let guard = self.inner.read();
+        Ok(guard
+            .iter()
+            .filter(|(r, _)| r.seq > from)
             .map(|(r, _)| r.clone())
             .collect())
     }
@@ -526,6 +567,57 @@ mod tests {
             replayed[0].event,
             AppEvent::NoteMetadataChanged { .. }
         ));
+    }
+
+    /// §32.2 跨通道顺序硬保证：Low 事件在 pre_medium_seq 被 ack 前不得放行。
+    #[test]
+    fn low_ready_gated_by_medium_watermark() {
+        let bus = LayeredEventBus::new(None);
+
+        // 发布顺序: Medium(seq=1) → Low(seq=2) → Low(seq=3)
+        bus.publish(AppEvent::BidiLinkChanged {
+            source_note_id: "n0".into(),
+            target_note_id: "n1".into(),
+            action: LinkAction::Created,
+        });
+        bus.publish(AppEvent::NoteCreated {
+            note_id: "n1".into(),
+            title: "t".into(),
+            content: String::new(),
+        });
+        bus.publish(AppEvent::NoteCreated {
+            note_id: "n2".into(),
+            title: "t".into(),
+            content: String::new(),
+        });
+
+        // 取出 Low 接收端读取事件
+        let mut low_rx = bus.take_low_receiver().unwrap();
+        let ev_low1 = low_rx.try_recv().unwrap(); // seq=2, pre_medium=1
+        let ev_low2 = low_rx.try_recv().unwrap(); // seq=3, pre_medium=1
+
+        // Medium 未 ack（watermark=0 < pre_medium=1）→ 不放行
+        assert!(!bus.low_ready(&ev_low1));
+        assert!(!bus.low_ready(&ev_low2));
+
+        // ack Medium(seq=1) → watermark=1 ≥ pre_medium=1 → 放行
+        bus.ack_medium(1);
+        assert!(bus.low_ready(&ev_low1));
+        assert!(bus.low_ready(&ev_low2));
+    }
+
+    #[test]
+    fn low_without_prior_medium_is_immediately_ready() {
+        let bus = LayeredEventBus::new(None);
+        // 无 Medium 前置 → pre_medium_seq=0，watermark=0 → 立即放行
+        bus.publish(AppEvent::NoteCreated {
+            note_id: "n1".into(),
+            title: "t".into(),
+            content: String::new(),
+        });
+        let mut low_rx = bus.take_low_receiver().unwrap();
+        let ev = low_rx.try_recv().unwrap();
+        assert!(bus.low_ready(&ev));
     }
 
     #[tokio::test]

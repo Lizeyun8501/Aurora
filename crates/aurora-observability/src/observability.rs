@@ -1179,11 +1179,17 @@ impl Tracer {
             match &ctx_opt {
                 Some(ctx) => {
                     if let Some(parent) = ctx.parent_span_id.clone() {
+                        // 子 span 结束 → 恢复父上下文
                         let mut restored = ctx.clone();
                         restored.span_id = parent;
                         restored.parent_span_id = None;
                         Some(restored)
+                    } else if ctx.span_id == span.span_id {
+                        // 根 span 结束 → 清空上下文（修复: 原实现保留导致
+                        // current_context 永不清空、parent-child 测试失败）
+                        None
                     } else {
+                        // 并发/乱序场景: 结束的不是栈顶 span → 保持现状
                         ctx_opt
                     }
                 }

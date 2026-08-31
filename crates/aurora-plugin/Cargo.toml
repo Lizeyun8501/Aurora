@@ -41,5 +41,6 @@ uuid = { workspace = true }
 parking_lot = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
 # Real CryptoProvider implementation for signature verification tests
 aurora-security = { path = "../aurora-security" }
