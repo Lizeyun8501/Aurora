@@ -200,6 +200,25 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
             }),
         ));
 
+    // V20 Phase 1 四投影之二: 双链投影（Medium 通道 BidiLinkChanged →
+    // 正反向链接表，反链面板/知识图谱读模型）。数据源: 空（links 主存储
+    // 落 SQLite 后接入回调；当前事件驱动增量维护）。
+    let bidi_link_projection: Arc<
+        aurora_core::l2_engines::bidi_link_projection::BidiLinkProjection,
+    > = Arc::new(aurora_core::l2_engines::bidi_link_projection::BidiLinkProjection::new(
+        kv_store.clone(),
+        Box::new(Vec::new),
+    ));
+
+    // 四投影之三: 任务投影（TodayView 数据源 — §5.4.2 架构约束:
+    // 聚合结果由 Rust 侧产出，前端只渲染）。数据源: 空（任务主存储
+    // tasks 容器接入 FFI 事件后由存储层提供）。
+    let task_projection: Arc<aurora_core::l2_engines::task_projection::TaskProjection> =
+        Arc::new(aurora_core::l2_engines::task_projection::TaskProjection::new(
+            kv_store.clone(),
+            Box::new(Vec::new),
+        ));
+
     Ok(AppCoreBuilder::new()
         .kv_store(kv_store)
         .search(search)
@@ -210,6 +229,8 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
         .plugin(plugin)
         .event_bus_store(event_bus_store)
         .projection(search_projection)
+        .projection(bidi_link_projection)
+        .projection(task_projection)
         .build())
 }
 
