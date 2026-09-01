@@ -141,12 +141,63 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
 
     // V20 Phase 1 §4.5: 搜索索引投影（读模型）— 消费事件投影到 Tantivy，
     // 水位线存 KVStore；启动 catch_up 增量追赶，verify 失败自动全量重建。
-    // 全量数据源：暂时为空（笔记主存储接入 NoteDoc 后由存储层提供回调）。
+    // 全量数据源: KVStore `note:` 前缀（NoteRecord JSON）— rebuild 自愈可用。
+    // 注意: 回调在 block_on 内执行（投影 rebuild 由 async 上下文驱动），
+    // 此处用阻塞读 kv 的方式不可行（kv 是 async trait）→ 改为捕获 runtime
+    // 句柄 + dedicated blocking thread。
+    let kv_for_source = kv_store.clone();
     let search_projection: Arc<aurora_core::l2_engines::search_projection::SearchIndexProjection> =
         Arc::new(aurora_core::l2_engines::search_projection::SearchIndexProjection::new(
             search.clone(),
             kv_store.clone(),
-            Box::new(Vec::new),
+            Box::new(move || {
+                // 数据源回调（同步签名）: 经独立线程 + 轻量 runtime 驱动 async kv 扫描。
+                // 重建为低频操作（verify 失败/手动），线程开销可接受。
+                let kv = kv_for_source.clone();
+                std::thread::scope(|s| {
+                    s.spawn(move || {
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .ok()
+                            .and_then(|rt| {
+                                Some(rt.block_on(async {
+                                    let pairs = kv.scan_prefix("note:").await.unwrap_or_default();
+                                    pairs
+                                        .iter()
+                                        .filter_map(|(k, bytes)| {
+                                            // note:{id} → IndexEntry（NoteRecord JSON 反序列化）
+                                            let id = k.strip_prefix("note:")?.to_string();
+                                            #[derive(serde::Deserialize)]
+                                            struct Rec {
+                                                title: String,
+                                                content: String,
+                                                updated_at: String,
+                                            }
+                                            let rec: Rec = serde_json::from_slice(bytes).ok()?;
+                                            Some(aurora_core::traits::search_backend::IndexEntry {
+                                                note_id: id,
+                                                content: rec.content,
+                                                metadata:
+                                                    aurora_core::traits::search_backend::NoteMetadata {
+                                                        title: rec.title,
+                                                        tags: vec![],
+                                                        workspace_id: String::new(),
+                                                        updated_at: chrono::DateTime::parse_from_rfc3339(&rec.updated_at)
+                                                            .ok()
+                                                            .map(|dt| dt.with_timezone(&chrono::Utc)),
+                                                    },
+                                            })
+                                        })
+                                        .collect::<Vec<_>>()
+                                }))
+                            })
+                            .unwrap_or_default()
+                    })
+                    .join()
+                    .unwrap_or_default()
+                })
+            }),
         ));
 
     Ok(AppCoreBuilder::new()

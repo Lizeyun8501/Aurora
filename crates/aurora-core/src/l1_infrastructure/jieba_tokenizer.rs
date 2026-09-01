@@ -98,6 +98,14 @@ pub fn register_jieba(index: &tantivy::Index) {
     index.tokenizers().register("jieba", analyzer);
 }
 
+/// 注册 analyzer 并共享词典实例（避免查询侧二次加载 ~几十 ms）。
+pub fn register_jieba_with(index: &tantivy::Index, jieba: &Arc<Jieba>) {
+    let analyzer = TextAnalyzer::builder(JiebaTokenizer { jieba: jieba.clone() })
+        .filter(LowerCaser)
+        .build();
+    index.tokenizers().register("jieba", analyzer);
+}
+
 #[cfg(test)]
 mod tests {
     use tantivy::tokenizer::Tokenizer;

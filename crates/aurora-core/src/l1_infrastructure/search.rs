@@ -24,7 +24,7 @@ use tantivy::schema::{Field, Schema, Value, STORED, STRING, TEXT};
 use tantivy::schema::TextOptions;
 use tantivy::tokenizer::{LowerCaser, SimpleTokenizer, TextAnalyzer};
 
-use crate::l1_infrastructure::jieba_tokenizer::register_jieba;
+use crate::l1_infrastructure::jieba_tokenizer::register_jieba_with;
 use tantivy::{doc, Index, TantivyDocument, Term};
 
 use crate::traits::search_backend::{
@@ -84,6 +84,8 @@ fn build_schema() -> Schema {
 /// 基于 Tantivy 的全文检索后端实现。
 pub struct TantivySearchBackend {
     index: Index,
+    /// 查询侧切词（与索引侧 analyzer 共享同一词典实例）。
+    jieba: std::sync::Arc<jieba_rs::Jieba>,
     id: Field,
     title: Field,
     content: Field,
@@ -105,7 +107,8 @@ impl TantivySearchBackend {
             Index::create_in_dir(dir, build_schema()).map_err(map_err)?
         };
         register_lowercase_default(&index);
-        register_jieba(&index);
+        let jieba = std::sync::Arc::new(jieba_rs::Jieba::new());
+        register_jieba_with(&index, &jieba);
         let schema = index.schema();
         let id = schema
             .get_field("id")
@@ -127,6 +130,7 @@ impl TantivySearchBackend {
             .map_err(|e| Error::Internal(format!("schema field updated_at: {}", e)))?;
         Ok(Self {
             index,
+            jieba,
             id,
             title,
             content,
@@ -140,7 +144,8 @@ impl TantivySearchBackend {
     pub fn new_in_memory() -> Result<Self, Error> {
         let index = Index::create_in_ram(build_schema());
         register_lowercase_default(&index);
-        register_jieba(&index);
+        let jieba = std::sync::Arc::new(jieba_rs::Jieba::new());
+        register_jieba_with(&index, &jieba);
         let schema = index.schema();
         let id = schema.get_field("id").expect("id field");
         let title = schema.get_field("title").expect("title field");
@@ -152,6 +157,7 @@ impl TantivySearchBackend {
         let updated_at = schema.get_field("updated_at").expect("updated_at field");
         Ok(Self {
             index,
+            jieba,
             id,
             title,
             content,
@@ -162,6 +168,42 @@ impl TantivySearchBackend {
     }
 
     /// 构建单篇文档。
+    /// 查询串预处理: 「分布式 系统」→ ("分布" OR "布式" OR "分布式") AND "系统"。
+    /// 子词与特殊字符经引号包裹转义（单 token phrase == TermQuery）。
+    fn preprocess_query(&self, raw: &str) -> String {
+        let escape = |w: &str| format!("\"{}\"", w.replace('"', ""));
+        let words: Vec<&str> = raw.split_whitespace().collect();
+        if words.is_empty() {
+            return String::new();
+        }
+        let groups: Vec<String> = words
+            .iter()
+            .map(|w| {
+                let tokens = self
+                    .jieba
+                    .tokenize(w, jieba_rs::TokenizeMode::Search, true);
+                if tokens.is_empty() {
+                    escape(w)
+                } else {
+                    // 去重（保序）后 OR 组合
+                    let mut seen = std::collections::HashSet::new();
+                    let subs: Vec<String> = tokens
+                        .iter()
+                        .map(|t| t.word)
+                        .filter(|t| seen.insert(*t))
+                        .map(escape)
+                        .collect();
+                    if subs.len() == 1 {
+                        subs[0].clone()
+                    } else {
+                        format!("({})", subs.join(" OR "))
+                    }
+                }
+            })
+            .collect();
+        groups.join(" AND ")
+    }
+
     fn build_doc(
         &self,
         note_id: &str,
@@ -206,8 +248,13 @@ impl SearchBackend for TantivySearchBackend {
         let limit = if opts.limit == 0 { 20 } else { opts.limit };
         let query_parser =
             QueryParser::for_index(&self.index, vec![self.title, self.content, self.tags]);
+        // 查询语义（对齐 ES match query）:
+        // - 用户词组按空白分隔 → 词组间 AND
+        // - 每个词经 jieba 切分子词 → 词内 OR（tantivy 默认把多 token 组
+        //   短语查询，中文子词乱序 position 永不命中 — 实测踩坑）
+        let processed = self.preprocess_query(query);
         let parsed = query_parser
-            .parse_query(query)
+            .parse_query(&processed)
             .map_err(|e| Error::Internal(format!("query parse error: {}", e)))?;
         let reader = self.index.reader().map_err(map_err)?;
         let searcher = reader.searcher();
@@ -268,6 +315,11 @@ impl SearchBackend for TantivySearchBackend {
         }
         writer.commit().map_err(map_err)?;
         Ok(())
+    }
+
+    async fn doc_count(&self) -> Result<Option<usize>, Error> {
+        let reader = self.index.reader().map_err(map_err)?;
+        Ok(Some(reader.searcher().num_docs() as usize))
     }
 
     async fn remove_index(&self, note_id: &str) -> Result<(), Error> {

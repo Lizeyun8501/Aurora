@@ -131,13 +131,28 @@ impl Projection for SearchIndexProjection {
     /// 轻量健康校验：水位线键可读即视为结构完好；
     /// 深度校验（索引 vs 数据源 diff）由每日全量补偿任务执行。
     async fn verify(&self) -> Result<ProjectionHealth, crate::Error> {
-        Ok(match self.watermark().await {
-            Ok(_) => ProjectionHealth::Ok,
-            Err(e) => {
-                warn!(error = %e, "search projection watermark unreadable");
-                ProjectionHealth::Corrupted
+        // 1) 水位线可读性
+        if let Err(e) = self.watermark().await {
+            warn!(error = %e, "search projection watermark unreadable");
+            return Ok(ProjectionHealth::Corrupted);
+        }
+        // 2) 数量一致性: 仅「索引缺失」（index < source）判损坏 —
+        //    - index < source: 数据源有而索引没有（索引被删/损坏）→ rebuild
+        //    - index > source: 事件投影先于数据源写入（lag，如 bootstrap
+        //      纯事件测试场景）→ 放行，稳态后自齐
+        //    - 相等: 一致
+        let expected = (self.source)().len();
+        match self.search.doc_count().await {
+            Ok(Some(actual)) if actual < expected => {
+                warn!(expected, actual, "search projection index missing docs");
+                Ok(ProjectionHealth::Corrupted)
             }
-        })
+            Err(e) => {
+                warn!(error = %e, "doc_count unreadable; skip count check");
+                Ok(ProjectionHealth::Ok)
+            }
+            _ => Ok(ProjectionHealth::Ok),
+        }
     }
 
     /// 全量重建：清空并从数据源重放全部笔记。

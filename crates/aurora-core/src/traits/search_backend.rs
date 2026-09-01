@@ -97,6 +97,13 @@ pub trait SearchBackend: Send + Sync {
     /// 全量重建索引（崩溃恢复 / 定期校验，对应 V19 ARCH-003 低频通道补偿）。
     async fn rebuild_index(&self, all_notes: &[IndexEntry]) -> Result<(), crate::Error>;
 
+    /// 索引中文档总数（投影 verify 一致性校验用）。
+    ///
+    /// 返回 `Ok(None)` 表示后端不支持计数（verify 跳过数量对比）。
+    async fn doc_count(&self) -> Result<Option<usize>, crate::Error> {
+        Ok(None)
+    }
+
     /// 中文分词（jieba），供查询解析与高亮使用。
     /// 纯计算方法，保持同步签名。
     fn tokenize(&self, text: &str) -> Vec<String>;
