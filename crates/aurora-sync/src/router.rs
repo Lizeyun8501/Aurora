@@ -31,8 +31,63 @@ use async_trait::async_trait;
 use tracing::{info, warn};
 
 use aurora_core::traits::sync_target::{
-    ConnectionState, Endpoint, SyncConfig, SyncProtocol, SyncReport, SyncTarget,
+    Connection, ConnectionState, DocSet, Endpoint, SyncConfig, SyncEvent, SyncProtocol,
+    SyncReport, SyncTarget,
 };
+
+/// core 错误 → sync 错误（执行层归一化）。
+impl From<aurora_core::Error> for crate::Error {
+    fn from(e: aurora_core::Error) -> Self {
+        crate::Error::Sync(format!("{e}"))
+    }
+}
+
+/// 执行层适配 — `SyncTarget` 的共享包装。
+///
+/// 问题: trait 的 `connect(&mut self)` 与 `Arc` 共享互斥（router 持有
+/// Arc，无法取得可变引用）。
+///
+/// 方案: `tokio::sync::Mutex`（guard 跨 await 合法且 `Send` — 与 std
+/// Mutex 不同，后者持锁跨 await 会破坏 future 的 Send 性）。
+/// `connect(&mut)` 与 `sync(&self)` 序列在同一锁内完成 = 原子执行
+/// （同一时刻至多一个执行者驱动该目标）。
+///
+/// 现有实现（IrohSyncTarget 等）内部已用 Mutex 管理连接表，
+/// `&mut self` 仅为 trait 历史签名 — 锁传递无副作用。
+pub struct SharedTarget {
+    inner: tokio::sync::Mutex<Box<dyn SyncTarget>>,
+}
+
+impl SharedTarget {
+    /// 包装任意 `SyncTarget` 为可共享执行目标。
+    pub fn wrap(target: impl SyncTarget + 'static) -> Arc<Self> {
+        Arc::new(Self {
+            inner: tokio::sync::Mutex::new(Box::new(target)),
+        })
+    }
+
+    /// 原子执行「连接 + 同步」。
+    pub async fn connect_and_sync(
+        &self,
+        endpoint: &Endpoint,
+        doc_ids: &[String],
+    ) -> Result<(Connection, SyncReport), crate::Error> {
+        let mut t = self.inner.lock().await;
+        let conn = t
+            .connect(endpoint)
+            .await
+            .map_err(crate::Error::from)?;
+        let docs = DocSet { doc_ids: doc_ids.to_vec() };
+        let report = t.sync(&conn, &docs).await.map_err(crate::Error::from)?;
+        Ok((conn, report))
+    }
+
+    /// 断开（&self 直通）。
+    pub async fn disconnect(&self, conn: &Connection) -> Result<(), crate::Error> {
+        let t = self.inner.lock().await;
+        t.disconnect(conn).await.map_err(crate::Error::from)
+    }
+}
 
 /// 同步目标优先级档位。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -169,6 +224,8 @@ impl Default for RouterPolicy {
 pub struct SyncRouter {
     entries: Vec<RouteEntry>,
     health: Mutex<HashMap<String, Health>>,
+    /// 执行层目标注册表（url → 共享包装; 决策与执行解耦后的执行侧）。
+    exec_targets: Mutex<HashMap<String, Arc<SharedTarget>>>,
     policy: RouterPolicy,
     clock: Arc<dyn Clock>,
 }
@@ -179,6 +236,7 @@ impl SyncRouter {
         Self {
             entries,
             health: Mutex::new(HashMap::new()),
+            exec_targets: Mutex::new(HashMap::new()),
             policy,
             clock: Arc::new(SystemClock),
         }
@@ -186,7 +244,8 @@ impl SyncRouter {
 
     /// DST 构造（注入时钟 — 确定性仿真）。
     pub fn with_clock(entries: Vec<RouteEntry>, policy: RouterPolicy, clock: Arc<dyn Clock>) -> Self {
-        Self { entries, health: Mutex::new(HashMap::new()), policy, clock }
+        Self { entries, health: Mutex::new(HashMap::new()),
+            exec_targets: Mutex::new(HashMap::new()), policy, clock }
     }
 
     /// 链路当前可用性（熔断状态机）。
@@ -290,6 +349,59 @@ impl SyncRouter {
     ///
     /// 当前语义: 返回路由决策，由调用方（sync 引擎）执行连接并回报
     /// `report_success/report_failure`（健康度状态机闭环）。
+    /// 挂接执行目标（url 对应 RouteEntry.endpoint.url）。
+    pub fn attach(&self, url: &str, target: Arc<SharedTarget>) {
+        self.exec_targets
+            .lock()
+            .unwrap()
+            .insert(url.to_string(), target);
+    }
+
+    /// 执行层闭环: 决策 → 连接+同步（AttachedTarget）→ 健康度回报。
+    ///
+    /// 未 attach 的 url 走调用方自执行路径（返回决策）。
+    /// 失败自动 report_failure（下轮 route 降级）。
+    pub async fn sync_via_route(
+        &self,
+        doc_ids: &[String],
+    ) -> Result<(RouteDecision, SyncReport), crate::Error> {
+        let decision = self.route()?;
+        let target = {
+            let m = self.exec_targets.lock().unwrap();
+            m.get(&decision.endpoint_url).cloned()
+        };
+        let Some(target) = target else {
+            return Err(crate::Error::Sync(format!(
+                "no attached target for {}（决策层就绪; 调用方 route_and_execute 自执行）",
+                decision.endpoint_url
+            )));
+        };
+        // 从 entries 找该 url 的 Endpoint（协议信息）
+        let endpoint = self
+            .entries
+            .iter()
+            .find(|e| e.endpoint.url == decision.endpoint_url)
+            .map(|e| e.endpoint.clone());
+        let Some(endpoint) = endpoint else {
+            return Err(crate::Error::Sync("entry vanished".into()));
+        };
+
+        let started = self.clock.now_ms();
+        match target.connect_and_sync(&endpoint, doc_ids).await {
+            Ok((_conn, report)) => {
+                let rtt = (self.clock.now_ms().saturating_sub(started)) as f64;
+                self.report_success(&decision.endpoint_url, rtt);
+                info!(url = %decision.endpoint_url, tier = ?decision.tier, "sync via route ok");
+                Ok((decision, report))
+            }
+            Err(e) => {
+                self.report_failure(&decision.endpoint_url);
+                warn!(url = %decision.endpoint_url, error = %e, "sync via route failed");
+                Err(e)
+            }
+        }
+    }
+
     pub async fn route_and_execute<R, Fut>(
         &self,
         execute: impl FnOnce(RouteDecision) -> Fut,
@@ -476,6 +588,138 @@ mod tests {
         r.report_success("iroh://a", 200.0);
         let snap = r.health_snapshot();
         assert!((snap[0].3 - 130.0).abs() < 0.01, "EMA: {}", snap[0].3);
+    }
+
+    // ═══ 执行层: attach → connect_and_sync 成功闭环 ═══
+    #[tokio::test]
+    async fn exec_sync_via_route_reports_health() {
+        let clock = Arc::new(FakeClock::new(1000));
+        let r = router(
+            vec![
+                entry(RouteTier::P2p, "iroh://a", PrivacyLevel::E2eeOnly),
+                entry(RouteTier::Lan, "lan://b", PrivacyLevel::E2eeOnly),
+            ],
+            &clock,
+        );
+        // 挂接真实执行目标（可连接的 mock）
+        r.attach("iroh://a", SharedTarget::wrap(OkTarget { clock: Some(clock.clone()) }));
+
+        let (decision, report) = r
+            .sync_via_route(&["doc1".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(decision.endpoint_url, "iroh://a");
+        assert_eq!(report.sent_ops, 1);
+
+        // 健康度回报: EMA 有样本（时钟推进 50ms → rtt>0）
+        let snap = r.health_snapshot();
+        assert!(snap[0].3 > 0.0, "RTT 上报: {}", snap[0].3);
+    }
+
+    /// 可成功连接的 mock target（connect 时推进虚拟时钟 50ms = 确定性耗时）。
+    struct OkTarget {
+        clock: Option<Arc<FakeClock>>,
+    }
+    impl Default for OkTarget {
+        fn default() -> Self {
+            Self { clock: None }
+        }
+    }
+    #[async_trait]
+    impl SyncTarget for OkTarget {
+        async fn connect(&mut self, _ep: &Endpoint) -> Result<Connection, aurora_core::Error> {
+            if let Some(c) = &self.clock {
+                c.advance(50);
+            }
+            Ok(Connection {
+                id: "c-ok".into(),
+                endpoint: Endpoint { url: "ok".into(), protocol: SyncProtocol::Iroh },
+            })
+        }
+        async fn sync(
+            &self,
+            _conn: &Connection,
+            docs: &DocSet,
+        ) -> Result<SyncReport, aurora_core::Error> {
+            Ok(SyncReport {
+                sent_ops: docs.doc_ids.len(),
+                received_ops: 0,
+                duration_ms: 5,
+            })
+        }
+        fn watch(&self, _cb: Box<dyn Fn(SyncEvent) + Send + Sync>) {}
+        async fn disconnect(&self, _conn: &Connection) -> Result<(), aurora_core::Error> {
+            Ok(())
+        }
+    }
+
+    /// 连接永远失败的 mock target（协议不匹配路径）。
+    struct FailTarget;
+    impl Default for FailTarget {
+        fn default() -> Self {
+            Self
+        }
+    }
+    #[async_trait]
+    impl SyncTarget for FailTarget {
+        async fn connect(&mut self, _ep: &Endpoint) -> Result<Connection, aurora_core::Error> {
+            Err(aurora_core::Error::Network("inject: connect failed".into()))
+        }
+        async fn sync(&self, _c: &Connection, _d: &DocSet) -> Result<SyncReport, aurora_core::Error> {
+            unreachable!()
+        }
+        fn watch(&self, _cb: Box<dyn Fn(SyncEvent) + Send + Sync>) {}
+        async fn disconnect(&self, _c: &Connection) -> Result<(), aurora_core::Error> {
+            Ok(())
+        }
+    }
+
+    // ═══ 执行层: 失败 → report_failure → 下轮降级（DST 同构） ═══
+    #[tokio::test]
+    async fn exec_failure_degrades_next_route() {
+        let clock = Arc::new(FakeClock::new(1000));
+        let r = router(
+            vec![
+                entry(RouteTier::P2p, "iroh://a", PrivacyLevel::E2eeOnly),
+                entry(RouteTier::Lan, "lan://b", PrivacyLevel::E2eeOnly),
+            ],
+            &clock,
+        );
+        r.attach("iroh://a", SharedTarget::wrap(FailTarget::default()));
+        r.attach("lan://b", SharedTarget::wrap(OkTarget::default()));
+
+        // 第一次: P2P 失败（connect 注入失败）
+        let err = r.sync_via_route(&["d".to_string()]).await.unwrap_err();
+        assert!(err.to_string().contains("inject"));
+
+        // 第二次: P2P 失败计数 1 → 仍可用（未到熔断阈值 2）？
+        // 依赖策略; 简化断言: 再失败一次熔断后 LAN 接管
+        let _ = r.sync_via_route(&["d".to_string()]).await;
+        // P2P 连续失败 2 次 = 熔断
+        let (decision, report) = r.sync_via_route(&["d".to_string()]).await.unwrap();
+        assert_eq!(decision.endpoint_url, "lan://b", "熔断后降级 LAN");
+        assert_eq!(report.sent_ops, 1);
+    }
+
+    // ═══ 执行层: 持锁跨 await（tokio Mutex）正确性 — 多任务并发驱动同一目标 ═══
+    #[tokio::test]
+    async fn exec_shared_target_concurrent_safety() {
+        let shared = SharedTarget::wrap(OkTarget::default());
+        let ep = Endpoint { url: "u".into(), protocol: SyncProtocol::Iroh };
+        // 并发 8 个 connect_and_sync — 无死锁无竞态（锁序列化）
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let s = shared.clone();
+            let ep = ep.clone();
+            handles.push(tokio::spawn(async move {
+                s.connect_and_sync(&ep, &["d".to_string()]).await.is_ok()
+            }));
+        }
+        let results = futures::future::join_all(handles).await;
+        assert!(
+            results.iter().all(|r| *r.as_ref().unwrap_or(&false)),
+            "全部并发执行成功: {results:?}"
+        );
     }
 
     // ═══ DST 场景 7: 确定性断言（同场景序列 → 同结果） ═══

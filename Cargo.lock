@@ -553,6 +553,7 @@ dependencies = [
  "aurora-core",
  "bincode",
  "chrono",
+ "futures",
  "iroh",
  "loro",
  "parking_lot 0.12.5",
