@@ -17,6 +17,11 @@ pub mod post_quantum;
 pub mod recovery;
 pub mod vault;
 
+// V20 Phase 2: SQLCipher 落盘加密（feature 门控; 独立 rusqlite 实例避免
+// 与 workspace bundled 冲突）
+#[cfg(feature = "sqlcipher")]
+pub mod encrypted_store;
+
 // 再导出常用类型，便于外部 `use aurora_security::SecurityCryptoProvider`。
 pub use crypto_provider_impl::SecurityCryptoProvider;
 

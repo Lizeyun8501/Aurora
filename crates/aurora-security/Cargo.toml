@@ -44,5 +44,14 @@ uuid = { workspace = true }
 # Concurrency
 parking_lot = { workspace = true }
 
+# V20 Phase 2: SQLCipher 落盘加密（optional, 见 features.sqlcipher）
+rusqlite = { version = "0.32", optional = true }
+
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+default = []
+# V20 Phase 2: SQLCipher 落盘加密（源码编译, 无需系统 libsqlcipher;
+# 编译 +~2min, feature 门控按需启用。测试: cargo test -p aurora-security --features sqlcipher）
+sqlcipher = ["dep:rusqlite", "rusqlite/bundled-sqlcipher"]
