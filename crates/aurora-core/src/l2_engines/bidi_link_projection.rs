@@ -30,6 +30,29 @@ pub struct LinkRow {
     pub target_note_id: String,
 }
 
+/// 从 SQLite links 表读全量正向链接（bootstrap 数据源 — 共享连接需
+/// 独立打开; Mutex<Connection> 不可克隆）。
+pub fn links_from_sqlite(path: &std::path::Path) -> Vec<LinkRow> {
+    let Ok(conn) = rusqlite::Connection::open(path) else {
+        return Vec::new();
+    };
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT source_note_id, target_note_id FROM links ORDER BY source_note_id, target_note_id",
+    ) else {
+        return Vec::new();
+    };
+    let rows = stmt.query_map([], |r| {
+        Ok(LinkRow {
+            source_note_id: r.get(0)?,
+            target_note_id: r.get(1)?,
+        })
+    });
+    match rows {
+        Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// 全量数据源回调：返回全库正向链接（含容器缓存）。
 pub type LinkSource = Box<dyn Fn() -> Vec<LinkRow> + Send + Sync>;
 
@@ -42,6 +65,9 @@ pub struct BidiLinkProjection {
     backward: RwLock<BTreeMap<String, BTreeSet<String>>>,
     kv: std::sync::Arc<dyn KVStore>,
     source: LinkSource,
+    /// SQLite links 表持久层（可选 — V20 Phase 2: links 主存储落地）。
+    /// None = 纯内存模式（测试）; Some = 事件驱动双写 + 数据源默认读表。
+    sqlite: Option<std::sync::Mutex<rusqlite::Connection>>,
 }
 
 const WATERMARK_KEY: &str = "projection.watermark.bidi_link";
@@ -49,6 +75,7 @@ const WATERMARK_KEY: &str = "projection.watermark.bidi_link";
 impl BidiLinkProjection {
     pub fn new(kv: std::sync::Arc<dyn KVStore>, source: LinkSource) -> Self {
         Self {
+            sqlite: None,
             forward: RwLock::new(BTreeMap::new()),
             backward: RwLock::new(BTreeMap::new()),
             kv,
@@ -56,7 +83,46 @@ impl BidiLinkProjection {
         }
     }
 
-    fn apply_link(&self, source: &str, target: &str, action: &LinkAction) {
+    /// SQLite 后端构造（links 表由 aurora-migration 建好; 事件驱动
+    /// 双写内存 + SQLite — 跨进程持久, 数据源读表）。
+    pub fn new_with_sqlite(
+        kv: std::sync::Arc<dyn KVStore>,
+        conn: rusqlite::Connection,
+    ) -> Self {
+        Self {
+            sqlite: Some(std::sync::Mutex::new(conn)),
+            forward: RwLock::new(BTreeMap::new()),
+            backward: RwLock::new(BTreeMap::new()),
+            kv,
+            source: Box::new(Vec::new),
+        }
+    }
+
+    pub fn apply_link(&self, source: &str, target: &str, action: &LinkAction) {
+        // SQLite 双写（失败仅告警 — 内存投影仍正确, 表由 rebuild 修复）
+        if let Some(db) = &self.sqlite {
+            if let Ok(conn) = db.lock() {
+                let res = match action {
+                    LinkAction::Created => conn.execute(
+                        "INSERT OR IGNORE INTO links (id, source_note_id, target_note_id, link_type, created_at, metadata)
+                         VALUES (?1, ?2, ?3, 'reference', ?4, '{}')",
+                        rusqlite::params![
+                            format!("{source}->{target}"),
+                            source,
+                            target,
+                            chrono::Utc::now().to_rfc3339()
+                        ],
+                    ),
+                    LinkAction::Deleted => conn.execute(
+                        "DELETE FROM links WHERE source_note_id = ?1 AND target_note_id = ?2",
+                        rusqlite::params![source, target],
+                    ),
+                };
+                if let Err(e) = res {
+                    tracing::warn!(error = %e, "links sqlite dual-write failed");
+                }
+            }
+        }
         match action {
             LinkAction::Created => {
                 self.forward
@@ -172,6 +238,10 @@ impl Projection for BidiLinkProjection {
         Ok(())
     }
 
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
     async fn set_watermark(&self, seq: u64) -> Result<(), crate::Error> {
         self.kv
             .set(WATERMARK_KEY, seq.to_string().as_bytes())
@@ -277,6 +347,62 @@ mod tests {
         bus.catch_up(&p).await.unwrap();
         assert_eq!(p.link_count(), 2, "verify 失败触发 rebuild 后 = 源全量");
         assert_eq!(p.incoming("y").len(), 2);
+    }
+
+    /// V20 Phase 2: SQLite 双写持久 — 跨进程（重启）经 links 表恢复。
+    #[tokio::test]
+    async fn sqlite_persistence_across_restart() {
+        use crate::traits::kv_store::KVStore;
+        use crate::l1_infrastructure::storage_engine::MemoryKVStore;
+        use crate::event_bus::layered::LinkAction;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("links.db");
+        // links 表
+        {
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS links (
+                    id TEXT PRIMARY KEY,
+                    source_note_id TEXT NOT NULL,
+                    target_note_id TEXT NOT NULL,
+                    link_type TEXT NOT NULL DEFAULT 'reference',
+                    created_at TEXT NOT NULL,
+                    metadata TEXT NOT NULL DEFAULT '{}')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // 进程一: SQLite 后端投影 + 事件双写
+        {
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            let p = BidiLinkProjection::new_with_sqlite(
+                std::sync::Arc::new(MemoryKVStore::default()),
+                conn,
+            );
+            p.apply_link("a", "b", &LinkAction::Created);
+            p.apply_link("c", "b", &LinkAction::Created);
+            assert_eq!(p.incoming("b").len(), 2, "内存投影正确");
+        } // conn drop = 进程退出
+
+        // 进程二: links_from_sqlite 读表恢复
+        let rows = links_from_sqlite(&db);
+        assert_eq!(rows.len(), 2, "SQLite 双写落表: {rows:?}");
+        let has_ab = rows.iter().any(|r| r.source_note_id == "a" && r.target_note_id == "b");
+        assert!(has_ab, "a→b 持久化");
+
+        // 删除也持久
+        {
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            let p = BidiLinkProjection::new_with_sqlite(
+                std::sync::Arc::new(MemoryKVStore::default()),
+                conn,
+            );
+            p.apply_link("a", "b", &LinkAction::Deleted);
+        }
+        let rows2 = links_from_sqlite(&db);
+        assert_eq!(rows2.len(), 1, "删除持久化: {rows2:?}");
     }
 
     #[tokio::test]

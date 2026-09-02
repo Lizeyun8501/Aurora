@@ -39,6 +39,15 @@ pub struct NoteSummary {
     pub updated_at: String,
 }
 
+/// 反向链接条目（V20 §5.4 双链反链面板 — Rust 侧产出）。
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct BacklinkItem {
+    /// 引用方笔记 ID。
+    pub source_note_id: String,
+    /// 引用方标题（面板显示）。
+    pub source_title: String,
+}
+
 /// TodayView 头部统计（V20 §5.4.2: Rust 侧聚合，前端只渲染）。
 #[derive(uniffi::Record, Debug, Clone, Default)]
 pub struct TodayViewStats {
@@ -346,6 +355,35 @@ impl UniffiAppCore {
             }
         } else {
             self.simple_title_search(&query)
+        }
+    }
+
+    /// 反链: BidiLinkProjection.incoming + KVStore 查引用方标题。
+    fn backlinks_impl(self: &Arc<Self>, note_id: String) -> Vec<BacklinkItem> {
+        if let Some(core) = &self.core {
+            let sources = core.bidi_link_incoming(&note_id);
+            let kv = core.kv_store.clone();
+            sources
+                .into_iter()
+                .map(|src| {
+                    let title = self
+                        .runtime
+                        .block_on(async {
+                            kv.get(&format!("note:{src}")).await.ok().flatten()
+                        })
+                        .and_then(|bytes| {
+                            serde_json::from_slice::<NoteRecord>(&bytes).ok()
+                        })
+                        .map(|n| n.title)
+                        .unwrap_or_else(|| src.clone());
+                    BacklinkItem {
+                        source_note_id: src,
+                        source_title: title,
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
         }
     }
 
@@ -948,6 +986,11 @@ impl UniffiAppCore {
     /// TodayView 统计（V20 §5.4.2 — 任务投影聚合，Rust 侧产出）。
     pub fn today_view_stats(self: Arc<Self>) -> TodayViewStats {
         Self::today_view_stats_impl(&self)
+    }
+
+    /// 反向链接（双链反链面板 — 笔记被哪些笔记引用）。
+    pub fn get_backlinks(self: Arc<Self>, note_id: String) -> Vec<BacklinkItem> {
+        Self::backlinks_impl(&self, note_id)
     }
 
     pub fn delete_note(self: Arc<Self>, note_id: String) -> Result<(), MobileError> {

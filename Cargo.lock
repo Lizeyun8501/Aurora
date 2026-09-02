@@ -368,6 +368,7 @@ dependencies = [
  "aurora-migration",
  "aurora-security",
  "chrono",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

@@ -200,15 +200,29 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
             }),
         ));
 
-    // V20 Phase 1 四投影之二: 双链投影（Medium 通道 BidiLinkChanged →
-    // 正反向链接表，反链面板/知识图谱读模型）。数据源: 空（links 主存储
-    // 落 SQLite 后接入回调；当前事件驱动增量维护）。
+    // V20 Phase 2: 双链投影接 SQLite links 表 — 事件驱动双写
+    // （内存投影 + links 表持久化），跨进程可用; 数据源读表（rebuild）。
+    let links_conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| BootstrapError::Core(format!("links connection: {e}")))?;
+    let db_path_for_links = db_path.clone();
     let bidi_link_projection: Arc<
         aurora_core::l2_engines::bidi_link_projection::BidiLinkProjection,
-    > = Arc::new(aurora_core::l2_engines::bidi_link_projection::BidiLinkProjection::new(
-        kv_store.clone(),
-        Box::new(Vec::new),
-    ));
+    > = Arc::new(
+        aurora_core::l2_engines::bidi_link_projection::BidiLinkProjection::new_with_sqlite(
+            kv_store.clone(),
+            links_conn,
+        ),
+    );
+    // 启动期: 从 links 表重建内存投影（跨进程恢复）
+    for row in aurora_core::l2_engines::bidi_link_projection::links_from_sqlite(
+        &db_path_for_links,
+    ) {
+        bidi_link_projection.apply_link(
+            &row.source_note_id,
+            &row.target_note_id,
+            &aurora_core::event_bus::layered::LinkAction::Created,
+        );
+    }
 
     // 四投影之三: 任务投影（TodayView 数据源 — §5.4.2 架构约束:
     // 聚合结果由 Rust 侧产出，前端只渲染）。数据源: KVStore note: 前缀

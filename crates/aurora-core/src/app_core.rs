@@ -191,6 +191,32 @@ impl AppCore {
         (0, 0)
     }
 
+    /// 双链反向查询（target 的入链 — 反链面板）。
+    pub fn bidi_link_incoming(&self, target_note_id: &str) -> Vec<String> {
+        for p in &self.projections {
+            if let Some(bp) = p
+                .as_any()
+                .and_then(|a| a.downcast_ref::<crate::l2_engines::bidi_link_projection::BidiLinkProjection>())
+            {
+                return bp.incoming(target_note_id);
+            }
+        }
+        Vec::new()
+    }
+
+    /// 双链正向查询（source 的出链 — 知识图谱）。
+    pub fn bidi_link_outgoing(&self, source_note_id: &str) -> Vec<String> {
+        for p in &self.projections {
+            if let Some(bp) = p
+                .as_any()
+                .and_then(|a| a.downcast_ref::<crate::l2_engines::bidi_link_projection::BidiLinkProjection>())
+            {
+                return bp.outgoing(source_note_id);
+            }
+        }
+        Vec::new()
+    }
+
     /// 任务投影今日到期数（含逾期）。
     pub fn task_projection_due_today(&self) -> usize {
         for p in &self.projections {
