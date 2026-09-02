@@ -24,6 +24,7 @@ pub mod incremental;
 pub mod iroh_transport;
 pub mod lan;
 pub mod offline_queue;
+pub mod router; // V20 §3.10/Phase 2: SyncRouter 策略路由 + DST
 pub mod p2p;
 
 use thiserror::Error;
