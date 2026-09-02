@@ -168,6 +168,10 @@ impl Projection for TaskProjection {
         Ok(())
     }
 
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
     async fn set_watermark(&self, seq: u64) -> Result<(), crate::Error> {
         self.kv
             .set(WATERMARK_KEY, seq.to_string().as_bytes())

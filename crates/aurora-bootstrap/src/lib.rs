@@ -211,12 +211,47 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
     ));
 
     // 四投影之三: 任务投影（TodayView 数据源 — §5.4.2 架构约束:
-    // 聚合结果由 Rust 侧产出，前端只渲染）。数据源: 空（任务主存储
-    // tasks 容器接入 FFI 事件后由存储层提供）。
+    // 聚合结果由 Rust 侧产出，前端只渲染）。数据源: KVStore note: 前缀
+    // 播种行（与 FFI note_created_seed 语义一致 — 保证 rebuild 后
+    // TodayView 有内容 + verify 数量一致性闭环; 任务容器结构化数据
+    // 接入 FFI 事件后由存储层提供全量行）。
+    let kv_for_tasks = kv_store.clone();
     let task_projection: Arc<aurora_core::l2_engines::task_projection::TaskProjection> =
         Arc::new(aurora_core::l2_engines::task_projection::TaskProjection::new(
             kv_store.clone(),
-            Box::new(Vec::new),
+            Box::new(move || {
+                let kv = kv_for_tasks.clone();
+                std::thread::scope(|s| {
+                    s.spawn(move || {
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .ok()
+                            .and_then(|rt| {
+                                Some(rt.block_on(async {
+                                    let pairs = kv.scan_prefix("note:").await.unwrap_or_default();
+                                    pairs
+                                        .iter()
+                                        .filter_map(|(k, _bytes)| {
+                                            let note_id = k.strip_prefix("note:")?.to_string();
+                                            Some(aurora_core::l2_engines::task_projection::TaskViewRow {
+                                                task_id: format!("seed:{note_id}"),
+                                                note_id,
+                                                title: String::new(),
+                                                status: "inbox".into(),
+                                                priority: "medium".into(),
+                                                due_date: None,
+                                            })
+                                        })
+                                        .collect::<Vec<_>>()
+                                }))
+                            })
+                            .unwrap_or_default()
+                    })
+                    .join()
+                    .unwrap_or_default()
+                })
+            }),
         ));
 
     Ok(AppCoreBuilder::new()

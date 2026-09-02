@@ -39,6 +39,17 @@ pub struct NoteSummary {
     pub updated_at: String,
 }
 
+/// TodayView 头部统计（V20 §5.4.2: Rust 侧聚合，前端只渲染）。
+#[derive(uniffi::Record, Debug, Clone, Default)]
+pub struct TodayViewStats {
+    /// 进行中（GTD: inbox/next/waiting/scheduled）。
+    pub active: i64,
+    /// 已完成。
+    pub done: i64,
+    /// 今日到期（含逾期）。
+    pub due_today: i64,
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct SearchResult {
     pub note_id: String,
@@ -335,6 +346,21 @@ impl UniffiAppCore {
             }
         } else {
             self.simple_title_search(&query)
+        }
+    }
+
+    /// TodayView 统计: 任务投影聚合（真实模式）; fallback 空统计。
+    fn today_view_stats_impl(self: &Arc<Self>) -> TodayViewStats {
+        if let Some(core) = &self.core {
+            let (active, done) = core.task_projection_stats();
+            let due_today = core.task_projection_due_today();
+            TodayViewStats {
+                active: active as i64,
+                done: done as i64,
+                due_today: due_today as i64,
+            }
+        } else {
+            TodayViewStats::default()
         }
     }
 
@@ -919,6 +945,11 @@ impl UniffiAppCore {
         Self::search_notes_impl(&self, query)
     }
 
+    /// TodayView 统计（V20 §5.4.2 — 任务投影聚合，Rust 侧产出）。
+    pub fn today_view_stats(self: Arc<Self>) -> TodayViewStats {
+        Self::today_view_stats_impl(&self)
+    }
+
     pub fn delete_note(self: Arc<Self>, note_id: String) -> Result<(), MobileError> {
         Self::delete_note_impl(&self, note_id)
     }
@@ -1023,6 +1054,35 @@ mod tests {
         let hits = core3.clone().search_notes("算法".into());
         // 数据源回调重建后应命中（若 verify 未触发，此断言暴露重建缺口）
         assert_eq!(hits.len(), 1, "索引损坏后经数据源重建恢复: {hits:?}");
+    }
+
+    /// V20 §5.4.2 + Phase 2 数据源闭环: 任务投影经 KVStore 数据源
+    /// rebuild 后 TodayView 统计由 Rust 侧产出（前端只渲染）。
+    #[test]
+    fn today_view_stats_from_task_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+            assert!(!core.is_fallback);
+            core.clone().create_note("待办事项A".into()).unwrap();
+            core.clone().create_note("待办事项B".into()).unwrap();
+            // 创建即播种 2 行 inbox → catch_up 后统计反映
+            let s = core.clone().today_view_stats();
+            assert_eq!(s.active, 2, "两篇笔记播种 2 行进行中: {s:?}");
+            assert_eq!(s.done, 0);
+        } // 杀进程
+        {
+            let core2 = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+            // 重启: 任务投影数据源（note: 播种）+ catch_up → 统计恢复
+            let s = core2.clone().today_view_stats();
+            assert_eq!(s.active, 2, "重启后经数据源 rebuild 恢复: {s:?}");
+
+            // 删除一篇 → 级联清理播种行
+            let notes = core2.clone().list_notes();
+            core2.clone().delete_note(notes[0].id.clone()).unwrap();
+            let s2 = core2.clone().today_view_stats();
+            assert_eq!(s2.active, 1, "删除笔记级联清理任务行: {s2:?}");
+        }
     }
 
     #[test]

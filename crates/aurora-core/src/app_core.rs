@@ -177,6 +177,34 @@ impl AppCore {
         &self.projections
     }
 
+    /// 任务投影统计（TodayView 头部 — V20 §5.4.2）。
+    /// 未注册任务投影时返回 (0, 0)。
+    pub fn task_projection_stats(&self) -> (usize, usize) {
+        for p in &self.projections {
+            if let Some(tp) = p
+                .as_any()
+                .and_then(|a| a.downcast_ref::<crate::l2_engines::task_projection::TaskProjection>())
+            {
+                return tp.stats();
+            }
+        }
+        (0, 0)
+    }
+
+    /// 任务投影今日到期数（含逾期）。
+    pub fn task_projection_due_today(&self) -> usize {
+        for p in &self.projections {
+            if let Some(tp) = p
+                .as_any()
+                .and_then(|a| a.downcast_ref::<crate::l2_engines::task_projection::TaskProjection>())
+            {
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                return tp.today(now_ms).len();
+            }
+        }
+        0
+    }
+
     pub fn startup(&self) -> Result<(), Error> {
         // V20 Phase 1: 先恢复全局 seq（防重启后新事件 seq 撞历史）
         self.event_bus.restore_seq()?;

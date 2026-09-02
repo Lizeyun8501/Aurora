@@ -61,6 +61,11 @@ pub trait Projection: Send + Sync {
     /// 更新水位线（apply 成功后由消费循环调用；须持久化）。
     async fn set_watermark(&self, seq: u64) -> Result<(), crate::Error>;
 
+    /// 下行转换支持（具体类型查询; 覆写返回 Some(self)）。
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
     /// 全量重建（从空状态追赶至最新）。
     async fn rebuild(&self) -> Result<(), crate::Error>;
 }
