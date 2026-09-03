@@ -331,6 +331,21 @@ impl UniffiAppCore {
 
     fn search_notes_impl(self: &Arc<Self>, query: String) -> Vec<SearchResult> {
         if let Some(core) = &self.core {
+            // V20 Phase 3 §5.4: 口语化语义查询 — NL 解析任务/链接意图
+            // 走投影聚合; notes 意图/兜底走 Tantivy 全文。
+            let parsed = aurora_core::l2_engines::nl_query::NlQueryParser::parse(&query);
+            match parsed.source.as_str() {
+                "tasks" => return Self::search_tasks_via_projection(&parsed, core),
+                "links" => {
+                    if let Some(aurora_core::l2_engines::query::Filter::Eq { value, .. }) =
+                        &parsed.filter
+                    {
+                        let target = value.as_str().unwrap_or_default().to_string();
+                        return Self::backlinks_for_query(self, &target, &query);
+                    }
+                }
+                _ => {}
+            }
             use aurora_core::traits::search_backend::SearchOptions;
             let search = core.search.clone();
             let result = self
@@ -385,6 +400,88 @@ impl UniffiAppCore {
         } else {
             Vec::new()
         }
+    }
+
+    /// 链接意图搜索: 反链面板数据转 SearchResult。
+    fn backlinks_for_query(
+        self: &Arc<Self>,
+        target: &str,
+        raw_query: &str,
+    ) -> Vec<SearchResult> {
+        Self::backlinks_impl(self, target.to_string())
+            .into_iter()
+            .map(|b| SearchResult {
+                note_id: b.source_note_id,
+                title: b.source_title,
+                snippet: format!("引用了「{raw_query}」"),
+                score: 1.0,
+            })
+            .collect()
+    }
+
+    /// 任务意图搜索: TaskProjection 聚合（未完成/今日/紧急），
+    /// **排除播种行**（seed: 前缀 — 笔记创建占位非真实行动项）。
+    fn search_tasks_via_projection(
+        parsed: &aurora_core::l2_engines::query::Query,
+        core: &std::sync::Arc<aurora_core::app_core::AppCore>,
+    ) -> Vec<SearchResult> {
+        use aurora_core::l2_engines::query::Filter;
+        let tp = core.projections().iter().find_map(|p| {
+            p.as_any().and_then(|a| {
+                a.downcast_ref::<aurora_core::l2_engines::task_projection::TaskProjection>()
+            })
+        });
+        let Some(tp) = tp else {
+            return Vec::new();
+        };
+        let (undone_only, today_window, urgent_only) = match &parsed.filter {
+            Some(Filter::And { filters }) => {
+                let undone = filters
+                    .iter()
+                    .any(|f| matches!(f, Filter::Ne { ref field, .. } if field == "status"));
+                let today = filters
+                    .iter()
+                    .any(|f| matches!(f, Filter::Lte { ref field, .. } if field == "due_date"));
+                let urgent = filters.iter().any(|f| {
+                    matches!(f, Filter::Eq { ref field, ref value, .. }
+                        if field == "priority" && value == "urgent")
+                });
+                (undone, today, urgent)
+            }
+            Some(Filter::Eq { field, value, .. }) if field == "priority" => {
+                (false, false, value == "urgent")
+            }
+            Some(Filter::Ne { field, .. }) if field == "status" => (true, false, false),
+            _ => (false, false, false),
+        };
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut rows: Vec<_> = if today_window {
+            tp.today(now)
+        } else if urgent_only {
+            tp.by_status("inbox")
+                .into_iter()
+                .filter(|r| r.priority == "urgent")
+                .collect()
+        } else if undone_only {
+            let mut all = tp.by_status("inbox");
+            all.extend(tp.by_status("next"));
+            all.extend(tp.by_status("waiting"));
+            all.extend(tp.by_status("scheduled"));
+            all
+        } else {
+            tp.by_status("inbox")
+        };
+        // 排除播种行（占位非行动项）
+        rows.retain(|r| !r.task_id.starts_with("seed:"));
+        rows.truncate(parsed.pagination.as_ref().map(|p| p.limit).unwrap_or(50));
+        rows.into_iter()
+            .map(|r| SearchResult {
+                note_id: r.note_id,
+                title: r.title,
+                snippet: format!("[{}] {}", r.status, r.priority),
+                score: 1.0,
+            })
+            .collect()
     }
 
     /// TodayView 统计: 任务投影聚合（真实模式）; fallback 空统计。
@@ -1147,6 +1244,30 @@ mod tests {
             let s2 = core2.clone().today_view_stats();
             assert_eq!(s2.active, 1, "删除笔记级联清理任务行: {s2:?}");
         }
+    }
+
+    /// V20 Phase 3 §5.4: 口语化语义搜索 —「未完成的任务」经 NL 解析 →
+    /// 任务投影聚合（播种行排除, 仅真实行动项）。
+    #[test]
+    fn nl_query_undone_tasks_end_to_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        assert!(!core.is_fallback);
+
+        let id = core.clone().create_note("项目推进".into()).unwrap();
+        core.clone()
+            .save_note_content(id.clone(), "- [ ] 明天提交预算表\n- [x] 已完成事项\n尽快安排评审".into())
+            .unwrap();
+
+        // 口语化「未完成的任务」→ 2 个真实行动项（播种行排除）
+        let hits = core.clone().search_notes("未完成的任务".into());
+        assert_eq!(hits.len(), 2, "2 个真实行动项（不含播种行）: {hits:?}");
+        assert!(hits.iter().any(|h| h.title.contains("预算")));
+        assert!(hits.iter().any(|h| h.title.contains("评审")));
+
+        // 关键词笔记查询（notes 意图 → Tantivy）
+        let note_hits = core.clone().search_notes("预算".into());
+        assert!(!note_hits.is_empty(), "关键词走全文: {note_hits:?}");
     }
 
     #[test]
