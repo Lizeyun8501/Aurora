@@ -39,6 +39,21 @@ pub struct NoteSummary {
     pub updated_at: String,
 }
 
+/// 复习卡片条目（V20 Phase 3 FSRS — 今日页「复习」分区）。
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct ReviewCard {
+    pub card_id: String,
+    pub note_id: String,
+    /// 下次到期时间（RFC3339）。
+    pub due_at: String,
+    /// 当前可提取性（0-1, 越低越急需复习）。
+    pub retrievability: f64,
+    /// 已复习次数。
+    pub reps: i64,
+    /// 失败次数。
+    pub lapses: i64,
+}
+
 /// 反向链接条目（V20 §5.4 双链反链面板 — Rust 侧产出）。
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct BacklinkItem {
@@ -1111,6 +1126,61 @@ impl UniffiAppCore {
         Self::backlinks_impl(&self, note_id)
     }
 
+    /// FSRS 复习: 到期卡片列表（due ≤ now 或 R 跌破 0.9）。
+    pub fn due_review_cards(self: Arc<Self>) -> Vec<ReviewCard> {
+        if let Some(core) = &self.core {
+            core.review_queue
+                .due_items(chrono::Utc::now())
+                .into_iter()
+                .map(|it| {
+                    let r = aurora_core::l3_domain::fsrs::FsrsScheduler::new()
+                        .retrievability(&it.state, chrono::Utc::now());
+                    ReviewCard {
+                        card_id: it.card_id,
+                        note_id: it.note_id,
+                        due_at: it.due.to_rfc3339(),
+                        retrievability: r,
+                        reps: it.state.reps as i64,
+                        lapses: it.state.lapses as i64,
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// FSRS 复习: 对卡片评分（1 Again / 2 Hard / 3 Good / 4 Easy）
+    /// → 返回下次到期时间（RFC3339）。
+    pub fn review_card(
+        self: Arc<Self>,
+        card_id: String,
+        rating: i64,
+    ) -> Result<String, MobileError> {
+        if let Some(core) = &self.core {
+            let rating = match rating {
+                1 => aurora_core::l3_domain::fsrs::Rating::Again,
+                2 => aurora_core::l3_domain::fsrs::Rating::Hard,
+                3 => aurora_core::l3_domain::fsrs::Rating::Good,
+                4 => aurora_core::l3_domain::fsrs::Rating::Easy,
+                _ => {
+                    return Err(MobileError::OperationFailed {
+                        message: "rating must be 1-4".into(),
+                    })
+                }
+            };
+            let out = core
+                .review_queue
+                .review_card(&card_id, rating)
+                .ok_or(MobileError::NotFound { resource: card_id })?;
+            Ok(out.due.to_rfc3339())
+        } else {
+            Err(MobileError::OperationFailed {
+                message: "fallback mode".into(),
+            })
+        }
+    }
+
     pub fn delete_note(self: Arc<Self>, note_id: String) -> Result<(), MobileError> {
         Self::delete_note_impl(&self, note_id)
     }
@@ -1268,6 +1338,40 @@ mod tests {
         // 关键词笔记查询（notes 意图 → Tantivy）
         let note_hits = core.clone().search_notes("预算".into());
         assert!(!note_hits.is_empty(), "关键词走全文: {note_hits:?}");
+    }
+
+    /// V20 Phase 3 FSRS: 复习闭环经 FFI（注册→到期→评分→推迟）。
+    #[test]
+    fn fsrs_review_cycle_via_ffi() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        assert!(!core.is_fallback);
+
+        // 注册复习卡（笔记 Distill 场景: 首次 Good）
+        let c = core.core.as_ref().unwrap();
+        c.review_queue.add_card("card-1", "note-1",
+            aurora_core::l3_domain::fsrs::Rating::Good);
+
+        // 新卡 due 在未来 → 无到期
+        assert!(core.clone().due_review_cards().is_empty());
+
+        // 时间快进语义: 经内部 API 用未来时刻查（FFI 恒 now — 测试走内部）
+        let future = chrono::Utc::now() + chrono::Duration::days(30);
+        let due = c.review_queue.due_items(future);
+        assert_eq!(due.len(), 1, "30 天后到期");
+
+        // FFI 评分: Good → 推迟
+        let next_due = core.clone().review_card("card-1".into(), 3).unwrap();
+        assert!(!next_due.is_empty(), "RFC3339 回传");
+        // 再评 Again → 队列不丢卡（重置而非删除）
+        core.clone().review_card("card-1".into(), 1).unwrap();
+        let (_, total) = c.review_queue.stats();
+        assert_eq!(total, 1, "卡仍在队列");
+
+        // 不存在的卡 → NotFound
+        assert!(core.clone().review_card("ghost".into(), 3).is_err());
+        // 非法评分 → 错误
+        assert!(core.clone().review_card("card-1".into(), 9).is_err());
     }
 
     #[test]

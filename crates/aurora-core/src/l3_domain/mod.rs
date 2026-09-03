@@ -5,6 +5,7 @@
 
 pub mod ai_system;
 pub mod content_editor;
+pub mod fsrs; // V20 Phase 3: FSRS 间隔重复调度（Distill 召回）
 pub mod gtd_system;
 pub mod knowledge_network;
 

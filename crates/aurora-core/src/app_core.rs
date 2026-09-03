@@ -45,6 +45,8 @@ pub struct AppCore {
     pub event_bus: Arc<LayeredEventBus>,
     /// 已注册投影（V20 §4.5 读模型; 启动时 catch_up 增量追赶）。
     projections: Vec<Arc<dyn crate::event_bus::projection::Projection>>,
+    /// FSRS 复习队列（V20 Phase 3 Distill — 今日页「复习」分区）。
+    pub review_queue: Arc<crate::l3_domain::fsrs::ReviewQueue>,
 }
 
 /// AppCore 构建器（依赖注入容器）。
@@ -133,6 +135,7 @@ impl AppCoreBuilder {
     pub fn build(mut self) -> AppCore {
         let event_bus = Arc::new(LayeredEventBus::new(self.event_bus_store));
         let projections = std::mem::take(&mut self.projections);
+        let review_queue = Arc::new(crate::l3_domain::fsrs::ReviewQueue::new());
 
         AppCore {
             sync_target: self.sync_target.expect("SyncTarget must be provided"),
@@ -144,6 +147,7 @@ impl AppCoreBuilder {
             plugin: self.plugin.expect("PluginRuntime must be provided"),
             event_bus,
             projections,
+            review_queue,
         }
     }
 }
