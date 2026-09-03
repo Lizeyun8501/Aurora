@@ -483,7 +483,7 @@ impl UniffiAppCore {
                 None => return Err(MobileError::NotFound { resource: note_id }),
             };
 
-            note.content = content;
+            note.content = content.clone();
             note.updated_at = chrono::Utc::now().to_rfc3339();
 
             let value = serde_json::to_vec(&note).map_err(|e| MobileError::OperationFailed {
@@ -510,6 +510,27 @@ impl UniffiAppCore {
             self.runtime
                 .block_on(async move { core_clone.catch_up_projections().await })
                 .ok();
+
+            // V20 Phase 3 GTD 闭环: 正文行动项自动提取 → 任务投影
+            // （- [ ] 任务 / 中文动词句 → inbox; TodayView 聚合可见）
+            let core_act = core.clone();
+            self.runtime
+                .block_on(async move {
+                    if let Some(tp) = core_act
+                        .projections()
+                        .iter()
+                        .find_map(|p| {
+                            p.as_any().and_then(|a| {
+                                a.downcast_ref::<aurora_core::l2_engines::task_projection::TaskProjection>()
+                            })
+                        })
+                    {
+                        let _ = aurora_core::l2_engines::action_extractor::ActionItemExtractor::apply_to_projection(
+                            &note_id, &content, tp,
+                        )
+                        .await;
+                    }
+                });
         } else {
             let mut notes = self.fallback_notes.lock().unwrap();
             for n in notes.iter_mut() {

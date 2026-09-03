@@ -92,6 +92,29 @@ impl TaskProjection {
             .collect()
     }
 
+    /// 播种/覆写单行（AI 行动项提取写入 — 幂等: 同 task_id 覆盖）。
+    pub fn seed_row(
+        &self,
+        task_id: &str,
+        note_id: &str,
+        title: &str,
+        status: &str,
+        priority: &str,
+        due_date: Option<i64>,
+    ) {
+        self.rows.write().unwrap().insert(
+            task_id.to_string(),
+            crate::l2_engines::task_projection::TaskViewRow {
+                task_id: task_id.to_string(),
+                note_id: note_id.to_string(),
+                title: title.to_string(),
+                status: status.to_string(),
+                priority: priority.to_string(),
+                due_date,
+            },
+        );
+    }
+
     /// 统计（TodayView 头部）: (进行中, 已完成)。
     pub fn stats(&self) -> (usize, usize) {
         let rows = self.rows.read().unwrap();
