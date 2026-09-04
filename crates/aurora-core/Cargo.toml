@@ -21,6 +21,9 @@ tantivy = { workspace = true }
 rusqlite = { workspace = true }
 # 中文分词（V20: jieba 接入 Tantivy 自定义 tokenizer）
 jieba-rs = "0.7"
+
+# V20 Phase 3: NL→SQL 沙箱（QueryEngine 安全边界）
+sqlparser = { version = "0.45", features = ["serde", "visitor"] }
 # Note: sqlite-vec is a loadable extension, not a direct crate dependency
 
 # WASM runtime

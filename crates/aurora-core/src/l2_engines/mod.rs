@@ -7,5 +7,6 @@ pub mod bidi_link_projection; // V20 Phase 1: 双链投影
 pub mod action_extractor; // V20 Phase 3: GTD 行动项提取
 pub mod nl_query; // V20 Phase 3: 口语化查询解析
 pub mod search_projection;
+pub mod sql_sandbox; // V20 Phase 3: NL→SQL 沙箱（AST 级）
 pub mod task_projection; // V20 Phase 1: 任务投影（TodayView 数据源） // V20 Phase 1: 搜索索引投影
 pub mod workflow;
