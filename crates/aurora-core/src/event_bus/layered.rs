@@ -229,6 +229,17 @@ pub struct QueuedEvent {
     pub event_type: String,
     /// JSON 序列化的事件本体。
     pub payload: String,
+    /// 幂等键（V23-I0 / T2）: 发布者生成的去重 ID（重放/重试
+    /// 场景二次入队零副作用）。None = 不参与去重（兼容旧路径）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
+}
+
+impl QueuedEvent {
+    /// 兼容构造（无幂等键 — 旧调用点零改动）。
+    pub fn legacy(seq: u64, channel: EventChannel, event_type: String, payload: String) -> Self {
+        Self { seq, channel, event_type, payload, event_id: None }
+    }
 }
 
 /// Medium 通道持久化存储抽象（ARCH-003）。
@@ -246,6 +257,24 @@ pub trait EventQueueStore: Send + Sync {
     /// 按 `seq` 升序）。默认空实现（无持久化的内存总线）。
     fn events_after(&self, _from: u64) -> Result<Vec<QueuedEvent>, crate::Error> {
         Ok(Vec::new())
+    }
+
+    /// 幂等入队（V23-I0 / T2）: 带 event_id 的记录若已存在则零副作用
+    /// 跳过。返回是否**新插入**（false = 重复事件被忽略）。
+    /// 默认实现委托 [`Self::enqueue`]（无去重能力的存储恒视为新插入）。
+    fn enqueue_idempotent(&self, record: &QueuedEvent) -> Result<bool, crate::Error> {
+        self.enqueue(record)?;
+        Ok(true)
+    }
+
+    /// 投影消费水位线读写（V23-I0 / T11）: 持久化各投影的消费位点，
+    /// 崩溃恢复后从位点续跑（不重放不遗漏）。默认实现不支持
+    /// （返回 0 / 忽略写入），由 SQLite 实现覆盖。
+    fn watermark(&self, _projection: &str) -> Result<u64, crate::Error> {
+        Ok(0)
+    }
+    fn set_watermark(&self, _projection: &str, _seq: u64) -> Result<(), crate::Error> {
+        Ok(())
     }
 }
 
@@ -319,6 +348,7 @@ impl LayeredEventBus {
                 // ARCH-003：先持久化再入队。
                 if let Some(store) = &self.store {
                     let record = QueuedEvent {
+                        event_id: None,
                         seq,
                         channel: EventChannel::Medium,
                         event_type: event.event_type().to_string(),
@@ -344,6 +374,7 @@ impl LayeredEventBus {
                 // 注意：Low 不参与 Medium 重放语义（pending() 只返回 medium）。
                 if let Some(store) = &self.store {
                     let record = QueuedEvent {
+                        event_id: None,
                         seq,
                         channel: EventChannel::Low,
                         event_type: event.event_type().to_string(),
@@ -667,6 +698,7 @@ mod tests {
                 channel: EventChannel::Medium,
                 event_type: event.event_type().to_string(),
                 payload: serde_json::to_string(&event).unwrap(),
+                event_id: None,
             })
             .unwrap();
         let bus = LayeredEventBus::new(Some(store));

@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use tracing::{error, info, warn};
 
 /// 当前数据库 Schema 版本。
-pub const CURRENT_SCHEMA_VERSION: i64 = 2;
+pub const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 /// 迁移管理器。
 pub struct MigrationManager {
@@ -72,8 +72,52 @@ impl MigrationManager {
         if current < 2 {
             Self::apply_v2(&mut conn)?;
         }
+        // V3: audit_log 哈希链列（V23-I0 / T12 — 防篡改链路）
+        if current < 3 {
+            Self::apply_v3(&mut conn)?;
+        }
 
         info!(version = CURRENT_SCHEMA_VERSION, "migration completed");
+        Ok(())
+    }
+
+    /// V3: audit_log 防篡改哈希链列（V23-I0 / T12）。
+    ///
+    /// 每条审计记录写入时计算 `hash = SHA-256(prev_hash || 记录字段)`，
+    /// `prev_hash` 指向前一条的 `hash`（首条用 GENESIS）。校验器重算
+    /// 全链即可检测任何中间篡改。历史数据两列为 NULL — 视为 legacy
+    /// 段，校验器跳过并从第一条非 NULL 记录重新起链。
+    fn apply_v3(conn: &mut rusqlite::Connection) -> Result<(), MigrationError> {
+        let tx = conn
+            .transaction()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        // SQLite ALTER TABLE ADD COLUMN 无 IF NOT EXISTS — 幂等靠 pragma 检查
+        let has_col = |name: &str| -> Result<bool, MigrationError> {
+            let mut stmt = tx
+                .prepare("PRAGMA table_info(audit_log)")
+                .map_err(|e| MigrationError::Exec(e.to_string()))?;
+            let mut rows = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(|e| MigrationError::Exec(e.to_string()))?;
+            while let Some(col) = rows.next() {
+                if col.map(|c| c == name).unwrap_or(false) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        };
+        for col in ["prev_hash", "hash"] {
+            if !has_col(col)? {
+                tx.execute(
+                    &format!("ALTER TABLE audit_log ADD COLUMN {} TEXT", col),
+                    [],
+                )
+                .map_err(|e| MigrationError::Exec(e.to_string()))?;
+            }
+        }
+        tx.commit()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        info!("migration v3 applied: audit hash chain columns");
         Ok(())
     }
 

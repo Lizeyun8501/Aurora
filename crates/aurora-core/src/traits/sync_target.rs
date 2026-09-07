@@ -160,9 +160,24 @@ pub trait SyncTarget: Send + Sync {
 
     /// 查询连接状态（SyncRouter 健康度路由依据）。
     ///
-    /// 默认实现：无状态追踪，返回 Connected（连接句柄存在即视为有效）。
-    async fn state(&self, _conn: &Connection) -> Result<ConnectionState, crate::Error> {
-        Ok(ConnectionState::Connected)
+    /// 默认实现（V23-I0 / T1 修复）: **真实探测**而非恒真——
+    /// 旧实现无条件返回 Connected，任何基于 state() 的降级判定
+    /// 都恒真（G-02: 故障切换永远不会触发）。
+    ///
+    /// 新语义: 用 `sync_version` 轻量查询探测对端可达性——
+    /// - 应答（含 None）→ `Connected`
+    /// - 错误 → `Failed`
+    /// - 超时（3s）→ `Failed`（不可达等价失败）
+    ///
+    /// 有状态追踪的实现体应覆盖此方法返回缓存状态，避免每次
+    /// 探测的网络往返。
+    async fn state(&self, conn: &Connection) -> Result<ConnectionState, crate::Error> {
+        let probe = self.sync_version(conn, "__health_probe__");
+        match tokio::time::timeout(std::time::Duration::from_secs(3), probe).await {
+            Ok(Ok(_)) => Ok(ConnectionState::Connected),
+            Ok(Err(_)) => Ok(ConnectionState::Failed),
+            Err(_) => Ok(ConnectionState::Failed),
+        }
     }
 
     /// 注册同步事件回调（fire-and-forget，保持同步签名）。
@@ -211,6 +226,125 @@ mod tests {
         async fn disconnect(&self, _conn: &Connection) -> Result<(), crate::Error> {
             Ok(())
         }
+    }
+
+    // ── T1（V23-I0）: state() 三态判定不恒真 ──
+
+    /// 应答探测的目标（模拟健康对端）。
+    struct HealthyTarget;
+
+    #[async_trait]
+    impl SyncTarget for HealthyTarget {
+        async fn connect(&mut self, _endpoint: &Endpoint) -> Result<Connection, crate::Error> {
+            Ok(Connection {
+                id: "h".into(),
+                endpoint: Endpoint { url: "healthy://x".into(), protocol: SyncProtocol::Quic },
+            })
+        }
+        async fn sync(
+            &self,
+            _conn: &Connection,
+            doc_set: &DocSet,
+        ) -> Result<SyncReport, crate::Error> {
+            Ok(SyncReport { sent_ops: doc_set.doc_ids.len(), received_ops: 0, duration_ms: 0 })
+        }
+        fn watch(&self, _cb: Box<dyn Fn(SyncEvent) + Send + Sync>) {}
+        async fn disconnect(&self, _conn: &Connection) -> Result<(), crate::Error> {
+            Ok(())
+        }
+    }
+
+    /// 探测必错的目标（模拟故障对端）。
+    struct BrokenTarget;
+
+    #[async_trait]
+    impl SyncTarget for BrokenTarget {
+        async fn connect(&mut self, _endpoint: &Endpoint) -> Result<Connection, crate::Error> {
+            Ok(Connection {
+                id: "b".into(),
+                endpoint: Endpoint { url: "broken://x".into(), protocol: SyncProtocol::Quic },
+            })
+        }
+        async fn sync(
+            &self,
+            _conn: &Connection,
+            doc_set: &DocSet,
+        ) -> Result<SyncReport, crate::Error> {
+            Ok(SyncReport { sent_ops: doc_set.doc_ids.len(), received_ops: 0, duration_ms: 0 })
+        }
+        async fn sync_version(
+            &self,
+            _conn: &Connection,
+            _doc_id: &str,
+        ) -> Result<Option<u64>, crate::Error> {
+            Err(crate::Error::Internal("peer unreachable".into()))
+        }
+        fn watch(&self, _cb: Box<dyn Fn(SyncEvent) + Send + Sync>) {}
+        async fn disconnect(&self, _conn: &Connection) -> Result<(), crate::Error> {
+            Ok(())
+        }
+    }
+
+    /// 探测挂起的目标（模拟不可达 — 应超时判 Failed）。
+    struct HangingTarget;
+
+    #[async_trait]
+    impl SyncTarget for HangingTarget {
+        async fn connect(&mut self, _endpoint: &Endpoint) -> Result<Connection, crate::Error> {
+            Ok(Connection {
+                id: "g".into(),
+                endpoint: Endpoint { url: "hang://x".into(), protocol: SyncProtocol::Quic },
+            })
+        }
+        async fn sync(
+            &self,
+            _conn: &Connection,
+            doc_set: &DocSet,
+        ) -> Result<SyncReport, crate::Error> {
+            Ok(SyncReport { sent_ops: doc_set.doc_ids.len(), received_ops: 0, duration_ms: 0 })
+        }
+        async fn sync_version(
+            &self,
+            _conn: &Connection,
+            _doc_id: &str,
+        ) -> Result<Option<u64>, crate::Error> {
+            // 挂起 60s — 超过 3s 探测上限（tokio paused 时间自动推进）
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Ok(None)
+        }
+        fn watch(&self, _cb: Box<dyn Fn(SyncEvent) + Send + Sync>) {}
+        async fn disconnect(&self, _conn: &Connection) -> Result<(), crate::Error> {
+            Ok(())
+        }
+    }
+
+    /// T1 验收: 默认 state() 三态判定——健康 Connected / 故障 Failed /
+    /// 不可达超时 Failed。修复前恒返 Connected。
+    #[tokio::test(start_paused = true)]
+    async fn t1_state_probe_not_always_connected() {
+        // 1) 健康对端（默认 sync_version 返 Ok(None)）→ Connected
+        let mut t = HealthyTarget;
+        let conn = t
+            .connect(&Endpoint { url: "h://x".into(), protocol: SyncProtocol::Quic })
+            .await
+            .unwrap();
+        assert!(matches!(t.state(&conn).await.unwrap(), ConnectionState::Connected));
+
+        // 2) 故障对端（sync_version 返 Err）→ Failed
+        let mut b = BrokenTarget;
+        let bconn = b
+            .connect(&Endpoint { url: "b://x".into(), protocol: SyncProtocol::Quic })
+            .await
+            .unwrap();
+        assert!(matches!(b.state(&bconn).await.unwrap(), ConnectionState::Failed));
+
+        // 3) 挂起对端（超时）→ Failed（paused 时钟自动推进过 3s 窗口）
+        let mut g = HangingTarget;
+        let gconn = g
+            .connect(&Endpoint { url: "g://x".into(), protocol: SyncProtocol::Quic })
+            .await
+            .unwrap();
+        assert!(matches!(g.state(&gconn).await.unwrap(), ConnectionState::Failed));
     }
 
     #[tokio::test]

@@ -22,6 +22,7 @@ impl SqliteEventQueue {
     pub fn new(path: impl AsRef<std::path::Path>) -> Result<Self, crate::Error> {
         let conn = rusqlite::Connection::open(path)
             .map_err(|e| crate::Error::Database(format!("sqlite queue open failed: {}", e)))?;
+        Self::ensure_schema(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -47,11 +48,13 @@ impl SqliteEventQueue {
                 payload TEXT NOT NULL,
                 seq INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
-                consumed_at TEXT
+                consumed_at TEXT,
+                event_id TEXT
             )",
             [],
         )
         .map_err(|e| crate::Error::Database(format!("sqlite queue create table failed: {}", e)))?;
+        Self::ensure_schema(&conn)?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_event_channel ON event_queue(channel, consumed_at)",
             [],
@@ -70,6 +73,118 @@ impl SqliteEventQueue {
         }
     }
 
+    /// V23-I0（T2/T11）: 旧库列迁移 + 去重索引 + 水位线表。
+    /// 五步法「新增先行」— 不改已有列，仅 ADD COLUMN（幂等）。
+    fn ensure_schema(conn: &rusqlite::Connection) -> Result<(), crate::Error> {
+        // 幂等建表（全新库独立可用; 与 aurora-migration 的建表语句一致）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS event_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                consumed_at TEXT,
+                event_id TEXT
+            )",
+            [],
+        )
+        .map_err(|e| crate::Error::Database(format!("event_queue create: {e}")))?;
+        let has_event_id: bool = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(event_queue)")
+                .map_err(|e| crate::Error::Database(format!("table_info: {e}")))?;
+            let cols: Vec<String> = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(|e| crate::Error::Database(format!("table_info cols: {e}")))?
+                .filter_map(|r| r.ok())
+                .collect();
+            cols.iter().any(|c| c == "event_id")
+        };
+        if !has_event_id {
+            conn.execute("ALTER TABLE event_queue ADD COLUMN event_id TEXT", [])
+                .map_err(|e| crate::Error::Database(format!("add event_id: {e}")))?;
+        }
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_event_dedup
+             ON event_queue(event_id) WHERE event_id IS NOT NULL",
+            [],
+        )
+        .map_err(|e| crate::Error::Database(format!("dedup index: {e}")))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS projection_watermark (
+                projection TEXT PRIMARY KEY,
+                watermark INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| crate::Error::Database(format!("watermark table: {e}")))?;
+        Ok(())
+    }
+
+    fn enqueue_idempotent(&self, record: &QueuedEvent) -> Result<bool, crate::Error> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite queue mutex poisoned".into()))?;
+        let inserted = Self::do_insert(&conn, record)?;
+        Ok(inserted > 0)
+    }
+
+    fn watermark(&self, projection: &str) -> Result<u64, crate::Error> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite queue mutex poisoned".into()))?;
+        let v: Option<i64> = conn
+            .query_row(
+                "SELECT watermark FROM projection_watermark WHERE projection = ?1",
+                [projection],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(crate::Error::Database(format!("watermark get: {other}"))),
+            })?;
+        Ok(v.map(|x| x as u64).unwrap_or(0))
+    }
+
+    fn set_watermark(&self, projection: &str, seq: u64) -> Result<(), crate::Error> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::Error::Internal("sqlite queue mutex poisoned".into()))?;
+        conn.execute(
+            "INSERT INTO projection_watermark (projection, watermark, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(projection) DO UPDATE SET watermark = ?2, updated_at = ?3",
+            rusqlite::params![projection, seq as i64, Utc::now().to_rfc3339()],
+        )
+        .map_err(|e| crate::Error::Database(format!("watermark set: {e}")))?;
+        Ok(())
+    }
+
+    /// 实际插入（返回影响行数: 0 = 幂等忽略）。
+    fn do_insert(conn: &rusqlite::Connection, record: &QueuedEvent) -> Result<usize, crate::Error> {
+        let created_at = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT OR IGNORE INTO event_queue (channel, event_type, payload, seq, created_at, event_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                Self::channel_to_str(&record.channel),
+                &record.event_type,
+                &record.payload,
+                record.seq as i64,
+                created_at,
+                record.event_id,
+            ],
+        )
+        .map_err(|e| crate::Error::Database(format!("sqlite queue enqueue failed: {}", e)))
+    }
+
     fn str_to_channel(s: &str) -> crate::event_bus::layered::EventChannel {
         match s {
             "high" => crate::event_bus::layered::EventChannel::High,
@@ -85,19 +200,12 @@ impl EventQueueStore for SqliteEventQueue {
             .conn
             .lock()
             .map_err(|_| crate::Error::Internal("sqlite queue mutex poisoned".into()))?;
-        let created_at = Utc::now().to_rfc3339();
-        conn.execute(
-            "INSERT INTO event_queue (channel, event_type, payload, seq, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![
-                Self::channel_to_str(&record.channel),
-                &record.event_type,
-                &record.payload,
-                record.seq as i64,
-                created_at,
-            ],
-        )
-        .map_err(|e| crate::Error::Database(format!("sqlite queue enqueue failed: {}", e)))?;
-        debug!(seq = record.seq, "event persisted to sqlite queue");
+        let inserted = Self::do_insert(&conn, record)?;
+        if inserted == 0 {
+            debug!(seq = record.seq, event_id = ?record.event_id, "duplicate event ignored (idempotent)");
+        } else {
+            debug!(seq = record.seq, "event persisted to sqlite queue");
+        }
         Ok(())
     }
 
@@ -131,12 +239,7 @@ impl EventQueueStore for SqliteEventQueue {
                 let channel_str: String = row.get(1)?;
                 let event_type: String = row.get(2)?;
                 let payload: String = row.get(3)?;
-                Ok(QueuedEvent {
-                    seq: seq as u64,
-                    channel: Self::str_to_channel(&channel_str),
-                    event_type,
-                    payload,
-                })
+                Ok(QueuedEvent::legacy(seq as u64, Self::str_to_channel(&channel_str), event_type, payload))
             })
             .map_err(|e| crate::Error::Database(format!("events_after query: {}", e)))?;
         let mut out = Vec::new();
@@ -164,12 +267,7 @@ impl EventQueueStore for SqliteEventQueue {
                 let channel_str: String = row.get(1)?;
                 let event_type: String = row.get(2)?;
                 let payload: String = row.get(3)?;
-                Ok(QueuedEvent {
-                    seq: seq as u64,
-                    channel: Self::str_to_channel(&channel_str),
-                    event_type,
-                    payload,
-                })
+                Ok(QueuedEvent::legacy(seq as u64, Self::str_to_channel(&channel_str), event_type, payload))
             })
             .map_err(|e| crate::Error::Database(format!("sqlite queue query failed: {}", e)))?;
         let mut result = Vec::new();
@@ -189,11 +287,59 @@ mod tests {
 
     fn make_event(seq: u64) -> QueuedEvent {
         QueuedEvent {
+            event_id: None,
             seq,
             channel: EventChannel::Medium,
             event_type: "NoteCreated".into(),
             payload: r#"{"id":"n-1"}"#.into(),
         }
+    }
+
+    /// T2（V23-I0）: 同 event_id 二次入队零副作用。
+    #[test]
+    fn t2_idempotent_enqueue_dedups() {
+        let queue = SqliteEventQueue::new_in_memory().unwrap();
+        let mut ev = make_event(1);
+        ev.event_id = Some("evt-abc".into());
+
+        assert!(queue.enqueue_idempotent(&ev).unwrap(), "first insert");
+        assert!(!queue.enqueue_idempotent(&ev).unwrap(), "dup ignored");
+        // 重放场景: 不同 seq 同 event_id 也被拒（键在 event_id）
+        let mut ev2 = make_event(99);
+        ev2.event_id = Some("evt-abc".into());
+        assert!(!queue.enqueue_idempotent(&ev2).unwrap(), "dup by event_id");
+
+        assert_eq!(queue.pending().unwrap().len(), 1, "only one physical row");
+    }
+
+    /// T2: 无 event_id 不去重（兼容旧路径）。
+    #[test]
+    fn t2_legacy_events_not_deduped() {
+        let queue = SqliteEventQueue::new_in_memory().unwrap();
+        queue.enqueue(&make_event(1)).unwrap();
+        queue.enqueue(&make_event(2)).unwrap();
+        assert_eq!(queue.pending().unwrap().len(), 2);
+    }
+
+    /// T11（V23-I0）: 水位线持久化 — 崩溃恢复不重放不遗漏。
+    #[test]
+    fn t11_watermark_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("q.db");
+        {
+            let queue = SqliteEventQueue::new(&db).unwrap();
+            queue.set_watermark("bidi_link", 42).unwrap();
+            queue.set_watermark("task_projection", 7).unwrap();
+        }
+        // 模拟进程重启: 重新打开同一库
+        let queue = SqliteEventQueue::new(&db).unwrap();
+        assert_eq!(queue.watermark("bidi_link").unwrap(), 42);
+        assert_eq!(queue.watermark("task_projection").unwrap(), 7);
+        // 未设置过的投影 → 0（从头重放）
+        assert_eq!(queue.watermark("unknown").unwrap(), 0);
+        // 更新语义: 前进
+        queue.set_watermark("bidi_link", 100).unwrap();
+        assert_eq!(queue.watermark("bidi_link").unwrap(), 100);
     }
 
     #[test]

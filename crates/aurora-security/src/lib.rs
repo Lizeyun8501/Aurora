@@ -19,6 +19,7 @@ pub mod vault;
 
 // V20 Phase 2 GAP-14: §21.1 加密审计自动化（测试模块）
 #[cfg(test)]
+pub mod audit_chain; // V23-I0 / T12: 审计防篡改哈希链
 pub mod audit_tests;
 
 // V20 Phase 2: SQLCipher 落盘加密（feature 门控; 独立 rusqlite 实例避免

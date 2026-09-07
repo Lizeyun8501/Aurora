@@ -157,6 +157,10 @@ pub struct AuditEntry {
     pub tool_name: String,
     pub session_id: Option<String>,
     pub detail: String,
+    /// 前一条目哈希（V23-I0 / T12 防篡改链路; 空串 = legacy 条目）。
+    pub prev_hash: String,
+    /// 本条目哈希 = SHA256(prev_hash | ts | action | decision | tool | session | detail)。
+    pub hash: String,
 }
 
 impl AuditEntry {
@@ -173,6 +177,8 @@ impl AuditEntry {
             tool_name: tool_name.into(),
             session_id: None,
             detail: detail.into(),
+            prev_hash: String::new(),
+            hash: String::new(),
         }
     }
 
@@ -182,10 +188,17 @@ impl AuditEntry {
     }
 }
 
-/// 审计日志：累积全部审计条目。
+/// 审计日志：累积全部审计条目（V23-I0 / T12: SHA-256 防篡改链路）。
+///
+/// 语义为「链式完整性」而非「不可篡改」（冰冷理性派 P1-2 裁决）：
+/// 任何对历史条目的修改都会导致 `verify_chain` 失败——被检测，
+/// 而非被物理阻止。Genesis 哈希为全零串。
 pub struct AuditLog {
     entries: Arc<RwLock<Vec<AuditEntry>>>,
+    last_hash: Arc<std::sync::Mutex<String>>,
 }
+
+const AUDIT_GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 impl Default for AuditLog {
     fn default() -> Self {
@@ -197,11 +210,32 @@ impl AuditLog {
     pub fn new() -> Self {
         Self {
             entries: Arc::new(RwLock::new(Vec::new())),
+            last_hash: Arc::new(std::sync::Mutex::new(AUDIT_GENESIS_HASH.to_string())),
         }
     }
 
-    /// 追加一条审计记录。
-    pub fn record(&self, entry: AuditEntry) {
+    /// 单条哈希计算（字段拼接后 SHA-256）。
+    fn hash_entry(prev_hash: &str, e: &AuditEntry) -> String {
+        use sha2::{Digest, Sha256};
+        let material = format!(
+            "{}|{}|{}|{}|{}|{}|{}",
+            prev_hash,
+            e.timestamp.to_rfc3339(),
+            e.action.as_str(),
+            e.decision.as_str(),
+            e.tool_name,
+            e.session_id.as_deref().unwrap_or(""),
+            e.detail,
+        );
+        let digest = Sha256::digest(material.as_bytes());
+        hex_encode(&digest)
+    }
+
+    /// 追加一条审计记录（链式: prev_hash 取上一条, hash 即时计算）。
+    pub fn record(&self, mut entry: AuditEntry) {
+        let prev = self.last_hash.lock().unwrap().clone();
+        entry.prev_hash = prev.clone();
+        entry.hash = Self::hash_entry(&prev, &entry);
         debug!(
             "audit: {} {} {} - {}",
             entry.action.as_str(),
@@ -209,7 +243,25 @@ impl AuditLog {
             entry.tool_name,
             entry.detail
         );
+        *self.last_hash.lock().unwrap() = entry.hash.clone();
         self.entries.write().push(entry);
+    }
+
+    /// 链完整性校验（V23-I0 / T12 验收）: 逐条重算哈希并比对前后
+    /// 链接。返回 false = 链被篡改或损坏。
+    pub fn verify_chain(&self) -> bool {
+        let entries = self.entries.read();
+        let mut prev = AUDIT_GENESIS_HASH.to_string();
+        for e in entries.iter() {
+            if e.prev_hash != prev {
+                return false; // 链接断裂
+            }
+            if e.hash.is_empty() || Self::hash_entry(&prev, e) != e.hash {
+                return false; // 内容被篡改
+            }
+            prev = e.hash.clone();
+        }
+        true
     }
 
     /// 全部条目快照。
@@ -420,8 +472,103 @@ pub fn is_read_tool(name: &str) -> bool {
     READ_TOOL_PREFIXES.iter().any(|p| lower.starts_with(p))
 }
 
+/// 字节转小写十六进制（审计哈希用 — 避免引入 hex crate）。
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
+    // ── T12（V23-I0）: 审计哈希链 ──
+
+    /// 三条记录 → 链验证通过; 篡改任一历史条目 → 校验失败。
+    #[test]
+    fn t12_audit_chain_detects_tampering() {
+        use super::{AuditAction, AuditDecision, AuditEntry, AuditLog};
+
+        let log = AuditLog::new();
+        log.record(AuditEntry::new(
+            AuditAction::Invoke,
+            AuditDecision::Allow,
+            "search",
+            "q=hello",
+        ));
+        log.record(AuditEntry::new(
+            AuditAction::Check,
+            AuditDecision::Deny,
+            "fs_write",
+            "path=/etc/passwd",
+        ));
+        log.record(AuditEntry::new(
+            AuditAction::Invoke,
+            AuditDecision::Allow,
+            "kv_get",
+            "k=1",
+        ));
+        assert_eq!(log.len(), 3);
+
+        // 完整链通过
+        assert!(log.verify_chain(), "intact chain must verify");
+
+        // 篡改中间条目（模拟攻击者改 detail）→ 链断裂被检测
+        let mut tampered = log.entries();
+        tampered[1].detail = "path=/innocent".into();
+        // 重放被篡改的序列到新日志应验证失败（hash 不再匹配内容）
+        let log2 = AuditLog::new();
+        for e in tampered {
+            // 直接注入已带 hash 的条目 — 模拟存储回放
+            log2.entries.write().push(e);
+        }
+        // 新日志 last_hash 是 genesis, 首条 prev_hash 非空 → 断链
+        assert!(!log2.verify_chain(), "replayed tampered sequence must fail");
+
+        // 直接篡改 detail（保持链字段）→ 内容哈希不匹配
+        let log3 = AuditLog::new();
+        log3.record(AuditEntry::new(
+            AuditAction::Invoke,
+            AuditDecision::Allow,
+            "a",
+            "x",
+        ));
+        let mut e3 = log3.entries();
+        e3[0].detail = "y".into();
+        // 重算应不匹配
+        assert_ne!(
+            AuditLog::hash_entry(&e3[0].prev_hash, &e3[0]),
+            {
+                // 原始 hash（从原日志取）不同于篡改后
+                let mut e = AuditEntry::new(AuditAction::Invoke, AuditDecision::Allow, "a", "x");
+                e.prev_hash = e3[0].prev_hash.clone();
+                e.timestamp = e3[0].timestamp;
+                AuditLog::hash_entry(&e.prev_hash, &e)
+            },
+            "detail change must change hash"
+        );
+    }
+
+    /// 不同输入 → 不同哈希（雪崩基本性质）。
+    #[test]
+    fn t12_hash_differs_on_any_change() {
+        use super::{AuditAction, AuditDecision, AuditEntry, AuditLog};
+        let mk = |detail: &str| {
+            let mut e = AuditEntry::new(AuditAction::Invoke, AuditDecision::Allow, "t", detail);
+            e.prev_hash = "prev".into();
+            e
+        };
+        let a = AuditLog::hash_entry("prev", &mk("x"));
+        let b = AuditLog::hash_entry("prev", &mk("y"));
+        let c = AuditLog::hash_entry("prev2", &mk("x"));
+        assert_ne!(a, b, "content diff must change hash");
+        assert_ne!(a, c, "prev diff must change hash");
+        assert_eq!(a.len(), 64, "sha256 hex length");
+    }
+
     use super::*;
 
     #[test]

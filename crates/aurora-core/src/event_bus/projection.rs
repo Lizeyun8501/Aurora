@@ -193,6 +193,7 @@ mod tests {
             content: String::new(),
         };
         QueuedEvent {
+            event_id: None,
             seq,
             channel: EventChannel::Low,
             event_type: "NoteCreated".into(),

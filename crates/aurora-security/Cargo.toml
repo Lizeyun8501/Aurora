@@ -46,6 +46,8 @@ parking_lot = { workspace = true }
 
 # V20 Phase 2: SQLCipher 落盘加密（optional, 见 features.sqlcipher）
 rusqlite = { version = "0.32", optional = true }
+# V23-I0 / T12: 审计哈希链落盘（非 optional — 防篡改链路是安全基线）
+rusqlite_chain = { version = "0.32", features = ["bundled"], package = "rusqlite" }
 
 [dev-dependencies]
 tempfile = "3"

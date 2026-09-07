@@ -64,6 +64,7 @@ parking_lot = { workspace = true }
 sled = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 mockall = "0.13"
 # Property-based testing harness (Task 6.3 test quality assurance)
 proptest = { workspace = true }
