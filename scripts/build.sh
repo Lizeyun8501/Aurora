@@ -19,12 +19,14 @@ MODE="debug"
 SKIP_FRONTEND=0
 CLEAN=0
 CHECK_ONLY=0
+BUILD_DESKTOP=0
 for arg in "$@"; do
     case "$arg" in
         --release) MODE="release" ;;
         --skip-frontend) SKIP_FRONTEND=1 ;;
         --clean) CLEAN=1 ;;
         --check) CHECK_ONLY=1 ;;
+        --desktop) BUILD_DESKTOP=1 ;;
         *) echo "未知参数: $arg（支持 --release/--skip-frontend/--clean/--check）"; exit 1 ;;
     esac
 done
@@ -171,9 +173,30 @@ GRADLE_TASK="assembleDebug"
 APK="$ANDROID_DIR/app/build/outputs/apk/$MODE/app-$MODE.apk"
 echo "════════════════════════════════════════════════"
 if [ -f "$APK" ]; then
-    echo "✅ 构建成功: $APK ($(du -h "$APK" | cut -f1))"
-    echo "   （Android 侧 release 需签名: apksigner / debug keystore）"
+    echo "✅ APK: $APK ($(du -h "$APK" | cut -f1))"
 else
     echo "❌ APK 未生成（查上方 gradle 日志）"
     exit 1
 fi
+
+# ---------- 4. 桌面（--desktop; 需系统 GTK/webkit2gtk-4.1 dev） ----------
+if [ "$BUILD_DESKTOP" = "1" ]; then
+    echo "── [4] Tauri 桌面（$MODE）──"
+    if ! pkg-config --exists atk 2>/dev/null; then
+        echo "⚠ 缺 GTK/webkit dev 库 — 桌面目标需: apt install libwebkit2gtk-4.1-dev \
+         libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev（跳过）"
+    else
+        (
+            cd "$REPO_ROOT/apps/mobile"
+            npx vite build --config vite.config.ts --outDir ../desktop/dist --emptyOutDir
+        )
+        (
+            cd "$REPO_ROOT/apps/desktop/src-tauri"
+            $CARGO build ${FFI_RELEASE:+--release}
+        )
+        BIN="$REPO_ROOT/apps/desktop/src-tauri/target/debug/aurora-desktop"
+        [ -f "$BIN" ] && echo "✅ 桌面可执行: $BIN" || echo "❌ 桌面可执行未生成"
+    fi
+fi
+echo "════════════════════════════════════════════════"
+echo "✅ 构建完成（APK $MODE; 桌面目标 --desktop）"

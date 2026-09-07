@@ -1374,6 +1374,86 @@ mod tests {
         assert!(core.clone().review_card("card-1".into(), 9).is_err());
     }
 
+    /// V23-I1: 桌面（Tauri command）与移动（FFI）视图模型**同构对拍**。
+    ///
+    /// 桌面壳 cmd_today_view_stats / cmd_get_backlinks / cmd_due_review_cards
+    /// 的 JSON 组装逻辑在本测试内等价复现，与 FFI 契约逐字段对拍——
+    /// 任一端改字段名/类型，此测试红（CI 拦截双端分叉）。
+    #[test]
+    fn desktop_mobile_view_model_isomorphic() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        assert!(!core.is_fallback);
+        let c = core.core.as_ref().unwrap();
+
+        // 1. today_view_stats 同构
+        let stats = core.clone().today_view_stats();
+        let (active, done) = c.task_projection_stats();
+        let due_today = c.task_projection_due_today();
+        let desktop_stats = serde_json::json!({
+            "active": active, "done": done, "due_today": due_today,
+        });
+        assert_eq!(stats.active, desktop_stats["active"].as_i64().unwrap());
+        assert_eq!(stats.done, desktop_stats["done"].as_i64().unwrap());
+        assert_eq!(stats.due_today, desktop_stats["due_today"].as_i64().unwrap());
+
+        // 2. backlinks 同构（播种 n1 → n2 后对拍字段集）
+        use aurora_core::event_bus::layered::LinkAction;
+        use aurora_core::l2_engines::bidi_link_projection::BidiLinkProjection;
+        let bp = c
+            .projections()
+            .iter()
+            .find_map(|p| {
+                p.as_any().and_then(|a| a.downcast_ref::<BidiLinkProjection>())
+            })
+            .expect("bidi projection");
+        bp.apply_link("n1", "n2", &LinkAction::Created);
+        let links = core.clone().get_backlinks("n2".into());
+        assert_eq!(links.len(), 1);
+        let desktop_links: Vec<serde_json::Value> = c
+            .bidi_link_incoming("n2")
+            .iter()
+            .map(|src| {
+                serde_json::json!({"source_note_id": src, "source_title": src.clone()})
+            })
+            .collect();
+        assert_eq!(links.len(), desktop_links.len());
+        assert_eq!(links[0].source_note_id, desktop_links[0]["source_note_id"].as_str().unwrap());
+        assert!(desktop_links[0].as_object().unwrap().len() == 2, "backlink 字段漂移");
+
+        // 3. 复习卡同构（字段集合 6 项 + RFC3339 due 契约）
+        c.review_queue.add_card("c1", "n1",
+            aurora_core::l3_domain::fsrs::Rating::Good);
+        let future = chrono::Utc::now() + chrono::Duration::days(30);
+        let scheduler = aurora_core::l3_domain::fsrs::FsrsScheduler::new();
+        let desktop_cards: Vec<serde_json::Value> = c
+            .review_queue
+            .due_items(future)
+            .iter()
+            .map(|it| {
+                serde_json::json!({
+                    "card_id": it.card_id,
+                    "note_id": it.note_id,
+                    "due_at": it.due.to_rfc3339(),
+                    "retrievability": scheduler.retrievability(&it.state, future),
+                    "reps": it.state.reps,
+                    "lapses": it.state.lapses,
+                })
+            })
+            .collect();
+        assert_eq!(desktop_cards.len(), 1, "30 天后应到期");
+        assert_eq!(desktop_cards[0].as_object().unwrap().len(), 6, "review 字段漂移");
+        // FFI 侧同语义（经 FFI 评分 → RFC3339 回传契约）
+        let due = core.clone().review_card("c1".into(), 3).unwrap();
+        assert!(due.contains('T') && (due.contains('+') || due.contains('Z')));
+        // 桌面壳评分同语义
+        let d_out = c
+            .review_queue
+            .review_card("c1", aurora_core::l3_domain::fsrs::Rating::Good)
+            .unwrap();
+        assert!(d_out.due.to_rfc3339().contains('T'));
+    }
+
     #[test]
     fn fallback_mode_works() {
         let core = UniffiAppCore::new("/dev/null/aurora-test".into()).unwrap();

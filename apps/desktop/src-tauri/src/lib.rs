@@ -90,6 +90,10 @@ pub fn run() {
             cmd_delete_note,
             cmd_search_notes,
             cmd_app_status,
+            cmd_today_view_stats,
+            cmd_get_backlinks,
+            cmd_due_review_cards,
+            cmd_review_card,
         ])
         .setup(|app| {
             tracing_subscriber::fmt::init();
@@ -244,6 +248,90 @@ pub async fn cmd_update_note(
     index_note_in_search(&core, &note_id, &note).await?;
     info!(note_id = %note_id, "note updated via desktop command");
     Ok(())
+}
+
+// ── V23-I1: 双端能力对齐（今日视图/反链/FSRS 复习） ──────────
+
+/// 今日视图统计（移动端 today_view_stats 同源 — AppCore 任务投影聚合）。
+#[tauri::command]
+pub async fn cmd_today_view_stats() -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let (active, done) = core.task_projection_stats();
+    let due_today = core.task_projection_due_today();
+    Ok(serde_json::json!({
+        "active": active,
+        "done": done,
+        "due_today": due_today,
+    }))
+}
+
+/// 反向链接（移动端 get_backlinks 同源 — 双链投影 incoming + 标题解析）。
+#[tauri::command]
+pub async fn cmd_get_backlinks(note_id: String) -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let kv = core.kv_store.clone();
+    let sources = core.bidi_link_incoming(&note_id);
+    let mut out = Vec::with_capacity(sources.len());
+    for src in sources {
+        // 标题解析: 与移动端同语义 — 读不到正文时回退显示 ID
+        let title = kv
+            .get(&format!("note:{}", src))
+            .await
+            .ok()
+            .flatten()
+            .and_then(|bytes| {
+                serde_json::from_slice::<serde_json::Value>(&bytes)
+                    .ok()
+                    .and_then(|v| v.get("title").and_then(|t| t.as_str().map(String::from)))
+            })
+            .unwrap_or_else(|| src.clone());
+        out.push(serde_json::json!({
+            "source_note_id": src,
+            "source_title": title,
+        }));
+    }
+    Ok(out)
+}
+
+/// FSRS 到期复习卡（移动端 due_review_cards 同源 — 复习队列 due/R 阈值）。
+#[tauri::command]
+pub async fn cmd_due_review_cards() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let now = chrono::Utc::now();
+    let items = core.review_queue.due_items(now);
+    let scheduler = aurora_core::l3_domain::fsrs::FsrsScheduler::new();
+    Ok(items
+        .into_iter()
+        .map(|it| {
+            let r = scheduler.retrievability(&it.state, now);
+            serde_json::json!({
+                "card_id": it.card_id,
+                "note_id": it.note_id,
+                "due_at": it.due.to_rfc3339(),
+                "retrievability": r,
+                "reps": it.state.reps,
+                "lapses": it.state.lapses,
+            })
+        })
+        .collect())
+}
+
+/// FSRS 评分复习（移动端 review_card 同源 — 1 Again / 2 Hard / 3 Good / 4 Easy）。
+#[tauri::command]
+pub async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, String> {
+    let core = get_core()?;
+    let rating = match rating {
+        1 => aurora_core::l3_domain::fsrs::Rating::Again,
+        2 => aurora_core::l3_domain::fsrs::Rating::Hard,
+        3 => aurora_core::l3_domain::fsrs::Rating::Good,
+        4 => aurora_core::l3_domain::fsrs::Rating::Easy,
+        _ => return Err("rating must be 1-4".into()),
+    };
+    let out = core
+        .review_queue
+        .review_card(&card_id, rating)
+        .ok_or_else(|| format!("card not found: {}", card_id))?;
+    Ok(out.due.to_rfc3339())
 }
 
 /// 删除笔记（含搜索索引）。

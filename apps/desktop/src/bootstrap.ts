@@ -4,8 +4,8 @@ import { tryLoadTauriApis } from './adapters/ipc';
 import { tauriPlatform } from './adapters/tauriPlatform';
 
 async function boot() {
-  const apis = tryLoadTauriApis();
-  const mode = apis ? 'tauri' : 'browser-mock';
+  const apis = await tryLoadTauriApis();
+  const mode = apis && (apis.invoke || apis.emit || apis.listen) ? 'tauri' : 'browser-mock';
   const platform = tauriPlatform;
   const info = {
     mode,
