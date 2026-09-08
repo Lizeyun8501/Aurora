@@ -209,6 +209,62 @@ impl AppCore {
     }
 
     /// 双链正向查询（source 的出链 — 知识图谱）。
+    /// V23-I4: Agent 现场感知上下文（对标思源 3.7 — Agent「看见当前
+    /// 工作现场」：当前文档 + 选中块 + 反链场景 + GTD 现状）。
+    ///
+    /// ai-liquify 内联助手与外部 MCP 客户端共享同一现场数据面 ——
+    /// 「现场」是一等公民而非外挂问答的检索前处理。
+    pub async fn agent_context(
+        &self,
+        note_id: &str,
+        selected_block: Option<&str>,
+    ) -> Result<serde_json::Value, crate::Error> {
+        let kv = self.kv_store.clone();
+        let (title, content, updated_at) = match kv
+            .get(&format!("note:{}", note_id))
+            .await
+            .map_err(crate::Error::from)?
+        {
+            Some(bytes) => {
+                let v: serde_json::Value = serde_json::from_slice(&bytes)
+                    .map_err(|e| crate::Error::Serialization(e))?;
+                (
+                    v.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                    v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string(),
+                    v.get("updated_at").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+                )
+            }
+            None => {
+                // 不存在的笔记 → 现场为空（Agent 明确知道「不在场」）
+                return Ok(serde_json::json!({
+                    "schema": "aurora.agent_context/1",
+                    "present": false,
+                    "note_id": note_id,
+                }));
+            }
+        };
+        let incoming = self.bidi_link_incoming(note_id);
+        let backlinks: Vec<String> = incoming.iter().take(5).cloned().collect();
+        let (active, done) = self.task_projection_stats();
+        let due_today = self.task_projection_due_today();
+        Ok(serde_json::json!({
+            "schema": "aurora.agent_context/1",
+            "present": true,
+            "note": {
+                "id": note_id,
+                "title": title,
+                "updated_at": updated_at,
+                "content_chars": content.chars().count(),
+                "selection": selected_block,
+            },
+            "scene": {
+                "backlinks": backlinks,
+                "backlink_count": incoming.len(),
+            },
+            "gtd": { "active": active, "done": done, "due_today": due_today },
+        }))
+    }
+
     pub fn bidi_link_outgoing(&self, source_note_id: &str) -> Vec<String> {
         for p in &self.projections {
             if let Some(bp) = p

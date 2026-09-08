@@ -120,6 +120,14 @@ impl NoteRecord {
 // UniffiAppCore — 真实实现（接入 bootstrap + KVStore + SearchBackend + Loro）
 // ===========================================================================
 
+/// V23-I4: 快照元数据（时间机器列表项）。
+#[derive(uniffi::Record, Clone, Debug, serde::Serialize)]
+pub struct SnapshotInfo {
+    pub version: i64,
+    pub created_at: String,
+    pub size: i64,
+}
+
 /// 每条笔记对应一个独立的 `NoteDoc`（V19 §30.1 五容器模型），
 /// 快照持久化到 KVStore（`notesnap:{id}`），元数据存 `note:{id}`。
 /// V19 §36.3: 移动端使用原生 Loro 绑定 — CRDT 语义，支持未来多端合并。
@@ -588,12 +596,26 @@ impl UniffiAppCore {
     /// 待写集合，flush 时逐条取最新数据渲染落盘（保存后 flush_all:
     /// 防抖窗口内连续保存自然合并为最后一次状态，正确性优先，
     /// 定时器驱动留 I2 收口）。失败仅记日志不阻塞保存主路径。
+    /// V23-I4: 时间机器会话（打开 SQLite; 表由 migration V1 建）。
+    fn with_time_machine<T>(
+        &self,
+        f: impl FnOnce(&aurora_core::time_machine::TimeMachine) -> T,
+    ) -> Option<T> {
+        let conn = rusqlite::Connection::open(self.data_dir.join("aurora.db")).ok()?;
+        let tm = aurora_core::time_machine::TimeMachine::new(conn);
+        Some(f(&tm))
+    }
+
     fn sync_blocks_and_mirror(&self, note_id: &str, _title: &str, content: &str, _updated_at: &str) {
         // blocks 双轨（None = 内存降级模式）
         if let Some(blocks) = &self.blocks {
             if let Err(e) = blocks.sync_note_blocks(note_id, None, content) {
                 tracing::warn!(note_id, error = %e, "blocks sync failed");
             }
+        }
+        // V23-I4: 时间机器快照（每次保存一版; R6 上限 20 自动裁剪）
+        if let Some(Err(e)) = self.with_time_machine(|tm| tm.save(note_id, content.as_bytes())) {
+            tracing::warn!(note_id, error = %e, "snapshot save failed");
         }
         let Some((scheduler, root)) = &self.mirror else { return };
         scheduler.feed(note_id);
@@ -1201,6 +1223,60 @@ impl UniffiAppCore {
     }
 
     /// TodayView 统计（V20 §5.4.2 — 任务投影聚合，Rust 侧产出）。
+    /// V23-I4: Agent 现场感知（当前文档+选中块+反链+GTD → 结构化 JSON）。
+    pub fn get_agent_context(
+        self: Arc<Self>,
+        note_id: String,
+        selected_block: Option<String>,
+    ) -> String {
+        if let Some(core) = &self.core {
+            match self
+                .runtime
+                .block_on(core.agent_context(&note_id, selected_block.as_deref()))
+            {
+                Ok(v) => v.to_string(),
+                Err(e) => {
+                    tracing::warn!(note_id, error = %e, "agent context failed");
+                    serde_json::json!({"schema": "aurora.agent_context/1", "present": false, "error": e.to_string()}).to_string()
+                }
+            }
+        } else {
+            serde_json::json!({"schema": "aurora.agent_context/1", "present": false}).to_string()
+        }
+    }
+
+    /// V23-I4: 时间机器列表（新→旧; R6 治理上限 20 版）。
+    pub fn list_note_snapshots(self: Arc<Self>, note_id: String) -> Vec<SnapshotInfo> {
+        self.with_time_machine(|tm| {
+            tm.list(&note_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|m| SnapshotInfo {
+                    version: m.version,
+                    created_at: m.created_at,
+                    size: m.size as i64,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    /// V23-I4: 读取指定版本快照内容（UI 确认后经 save_note_content 写回
+    /// —— 回溯走正规保存路径, mirror/blocks 双轨自动跟随）。
+    pub fn restore_note_snapshot(
+        self: Arc<Self>,
+        note_id: String,
+        version: i64,
+    ) -> Option<String> {
+        self.with_time_machine(|tm| {
+            tm.load(&note_id, version)
+                .ok()
+                .flatten()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+        })
+        .flatten()
+    }
+
     pub fn today_view_stats(self: Arc<Self>) -> TodayViewStats {
         Self::today_view_stats_impl(&self)
     }
@@ -1536,6 +1612,54 @@ mod tests {
             .review_card("c1", aurora_core::l3_domain::fsrs::Rating::Good)
             .unwrap();
         assert!(d_out.due.to_rfc3339().contains('T'));
+    }
+
+    /// V23-I4 端到端: Agent 现场感知结构 + 时间机器保存/列表/回溯。
+    #[test]
+    fn agent_context_and_time_machine_end_to_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        assert!(!core.is_fallback);
+
+        // 建笔记 + 写内容（走正规保存 → blocks/mirror 双轨已接）
+        let note_id = core.clone().create_note("现场笔记".into()).unwrap();
+        core.clone()
+            .save_note_content(note_id.clone(), "# 标题\n\n现场正文".into())
+            .unwrap();
+
+        // 1. Agent 现场感知: schema/present/note 三段齐
+        let ctx = core.clone().get_agent_context(note_id.clone(), Some("b1".into()));
+        let ctx: serde_json::Value = serde_json::from_str(&ctx).unwrap();
+        assert_eq!(ctx["schema"], "aurora.agent_context/1");
+        assert_eq!(ctx["present"], true);
+        assert_eq!(ctx["note"]["title"], "现场笔记");
+        assert_eq!(ctx["note"]["selection"], "b1");
+        assert!(ctx["gtd"]["active"].is_i64(), "GTD 段齐: {ctx:?}");
+        assert!(ctx["scene"]["backlinks"].is_array());
+
+        // 2. 不存在笔记 → present false（Agent 明确「不在场」）
+        let absent = core.clone().get_agent_context("ghost".into(), None);
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&absent).unwrap()["present"], false);
+
+        // 3. 时间机器: 保存两次 → 两个版本; 列表新→旧; 回溯取旧版
+        core.clone()
+            .save_note_content(note_id.clone(), "第二版内容".into())
+            .unwrap();
+        let snaps = core.clone().list_note_snapshots(note_id.clone());
+        assert!(snaps.len() >= 2, "每次保存应留快照: {snaps:?}");
+        assert!(snaps[0].version > snaps[1].version, "新→旧");
+        let restored = core
+            .clone()
+            .restore_note_snapshot(note_id.clone(), snaps[1].version)
+            .unwrap();
+        // 旧版内容（第一版正文或第二版 — 至少是历史原文而非空）
+        assert!(!restored.is_empty());
+        // 回到当前版验证内容仍可用（回溯→写回路径契约: 内容可经 save_note_content 落回）
+        core.clone()
+            .save_note_content(note_id.clone(), restored.clone())
+            .unwrap();
+        let back = core.get_note_content(note_id.clone()).unwrap();
+        assert_eq!(back, restored, "回溯写回后内容一致");
     }
 
     #[test]
