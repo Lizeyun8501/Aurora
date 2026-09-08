@@ -12,6 +12,7 @@ pub mod app_core;
 pub mod blocks; // V23-I2: 块级存储双轨
 pub mod mirror; // V23-I2: Mirror 单向导出
 pub mod time_machine; // V23-I4: 时间机器快照回溯
+pub mod mcp_registry; // V23-I5: MCP 数据中枢工具契约（稳定层）
 pub mod event_bus;
 pub mod l1_infrastructure;
 pub mod l2_engines;
