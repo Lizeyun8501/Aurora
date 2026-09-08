@@ -39,6 +39,10 @@ default = []
 # 启用 iroh P2P 同步引擎（V19 §31 DEV-005）
 p2p-sync = ["dep:aurora-sync", "aurora-sync/iroh-transport", "dep:iroh"]
 
+# V23-I2: blocks 双轨存储（SQLite — 主线路径非 optional）
+[dependencies.rusqlite]
+workspace = true
+
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }
 

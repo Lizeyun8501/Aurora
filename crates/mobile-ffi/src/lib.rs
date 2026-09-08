@@ -132,11 +132,25 @@ pub struct UniffiAppCore {
     /// Loro 文档缓存（note_id → NoteDoc 五容器模型）
     docs: Mutex<std::collections::HashMap<String, NoteDoc>>,
     is_fallback: bool,
+    /// V23-I2: Mirror 单向导出（调度器 + 根目录; 铁律 9 永不读回）
+    mirror: Option<(aurora_core::mirror::MirrorScheduler, aurora_core::mirror::MirrorRoot)>,
+    /// V23-I2: blocks 双轨存储（None = 内存降级模式）
+    blocks: Option<aurora_core::blocks::BlockStore>,
 }
 
 impl UniffiAppCore {
     pub fn new(data_dir: String) -> Result<Arc<Self>, MobileError> {
         let data_dir = PathBuf::from(&data_dir);
+        // V23-I2: blocks 双轨（复用 migration 建的库; 打不开则降级 None）
+        let blocks = {
+            let db_path = data_dir.join("aurora.db");
+            rusqlite::Connection::open(&db_path).ok().map(aurora_core::blocks::BlockStore::new)
+        };
+        // V23-I2: Mirror 单向导出（data_dir/mirror — 铁律 9: 永不读回）
+        let mirror = Some((
+            aurora_core::mirror::MirrorScheduler::new(),
+            aurora_core::mirror::MirrorRoot::new(data_dir.join("mirror")),
+        ));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -162,10 +176,14 @@ impl UniffiAppCore {
                     fallback_notes: Mutex::new(Vec::new()),
                     docs: Mutex::new(std::collections::HashMap::new()),
                     is_fallback: false,
+                    mirror,
+                    blocks,
                 }))
             }
             Err(e) => {
                 tracing::warn!("bootstrap failed, falling back to in-memory: {e}");
+                // data_dir 在 struct 构造中被 move — mirror root 需提前算
+                let mirror_root = data_dir.join("mirror");
                 Ok(Arc::new(Self {
                     core: None,
                     runtime,
@@ -173,6 +191,12 @@ impl UniffiAppCore {
                     fallback_notes: Mutex::new(Vec::new()),
                     docs: Mutex::new(std::collections::HashMap::new()),
                     is_fallback: true,
+                    // 降级模式仍提供 mirror（本地目录不依赖 core 装配）
+                    mirror: Some((
+                        aurora_core::mirror::MirrorScheduler::new(),
+                        aurora_core::mirror::MirrorRoot::new(mirror_root),
+                    )),
+                    blocks: None,
                 }))
             }
         }
@@ -558,6 +582,62 @@ impl UniffiAppCore {
     }
 
     /// V19 §36.3: saveNote(noteId, content) — 保存笔记内容（Loro CRDT）
+    /// V23-I2: 块双轨同步 + Mirror 单向导出。
+    ///
+    /// mirror 写盘以 KVStore（note:{id} JSON）为数据源 —— feed 只登记
+    /// 待写集合，flush 时逐条取最新数据渲染落盘（保存后 flush_all:
+    /// 防抖窗口内连续保存自然合并为最后一次状态，正确性优先，
+    /// 定时器驱动留 I2 收口）。失败仅记日志不阻塞保存主路径。
+    fn sync_blocks_and_mirror(&self, note_id: &str, _title: &str, content: &str, _updated_at: &str) {
+        // blocks 双轨（None = 内存降级模式）
+        if let Some(blocks) = &self.blocks {
+            if let Err(e) = blocks.sync_note_blocks(note_id, None, content) {
+                tracing::warn!(note_id, error = %e, "blocks sync failed");
+            }
+        }
+        let Some((scheduler, root)) = &self.mirror else { return };
+        scheduler.feed(note_id);
+        // 保存后兜底 flush：全部 pending 逐条取最新态落盘后 complete
+        // （防抖窗口内连续保存自然合并; 3s 窗口定时器驱动留 I2 收口）
+        for id in scheduler.pending_ids() {
+            let (title, content, updated) = self.note_snapshot(&id);
+            let body = aurora_core::mirror::render_note_markdown(
+                &id, &title, &content, &[], &updated,
+            );
+            let rel = aurora_core::mirror::mirror_rel_path("default", &title, &id);
+            match aurora_core::mirror::write_note_to_mirror(root.path(), &rel, &body) {
+                Ok(_) => scheduler.complete(&id),
+                Err(e) => {
+                    tracing::warn!(note_id = %id, error = %e, "mirror write failed");
+                }
+            }
+        }
+    }
+
+    /// mirror 数据源: KVStore 优先（core 装配态），fallback_notes 兜底。
+    fn note_snapshot(&self, note_id: &str) -> (String, String, String) {
+        if let Some(core) = &self.core {
+            let kv = core.kv_store.clone();
+            if let Ok(Some(bytes)) =
+                self.runtime.block_on(async { kv.get(&format!("note:{}", note_id)).await })
+            {
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    let title = v.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                    let updated = v.get("updated_at").and_then(|u| u.as_str()).unwrap_or("").to_string();
+                    return (title, content, updated);
+                }
+            }
+        }
+        // fallback
+        let notes = self.fallback_notes.lock().unwrap();
+        notes
+            .iter()
+            .find(|n| n.id == note_id)
+            .map(|n| (n.title.clone(), n.content.clone(), n.updated_at.clone()))
+            .unwrap_or_default()
+    }
+
     fn save_note_content_impl(
         self: &Arc<Self>,
         note_id: String,
@@ -607,6 +687,10 @@ impl UniffiAppCore {
                 .map_err(|e| MobileError::OperationFailed {
                     message: format!("set: {e}"),
                 })?;
+
+            // V23-I2: 块级双轨同步（notes 为主源, blocks 并列索引）
+            // Mirror 单向 feed（若配置 mirror 目录 — 3s 防抖落盘）
+            self.sync_blocks_and_mirror(&note.id, &note.title, &content, &note.updated_at);
 
             // V20 §4.5 事件驱动: 内容变更 → NoteMetadataChanged（投影从
             // KVStore 数据源重取最新内容重建索引，写路径与 rebuild 同源）

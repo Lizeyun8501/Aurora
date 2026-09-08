@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use tracing::{error, info, warn};
 
 /// 当前数据库 Schema 版本。
-pub const CURRENT_SCHEMA_VERSION: i64 = 3;
+pub const CURRENT_SCHEMA_VERSION: i64 = 4;
 
 /// 迁移管理器。
 pub struct MigrationManager {
@@ -76,8 +76,64 @@ impl MigrationManager {
         if current < 3 {
             Self::apply_v3(&mut conn)?;
         }
+        // V4: blocks 块级存储（V23-I2 / T14 — 与 notes 并列双轨非替换）
+        if current < 4 {
+            Self::apply_v4(&mut conn)?;
+        }
 
         info!(version = CURRENT_SCHEMA_VERSION, "migration completed");
+        Ok(())
+    }
+
+    /// V4: blocks 块级存储（V23-I2 / M3-1）。
+    ///
+    /// 与 notes 并列双轨：notes 仍为聚合视图与事实源入口，blocks 为
+    /// 块级索引与编辑地基（块级 CRDT 在 I3 接入 loro_doc_id/loro_version）。
+    /// position 用 REAL —— 插入无需重排兄弟节点（规格包 M3-1 契约）。
+    fn apply_v4(conn: &mut rusqlite::Connection) -> Result<(), MigrationError> {
+        let tx = conn
+            .transaction()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS blocks (
+                id TEXT PRIMARY KEY,
+                note_id TEXT NOT NULL,
+                workspace_id TEXT,
+                parent_id TEXT,
+                block_type TEXT NOT NULL,
+                content_json TEXT NOT NULL,
+                loro_doc_id TEXT,
+                loro_version TEXT,
+                position REAL NOT NULL,
+                file_path TEXT,
+                file_hash TEXT,
+                lamport_ts INTEGER,
+                encryption TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                is_deleted INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_blk_note ON blocks(note_id, position)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_blk_parent ON blocks(parent_id, position)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_blk_ws ON blocks(workspace_id, updated_at DESC)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.commit()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        info!("migration v4 applied: blocks table");
         Ok(())
     }
 

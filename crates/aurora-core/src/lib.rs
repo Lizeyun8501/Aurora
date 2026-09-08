@@ -9,6 +9,8 @@
 //! 实现后作为平台适配层的依赖容器。
 
 pub mod app_core;
+pub mod blocks; // V23-I2: 块级存储双轨
+pub mod mirror; // V23-I2: Mirror 单向导出
 pub mod event_bus;
 pub mod l1_infrastructure;
 pub mod l2_engines;

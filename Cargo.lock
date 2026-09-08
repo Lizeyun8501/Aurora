@@ -468,6 +468,7 @@ dependencies = [
  "iroh",
  "jni 0.21.1",
  "loro",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

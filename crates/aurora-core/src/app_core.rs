@@ -309,6 +309,23 @@ impl AppCore {
     }
 }
 
+/// 测试辅助: 内存库建 blocks 表（V23-I2 — 生产由 migration V4 负责）。
+#[cfg(test)]
+pub fn apply_blocks_schema_for_tests(conn: &rusqlite::Connection) {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS blocks (
+            id TEXT PRIMARY KEY, note_id TEXT NOT NULL, workspace_id TEXT,
+            parent_id TEXT, block_type TEXT NOT NULL, content_json TEXT NOT NULL,
+            loro_doc_id TEXT, loro_version TEXT, position REAL NOT NULL,
+            file_path TEXT, file_hash TEXT, lamport_ts INTEGER, encryption TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            is_deleted INTEGER NOT NULL DEFAULT 0
+        )",
+        [],
+    )
+    .unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
