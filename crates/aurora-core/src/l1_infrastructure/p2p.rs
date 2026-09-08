@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::traits::sync_target::{
     Connection, DocSet, Endpoint, SyncEvent, SyncProtocol, SyncReport, SyncTarget,
@@ -15,6 +15,10 @@ use crate::traits::sync_target::{
 pub struct IrohSyncTarget {
     connections: Mutex<HashMap<String, Connection>>,
     callback: Mutex<Option<Box<dyn Fn(SyncEvent) + Send + Sync>>>,
+    /// V23-I3 / T3: 对端传输数据面（None = sync 大声失败）
+    transport: Mutex<Option<Arc<dyn crate::traits::sync_target::PeerTransport>>>,
+    /// 本地 oplog 导出/远端合并钩子
+    hooks: Mutex<Option<Arc<crate::traits::sync_target::SyncHooks>>>,
 }
 
 impl IrohSyncTarget {
@@ -23,7 +27,19 @@ impl IrohSyncTarget {
         Self {
             connections: Mutex::new(HashMap::new()),
             callback: Mutex::new(None),
+            transport: Mutex::new(None),
+            hooks: Mutex::new(None),
         }
+    }
+
+    /// 注入对端传输（T3 — 注入后 sync 走真搬运往返）。
+    pub fn set_transport(&self, t: Arc<dyn crate::traits::sync_target::PeerTransport>) {
+        *self.transport.lock().unwrap() = Some(t);
+    }
+
+    /// 注入本地导出/远端合并钩子。
+    pub fn set_hooks(&self, h: Arc<crate::traits::sync_target::SyncHooks>) {
+        *self.hooks.lock().unwrap() = Some(h);
     }
 }
 
@@ -61,22 +77,48 @@ impl SyncTarget for IrohSyncTarget {
     }
 
     async fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error> {
-        let connections = self
-            .connections
+
+        // V23-I3 / T3: 真搬运往返 — 无传输/无钩子大声失败（零静默占位）。
+        // 此前恒返零报告 → SyncRouter 永远认为同步成功 → 降级链永不触发。
+        let transport = self
+            .transport
             .lock()
-            .map_err(|_| crate::Error::Internal("iroh connections mutex poisoned".to_string()))?;
-        if !connections.contains_key(&conn.id) {
-            return Err(crate::Error::NotFound(format!(
-                "connection not found: {}",
-                conn.id
-            )));
+            .map_err(|_| crate::Error::Internal("iroh transport mutex poisoned".to_string()))?
+            .clone()
+            .ok_or_else(|| {
+                crate::Error::Internal(
+                    "iroh sync: no peer transport configured — sync fails loudly (T3)".to_string(),
+                )
+            })?;
+        let hooks = self
+            .hooks
+            .lock()
+            .map_err(|_| crate::Error::Internal("iroh hooks mutex poisoned".to_string()))?
+            .clone()
+            .ok_or_else(|| {
+                crate::Error::Internal("iroh sync: no sync hooks configured (T3)".to_string())
+            })?;
+
+        let started = std::time::Instant::now();
+        let mut sent_ops = 0usize;
+        let mut received_ops = 0usize;
+        for doc_id in &doc_set.doc_ids {
+            // push: 本地 oplog → 对端
+            let local = (hooks.export)(doc_id)?;
+            if !local.is_empty() {
+                sent_ops += transport.push(doc_id, local).await?;
+            }
+            // pull: 对端增量 → 本地合并
+            let remote = transport.pull(doc_id).await?;
+            if !remote.is_empty() {
+                (hooks.merge)(doc_id, remote)?;
+                received_ops += 1;
+            }
         }
-        tracing::info!("iroh sync: conn={}, docs={:?}", conn.id, doc_set.doc_ids);
-        // TODO: 接入 iroh 真实的文档同步协议 (iroh-docs / iroh-blobs)。
         Ok(SyncReport {
-            sent_ops: 0,
-            received_ops: 0,
-            duration_ms: 0,
+            sent_ops,
+            received_ops,
+            duration_ms: started.elapsed().as_millis() as u64,
         })
     }
 
@@ -168,7 +210,12 @@ impl SyncTarget for WebSocketSyncTarget {
             conn.id,
             doc_set.doc_ids
         );
-        // TODO: 接入 tokio-tungstenite 或 async-tungstenite 实现真实 WebSocket 同步。
+        // V23-I3 / T3 零静默占位: WebSocket 传输未实装 — 大声失败
+        // （生产接 tokio-tungstenite + PeerTransport 适配后消除）。
+        return Err(crate::Error::Internal(
+            "websocket sync: transport not implemented — fails loudly (T3)".to_string(),
+        ));
+        #[allow(unreachable_code)]
         Ok(SyncReport {
             sent_ops: 0,
             received_ops: 0,
@@ -205,6 +252,10 @@ impl SyncTarget for WebSocketSyncTarget {
 pub struct LanSyncTarget {
     connections: Mutex<HashMap<String, Connection>>,
     callback: Mutex<Option<Box<dyn Fn(SyncEvent) + Send + Sync>>>,
+    /// V23-I3 / T3: 对端传输数据面（None = sync 大声失败）
+    transport: Mutex<Option<Arc<dyn crate::traits::sync_target::PeerTransport>>>,
+    /// 本地 oplog 导出/远端合并钩子
+    hooks: Mutex<Option<Arc<crate::traits::sync_target::SyncHooks>>>,
 }
 
 impl LanSyncTarget {
@@ -213,7 +264,19 @@ impl LanSyncTarget {
         Self {
             connections: Mutex::new(HashMap::new()),
             callback: Mutex::new(None),
+            transport: Mutex::new(None),
+            hooks: Mutex::new(None),
         }
+    }
+
+    /// 注入对端传输（T3）。
+    pub fn set_transport(&self, t: Arc<dyn crate::traits::sync_target::PeerTransport>) {
+        *self.transport.lock().unwrap() = Some(t);
+    }
+
+    /// 注入本地导出/远端合并钩子。
+    pub fn set_hooks(&self, h: Arc<crate::traits::sync_target::SyncHooks>) {
+        *self.hooks.lock().unwrap() = Some(h);
     }
 }
 
@@ -245,22 +308,59 @@ impl SyncTarget for LanSyncTarget {
     }
 
     async fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error> {
-        let connections = self
-            .connections
-            .lock()
-            .map_err(|_| crate::Error::Internal("lan connections mutex poisoned".to_string()))?;
-        if !connections.contains_key(&conn.id) {
-            return Err(crate::Error::NotFound(format!(
-                "connection not found: {}",
-                conn.id
-            )));
+        // 连接存在性检查限定作用域 — guard 严禁跨 await（死锁教训）
+        {
+            let connections = self
+                .connections
+                .lock()
+                .map_err(|_| {
+                    crate::Error::Internal("lan connections mutex poisoned".to_string())
+                })?;
+            if !connections.contains_key(&conn.id) {
+                return Err(crate::Error::NotFound(format!(
+                    "connection not found: {}",
+                    conn.id
+                )));
+            }
         }
-        tracing::info!("lan sync: conn={}, docs={:?}", conn.id, doc_set.doc_ids);
-        // TODO: 接入本地网络发现协议 (如 mDNS) 与直连传输。
+        // V23-I3 / T3: 真搬运往返（与 IrohSyncTarget 同构 — 传输注入 +
+        // 导出/合并钩子; 无配置大声失败 → SyncRouter 正常触发降级）。
+        let transport = self
+            .transport
+            .lock()
+            .map_err(|_| crate::Error::Internal("lan transport mutex poisoned".to_string()))?
+            .clone()
+            .ok_or_else(|| {
+                crate::Error::Internal(
+                    "lan sync: no peer transport configured — sync fails loudly (T3)".to_string(),
+                )
+            })?;
+        let hooks = self
+            .hooks
+            .lock()
+            .map_err(|_| crate::Error::Internal("lan hooks mutex poisoned".to_string()))?
+            .clone()
+            .ok_or_else(|| {
+                crate::Error::Internal("lan sync: no sync hooks configured (T3)".to_string())
+            })?;
+        let started = std::time::Instant::now();
+        let mut sent_ops = 0usize;
+        let mut received_ops = 0usize;
+        for doc_id in &doc_set.doc_ids {
+            let local = (hooks.export)(doc_id)?;
+            if !local.is_empty() {
+                sent_ops += transport.push(doc_id, local).await?;
+            }
+            let remote = transport.pull(doc_id).await?;
+            if !remote.is_empty() {
+                (hooks.merge)(doc_id, remote)?;
+                received_ops += 1;
+            }
+        }
         Ok(SyncReport {
-            sent_ops: 0,
-            received_ops: 0,
-            duration_ms: 0,
+            sent_ops,
+            received_ops,
+            duration_ms: started.elapsed().as_millis() as u64,
         })
     }
 

@@ -92,6 +92,77 @@ impl Default for SyncConfig {
     }
 }
 
+/// 对端传输数据面（V23-I3 / T3 — sync 真搬运的最小契约）。
+///
+/// 生产实现: iroh-blobs / WebSocket 帧传输（aurora-sync::iroh_transport）；
+/// 测试与 IST: [`InMemoryPeerTransport`]。`sync` 无传输时**大声失败**
+/// —— 此前恒返零报告导致降级链永不触发（G-02 同型静默占位）。
+#[async_trait]
+pub trait PeerTransport: Send + Sync {
+    /// 推送 oplog 到对端，返回对端确认接收的 op 数。
+    async fn push(&self, doc_id: &str, ops: Vec<u8>) -> Result<usize, crate::Error>;
+    /// 从对端拉取该文档当前增量字节（无增量返空 Vec — 非错误）。
+    async fn pull(&self, doc_id: &str) -> Result<Vec<u8>, crate::Error>;
+}
+
+/// 内存对端（测试/IST — push 沉淀到对端存储，pull 返回对端存量）。
+#[derive(Default)]
+pub struct InMemoryPeerTransport {
+    store: std::sync::Mutex<std::collections::BTreeMap<String, Vec<Vec<u8>>>>,
+}
+
+impl InMemoryPeerTransport {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 测试播种：对端已有该文档的增量。
+    pub fn seed(&self, doc_id: &str, ops: Vec<u8>) {
+        self.store
+            .lock()
+            .unwrap()
+            .entry(doc_id.to_string())
+            .or_default()
+            .push(ops);
+    }
+
+    /// 测试断言：对端收到的某文档 op 总数。
+    pub fn received_count(&self, doc_id: &str) -> usize {
+        self.store
+            .lock()
+            .unwrap()
+            .get(doc_id)
+            .map(|v| v.len())
+            .unwrap_or(0)
+    }
+}
+
+#[async_trait]
+impl PeerTransport for InMemoryPeerTransport {
+    async fn push(&self, doc_id: &str, ops: Vec<u8>) -> Result<usize, crate::Error> {
+        let mut store = self.store.lock().unwrap();
+        store.entry(doc_id.to_string()).or_default().push(ops);
+        Ok(1)
+    }
+
+    async fn pull(&self, doc_id: &str) -> Result<Vec<u8>, crate::Error> {
+        // 语义: 取对端**未消费**的一条增量（FIFO）；空 = 无增量
+        let mut store = self.store.lock().unwrap();
+        Ok(store
+            .get_mut(doc_id)
+            .and_then(|v| (!v.is_empty()).then(|| v.remove(0)))
+            .unwrap_or_default())
+    }
+}
+
+/// 同步数据源/汇钩子（sync 往返中导出本地 oplog、应用远端 oplog）。
+pub struct SyncHooks {
+    /// 导出本地文档 oplog 字节（Loro ExportMode::Update 或等价）。
+    pub export: Box<dyn Fn(&str) -> Result<Vec<u8>, crate::Error> + Send + Sync>,
+    /// 应用远端 oplog（Loro import 或等价）。
+    pub merge: Box<dyn Fn(&str, Vec<u8>) -> Result<(), crate::Error> + Send + Sync>,
+}
+
 /// 单文档增量更新载荷（CRDT oplog 字节，传输格式由适配器决定）。
 #[derive(Debug, Clone)]
 pub struct UpdatePayload {

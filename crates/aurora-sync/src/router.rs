@@ -31,8 +31,8 @@ use async_trait::async_trait;
 use tracing::{info, warn};
 
 use aurora_core::traits::sync_target::{
-    Connection, ConnectionState, DocSet, Endpoint, SyncConfig, SyncEvent, SyncProtocol,
-    SyncReport, SyncTarget,
+    Connection, ConnectionState, DocSet, Endpoint, InMemoryPeerTransport, SyncConfig, SyncEvent,
+    SyncHooks, SyncProtocol, SyncReport, SyncTarget,
 };
 
 /// core 错误 → sync 错误（执行层归一化）。
@@ -699,6 +699,92 @@ mod tests {
         let (decision, report) = r.sync_via_route(&["d".to_string()]).await.unwrap();
         assert_eq!(decision.endpoint_url, "lan://b", "熔断后降级 LAN");
         assert_eq!(report.sent_ops, 1);
+    }
+
+    // ═══ V23-I3 / T3: 真搬运往返 + 大声失败降级 ═══
+
+    /// 无对端传输 → sync **大声失败**（此前恒返零报告 = 静默占位,
+    /// 降级链永不触发 — G-02 同型问题在 sync 数据面的收口验证）。
+    #[tokio::test]
+    async fn t3_sync_without_transport_fails_loudly() {
+        let target = aurora_core::l1_infrastructure::p2p::IrohSyncTarget::new();
+        let ep = Endpoint { url: "iroh://x".into(), protocol: SyncProtocol::Iroh };
+        let mut t = target;
+        let conn = t.connect(&ep).await.unwrap();
+        let report = t.sync(&conn, &DocSet { doc_ids: vec!["d".into()] }).await;
+        let err = report.unwrap_err().to_string();
+        assert!(err.contains("fails loudly"), "必须大声失败: {err}");
+    }
+
+    /// 内存对端真往返: export 推送沉淀到对端 + 对端播种 pull 回来 merge。
+    #[tokio::test]
+    async fn t3_push_pull_roundtrip_via_inmemory_peer() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let peer = Arc::new(InMemoryPeerTransport::new());
+        peer.seed("d1", b"remote-op-1".to_vec());
+
+        let mut target = aurora_core::l1_infrastructure::p2p::IrohSyncTarget::new();
+        target.set_transport(peer.clone());
+        let merged = Arc::new(AtomicUsize::new(0));
+        let m2 = merged.clone();
+        target.set_hooks(Arc::new(SyncHooks {
+            export: Box::new(move |doc| {
+                if doc == "d1" {
+                    Ok(b"local-op-0".to_vec())
+                } else {
+                    Ok(Vec::new())
+                }
+            }),
+            merge: Box::new(move |doc, ops| {
+                assert_eq!(doc, "d1");
+                assert_eq!(ops, b"remote-op-1");
+                m2.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }),
+        }));
+
+        let ep = Endpoint { url: "iroh://y".into(), protocol: SyncProtocol::Iroh };
+        let conn = target.connect(&ep).await.unwrap();
+        let report = target.sync(&conn, &DocSet { doc_ids: vec!["d1".into()] }).await.unwrap();
+        assert_eq!(report.sent_ops, 1, "本地 oplog 推送 1");
+        assert_eq!(report.received_ops, 1, "对端增量合并 1");
+        assert_eq!(merged.load(Ordering::SeqCst), 1);
+        // 播种 1 被 pull 消费 + 本地 push 1 = 对端现存 1
+        assert_eq!(peer.received_count("d1"), 1, "播种消费后 + 本地推送");
+    }
+
+    /// 降级闭环: A 目标无传输（大声失败熔断）→ B 目标有传输接管真搬运。
+    #[tokio::test]
+    async fn t3_degrade_on_missing_transport_to_real_peer() {
+        let clock = Arc::new(FakeClock::new(1000));
+        let r = router(
+            vec![
+                entry(RouteTier::P2p, "iroh://a", PrivacyLevel::E2eeOnly),
+                entry(RouteTier::Lan, "lan://b", PrivacyLevel::E2eeOnly),
+            ],
+            &clock,
+        );
+        let no_transport = aurora_core::l1_infrastructure::p2p::IrohSyncTarget::new();
+        r.attach("iroh://a", SharedTarget::wrap(no_transport));
+
+        let lan = aurora_core::l1_infrastructure::p2p::LanSyncTarget::new();
+        let peer = Arc::new(InMemoryPeerTransport::new());
+        peer.seed("d", b"op".to_vec());
+        lan.set_transport(peer.clone());
+        lan.set_hooks(Arc::new(SyncHooks {
+            export: Box::new(|_| Ok(b"op".to_vec())),
+            merge: Box::new(|_, _| Ok(())),
+        }));
+        r.attach("lan://b", SharedTarget::wrap(lan));
+
+        // 两次失败 → A 熔断 → 降级 LAN 真搬运
+        let _ = r.sync_via_route(&["d".to_string()]).await;
+        let _ = r.sync_via_route(&["d".to_string()]).await;
+        let (decision, report) = r.sync_via_route(&["d".to_string()]).await.unwrap();
+        assert_eq!(decision.endpoint_url, "lan://b");
+        assert_eq!(report.sent_ops, 1, "LAN 真搬运推送");
+        assert_eq!(report.received_ops, 1, "LAN 真搬运接收");
     }
 
     // ═══ 执行层: 持锁跨 await（tokio Mutex）正确性 — 多任务并发驱动同一目标 ═══
