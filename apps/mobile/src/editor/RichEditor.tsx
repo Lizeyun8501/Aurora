@@ -37,6 +37,49 @@ interface RichEditorProps {
 }
 
 // ---------------------------------------------------------------------------
+// 降级模式 Markdown 工具条 — V23-I5 清单②（对齐富文本工具栏能力面）
+// 受控 textarea: 全部走 setState, 光标经 rAF 恢复; 行前缀切换 + 选区包裹
+// ---------------------------------------------------------------------------
+
+/** 行前缀操作结果（text 新文本 / caret 新光标位）。 */
+interface TextOp {
+  text: string;
+  caret: number;
+}
+
+/** 标题/列表/引用行前缀切换: 已有同级前缀 → 剥除回正文; 其他 # 级 → 替换。 */
+function toggleLinePrefix(v: string, selStart: number, prefix: string | null): TextOp {
+  const lineStart = v.lastIndexOf('\n', selStart - 1) + 1;
+  const nlAt = v.indexOf('\n', selStart);
+  const lineEnd = nlAt === -1 ? v.length : nlAt;
+  const line = v.slice(lineStart, lineEnd);
+  const bare = line.replace(/^#{1,6} |^[-*+] |^\d{1,9}\. |^> /, '');
+  const newLine = prefix === null ? bare : prefix + bare;
+  return {
+    text: v.slice(0, lineStart) + newLine + v.slice(lineEnd),
+    caret: lineStart + Math.max(newLine.length, 0),
+  };
+}
+
+/** 选区包裹: 对称存在同标记 → 解开; 否则包裹（空选区填占位词）。 */
+function wrapSelection(v: string, s: number, e: number, mark: string): TextOp {
+  const before = v.slice(Math.max(0, s - mark.length), s);
+  const after = v.slice(e, e + mark.length);
+  if (before === mark && after === mark) {
+    const inner = v.slice(s, e);
+    return {
+      text: v.slice(0, s - mark.length) + inner + v.slice(e + mark.length),
+      caret: s - mark.length + inner.length,
+    };
+  }
+  const inner = v.slice(s, e) || '文本';
+  return {
+    text: v.slice(0, s) + mark + inner + mark + v.slice(e),
+    caret: s + mark.length + inner.length,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 工具栏命令（view 为空时按钮禁用）— PM 命令统一 (state, dispatch) 签名
 // ---------------------------------------------------------------------------
 
@@ -252,6 +295,7 @@ function EditorToolbar({ view, tick }: { view: EditorView | null; tick: number }
 
 export function RichEditor({ noteId, fallbackText, onDirty, onSaved, onStatus }: RichEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const handleRef = useRef<AuroraEditorHandle | null>(null);
   const dirtyRef = useRef(false);
   const [status, setStatus] = useState<EditorStatus>('loading');
@@ -322,9 +366,37 @@ export function RichEditor({ noteId, fallbackText, onDirty, onSaved, onStatus }:
 
   // 降级 textarea
   if (status === 'fallback') {
+    const ta = taRef.current;
+    /** 统一文本操作入口: setState + 落盘 + rAF 恢复光标。 */
+    const applyOp = (op: TextOp) => {
+      setFallbackContent(op.text);
+      onDirty?.();
+      platform.saveNoteContent(noteId, op.text);
+      requestAnimationFrame(() => {
+        const el = taRef.current;
+        if (el) {
+          el.focus();
+          el.setSelectionRange(op.caret, op.caret);
+        }
+      });
+    };
+    const lineOp = (prefix: string | null) => {
+      if (!ta) return;
+      applyOp(toggleLinePrefix(ta.value, ta.selectionStart, prefix));
+    };
+    const wrapOp = (mark: string) => {
+      if (!ta) return;
+      applyOp(wrapSelection(ta.value, ta.selectionStart, ta.selectionEnd, mark));
+    };
+    const fbBtn = (label: string, title: string, onClick: () => void) => (
+      <button key={title} className="tb-btn" title={title} onMouseDown={(e) => e.preventDefault()} onClick={onClick}>
+        {label}
+      </button>
+    );
     return (
-      <div className="editor-fallback-wrap">
+      <div className="editor-fallback-wrap" style={{ flexDirection: 'column' }}>
         <textarea
+          ref={taRef}
           className="editor-textarea"
           value={fallbackContent}
           onChange={(e) => {
@@ -334,6 +406,26 @@ export function RichEditor({ noteId, fallbackText, onDirty, onSaved, onStatus }:
           }}
           placeholder="开始写作…（降级模式：纯文本）"
         />
+        <div className="editor-toolbar" role="toolbar" aria-label="Markdown 工具栏（降级模式）">
+          {fbBtn('H1', '标题 1', () => lineOp('# '))}
+          {fbBtn('H2', '标题 2', () => lineOp('## '))}
+          {fbBtn('H3', '标题 3', () => lineOp('### '))}
+          {fbBtn('正文', '回正文', () => lineOp(null))}
+          <span className="tb-sep" />
+          {fbBtn('B', '加粗', () => wrapOp('**'))}
+          {fbBtn('I', '斜体', () => wrapOp('*'))}
+          {fbBtn('</>', '行内代码', () => wrapOp('`'))}
+          <span className="tb-sep" />
+          {fbBtn('•≡', '无序列表', () => lineOp('- '))}
+          {fbBtn('☑', '任务', () => lineOp('- [ ] '))}
+          {fbBtn('❝', '引用', () => lineOp('> '))}
+          <span className="tb-sep" />
+          {fbBtn('—', '分割线', () => {
+            if (!ta) return;
+            const s = ta.selectionStart;
+            applyOp({ text: ta.value.slice(0, s) + '\n---\n' + ta.value.slice(s), caret: s + 5 });
+          })}
+        </div>
       </div>
     );
   }
