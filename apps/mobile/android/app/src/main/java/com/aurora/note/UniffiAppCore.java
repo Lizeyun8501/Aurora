@@ -124,6 +124,17 @@ public class UniffiAppCore {
         return nativeSaveNoteSnapshot(handle, noteId, snapshotBase64) != 0;
     }
 
+    /** 时间机器：列出笔记快照元数据（JSON 数组）。失败返回 "[]"。 */
+    public String listSnapshots(String noteId) {
+        String s = nativeListSnapshots(handle, noteId);
+        return s == null ? "[]" : s;
+    }
+
+    /** 时间机器：读取指定版本快照正文。失败返回 null。 */
+    public String getSnapshotContent(String noteId, int version) {
+        return nativeGetSnapshotContent(handle, noteId, version);
+    }
+
     public boolean isFallback() {
         if (handle == 0) return true;
         return nativeIsFallback(handle) != 0;
@@ -153,5 +164,7 @@ public class UniffiAppCore {
     private static native String nativeGetNoteContent(long handle, String noteId);
     private static native String nativeGetNoteSnapshot(long handle, String noteId);
     private static native int nativeSaveNoteSnapshot(long handle, String noteId, String snapshotBase64);
+    private static native String nativeListSnapshots(long handle, String noteId);
+    private static native String nativeGetSnapshotContent(long handle, String noteId, int version);
     private static native void nativeDestroy(long handle);
 }

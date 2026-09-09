@@ -606,6 +606,33 @@ impl UniffiAppCore {
         Some(f(&tm))
     }
 
+    /// 时间机器：列出笔记快照元数据（JSON 数组）— 移动端版本历史 UI（V23-I5）。
+    pub fn list_snapshots_impl(&self, note_id: &str) -> String {
+        match self.with_time_machine(|tm| tm.list(note_id)) {
+            Some(Ok(metas)) => {
+                let items: Vec<String> = metas
+                    .iter()
+                    .map(|m| {
+                        format!(
+                            "{{\"version\":{},\"created_at\":\"{}\",\"size\":{}}}",
+                            m.version, m.created_at, m.size
+                        )
+                    })
+                    .collect();
+                format!("[{}]", items.join(","))
+            }
+            _ => "[]".to_string(),
+        }
+    }
+
+    /// 时间机器：读取指定版本快照正文（UTF-8 文本）。
+    pub fn get_snapshot_content_impl(&self, note_id: &str, version: i64) -> Option<String> {
+        match self.with_time_machine(|tm| tm.load(note_id, version)) {
+            Some(Ok(Some(bytes))) => String::from_utf8(bytes).ok(),
+            _ => None,
+        }
+    }
+
     fn sync_blocks_and_mirror(&self, note_id: &str, _title: &str, content: &str, _updated_at: &str) {
         // blocks 双轨（None = 内存降级模式）
         if let Some(blocks) = &self.blocks {
@@ -1158,6 +1185,42 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeGetNoteSnapshot(
     match core.get_note_snapshot_impl(note_id) {
         Ok(b64) => rust_str_to_jstring(&mut env, &b64),
         Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// 时间机器：列出笔记快照元数据（JSON 数组）— 移动端版本历史 UI（V23-I5）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeListSnapshots(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    note_id: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let note_id = match jstring_to_rust(&mut env, &note_id) {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    rust_str_to_jstring(&mut env, &core.list_snapshots_impl(&note_id))
+}
+
+/// 时间机器：读取指定版本快照正文（UTF-8 文本）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeGetSnapshotContent(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    note_id: JString,
+    version: jint,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let note_id = match jstring_to_rust(&mut env, &note_id) {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+    match core.get_snapshot_content_impl(&note_id, version as i64) {
+        Some(c) => rust_str_to_jstring(&mut env, &c),
+        None => std::ptr::null_mut(),
     }
 }
 

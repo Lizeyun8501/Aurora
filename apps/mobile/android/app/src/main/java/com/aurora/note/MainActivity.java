@@ -191,6 +191,26 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** 时间机器：列出笔记快照元数据（JSON 数组）。 */
+        @JavascriptInterface
+        public String listSnapshots(String noteId) {
+            try {
+                return core.listSnapshots(noteId);
+            } catch (Throwable e) {
+                return "[]";
+            }
+        }
+
+        /** 时间机器：读取指定版本快照正文。 */
+        @JavascriptInterface
+        public String getSnapshotContent(String noteId, int version) {
+            try {
+                return core.getSnapshotContent(noteId, version);
+            } catch (Throwable e) {
+                return null;
+            }
+        }
+
         // ------------------------------------------------------------------
         // P2P 同步（V19 §31 DEV-005 — iroh QUIC + NAT 穿透）
         // ------------------------------------------------------------------

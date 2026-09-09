@@ -695,6 +695,65 @@ function CaptureSheet({ onClose, onNewNote, onNewTask }: {
 // 知识库 — V19 移动端页面3（列表 + 摘要 + 任务红点 + 左滑删除）
 // ===========================================================================
 
+/** 时间机器快照列表 — JNI listSnapshots/getSnapshotContent 桥（V23-I5 移动端）。 */
+function SnapshotList({ noteId, refreshKey }: { noteId: string; refreshKey: number }) {
+  const [metas, setMetas] = useState<Array<{ version: number; created_at: string; size: number }>>([]);
+  const [viewing, setViewing] = useState<{ version: number; content: string } | null>(null);
+
+  useEffect(() => {
+    try {
+      const anyPlatform = platform as unknown as Record<string, unknown>;
+      if (typeof anyPlatform.listSnapshots !== 'function') return; // 非 Android 环境守卫
+      const arr = JSON.parse(platform.listSnapshots(noteId) || '[]');
+      setMetas(Array.isArray(arr) ? arr : []);
+    } catch { setMetas([]); }
+  }, [noteId, refreshKey]);
+
+  if (!metas.length) {
+    return <div style={{ fontSize: 12, opacity: 0.6, marginTop: 6 }}>暂无快照（保存后自动生成）</div>;
+  }
+  return (
+    <div style={{ marginTop: 8 }}>
+      {metas.map((m) => (
+        <div
+          key={m.version}
+          className="settings-row"
+          style={{ padding: '8px 0', borderTop: '1px solid var(--border)' }}
+          onClick={() => {
+            try {
+              const c = platform.getSnapshotContent(noteId, m.version);
+              setViewing({ version: m.version, content: c ?? '（读取失败）' });
+            } catch { setViewing({ version: m.version, content: '（读取失败）' }); }
+          }}
+        >
+          <span className="settings-row-label">
+            版本 {m.version}
+            <div className="sub">{m.created_at} · {m.size} 字节 · 点按查看存档正文</div>
+          </span>
+          <span className="settings-value">查看</span>
+        </div>
+      ))}
+      {viewing && (
+        <>
+          <div className="sheet-mask" onClick={() => setViewing(null)} />
+          <div className="sheet">
+            <div className="sheet-grab" />
+            <div className="sheet-head">
+              <span className="sheet-title">版本 {viewing.version} 存档</span>
+              <button className="icon-btn" onClick={() => setViewing(null)} aria-label="关闭">{I.x}</button>
+            </div>
+            <div className="sheet-body">
+              <pre style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.6, fontFamily: 'inherit', margin: 0 }}>
+                {viewing.content}
+              </pre>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** 笔记摘要缓存（body 前 60 字）。 */
 const snippetCache = new Map<string, string>();
 function noteSnippet(id: string): string {
@@ -1180,7 +1239,7 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted }: {
       {snapOpen && (
         <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontSize: 13, opacity: 0.7, lineHeight: 1.6, marginBottom: 8 }}>
-            每次保存自动留版（20 版滑动窗口）· 手动存档立即固化当前版
+            每次保存自动留版（20 版滑动窗口）· 点版本号查看存档正文
           </div>
           <button
             className="btn btn-secondary btn-block"
@@ -1192,11 +1251,9 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted }: {
               } catch { setSnapSaved(false); }
             }}
           >
-            {snapSaved ? '✓ 已存档（v20 桥接生效）' : '手动存档当前版本'}
+            {snapSaved ? '✓ 已存档（刷新列表可见）' : '手动存档当前版本'}
           </button>
-          <div style={{ fontSize: 12, opacity: 0.6, marginTop: 6 }}>
-            版本列表 / 一键回溯：JNI list_snapshots 桥（FFI 下轮）
-          </div>
+          <SnapshotList noteId={noteId} refreshKey={(snapSaved ? 1 : 0) + (snapOpen ? 10 : 0)} />
         </div>
       )}
 

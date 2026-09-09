@@ -32,6 +32,8 @@ interface AndroidBridge {
   // ProseMirror + Loro 编辑器（V19 §35 DEV-009）
   getNoteSnapshot(noteId: string): string;
   saveNoteSnapshot(noteId: string, snapshotBase64: string): boolean;
+  listSnapshots(noteId: string): string;
+  getSnapshotContent(noteId: string, version: number): string | null;
   // P2P 同步（V19 §31 DEV-005 — iroh QUIC + NAT 穿透）
   startSyncEngine(): string;
   getSyncLocalAddr(): string;
@@ -191,6 +193,14 @@ export const platform = {
   /** 保存 Loro 快照（base64，CRDT 合并语义）。 */
   saveNoteSnapshot(noteId: string, snapshotBase64: string): boolean {
     return bridge()?.saveNoteSnapshot(noteId, snapshotBase64) ?? false;
+  },
+
+  listSnapshots(noteId: string): string {
+    return bridge()?.listSnapshots(noteId) ?? '[]';
+  },
+
+  getSnapshotContent(noteId: string, version: number): string | null {
+    return bridge()?.getSnapshotContent(noteId, version) ?? null;
   },
 
   // -------------------------------------------------------------------------
