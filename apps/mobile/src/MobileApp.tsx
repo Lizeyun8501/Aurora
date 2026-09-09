@@ -766,6 +766,120 @@ function noteSnippet(id: string): string {
   return s;
 }
 
+// ===========================================================================
+// 笔记本文档树 — V23-I5（思源式无限级目录）
+// 树元数据 localStorage（doc 节点 id = noteId, 内容复用现有笔记体系）;
+// core parent_id schema 下沉 + P2P 同步树结构 → V24 路线（日记记录）
+// ===========================================================================
+
+interface TreeNodeMeta {
+  id: string;              // doc = noteId; book = 'b<ts>'（纯组织节点）
+  kind: 'book' | 'doc';
+  title: string;
+  parentId: string | null; // book 为 null
+}
+
+const K_TREE = 'aurora.tree';
+function loadTree(): TreeNodeMeta[] {
+  try { return JSON.parse(localStorage.getItem(K_TREE) || 'null') || []; } catch { return []; }
+}
+function saveTree(t: TreeNodeMeta[]) {
+  try { localStorage.setItem(K_TREE, JSON.stringify(t)); } catch { /* 防御 */ }
+}
+
+/** 首次进入: 自动建「我的笔记本」; 现有平铺笔记走孤儿区「入树」, 不自动迁移（时序安全）。 */
+function initialTree(): TreeNodeMeta[] {
+  return [{ id: `b${Date.now()}`, kind: 'book', title: '我的笔记本', parentId: null }];
+}
+
+/** 文档树组件 — 展开折叠 + ＋新建子文档 + 孤儿笔记收入。 */
+function NodeTree({ notes, onOpen, showToast }: {
+  notes: NoteSummary[];
+  onOpen: (id: string, title: string) => void;
+  showToast: (m: string) => void;
+}) {
+  const [tree, setTree] = useState<TreeNodeMeta[]>(() => {
+    const t = loadTree();
+    return t.length ? t : initialTree();
+  });
+  const persist = (t: TreeNodeMeta[]) => { saveTree(t); setTree(t); };
+  const [open, setOpen] = useState<Set<string>>(() => new Set(loadTree().filter((x) => x.kind === 'book').map((x) => x.id)));
+
+  const toggle = (id: string) =>
+    setOpen((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  const childrenOf = (pid: string) => tree.filter((t) => t.parentId === pid);
+  const firstBookId = tree.find((t) => t.kind === 'book')?.id ?? null;
+  const displayTitle = (t: TreeNodeMeta) => (t.kind === 'doc' ? getTitleOverlay(t.id) || t.title : t.title);
+
+  /** 新建子文档: 走现有 createNote（内容体系不动）, 树挂节点, 就地创建不跳转（对齐思源）。 */
+  const createChild = (parentId: string) => {
+    const id = platform.createNote('未命名文档');
+    if (!id) { showToast('创建失败'); return; }
+    persist([...tree, { id, kind: 'doc', title: '未命名文档', parentId }]);
+    setOpen((prev) => new Set(prev).add(parentId));
+    showToast('已创建子文档（点标题行改名）');
+  };
+
+  /** 平铺孤儿笔记收入第一个笔记本。 */
+  const adopt = (n: NoteSummary) => {
+    if (!firstBookId) return;
+    persist([...tree, { id: n.note_id, kind: 'doc', title: n.title, parentId: firstBookId }]);
+    showToast(`「${n.title}」已收入笔记本`);
+  };
+
+  const treeDocIds = new Set(tree.filter((t) => t.kind === 'doc').map((t) => t.id));
+  const orphans = notes.filter((n) => !treeDocIds.has(n.note_id));
+
+  const row = (t: TreeNodeMeta, depth: number): React.ReactNode => {
+    const kids = childrenOf(t.id);
+    const hasKids = kids.length > 0;
+    const isOpen = open.has(t.id);
+    return (
+      <React.Fragment key={t.id}>
+        <div className={`nt-row ${t.kind === 'book' ? 'nt-book' : ''}`} style={{ paddingLeft: 8 + depth * 18 }}>
+          {hasKids || t.kind === 'book' ? (
+            <button className="nt-arrow" onClick={() => toggle(t.id)} aria-label={isOpen ? '折叠' : '展开'}>{isOpen ? '▾' : '▸'}</button>
+          ) : <span className="nt-arrow nt-arrow-ph" />}
+          <span className="nt-icon">{t.kind === 'book' ? '📕' : hasKids ? '📄' : '📄'}</span>
+          <button className="nt-title" onClick={() => t.kind === 'doc' && onOpen(t.id, displayTitle(t))}>
+            {displayTitle(t)}
+            {t.kind === 'doc' && hasKids && <span className="nt-count">{kids.length}</span>}
+          </button>
+          <button className="nt-add" onClick={() => createChild(t.id)} aria-label="新建子文档">＋</button>
+        </div>
+        {isOpen && kids.map((k) => row(k, depth + 1))}
+      </React.Fragment>
+    );
+  };
+
+  return (
+    <div>
+      {tree.filter((t) => t.kind === 'book').map((b) => row(b, 0))}
+      <button className="btn btn-text" style={{ marginTop: 4 }} onClick={() => {
+        const id = `b${Date.now()}`;
+        const name = `笔记本 ${tree.filter((t) => t.kind === 'book').length + 1}`;
+        persist([...tree, { id, kind: 'book', title: name, parentId: null }]);
+        showToast(`已创建「${name}」`);
+      }}>＋ 新建笔记本</button>
+
+      {orphans.length > 0 && (
+        <>
+          <div className="nt-orphan-title">未入树笔记（{orphans.length}）— 点「收入」挂到笔记本</div>
+          {orphans.map((n) => (
+            <div key={n.note_id} className="nt-row" style={{ paddingLeft: 8 }}>
+              <span className="nt-arrow nt-arrow-ph" />
+              <span className="nt-icon">📄</span>
+              <button className="nt-title" onClick={() => onOpen(n.note_id, n.title)}>{n.title}</button>
+              <button className="nt-add" style={{ fontSize: 12 }} onClick={() => adopt(n)}>收入</button>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleFav }: {
   onOpen: (id: string, title: string) => void;
   showToast: (t: string) => void;
@@ -777,9 +891,30 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [query, setQuery] = useState('');
   const [swipingId, setSwipingId] = useState<string | null>(null);
+  const [mode, setMode] = useState<'tree' | 'list'>('tree');
 
   const refresh = useCallback(() => setNotes(listNotesTitled()), []);
   useEffect(refresh, [refresh]);
+
+  /** 视图段控 — 树形（思源式笔记本/文档树）/ 列表（原平铺）。 */
+  const modeSeg = (
+    <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+      <button className={`nt-seg ${mode === 'tree' ? 'on' : ''}`} onClick={() => setMode('tree')}>树形</button>
+      <button className={`nt-seg ${mode === 'list' ? 'on' : ''}`} onClick={() => setMode('list')}>列表</button>
+    </div>
+  );
+
+  if (mode === 'tree') {
+    return (
+      <div className="view">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <span style={{ fontSize: 20, fontWeight: 700 }}>文档</span>
+          {modeSeg}
+        </div>
+        <NodeTree notes={notes} onOpen={onOpen} showToast={showToast} />
+      </div>
+    );
+  }
 
   const shown = query.trim()
     ? notes.filter((n) => n.title.includes(query.trim()))
@@ -795,6 +930,10 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
 
   return (
     <div className="view">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <span style={{ fontSize: 20, fontWeight: 700 }}>知识库</span>
+        {modeSeg}
+      </div>
       <div className="search-hero-input" style={{ marginBottom: 12 }}>
         <span style={{ color: 'var(--text-tertiary)' }}>{I.search}</span>
         <input
