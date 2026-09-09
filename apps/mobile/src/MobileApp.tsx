@@ -961,6 +961,28 @@ function SettingsView({ theme, onTheme, showToast }: {
       </div>
 
       <div className="settings-group">
+        <div className="settings-group-title">Mirror 导出 — 活的笔记库</div>
+        <div className="settings-card">
+          <div className="settings-row">
+            <span className="settings-row-icon">{I.note}</span>
+            <span className="settings-row-label">
+              Markdown 单向导出
+              <div className="sub">每次保存自动写入 data/mirror/（YAML 前置）</div>
+            </span>
+            <span className="settings-value">自动</span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-row-icon">{I.text}</span>
+            <span className="settings-row-label">
+              用 Obsidian 打开该目录
+              <div className="sub">即得与笔记应用同源的 Markdown 库 · 单向只读</div>
+            </span>
+            <span className="settings-value">v20</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="settings-group">
         <div className="settings-group-title">同步</div>
         <div className="settings-card">
           <div className="settings-row" onClick={() => setSyncOpen(!syncOpen)}>
@@ -1085,6 +1107,8 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted }: {
   const [syncOpen, setSyncOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [snapOpen, setSnapOpen] = useState(false);
+  const [snapSaved, setSnapSaved] = useState(false);
   const [status, setStatus] = useState<'dirty' | 'saved' | null>(null);
   // 大标题可编辑（参考图布局）— overlay 存储，所有列表同步
   const [docTitle, setDocTitle] = useState(() => getTitleOverlay(noteId) || title);
@@ -1128,6 +1152,9 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted }: {
             <button className="menu-item" onClick={() => { setFocusMode(!focusMode); setMenuOpen(false); }}>
               {I.focus} {focusMode ? '退出专注模式' : '专注模式'}
             </button>
+            <button className="menu-item" onClick={() => { setSnapOpen(!snapOpen); setMenuOpen(false); }}>
+              {I.note} 版本历史（时间机器）
+            </button>
             {confirmDel ? (
               <button className="menu-item danger" onClick={() => {
                 snippetCache.delete(noteId);
@@ -1147,6 +1174,29 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted }: {
       {syncOpen && (
         <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)' }}>
           <SyncPanel noteId={noteId} />
+        </div>
+      )}
+
+      {snapOpen && (
+        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 13, opacity: 0.7, lineHeight: 1.6, marginBottom: 8 }}>
+            每次保存自动留版（20 版滑动窗口）· 手动存档立即固化当前版
+          </div>
+          <button
+            className="btn btn-secondary btn-block"
+            onClick={() => {
+              try {
+                const c = platform.getNoteContent(noteId);
+                platform.saveNoteSnapshot(noteId, btoa(unescape(encodeURIComponent(c))));
+                setSnapSaved(true);
+              } catch { setSnapSaved(false); }
+            }}
+          >
+            {snapSaved ? '✓ 已存档（v20 桥接生效）' : '手动存档当前版本'}
+          </button>
+          <div style={{ fontSize: 12, opacity: 0.6, marginTop: 6 }}>
+            版本列表 / 一键回溯：JNI list_snapshots 桥（FFI 下轮）
+          </div>
         </div>
       )}
 
