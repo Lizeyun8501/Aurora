@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { platform, type NoteSummary, type SearchResult } from './adapters/androidPlatform';
+import { Solar, HolidayUtil } from 'lunar-typescript';
 
 // 编辑器懒加载 — schema/wasm 初始化失败不拖垮整个应用（白屏防御）
 const RichEditor = React.lazy(() =>
@@ -1554,6 +1555,36 @@ function CalendarView({ tasks, onOpenNote, onNewTask }: {
     return dayNotes.length > 0 || dayDiary.length > 0 || dayTasks.length > 0;
   };
 
+  // 农历/节假日 — lunar-typescript（6tail, 含法定节假日+调休数据随库更新）
+  /** 格子副标: 法定假日名 > 农历节日 > 公历节日 > 节气 > 初一显月名 > 农历日。 */
+  const lunarSub = (d: number): { sub: string; isStat: boolean; isWork: boolean } => {
+    const solar = Solar.fromYmd(y, m + 1, d);
+    const lunar = solar.getLunar();
+    const h = HolidayUtil.getHoliday(y, m + 1, d);
+    let sub: string;
+    if (h) sub = h.getName();
+    else if (lunar.getFestivals().length) sub = lunar.getFestivals()[0];
+    else if (solar.getFestivals().length) sub = solar.getFestivals()[0];
+    else if (lunar.getJieQi()) sub = lunar.getJieQi();
+    else if (lunar.getDayInChinese() === '初一') sub = `农历${lunar.getMonthInChinese()}月`;
+    else sub = lunar.getDayInChinese();
+    return { sub, isStat: !!h && !h.isWork(), isWork: !!h && h.isWork() };
+  };
+  /** 选中日农历全称（如 二〇二六年正月初一）+ 假日/节气标注。 */
+  const selLunarInfo = (() => {
+    const [sy, sm, sd] = selected.split('-').map(Number);
+    const solar = Solar.fromYmd(sy, sm, sd);
+    const lunar = solar.getLunar();
+    const tags = [
+      ...lunar.getFestivals(),
+      ...solar.getFestivals(),
+      lunar.getJieQi(),
+    ].filter(Boolean);
+    const h = HolidayUtil.getHoliday(sy, sm, sd);
+    const rest = h ? (h.isWork() ? '（调休上班）' : '（法定假日）') : '';
+    return { text: lunar.toString(), tag: tags.length ? tags[0] + rest : rest };
+  })();
+
   const selD = parseInt(selected.slice(8), 10);
   const selData = dayData(selD);
   const isSelInMonth = selected.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`);
@@ -1578,13 +1609,15 @@ function CalendarView({ tasks, onOpenNote, onNewTask }: {
             const key = fmt(d);
             const isToday = key === todayStr;
             const isSel = key === selected;
+            const ls = lunarSub(d);
             return (
               <button
                 key={d}
-                className={`cal-day cal-day-btn ${isToday ? 'today' : ''} ${isSel ? 'sel' : ''} ${hasMark(d) ? 'has' : ''}`}
+                className={`cal-day cal-day-btn ${isToday ? 'today' : ''} ${isSel ? 'sel' : ''} ${hasMark(d) ? 'has' : ''} ${ls.isStat ? 'fest' : ''} ${ls.isWork ? 'workday' : ''}`}
                 onClick={() => setSelected(key)}
               >
-                {d}
+                <span className="cal-num">{d}</span>
+                {!isToday && <span className={`cal-lunar ${(ls.isStat || ls.sub.length > 2) && !ls.isWork ? 'fest' : ''}`}>{ls.isWork ? '班' : ls.sub}</span>}
               </button>
             );
           })}
@@ -1599,6 +1632,9 @@ function CalendarView({ tasks, onOpenNote, onNewTask }: {
       {/* 当日聚合 */}
       <div className="result-section-title" style={{ marginTop: 12 }}>
         {selected.replace(/^(\d+)-(\d+)-(\d+)$/, '$1 年 $2 月 $3 日')}
+        <span style={{ marginLeft: 8, fontSize: 13, fontWeight: 400, opacity: 0.7 }}>
+          {selLunarInfo.text}{selLunarInfo.tag ? ` · ${selLunarInfo.tag}` : ''}
+        </span>
       </div>
 
       {isSelInMonth && (selData.dayTasks.length > 0 || (selData.dayNotes.length + selData.dayDiary.length) > 0) === false && (
