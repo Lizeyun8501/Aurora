@@ -30,6 +30,7 @@ dirs-next = "2.0"
 tauri-build = { version = "2", features = [] }
 
 [features]
-default = []
-# 完整桌面构建（WebView 窗口 + 托盘）— 需 libgtk-3-dev / libwebkit2gtk-4.1-dev
-full = ["tauri/wry"]
+# 默认 wry（真实 WebView）— CI 与开发机均已装齐 GTK/WebKit 系统库；
+# 无系统库环境请用 cargo check --exclude aurora-desktop 验证 workspace 其余部分。
+default = ["tauri/wry"]
+full = ["tauri/tray-icon"]

@@ -17,6 +17,7 @@
 //! 过渡方案说明：DEK 当前以本地文件保管（Unix 0600），生产应迁移至
 //! `KeyHierarchy` 口令解锁 + OS 安全存储（DPAPI / Keychain）。
 
+use tauri::Manager;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -183,7 +184,7 @@ async fn index_note_in_search(
 
 /// 创建新笔记（加密存储 + 建立搜索索引）。
 #[tauri::command]
-pub async fn cmd_create_note(title: String) -> Result<String, String> {
+async fn cmd_create_note(title: String) -> Result<String, String> {
     let core = get_core()?;
     let vault = get_vault()?;
     let id = uuid::Uuid::new_v4().to_string();
@@ -206,7 +207,7 @@ pub async fn cmd_create_note(title: String) -> Result<String, String> {
 
 /// 获取笔记内容（解密后返回）。
 #[tauri::command]
-pub async fn cmd_get_note(note_id: String) -> Result<serde_json::Value, String> {
+async fn cmd_get_note(note_id: String) -> Result<serde_json::Value, String> {
     let core = get_core()?;
     let vault = get_vault()?;
     let key = format!("note:{}", note_id);
@@ -221,7 +222,7 @@ pub async fn cmd_get_note(note_id: String) -> Result<serde_json::Value, String> 
 
 /// 更新笔记（解密 → 修改 → 重新加密落库 + 更新索引）。
 #[tauri::command]
-pub async fn cmd_update_note(
+async fn cmd_update_note(
     note_id: String,
     title: Option<String>,
     content: Option<String>,
@@ -254,7 +255,7 @@ pub async fn cmd_update_note(
 
 /// 今日视图统计（移动端 today_view_stats 同源 — AppCore 任务投影聚合）。
 #[tauri::command]
-pub async fn cmd_today_view_stats() -> Result<serde_json::Value, String> {
+async fn cmd_today_view_stats() -> Result<serde_json::Value, String> {
     let core = get_core()?;
     let (active, done) = core.task_projection_stats();
     let due_today = core.task_projection_due_today();
@@ -267,7 +268,7 @@ pub async fn cmd_today_view_stats() -> Result<serde_json::Value, String> {
 
 /// 反向链接（移动端 get_backlinks 同源 — 双链投影 incoming + 标题解析）。
 #[tauri::command]
-pub async fn cmd_get_backlinks(note_id: String) -> Result<Vec<serde_json::Value>, String> {
+async fn cmd_get_backlinks(note_id: String) -> Result<Vec<serde_json::Value>, String> {
     let core = get_core()?;
     let kv = core.kv_store.clone();
     let sources = core.bidi_link_incoming(&note_id);
@@ -295,7 +296,7 @@ pub async fn cmd_get_backlinks(note_id: String) -> Result<Vec<serde_json::Value>
 
 /// FSRS 到期复习卡（移动端 due_review_cards 同源 — 复习队列 due/R 阈值）。
 #[tauri::command]
-pub async fn cmd_due_review_cards() -> Result<Vec<serde_json::Value>, String> {
+async fn cmd_due_review_cards() -> Result<Vec<serde_json::Value>, String> {
     let core = get_core()?;
     let now = chrono::Utc::now();
     let items = core.review_queue.due_items(now);
@@ -318,7 +319,7 @@ pub async fn cmd_due_review_cards() -> Result<Vec<serde_json::Value>, String> {
 
 /// FSRS 评分复习（移动端 review_card 同源 — 1 Again / 2 Hard / 3 Good / 4 Easy）。
 #[tauri::command]
-pub async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, String> {
+async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, String> {
     let core = get_core()?;
     let rating = match rating {
         1 => aurora_core::l3_domain::fsrs::Rating::Again,
@@ -336,7 +337,7 @@ pub async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, Str
 
 /// 删除笔记（含搜索索引）。
 #[tauri::command]
-pub async fn cmd_delete_note(note_id: String) -> Result<(), String> {
+async fn cmd_delete_note(note_id: String) -> Result<(), String> {
     let core = get_core()?;
     let key = format!("note:{}", note_id);
     core.kv_store
@@ -353,7 +354,7 @@ pub async fn cmd_delete_note(note_id: String) -> Result<(), String> {
 
 /// 搜索笔记（Tantivy 全文检索）。
 #[tauri::command]
-pub async fn cmd_search_notes(query: String) -> Result<Vec<serde_json::Value>, String> {
+async fn cmd_search_notes(query: String) -> Result<Vec<serde_json::Value>, String> {
     let core = get_core()?;
     info!(query, "search notes via desktop command");
     let opts = aurora_core::traits::search_backend::SearchOptions::default();
@@ -378,7 +379,7 @@ pub async fn cmd_search_notes(query: String) -> Result<Vec<serde_json::Value>, S
 
 /// 获取应用状态摘要（健康检查）。
 #[tauri::command]
-pub fn cmd_app_status() -> Result<serde_json::Value, String> {
+fn cmd_app_status() -> Result<serde_json::Value, String> {
     let core = get_core()?;
     let crypto_version = core.crypto.algorithm_version();
     Ok(serde_json::json!({
