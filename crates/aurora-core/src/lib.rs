@@ -10,6 +10,7 @@
 
 pub mod app_core;
 pub mod blocks; // V23-I2: 块级存储双轨
+pub mod error_codes;
 pub mod event_bus;
 pub mod l1_infrastructure;
 pub mod l2_engines;
@@ -100,6 +101,15 @@ pub enum Error {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    // ===== V26 DK-00 契约层：统一错误码（62 个，见 error_codes::TABLE）=====
+    #[error("{code:?}: {message}")]
+    Domain {
+        /// 统一错误码（62 个之一）。
+        code: crate::error_codes::ErrorCode,
+        /// 用户文案（来自错误码契约三元组）。
+        message: &'static str,
+    },
 }
 
 impl Error {

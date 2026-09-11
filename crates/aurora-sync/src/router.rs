@@ -455,7 +455,7 @@ mod tests {
     use async_trait::async_trait;
 
     use aurora_core::traits::sync_target::{
-        InMemoryPeerTransport, SyncEvent, SyncHooks, SyncProtocol,
+        InMemoryPeerTransport, SyncEvent, SyncHooks, SyncProtocol, UpdatePayload,
     };
 
     fn entry(tier: RouteTier, url: &str, privacy: PrivacyLevel) -> RouteEntry {
@@ -484,6 +484,28 @@ mod tests {
             _c: &aurora_core::traits::sync_target::Connection,
             _d: &aurora_core::traits::sync_target::DocSet,
         ) -> Result<SyncReport, aurora_core::Error> {
+            unimplemented!()
+        }
+        /// V26 DK-00：增量三原语显式实现（Noop 测试桩 — unimplemented 语义保持）。
+        async fn send_update(
+            &self,
+            _c: &aurora_core::traits::sync_target::Connection,
+            _u: &aurora_core::traits::sync_target::UpdatePayload,
+        ) -> Result<(), aurora_core::Error> {
+            unimplemented!()
+        }
+        async fn recv_update(
+            &self,
+            _c: &aurora_core::traits::sync_target::Connection,
+            _d: &str,
+        ) -> Result<Vec<u8>, aurora_core::Error> {
+            unimplemented!()
+        }
+        async fn sync_version(
+            &self,
+            _c: &aurora_core::traits::sync_target::Connection,
+            _d: &str,
+        ) -> Result<Option<u64>, aurora_core::Error> {
             unimplemented!()
         }
         fn watch(
@@ -696,6 +718,28 @@ mod tests {
                 duration_ms: 5,
             })
         }
+        /// V26 DK-00：增量三原语显式实现（成功语义）。
+        async fn send_update(
+            &self,
+            _c: &Connection,
+            _u: &UpdatePayload,
+        ) -> Result<(), aurora_core::Error> {
+            Ok(())
+        }
+        async fn recv_update(
+            &self,
+            _c: &Connection,
+            _d: &str,
+        ) -> Result<Vec<u8>, aurora_core::Error> {
+            Ok(Vec::new())
+        }
+        async fn sync_version(
+            &self,
+            _c: &Connection,
+            _d: &str,
+        ) -> Result<Option<u64>, aurora_core::Error> {
+            Ok(None)
+        }
         fn watch(&self, _cb: Box<dyn Fn(SyncEvent) + Send + Sync>) {}
         async fn disconnect(&self, _conn: &Connection) -> Result<(), aurora_core::Error> {
             Ok(())
@@ -720,6 +764,28 @@ mod tests {
             _d: &DocSet,
         ) -> Result<SyncReport, aurora_core::Error> {
             unreachable!()
+        }
+        /// V26 DK-00：增量三原语显式实现（失败语义，与 connect 一致）。
+        async fn send_update(
+            &self,
+            _c: &Connection,
+            _u: &UpdatePayload,
+        ) -> Result<(), aurora_core::Error> {
+            Err(aurora_core::Error::Network("inject: send failed".into()))
+        }
+        async fn recv_update(
+            &self,
+            _c: &Connection,
+            _d: &str,
+        ) -> Result<Vec<u8>, aurora_core::Error> {
+            Err(aurora_core::Error::Network("inject: recv failed".into()))
+        }
+        async fn sync_version(
+            &self,
+            _c: &Connection,
+            _d: &str,
+        ) -> Result<Option<u64>, aurora_core::Error> {
+            Err(aurora_core::Error::Network("inject: version failed".into()))
         }
         fn watch(&self, _cb: Box<dyn Fn(SyncEvent) + Send + Sync>) {}
         async fn disconnect(&self, _c: &Connection) -> Result<(), aurora_core::Error> {

@@ -107,6 +107,8 @@ mod tests {
         bus.publish(CoreEvent::TaskCreated {
             task_id: "task-1".to_string(),
             title: "Test Task".to_string(),
+            note_id: None,
+            block_id: None,
         });
 
         let event1 = rx1.recv().await.unwrap();

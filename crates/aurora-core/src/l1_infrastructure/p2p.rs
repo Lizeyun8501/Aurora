@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::traits::sync_target::{
-    Connection, DocSet, Endpoint, SyncEvent, SyncProtocol, SyncReport, SyncTarget,
+    Connection, DocSet, Endpoint, SyncEvent, SyncProtocol, SyncReport, SyncTarget, UpdatePayload,
 };
 
 /// 基于 iroh 的 P2P 同步目标实现。
@@ -54,6 +54,63 @@ impl Default for IrohSyncTarget {
 
 #[async_trait]
 impl SyncTarget for IrohSyncTarget {
+    /// ★ V26 DK-00 契约：真实增量发送 — 经 PeerTransport 推送 oplog 字节。
+    async fn send_update(
+        &self,
+        _conn: &Connection,
+        update: &UpdatePayload,
+    ) -> Result<(), crate::Error> {
+        let transport = self
+            .transport
+            .lock()
+            .map_err(|_| crate::Error::Internal("transport mutex poisoned".to_string()))?
+            .clone()
+            .ok_or_else(|| {
+                crate::Error::Internal(
+                    "IrohSyncTarget send_update: no peer transport configured (V26 DK-00)"
+                        .to_string(),
+                )
+            })?;
+        transport.push(&update.doc_id, update.ops.clone()).await?;
+        Ok(())
+    }
+
+    /// ★ V26 DK-00 契约：真实增量拉取 — 返回对端待传 oplog 字节。
+    async fn recv_update(&self, _conn: &Connection, doc_id: &str) -> Result<Vec<u8>, crate::Error> {
+        let transport = self
+            .transport
+            .lock()
+            .map_err(|_| crate::Error::Internal("transport mutex poisoned".to_string()))?
+            .clone()
+            .ok_or_else(|| {
+                crate::Error::Internal(
+                    "IrohSyncTarget recv_update: no peer transport configured (V26 DK-00)"
+                        .to_string(),
+                )
+            })?;
+        transport.pull(doc_id).await
+    }
+
+    /// ★ V26 DK-00 契约：真实版本协商 — 经 PeerTransport 查对端版本。
+    async fn sync_version(
+        &self,
+        _conn: &Connection,
+        doc_id: &str,
+    ) -> Result<Option<u64>, crate::Error> {
+        let transport = self
+            .transport
+            .lock()
+            .map_err(|_| crate::Error::Internal("transport mutex poisoned".to_string()))?
+            .clone()
+            .ok_or_else(|| {
+                crate::Error::Internal(
+                    "IrohSyncTarget sync_version: no peer transport configured (V26 DK-00)"
+                        .to_string(),
+                )
+            })?;
+        transport.version(doc_id).await
+    }
+
     async fn connect(&mut self, endpoint: &Endpoint) -> Result<Connection, crate::Error> {
         if !matches!(endpoint.protocol, SyncProtocol::Iroh | SyncProtocol::Quic) {
             return Err(crate::Error::InvalidInput(format!(
@@ -171,6 +228,38 @@ impl Default for WebSocketSyncTarget {
 
 #[async_trait]
 impl SyncTarget for WebSocketSyncTarget {
+    /// V26 DK-00：增量三原语真实实现 —— WebSocket 传输层尚未接入（V23 T3
+    /// 明确 loudly fail），显式返回 Internal 而非静默空载荷。
+    async fn send_update(
+        &self,
+        _conn: &Connection,
+        _update: &UpdatePayload,
+    ) -> Result<(), crate::Error> {
+        Err(crate::Error::Internal(
+            "websocket send_update: transport not wired — loud failure (V26 DK-00)".to_string(),
+        ))
+    }
+
+    async fn recv_update(
+        &self,
+        _conn: &Connection,
+        _doc_id: &str,
+    ) -> Result<Vec<u8>, crate::Error> {
+        Err(crate::Error::Internal(
+            "websocket recv_update: transport not wired — loud failure (V26 DK-00)".to_string(),
+        ))
+    }
+
+    async fn sync_version(
+        &self,
+        _conn: &Connection,
+        _doc_id: &str,
+    ) -> Result<Option<u64>, crate::Error> {
+        Err(crate::Error::Internal(
+            "websocket sync_version: transport not wired — loud failure (V26 DK-00)".to_string(),
+        ))
+    }
+
     async fn connect(&mut self, endpoint: &Endpoint) -> Result<Connection, crate::Error> {
         if endpoint.protocol != SyncProtocol::WebSocket {
             return Err(crate::Error::InvalidInput(format!(
@@ -290,6 +379,63 @@ impl Default for LanSyncTarget {
 
 #[async_trait]
 impl SyncTarget for LanSyncTarget {
+    /// ★ V26 DK-00 契约：真实增量发送 — 经 PeerTransport 推送 oplog 字节。
+    async fn send_update(
+        &self,
+        _conn: &Connection,
+        update: &UpdatePayload,
+    ) -> Result<(), crate::Error> {
+        let transport = self
+            .transport
+            .lock()
+            .map_err(|_| crate::Error::Internal("transport mutex poisoned".to_string()))?
+            .clone()
+            .ok_or_else(|| {
+                crate::Error::Internal(
+                    "LanSyncTarget send_update: no peer transport configured (V26 DK-00)"
+                        .to_string(),
+                )
+            })?;
+        transport.push(&update.doc_id, update.ops.clone()).await?;
+        Ok(())
+    }
+
+    /// ★ V26 DK-00 契约：真实增量拉取 — 返回对端待传 oplog 字节。
+    async fn recv_update(&self, _conn: &Connection, doc_id: &str) -> Result<Vec<u8>, crate::Error> {
+        let transport = self
+            .transport
+            .lock()
+            .map_err(|_| crate::Error::Internal("transport mutex poisoned".to_string()))?
+            .clone()
+            .ok_or_else(|| {
+                crate::Error::Internal(
+                    "LanSyncTarget recv_update: no peer transport configured (V26 DK-00)"
+                        .to_string(),
+                )
+            })?;
+        transport.pull(doc_id).await
+    }
+
+    /// ★ V26 DK-00 契约：真实版本协商 — 经 PeerTransport 查对端版本。
+    async fn sync_version(
+        &self,
+        _conn: &Connection,
+        doc_id: &str,
+    ) -> Result<Option<u64>, crate::Error> {
+        let transport = self
+            .transport
+            .lock()
+            .map_err(|_| crate::Error::Internal("transport mutex poisoned".to_string()))?
+            .clone()
+            .ok_or_else(|| {
+                crate::Error::Internal(
+                    "LanSyncTarget sync_version: no peer transport configured (V26 DK-00)"
+                        .to_string(),
+                )
+            })?;
+        transport.version(doc_id).await
+    }
+
     async fn connect(&mut self, endpoint: &Endpoint) -> Result<Connection, crate::Error> {
         let conn = Connection {
             id: uuid::Uuid::new_v4().to_string(),

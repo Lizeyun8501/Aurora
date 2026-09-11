@@ -9,8 +9,8 @@
 //! - [`SyncConfig`]（超时 / 重试 / 批量 / 压缩）与 `connect_with_config`
 //! - [`ConnectionState`]（连接状态机，供 SyncRouter 健康度路由）
 //!
-//! 兼容策略：新增方法均带默认实现，现有 Iroh / WebSocket / Lan 三个
-//! 适配器零改动通过编译；增量语义随各传输层逐步落地。
+//! V26 DK-00 契约冻结：`send_update` / `recv_update` / `sync_version`
+//! 三方法 **不提供默认实现**（★），编译期强制适配器表态 —— 见 §4.1.1。
 
 use async_trait::async_trait;
 
@@ -103,12 +103,29 @@ pub trait PeerTransport: Send + Sync {
     async fn push(&self, doc_id: &str, ops: Vec<u8>) -> Result<usize, crate::Error>;
     /// 从对端拉取该文档当前增量字节（无增量返空 Vec — 非错误）。
     async fn pull(&self, doc_id: &str) -> Result<Vec<u8>, crate::Error>;
+
+    /// 对端文档版本（增量同步起点协商；单调递增计数）。
+    /// 默认 None = 对端不支持版本协商（调用方回退全量 sync）。
+    async fn version(&self, doc_id: &str) -> Result<Option<u64>, crate::Error> {
+        let _ = doc_id;
+        Ok(None)
+    }
 }
 
 /// 内存对端（测试/IST — push 沉淀到对端存储，pull 返回对端存量）。
-#[derive(Default)]
 pub struct InMemoryPeerTransport {
     store: std::sync::Mutex<std::collections::BTreeMap<String, Vec<Vec<u8>>>>,
+    /// 每文档累计 push 次数（version 协商用，单调递增）。
+    pushed: std::sync::Mutex<std::collections::BTreeMap<String, u64>>,
+}
+
+impl Default for InMemoryPeerTransport {
+    fn default() -> Self {
+        Self {
+            store: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            pushed: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+        }
+    }
 }
 
 impl InMemoryPeerTransport {
@@ -142,6 +159,8 @@ impl PeerTransport for InMemoryPeerTransport {
     async fn push(&self, doc_id: &str, ops: Vec<u8>) -> Result<usize, crate::Error> {
         let mut store = self.store.lock().unwrap();
         store.entry(doc_id.to_string()).or_default().push(ops);
+        let mut pushed = self.pushed.lock().unwrap();
+        *pushed.entry(doc_id.to_string()).or_default() += 1;
         Ok(1)
     }
 
@@ -152,6 +171,11 @@ impl PeerTransport for InMemoryPeerTransport {
             .get_mut(doc_id)
             .and_then(|v| (!v.is_empty()).then(|| v.remove(0)))
             .unwrap_or_default())
+    }
+
+    async fn version(&self, doc_id: &str) -> Result<Option<u64>, crate::Error> {
+        let pushed = self.pushed.lock().unwrap();
+        Ok(pushed.get(doc_id).copied())
     }
 }
 
@@ -193,52 +217,33 @@ pub trait SyncTarget: Send + Sync {
 
     async fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error>;
 
-    /// 发送单文档增量更新（§28.1 细粒度原语）。
+    /// ★ 发送单文档增量更新（§28.1 细粒度原语）。
     ///
-    /// 默认实现：回退全量 `sync`（语义保底 — 更新已包含在同步中），
-    /// 传输适配器应覆写以提供真正的增量发送（省带宽、降延迟）。
+    /// **V26 DK-00 契约冻结：不提供默认实现** —— 远端默认实现回退全量
+    /// `sync`，三个适配器均未覆写，增量语义在接口层成立、传输层不通。
+    /// 编译期强制每个适配器给出真实增量发送。
     async fn send_update(
         &self,
         conn: &Connection,
         update: &UpdatePayload,
-    ) -> Result<(), crate::Error> {
-        let _ = update;
-        self.sync(
-            conn,
-            &DocSet {
-                doc_ids: vec![update.doc_id.clone()],
-            },
-        )
-        .await
-        .map(|_| ())
-    }
+    ) -> Result<(), crate::Error>;
 
-    /// 接收单文档增量更新（§28.1 细粒度原语）。
+    /// ★ 接收单文档增量更新（§28.1 细粒度原语）。
     ///
-    /// 默认实现：触发一次全量 `sync` 后返回空载荷（拉取语义已满足，
-    /// 但无法给出精确字节）；适配器覆写后返回对端待传 oplog 字节。
-    async fn recv_update(&self, conn: &Connection, doc_id: &str) -> Result<Vec<u8>, crate::Error> {
-        let _ = doc_id;
-        self.sync(
-            conn,
-            &DocSet {
-                doc_ids: vec![doc_id.to_string()],
-            },
-        )
-        .await
-        .map(|_| Vec::new())
-    }
+    /// **V26 DK-00 契约冻结：不提供默认实现** —— 远端默认实现返回空载荷，
+    /// 降级链路静默不通。编译期强制每个适配器返回对端真实待传 oplog 字节。
+    async fn recv_update(&self, conn: &Connection, doc_id: &str) -> Result<Vec<u8>, crate::Error>;
 
-    /// 查询对端文档版本（§28.1 细粒度原语 — 增量同步起点判定）。
+    /// ★ 查询对端文档版本（§28.1 细粒度原语 — 增量同步起点判定）。
     ///
-    /// 默认实现：不支持版本协商，返回 `None`（调用方回退全量同步）。
+    /// **V26 DK-00 契约冻结：不提供默认实现** —— 远端默认实现返回 `None`，
+    /// 版本协商静默失效。编译期强制每个适配器给出真实版本查询
+    /// （对端确不支持时返回 `Ok(None)` 是合法的显式声明）。
     async fn sync_version(
         &self,
-        _conn: &Connection,
-        _doc_id: &str,
-    ) -> Result<Option<u64>, crate::Error> {
-        Ok(None)
-    }
+        conn: &Connection,
+        doc_id: &str,
+    ) -> Result<Option<u64>, crate::Error>;
 
     /// 查询连接状态（SyncRouter 健康度路由依据）。
     ///
@@ -303,6 +308,45 @@ mod tests {
             })
         }
 
+        /// V26 DK-00：增量原语显式实现 — 保持旧默认语义（回退全量 sync）。
+        async fn send_update(
+            &self,
+            conn: &Connection,
+            update: &UpdatePayload,
+        ) -> Result<(), crate::Error> {
+            self.sync(
+                conn,
+                &DocSet {
+                    doc_ids: vec![update.doc_id.clone()],
+                },
+            )
+            .await
+            .map(|_| ())
+        }
+
+        async fn recv_update(
+            &self,
+            conn: &Connection,
+            doc_id: &str,
+        ) -> Result<Vec<u8>, crate::Error> {
+            self.sync(
+                conn,
+                &DocSet {
+                    doc_ids: vec![doc_id.to_string()],
+                },
+            )
+            .await
+            .map(|_| Vec::new())
+        }
+
+        async fn sync_version(
+            &self,
+            _conn: &Connection,
+            _doc_id: &str,
+        ) -> Result<Option<u64>, crate::Error> {
+            Ok(None)
+        }
+
         fn watch(&self, _callback: Box<dyn Fn(SyncEvent) + Send + Sync>) {}
 
         async fn disconnect(&self, _conn: &Connection) -> Result<(), crate::Error> {
@@ -337,6 +381,24 @@ mod tests {
                 duration_ms: 0,
             })
         }
+        /// V26 DK-00：显式声明支持探测（None = 无版本，应答即健康）。
+        async fn send_update(
+            &self,
+            _c: &Connection,
+            _u: &UpdatePayload,
+        ) -> Result<(), crate::Error> {
+            Ok(())
+        }
+        async fn recv_update(&self, _c: &Connection, _d: &str) -> Result<Vec<u8>, crate::Error> {
+            Ok(Vec::new())
+        }
+        async fn sync_version(
+            &self,
+            _conn: &Connection,
+            _doc_id: &str,
+        ) -> Result<Option<u64>, crate::Error> {
+            Ok(None)
+        }
         fn watch(&self, _cb: Box<dyn Fn(SyncEvent) + Send + Sync>) {}
         async fn disconnect(&self, _conn: &Connection) -> Result<(), crate::Error> {
             Ok(())
@@ -367,6 +429,16 @@ mod tests {
                 received_ops: 0,
                 duration_ms: 0,
             })
+        }
+        async fn send_update(
+            &self,
+            _c: &Connection,
+            _u: &UpdatePayload,
+        ) -> Result<(), crate::Error> {
+            Err(crate::Error::Internal("peer unreachable".into()))
+        }
+        async fn recv_update(&self, _c: &Connection, _d: &str) -> Result<Vec<u8>, crate::Error> {
+            Err(crate::Error::Internal("peer unreachable".into()))
         }
         async fn sync_version(
             &self,
@@ -405,6 +477,18 @@ mod tests {
                 received_ops: 0,
                 duration_ms: 0,
             })
+        }
+        async fn send_update(
+            &self,
+            _c: &Connection,
+            _u: &UpdatePayload,
+        ) -> Result<(), crate::Error> {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Ok(())
+        }
+        async fn recv_update(&self, _c: &Connection, _d: &str) -> Result<Vec<u8>, crate::Error> {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Ok(Vec::new())
         }
         async fn sync_version(
             &self,
