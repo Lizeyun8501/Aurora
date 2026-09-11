@@ -17,14 +17,12 @@
 //! 过渡方案说明：DEK 当前以本地文件保管（Unix 0600），生产应迁移至
 //! `KeyHierarchy` 口令解锁 + OS 安全存储（DPAPI / Keychain）。
 
-use tauri::Manager;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tauri::Manager;
 
 use aurora_core::app_core::AppCore;
-use aurora_core::traits::crypto_provider::CryptoProvider;
-use aurora_core::traits::kv_store::KVStore;
-use aurora_core::traits::search_backend::{NoteMetadata, SearchBackend};
+use aurora_core::traits::search_backend::NoteMetadata;
 use aurora_security::LocalDekVault;
 use tracing::{info, warn};
 
