@@ -22,7 +22,6 @@ use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 use aurora_core::app_core::AppCore;
-use aurora_core::traits::search_backend::NoteMetadata;
 use aurora_security::LocalDekVault;
 use tracing::{info, warn};
 
@@ -139,43 +138,20 @@ fn unwrap_note_bytes(
 }
 
 /// 将笔记明文加密为落库字节。
-fn seal_note_bytes(
-    core: &AppCore,
-    vault: &LocalDekVault,
-    note: &serde_json::Value,
-) -> Result<Vec<u8>, String> {
-    let payload = serde_json::to_vec(note).map_err(|e| e.to_string())?;
-    vault
-        .encrypt(core.crypto.as_ref(), &payload)
-        .map_err(|e| e.to_string())
-}
+// ── V26 I2/DK-01W: WritePath 唯一写入入口 ─────────────────────
 
-/// 同步笔记到本地全文检索索引（明文索引，V19 本地检索设计）。
-async fn index_note_in_search(
-    core: &AppCore,
-    id: &str,
-    note: &serde_json::Value,
-) -> Result<(), String> {
-    let title = note
-        .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let content = note
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let metadata = NoteMetadata {
-        title,
-        tags: vec![],
-        workspace_id: DEFAULT_WORKSPACE_ID.to_string(),
-        updated_at: Some(chrono::Utc::now()),
-    };
-    core.search
-        .index_note(id, &content, &metadata)
-        .await
-        .map_err(|e| e.to_string())
+/// blocks 双轨存储（进程级单例；复用 migration 建的 aurora.db；打开失败 = 内存降级）。
+fn blocks_store() -> Option<std::sync::Arc<aurora_core::blocks::BlockStore>> {
+    static BLOCKS: std::sync::OnceLock<Option<std::sync::Arc<aurora_core::blocks::BlockStore>>> =
+        std::sync::OnceLock::new();
+    BLOCKS
+        .get_or_init(|| {
+            let dir = dirs_next::data_dir()
+                .map(|d| d.join("aurora-note"))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            aurora_core::blocks::BlockStore::open(&dir.join("aurora.db")).map(std::sync::Arc::new)
+        })
+        .clone()
 }
 
 // ── Tauri Commands（§30 平台适配） ─────────────────────
@@ -185,21 +161,39 @@ async fn index_note_in_search(
 async fn cmd_create_note(title: String) -> Result<String, String> {
     let core = get_core()?;
     let vault = get_vault()?;
-    let id = uuid::Uuid::new_v4().to_string();
-    let note = serde_json::json!({
-        "id": id,
-        "title": title,
-        "content": "",
-        "content_type": "markdown",
-        "created_at": chrono::Utc::now().to_rfc3339(),
-    });
-    let sealed = seal_note_bytes(&core, &vault, &note)?;
-    core.kv_store
-        .set(&format!("note:{}", id), &sealed)
+    let blocks = blocks_store();
+    // V26 I2/DK-01W: 唯一写入入口（闭包与 ctx 同栈，借用链一致）
+    // V26 DK-01W: owned ctx（'static boxed 闭包，避免 async 自借用）
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+    };
+    let id = aurora_core::write_path::create_note(&ctx, &title)
         .await
         .map_err(|e| e.to_string())?;
-    index_note_in_search(&core, &id, &note).await?;
-    info!(note_id = %id, "note created via desktop command");
+    // 投影事件驱动（搜索/双链/任务 — TodayView 桌面端从此有数据）
+    core.catch_up_projections()
+        .await
+        .map_err(|e| e.to_string())?;
+    info!(note_id = %id, "note created via desktop WritePath");
     Ok(id)
 }
 
@@ -227,25 +221,47 @@ async fn cmd_update_note(
 ) -> Result<(), String> {
     let core = get_core()?;
     let vault = get_vault()?;
-    let key = format!("note:{}", note_id);
-    let mut note = match core.kv_store.get(&key).await.map_err(|e| e.to_string())? {
-        Some(data) => unwrap_note_bytes(&core, &vault, &data)?,
-        None => serde_json::json!({"id": note_id, "content_type": "markdown"}),
+    let blocks = blocks_store();
+    // V26 I2/DK-01W: 走 WritePath（含 Loro 快照 + blocks 派生 + 事件）
+    // V26 DK-01W: owned ctx（'static boxed 闭包，避免 async 自借用）
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
     };
-    if let Some(t) = title {
-        note["title"] = serde_json::Value::String(t);
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+    };
+    if let Some(t) = title.as_deref() {
+        if title.is_some() {
+            aurora_core::write_path::rename_note(&ctx, &note_id, t)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
-    if let Some(c) = content {
-        note["content"] = serde_json::Value::String(c);
+    if let Some(c) = content.as_deref() {
+        aurora_core::write_path::save_note_content(&ctx, &note_id, c)
+            .await
+            .map_err(|e| e.to_string())?;
     }
-    note["updated_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
-    let sealed = seal_note_bytes(&core, &vault, &note)?;
-    core.kv_store
-        .set(&key, &sealed)
+    core.catch_up_projections()
         .await
         .map_err(|e| e.to_string())?;
-    index_note_in_search(&core, &note_id, &note).await?;
-    info!(note_id = %note_id, "note updated via desktop command");
+    info!(note_id = %note_id, "note updated via desktop WritePath");
     Ok(())
 }
 
@@ -337,16 +353,39 @@ async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, String>
 #[tauri::command]
 async fn cmd_delete_note(note_id: String) -> Result<(), String> {
     let core = get_core()?;
-    let key = format!("note:{}", note_id);
-    core.kv_store
-        .delete(&key)
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    // V26 I2/DK-01W: 走 WritePath（元数据+快照同删 + NoteDeleted 事件）
+    // V26 DK-01W: owned ctx（'static boxed 闭包，避免 async 自借用）
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+    };
+    aurora_core::write_path::delete_note(&ctx, &note_id)
         .await
         .map_err(|e| e.to_string())?;
-    core.search
-        .remove_index(&note_id)
+    core.catch_up_projections()
         .await
         .map_err(|e| e.to_string())?;
-    info!(note_id = %note_id, "note deleted via desktop command");
+    info!(note_id = %note_id, "note deleted via desktop WritePath");
     Ok(())
 }
 

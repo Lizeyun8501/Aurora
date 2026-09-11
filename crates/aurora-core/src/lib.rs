@@ -19,6 +19,7 @@ pub mod mcp_registry; // V23-I5: MCP 数据中枢工具契约（稳定层）
 pub mod mirror; // V23-I2: Mirror 单向导出
 pub mod time_machine; // V23-I4: 时间机器快照回溯
 pub mod traits;
+pub mod write_path; // V26 I2/DK-01W: 唯一写入入口（load→apply→原子保存→派生→发事件）
 
 use thiserror::Error;
 

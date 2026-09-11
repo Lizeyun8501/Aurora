@@ -127,6 +127,13 @@ pub struct BlockStore {
 }
 
 impl BlockStore {
+    /// 从数据库路径打开（V26 I2: 供平台层免直接依赖 rusqlite）。
+    pub fn open(db_path: &std::path::Path) -> Option<Self> {
+        rusqlite::Connection::open(db_path)
+            .ok()
+            .map(BlockStore::new)
+    }
+
     pub fn new(conn: Connection) -> Self {
         Self {
             conn: std::sync::Mutex::new(conn),

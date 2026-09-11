@@ -331,6 +331,11 @@ impl LayeredEventBus {
         }
     }
 
+    /// 当前全局事件序号（WritePath 回执用 — publish 后单调递增）。
+    pub fn last_seq(&self) -> u64 {
+        self.seq.load(Ordering::SeqCst)
+    }
+
     /// 发布事件：按 [`AppEvent::channel`] 自动路由到对应通道。
     pub fn publish(&self, event: AppEvent) {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst);
