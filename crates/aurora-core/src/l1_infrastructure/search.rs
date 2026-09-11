@@ -20,8 +20,8 @@ use std::time::Instant;
 use async_trait::async_trait;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Field, Schema, Value, STORED, STRING, TEXT};
 use tantivy::schema::TextOptions;
+use tantivy::schema::{Field, Schema, Value, STORED, STRING};
 use tantivy::tokenizer::{LowerCaser, SimpleTokenizer, TextAnalyzer};
 
 use crate::l1_infrastructure::jieba_tokenizer::register_jieba_with;
@@ -67,9 +67,7 @@ fn build_schema() -> Schema {
             .set_indexing_options(
                 tantivy::schema::TextFieldIndexing::default()
                     .set_tokenizer("jieba")
-                    .set_index_option(
-                        tantivy::schema::IndexRecordOption::WithFreqsAndPositions,
-                    ),
+                    .set_index_option(tantivy::schema::IndexRecordOption::WithFreqsAndPositions),
             )
             .set_stored()
     };
@@ -179,9 +177,7 @@ impl TantivySearchBackend {
         let groups: Vec<String> = words
             .iter()
             .map(|w| {
-                let tokens = self
-                    .jieba
-                    .tokenize(w, jieba_rs::TokenizeMode::Search, true);
+                let tokens = self.jieba.tokenize(w, jieba_rs::TokenizeMode::Search, true);
                 if tokens.is_empty() {
                     escape(w)
                 } else {
@@ -394,24 +390,40 @@ mod tests {
     async fn search_chinese_substring_hits() {
         let backend = TantivySearchBackend::new_in_memory().unwrap();
         backend
-            .index_note("n1", "架构投影验证：单一事实源与读模型", &metadata("中文笔记", "ws-1"))
+            .index_note(
+                "n1",
+                "架构投影验证：单一事实源与读模型",
+                &metadata("中文笔记", "ws-1"),
+            )
             .await
             .unwrap();
 
         // 单词子串
-        let r = backend.search("架构", &SearchOptions::default()).await.unwrap();
+        let r = backend
+            .search("架构", &SearchOptions::default())
+            .await
+            .unwrap();
         assert_eq!(r.hits.len(), 1, "「架构」应命中正文: {:?}", r.hits);
 
         // 多词（AND 语义，QueryParser 用同一 jieba analyzer 切查询词）
-        let r = backend.search("投影 验证", &SearchOptions::default()).await.unwrap();
+        let r = backend
+            .search("投影 验证", &SearchOptions::default())
+            .await
+            .unwrap();
         assert_eq!(r.hits.len(), 1);
 
         // 标题字段
-        let r = backend.search("笔记", &SearchOptions::default()).await.unwrap();
+        let r = backend
+            .search("笔记", &SearchOptions::default())
+            .await
+            .unwrap();
         assert_eq!(r.hits.len(), 1, "「笔记」应命中标题");
 
         // 未出现的词
-        let r = backend.search("区块链", &SearchOptions::default()).await.unwrap();
+        let r = backend
+            .search("区块链", &SearchOptions::default())
+            .await
+            .unwrap();
         assert_eq!(r.hits.len(), 0);
     }
 
@@ -423,9 +435,15 @@ mod tests {
             .index_note("n1", "Aurora 本地优先笔记", &metadata("混合标题", "ws-1"))
             .await
             .unwrap();
-        let r = backend.search("aurora", &SearchOptions::default()).await.unwrap();
+        let r = backend
+            .search("aurora", &SearchOptions::default())
+            .await
+            .unwrap();
         assert_eq!(r.hits.len(), 1, "英文小写应命中（LowerCaser）");
-        let r = backend.search("本地", &SearchOptions::default()).await.unwrap();
+        let r = backend
+            .search("本地", &SearchOptions::default())
+            .await
+            .unwrap();
         assert_eq!(r.hits.len(), 1, "中文词应命中");
     }
 

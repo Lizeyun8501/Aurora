@@ -11,6 +11,8 @@ use crate::traits::vector_store::{QueryFilter, SearchResult, VectorStore};
 /// 基于 LanceDB 的向量存储实现。
 ///
 /// 使用 `tokio::runtime::Runtime` 在同步接口中驱动 LanceDB 的异步 API。
+// V26 DK-16: LanceDB 接入前的占位实现 — 字段在 new() 构造、运行期暂不读取
+#[allow(dead_code)]
 pub struct LanceDbStore {
     uri: String,
     table_name: String,

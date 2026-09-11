@@ -16,7 +16,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
-use crate::traits::storage::{QueryFilter as StorageFilter, Record, Storage, StorageQuery};
+use crate::traits::storage::{QueryFilter as StorageFilter, Storage, StorageQuery};
 use crate::traits::vector_store::{QueryFilter as VectorFilter, VectorStore};
 
 // ==================== Query DSL ====================
@@ -289,6 +289,8 @@ fn filter_contains_vector(filter: &Filter) -> bool {
     }
 }
 
+// V26 DK-12 结构化数据迭代启用的查询路由判定
+#[allow(dead_code)]
 fn has_only_fulltext(query: &Query) -> bool {
     match &query.filter {
         Some(f) => filter_is_only_fulltext(f),
@@ -296,6 +298,7 @@ fn has_only_fulltext(query: &Query) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn filter_is_only_fulltext(filter: &Filter) -> bool {
     match filter {
         Filter::FullText { .. } => true,
@@ -306,6 +309,7 @@ fn filter_is_only_fulltext(filter: &Filter) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn has_only_vector(query: &Query) -> bool {
     match &query.filter {
         Some(f) => filter_is_only_vector(f),
@@ -313,6 +317,7 @@ fn has_only_vector(query: &Query) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn filter_is_only_vector(filter: &Filter) -> bool {
     match filter {
         Filter::Vector { .. } => true,
@@ -823,11 +828,9 @@ impl QueryEngine {
                 let mut map = serde_json::Map::new();
                 map.insert("id".to_string(), serde_json::Value::String(r.id));
                 map.insert("score".to_string(), serde_json::Value::from(r.score as f64));
-                if let Some(data) = r.data {
-                    if let serde_json::Value::Object(m) = data {
-                        for (k, v) in m {
-                            map.insert(k, v);
-                        }
+                if let Some(serde_json::Value::Object(m)) = r.data {
+                    for (k, v) in m {
+                        map.insert(k, v);
                     }
                 }
                 serde_json::Value::Object(map)
@@ -1180,7 +1183,7 @@ fn apply_pagination(
     }
 }
 
-fn apply_sort(items: &mut Vec<serde_json::Value>, sort: &[Sort]) {
+fn apply_sort(items: &mut [serde_json::Value], sort: &[Sort]) {
     if sort.is_empty() {
         return;
     }

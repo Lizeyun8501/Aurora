@@ -20,7 +20,8 @@ pub mod vault;
 // V20 Phase 2 GAP-14: §21.1 加密审计自动化（测试模块）
 #[cfg(test)]
 pub mod audit_chain; // V23-I0 / T12: 审计防篡改哈希链
-pub mod audit_tests;
+#[cfg(test)]
+pub mod audit_tests; // 纯测试模块 — lib 目标下不编译（test fn 体被剥除致 import 双重身份）
 
 // V20 Phase 2: SQLCipher 落盘加密（feature 门控; 独立 rusqlite 实例避免
 // 与 workspace bundled 冲突）
@@ -67,7 +68,7 @@ pub use biometric::{
     BiometricAuthenticator, BiometricConfig, BiometricKind, BiometricProtector, BiometricStatus,
     MockBiometricAuthenticator,
 };
-pub use e2ee::{encrypt, decrypt, AesGcmCipher, Ciphertext, Plaintext};
+pub use e2ee::{decrypt, encrypt, AesGcmCipher, Ciphertext, Plaintext};
 pub use key_hierarchy::{KeyHierarchy, MasterKey, WorkspaceDek};
 pub use post_quantum::{
     HybridEncapsulation, HybridKeyExchange, HybridKeyPair, KemAlgorithm, KemKeyPair, MlKem768Kem,
@@ -110,7 +111,9 @@ mod tests {
         let shares = sss.split(mk.as_bytes()).unwrap();
 
         // 3. 用其中 2 份重建主密钥
-        let recon = sss.combine(&[shares[0].clone(), shares[2].clone()]).unwrap();
+        let recon = sss
+            .combine(&[shares[0].clone(), shares[2].clone()])
+            .unwrap();
         assert_eq!(recon, mk.as_bytes());
     }
 

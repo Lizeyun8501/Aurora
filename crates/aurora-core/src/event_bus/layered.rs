@@ -238,7 +238,13 @@ pub struct QueuedEvent {
 impl QueuedEvent {
     /// 兼容构造（无幂等键 — 旧调用点零改动）。
     pub fn legacy(seq: u64, channel: EventChannel, event_type: String, payload: String) -> Self {
-        Self { seq, channel, event_type, payload, event_id: None }
+        Self {
+            seq,
+            channel,
+            event_type,
+            payload,
+            event_id: None,
+        }
     }
 }
 

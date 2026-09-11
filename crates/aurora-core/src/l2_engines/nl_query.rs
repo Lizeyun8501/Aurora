@@ -61,7 +61,10 @@ impl NlQueryParser {
                     value: serde_json::json!(target),
                 }),
                 sort: Vec::new(),
-                pagination: Some(Pagination { limit: 50, offset: 0 }),
+                pagination: Some(Pagination {
+                    limit: 50,
+                    offset: 0,
+                }),
                 aggregation: None,
                 projection: Some(vec![
                     "source_note_id".into(),
@@ -75,7 +78,7 @@ impl NlQueryParser {
     }
 
     /// 任务意图解析（时间窗 + 状态 + 优先级组合）。
-    fn parse_task_query(text: &str, lower: &str) -> Query {
+    fn parse_task_query(_text: &str, lower: &str) -> Query {
         let mut filters: Vec<Filter> = Vec::new();
 
         // 状态
@@ -105,14 +108,14 @@ impl NlQueryParser {
         }
 
         // 时间窗（due_date 毫秒边界）
-        let now = Utc::now().timestamp_millis();
         let today_end = Self::end_of_today_ms();
         if lower.contains("今天") || lower.contains("今日") {
             filters.push(Filter::Lte {
                 field: "due_date".into(),
                 value: serde_json::json!(today_end),
             });
-        } else if lower.contains("本周") || lower.contains("这周") || lower.contains("这星期") {
+        } else if lower.contains("本周") || lower.contains("这周") || lower.contains("这星期")
+        {
             filters.push(Filter::Lte {
                 field: "due_date".into(),
                 value: serde_json::json!(Self::end_of_week_ms()),
@@ -151,7 +154,10 @@ impl NlQueryParser {
                 Some(Filter::And { filters })
             },
             sort,
-            pagination: Some(Pagination { limit: 50, offset: 0 }),
+            pagination: Some(Pagination {
+                limit: 50,
+                offset: 0,
+            }),
             aggregation: None,
             projection: Some(vec![
                 "task_id".into(),
@@ -161,8 +167,6 @@ impl NlQueryParser {
                 "priority".into(),
                 "due_date".into(),
             ]),
-            // 冗余字段抹除（text 未用 — 签名对称性）
-            ..Self::fallback("")
         }
     }
 
@@ -196,7 +200,10 @@ impl NlQueryParser {
                         value: kw,
                     }),
                     sort: Vec::new(),
-                    pagination: Some(Pagination { limit: 50, offset: 0 }),
+                    pagination: Some(Pagination {
+                        limit: 50,
+                        offset: 0,
+                    }),
                     aggregation: None,
                     projection: None,
                 };
@@ -244,7 +251,10 @@ impl NlQueryParser {
                 fields: None,
             }),
             sort: Vec::new(),
-            pagination: Some(Pagination { limit: 50, offset: 0 }),
+            pagination: Some(Pagination {
+                limit: 50,
+                offset: 0,
+            }),
             aggregation: None,
             projection: None,
         }
@@ -257,8 +267,12 @@ impl NlQueryParser {
 
     fn end_of_today_ms() -> i64 {
         let now = Utc::now();
-        let end = now.date() + Duration::days(1);
-        end.and_hms_opt(0, 0, 0).unwrap().timestamp_millis() - 1
+        let end = now.date_naive() + Duration::days(1);
+        end.and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis()
+            - 1
     }
 
     fn end_of_week_ms() -> i64 {
@@ -273,8 +287,12 @@ impl NlQueryParser {
             Weekday::Sat => 1,
             Weekday::Sun => 0,
         };
-        let end = now.date() + Duration::days(days_to_sunday + 1);
-        end.and_hms_opt(0, 0, 0).unwrap().timestamp_millis() - 1
+        let end = now.date_naive() + Duration::days(days_to_sunday + 1);
+        end.and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis()
+            - 1
     }
 
     fn extract_number(text: &str) -> Option<usize> {
@@ -360,7 +378,10 @@ mod tests {
         let q = NlQueryParser::parse("最近5篇笔记");
         assert_eq!(q.source, "notes");
         assert_eq!(q.pagination.unwrap().limit, 5);
-        assert!(q.sort.iter().any(|s| s.field == "updated_at" && matches!(s.direction, SortDirection::Desc)));
+        assert!(q
+            .sort
+            .iter()
+            .any(|s| s.field == "updated_at" && matches!(s.direction, SortDirection::Desc)));
     }
 
     /// 「关于架构设计」→ 全文检索。

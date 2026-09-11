@@ -40,7 +40,10 @@ pub enum SqlCipherError {
 ///
 /// `key` 为 32 字节原始密钥（DEK）。
 /// 密钥错误 / 库损坏 → [`SqlCipherError::KeyRejected`]。
-pub fn open_encrypted(path: &std::path::Path, key: &[u8; 32]) -> Result<Connection, SqlCipherError> {
+pub fn open_encrypted(
+    path: &std::path::Path,
+    key: &[u8; 32],
+) -> Result<Connection, SqlCipherError> {
     let conn = Connection::open(path)?;
     apply_key(&conn, key)?;
     Ok(conn)
@@ -92,9 +95,7 @@ pub mod bench {
     /// 1k 行写 + 1k 行读 + 100 次点查。
     /// 返回 (plain_ms, cipher_ms)。
     pub fn workload(conn: &Connection) -> Result<f64, SqlCipherError> {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS bench (id INTEGER PRIMARY KEY, val TEXT);",
-        )?;
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS bench (id INTEGER PRIMARY KEY, val TEXT);")?;
         let start = Instant::now();
         // 批量写
         {
@@ -120,7 +121,10 @@ pub mod bench {
     }
 
     /// 运行对照并返回回退百分比（cipher_ms / plain_ms - 1）× 100。
-    pub fn regression_percent(dir: &std::path::Path, key: &[u8; 32]) -> Result<f64, SqlCipherError> {
+    pub fn regression_percent(
+        dir: &std::path::Path,
+        key: &[u8; 32],
+    ) -> Result<f64, SqlCipherError> {
         let plain = {
             let c = Connection::open(dir.join("bench_plain.db"))?;
             workload(&c)?
@@ -157,7 +161,9 @@ mod tests {
         }
         let c2 = open_encrypted(&db, &key(1)).unwrap();
         let title: String = c2
-            .query_row("SELECT title FROM note_meta WHERE note_id='n1'", [], |r| r.get(0))
+            .query_row("SELECT title FROM note_meta WHERE note_id='n1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(title, "秘密笔记");
     }
@@ -196,9 +202,15 @@ mod tests {
         }
         // WAL/checkpoint 后读取全部落盘字节
         let bytes = std::fs::read(&db).unwrap();
-        assert!(!bytes.windows(16).any(|w| w == b"PLAINTEXTMARKER"), "明文泄露!");
+        assert!(
+            !bytes.windows(16).any(|w| w == b"PLAINTEXTMARKER"),
+            "明文泄露!"
+        );
         // 密文特征: 压缩/随机度高 — 简单验证: 找不到可读 schema 明文
-        assert!(!bytes.windows(9).any(|w| w == b"note_meta"), "表名明文泄露!");
+        assert!(
+            !bytes.windows(9).any(|w| w == b"note_meta"),
+            "表名明文泄露!"
+        );
     }
 
     /// 4. V20 退出条件: 性能回退 ≤15%。

@@ -699,8 +699,10 @@ mod tests {
 
     #[test]
     fn test_connector_connect_empty_url_errors() {
-        let mut cfg = CalDavConfig::default();
-        cfg.url = String::new();
+        let cfg = CalDavConfig {
+            url: String::new(),
+            ..Default::default()
+        };
         let conn = CalDavConnector::new("cal", cfg);
         let r = conn.connect();
         assert!(r.is_err());

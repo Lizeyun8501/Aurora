@@ -155,12 +155,17 @@ impl PeerTransport for InMemoryPeerTransport {
     }
 }
 
+/// 导出本地文档 oplog 字节（Loro ExportMode::Update 或等价）。
+pub type OplogExportFn = Box<dyn Fn(&str) -> Result<Vec<u8>, crate::Error> + Send + Sync>;
+/// 应用远端 oplog（Loro import 或等价）。
+pub type OplogMergeFn = Box<dyn Fn(&str, Vec<u8>) -> Result<(), crate::Error> + Send + Sync>;
+
 /// 同步数据源/汇钩子（sync 往返中导出本地 oplog、应用远端 oplog）。
 pub struct SyncHooks {
     /// 导出本地文档 oplog 字节（Loro ExportMode::Update 或等价）。
-    pub export: Box<dyn Fn(&str) -> Result<Vec<u8>, crate::Error> + Send + Sync>,
+    pub export: OplogExportFn,
     /// 应用远端 oplog（Loro import 或等价）。
-    pub merge: Box<dyn Fn(&str, Vec<u8>) -> Result<(), crate::Error> + Send + Sync>,
+    pub merge: OplogMergeFn,
 }
 
 /// 单文档增量更新载荷（CRDT oplog 字节，传输格式由适配器决定）。
@@ -198,24 +203,30 @@ pub trait SyncTarget: Send + Sync {
         update: &UpdatePayload,
     ) -> Result<(), crate::Error> {
         let _ = update;
-        self.sync(conn, &DocSet { doc_ids: vec![update.doc_id.clone()] })
-            .await
-            .map(|_| ())
+        self.sync(
+            conn,
+            &DocSet {
+                doc_ids: vec![update.doc_id.clone()],
+            },
+        )
+        .await
+        .map(|_| ())
     }
 
     /// 接收单文档增量更新（§28.1 细粒度原语）。
     ///
     /// 默认实现：触发一次全量 `sync` 后返回空载荷（拉取语义已满足，
     /// 但无法给出精确字节）；适配器覆写后返回对端待传 oplog 字节。
-    async fn recv_update(
-        &self,
-        conn: &Connection,
-        doc_id: &str,
-    ) -> Result<Vec<u8>, crate::Error> {
+    async fn recv_update(&self, conn: &Connection, doc_id: &str) -> Result<Vec<u8>, crate::Error> {
         let _ = doc_id;
-        self.sync(conn, &DocSet { doc_ids: vec![doc_id.to_string()] })
-            .await
-            .map(|_| Vec::new())
+        self.sync(
+            conn,
+            &DocSet {
+                doc_ids: vec![doc_id.to_string()],
+            },
+        )
+        .await
+        .map(|_| Vec::new())
     }
 
     /// 查询对端文档版本（§28.1 细粒度原语 — 增量同步起点判定）。
@@ -309,7 +320,10 @@ mod tests {
         async fn connect(&mut self, _endpoint: &Endpoint) -> Result<Connection, crate::Error> {
             Ok(Connection {
                 id: "h".into(),
-                endpoint: Endpoint { url: "healthy://x".into(), protocol: SyncProtocol::Quic },
+                endpoint: Endpoint {
+                    url: "healthy://x".into(),
+                    protocol: SyncProtocol::Quic,
+                },
             })
         }
         async fn sync(
@@ -317,7 +331,11 @@ mod tests {
             _conn: &Connection,
             doc_set: &DocSet,
         ) -> Result<SyncReport, crate::Error> {
-            Ok(SyncReport { sent_ops: doc_set.doc_ids.len(), received_ops: 0, duration_ms: 0 })
+            Ok(SyncReport {
+                sent_ops: doc_set.doc_ids.len(),
+                received_ops: 0,
+                duration_ms: 0,
+            })
         }
         fn watch(&self, _cb: Box<dyn Fn(SyncEvent) + Send + Sync>) {}
         async fn disconnect(&self, _conn: &Connection) -> Result<(), crate::Error> {
@@ -333,7 +351,10 @@ mod tests {
         async fn connect(&mut self, _endpoint: &Endpoint) -> Result<Connection, crate::Error> {
             Ok(Connection {
                 id: "b".into(),
-                endpoint: Endpoint { url: "broken://x".into(), protocol: SyncProtocol::Quic },
+                endpoint: Endpoint {
+                    url: "broken://x".into(),
+                    protocol: SyncProtocol::Quic,
+                },
             })
         }
         async fn sync(
@@ -341,7 +362,11 @@ mod tests {
             _conn: &Connection,
             doc_set: &DocSet,
         ) -> Result<SyncReport, crate::Error> {
-            Ok(SyncReport { sent_ops: doc_set.doc_ids.len(), received_ops: 0, duration_ms: 0 })
+            Ok(SyncReport {
+                sent_ops: doc_set.doc_ids.len(),
+                received_ops: 0,
+                duration_ms: 0,
+            })
         }
         async fn sync_version(
             &self,
@@ -364,7 +389,10 @@ mod tests {
         async fn connect(&mut self, _endpoint: &Endpoint) -> Result<Connection, crate::Error> {
             Ok(Connection {
                 id: "g".into(),
-                endpoint: Endpoint { url: "hang://x".into(), protocol: SyncProtocol::Quic },
+                endpoint: Endpoint {
+                    url: "hang://x".into(),
+                    protocol: SyncProtocol::Quic,
+                },
             })
         }
         async fn sync(
@@ -372,7 +400,11 @@ mod tests {
             _conn: &Connection,
             doc_set: &DocSet,
         ) -> Result<SyncReport, crate::Error> {
-            Ok(SyncReport { sent_ops: doc_set.doc_ids.len(), received_ops: 0, duration_ms: 0 })
+            Ok(SyncReport {
+                sent_ops: doc_set.doc_ids.len(),
+                received_ops: 0,
+                duration_ms: 0,
+            })
         }
         async fn sync_version(
             &self,
@@ -396,34 +428,57 @@ mod tests {
         // 1) 健康对端（默认 sync_version 返 Ok(None)）→ Connected
         let mut t = HealthyTarget;
         let conn = t
-            .connect(&Endpoint { url: "h://x".into(), protocol: SyncProtocol::Quic })
+            .connect(&Endpoint {
+                url: "h://x".into(),
+                protocol: SyncProtocol::Quic,
+            })
             .await
             .unwrap();
-        assert!(matches!(t.state(&conn).await.unwrap(), ConnectionState::Connected));
+        assert!(matches!(
+            t.state(&conn).await.unwrap(),
+            ConnectionState::Connected
+        ));
 
         // 2) 故障对端（sync_version 返 Err）→ Failed
         let mut b = BrokenTarget;
         let bconn = b
-            .connect(&Endpoint { url: "b://x".into(), protocol: SyncProtocol::Quic })
+            .connect(&Endpoint {
+                url: "b://x".into(),
+                protocol: SyncProtocol::Quic,
+            })
             .await
             .unwrap();
-        assert!(matches!(b.state(&bconn).await.unwrap(), ConnectionState::Failed));
+        assert!(matches!(
+            b.state(&bconn).await.unwrap(),
+            ConnectionState::Failed
+        ));
 
         // 3) 挂起对端（超时）→ Failed（paused 时钟自动推进过 3s 窗口）
         let mut g = HangingTarget;
         let gconn = g
-            .connect(&Endpoint { url: "g://x".into(), protocol: SyncProtocol::Quic })
+            .connect(&Endpoint {
+                url: "g://x".into(),
+                protocol: SyncProtocol::Quic,
+            })
             .await
             .unwrap();
-        assert!(matches!(g.state(&gconn).await.unwrap(), ConnectionState::Failed));
+        assert!(matches!(
+            g.state(&gconn).await.unwrap(),
+            ConnectionState::Failed
+        ));
     }
 
     #[tokio::test]
     async fn fine_grained_primitives_fall_back_to_sync() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let mut target = EchoTarget { sync_calls: calls.clone() };
+        let mut target = EchoTarget {
+            sync_calls: calls.clone(),
+        };
         let conn = target
-            .connect(&Endpoint { url: "echo://x".into(), protocol: SyncProtocol::Quic })
+            .connect(&Endpoint {
+                url: "echo://x".into(),
+                protocol: SyncProtocol::Quic,
+            })
             .await
             .unwrap();
 
@@ -431,7 +486,10 @@ mod tests {
         target
             .send_update(
                 &conn,
-                &UpdatePayload { doc_id: "note-1".into(), ops: vec![1, 2, 3] },
+                &UpdatePayload {
+                    doc_id: "note-1".into(),
+                    ops: vec![1, 2, 3],
+                },
             )
             .await
             .unwrap();
@@ -443,15 +501,25 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
         // sync_version → 默认 None（调用方回退全量）
-        assert!(target.sync_version(&conn, "note-1").await.unwrap().is_none());
+        assert!(target
+            .sync_version(&conn, "note-1")
+            .await
+            .unwrap()
+            .is_none());
 
         // state → 默认 Connected
-        assert_eq!(target.state(&conn).await.unwrap(), ConnectionState::Connected);
+        assert_eq!(
+            target.state(&conn).await.unwrap(),
+            ConnectionState::Connected
+        );
 
         // connect_with_config → 默认委托 connect
         let c2 = target
             .connect_with_config(
-                &Endpoint { url: "echo://y".into(), protocol: SyncProtocol::Iroh },
+                &Endpoint {
+                    url: "echo://y".into(),
+                    protocol: SyncProtocol::Iroh,
+                },
                 &SyncConfig::default(),
             )
             .await

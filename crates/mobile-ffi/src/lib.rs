@@ -141,7 +141,10 @@ pub struct UniffiAppCore {
     docs: Mutex<std::collections::HashMap<String, NoteDoc>>,
     is_fallback: bool,
     /// V23-I2: Mirror 单向导出（调度器 + 根目录; 铁律 9 永不读回）
-    mirror: Option<(aurora_core::mirror::MirrorScheduler, aurora_core::mirror::MirrorRoot)>,
+    mirror: Option<(
+        aurora_core::mirror::MirrorScheduler,
+        aurora_core::mirror::MirrorRoot,
+    )>,
     /// V23-I2: blocks 双轨存储（None = 内存降级模式）
     blocks: Option<aurora_core::blocks::BlockStore>,
 }
@@ -152,7 +155,9 @@ impl UniffiAppCore {
         // V23-I2: blocks 双轨（复用 migration 建的库; 打不开则降级 None）
         let blocks = {
             let db_path = data_dir.join("aurora.db");
-            rusqlite::Connection::open(&db_path).ok().map(aurora_core::blocks::BlockStore::new)
+            rusqlite::Connection::open(&db_path)
+                .ok()
+                .map(aurora_core::blocks::BlockStore::new)
         };
         // V23-I2: Mirror 单向导出（data_dir/mirror — 铁律 9: 永不读回）
         let mirror = Some((
@@ -327,13 +332,12 @@ impl UniffiAppCore {
 
             // V20 §4.5 事件驱动: 发 NoteCreated 事件（投影消费建索引，
             // 替代直接 index_note 旁路 — 保证与重建路径同源一致）
-            core.event_bus.publish(
-                aurora_core::event_bus::layered::AppEvent::NoteCreated {
+            core.event_bus
+                .publish(aurora_core::event_bus::layered::AppEvent::NoteCreated {
                     note_id: note.id.clone(),
                     title: note.title.clone(),
                     content: note.content.clone(),
-                },
-            );
+                });
             // 同步驱动投影追赶（移动端单线程 runtime，启动期/写后各一次）
             let core_clone = core.clone();
             self.runtime
@@ -430,12 +434,8 @@ impl UniffiAppCore {
                 .map(|src| {
                     let title = self
                         .runtime
-                        .block_on(async {
-                            kv.get(&format!("note:{src}")).await.ok().flatten()
-                        })
-                        .and_then(|bytes| {
-                            serde_json::from_slice::<NoteRecord>(&bytes).ok()
-                        })
+                        .block_on(async { kv.get(&format!("note:{src}")).await.ok().flatten() })
+                        .and_then(|bytes| serde_json::from_slice::<NoteRecord>(&bytes).ok())
                         .map(|n| n.title)
                         .unwrap_or_else(|| src.clone());
                     BacklinkItem {
@@ -450,11 +450,7 @@ impl UniffiAppCore {
     }
 
     /// 链接意图搜索: 反链面板数据转 SearchResult。
-    fn backlinks_for_query(
-        self: &Arc<Self>,
-        target: &str,
-        raw_query: &str,
-    ) -> Vec<SearchResult> {
+    fn backlinks_for_query(self: &Arc<Self>, target: &str, raw_query: &str) -> Vec<SearchResult> {
         Self::backlinks_impl(self, target.to_string())
             .into_iter()
             .map(|b| SearchResult {
@@ -633,7 +629,13 @@ impl UniffiAppCore {
         }
     }
 
-    fn sync_blocks_and_mirror(&self, note_id: &str, _title: &str, content: &str, _updated_at: &str) {
+    fn sync_blocks_and_mirror(
+        &self,
+        note_id: &str,
+        _title: &str,
+        content: &str,
+        _updated_at: &str,
+    ) {
         // blocks 双轨（None = 内存降级模式）
         if let Some(blocks) = &self.blocks {
             if let Err(e) = blocks.sync_note_blocks(note_id, None, content) {
@@ -644,15 +646,16 @@ impl UniffiAppCore {
         if let Some(Err(e)) = self.with_time_machine(|tm| tm.save(note_id, content.as_bytes())) {
             tracing::warn!(note_id, error = %e, "snapshot save failed");
         }
-        let Some((scheduler, root)) = &self.mirror else { return };
+        let Some((scheduler, root)) = &self.mirror else {
+            return;
+        };
         scheduler.feed(note_id);
         // 保存后兜底 flush：全部 pending 逐条取最新态落盘后 complete
         // （防抖窗口内连续保存自然合并; 3s 窗口定时器驱动留 I2 收口）
         for id in scheduler.pending_ids() {
             let (title, content, updated) = self.note_snapshot(&id);
-            let body = aurora_core::mirror::render_note_markdown(
-                &id, &title, &content, &[], &updated,
-            );
+            let body =
+                aurora_core::mirror::render_note_markdown(&id, &title, &content, &[], &updated);
             let rel = aurora_core::mirror::mirror_rel_path("default", &title, &id);
             match aurora_core::mirror::write_note_to_mirror(root.path(), &rel, &body) {
                 Ok(_) => scheduler.complete(&id),
@@ -667,13 +670,26 @@ impl UniffiAppCore {
     fn note_snapshot(&self, note_id: &str) -> (String, String, String) {
         if let Some(core) = &self.core {
             let kv = core.kv_store.clone();
-            if let Ok(Some(bytes)) =
-                self.runtime.block_on(async { kv.get(&format!("note:{}", note_id)).await })
+            if let Ok(Some(bytes)) = self
+                .runtime
+                .block_on(async { kv.get(&format!("note:{}", note_id)).await })
             {
                 if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                    let title = v.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
-                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                    let updated = v.get("updated_at").and_then(|u| u.as_str()).unwrap_or("").to_string();
+                    let title = v
+                        .get("title")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let content = v
+                        .get("content")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let updated = v
+                        .get("updated_at")
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     return (title, content, updated);
                 }
             }
@@ -1326,11 +1342,7 @@ impl UniffiAppCore {
 
     /// V23-I4: 读取指定版本快照内容（UI 确认后经 save_note_content 写回
     /// —— 回溯走正规保存路径, mirror/blocks 双轨自动跟随）。
-    pub fn restore_note_snapshot(
-        self: Arc<Self>,
-        note_id: String,
-        version: i64,
-    ) -> Option<String> {
+    pub fn restore_note_snapshot(self: Arc<Self>, note_id: String, version: i64) -> Option<String> {
         self.with_time_machine(|tm| {
             tm.load(&note_id, version)
                 .ok()
@@ -1549,7 +1561,10 @@ mod tests {
 
         let id = core.clone().create_note("项目推进".into()).unwrap();
         core.clone()
-            .save_note_content(id.clone(), "- [ ] 明天提交预算表\n- [x] 已完成事项\n尽快安排评审".into())
+            .save_note_content(
+                id.clone(),
+                "- [ ] 明天提交预算表\n- [x] 已完成事项\n尽快安排评审".into(),
+            )
             .unwrap();
 
         // 口语化「未完成的任务」→ 2 个真实行动项（播种行排除）
@@ -1572,8 +1587,11 @@ mod tests {
 
         // 注册复习卡（笔记 Distill 场景: 首次 Good）
         let c = core.core.as_ref().unwrap();
-        c.review_queue.add_card("card-1", "note-1",
-            aurora_core::l3_domain::fsrs::Rating::Good);
+        c.review_queue.add_card(
+            "card-1",
+            "note-1",
+            aurora_core::l3_domain::fsrs::Rating::Good,
+        );
 
         // 新卡 due 在未来 → 无到期
         assert!(core.clone().due_review_cards().is_empty());
@@ -1618,7 +1636,10 @@ mod tests {
         });
         assert_eq!(stats.active, desktop_stats["active"].as_i64().unwrap());
         assert_eq!(stats.done, desktop_stats["done"].as_i64().unwrap());
-        assert_eq!(stats.due_today, desktop_stats["due_today"].as_i64().unwrap());
+        assert_eq!(
+            stats.due_today,
+            desktop_stats["due_today"].as_i64().unwrap()
+        );
 
         // 2. backlinks 同构（播种 n1 → n2 后对拍字段集）
         use aurora_core::event_bus::layered::LinkAction;
@@ -1627,7 +1648,8 @@ mod tests {
             .projections()
             .iter()
             .find_map(|p| {
-                p.as_any().and_then(|a| a.downcast_ref::<BidiLinkProjection>())
+                p.as_any()
+                    .and_then(|a| a.downcast_ref::<BidiLinkProjection>())
             })
             .expect("bidi projection");
         bp.apply_link("n1", "n2", &LinkAction::Created);
@@ -1636,17 +1658,21 @@ mod tests {
         let desktop_links: Vec<serde_json::Value> = c
             .bidi_link_incoming("n2")
             .iter()
-            .map(|src| {
-                serde_json::json!({"source_note_id": src, "source_title": src.clone()})
-            })
+            .map(|src| serde_json::json!({"source_note_id": src, "source_title": src.clone()}))
             .collect();
         assert_eq!(links.len(), desktop_links.len());
-        assert_eq!(links[0].source_note_id, desktop_links[0]["source_note_id"].as_str().unwrap());
-        assert!(desktop_links[0].as_object().unwrap().len() == 2, "backlink 字段漂移");
+        assert_eq!(
+            links[0].source_note_id,
+            desktop_links[0]["source_note_id"].as_str().unwrap()
+        );
+        assert!(
+            desktop_links[0].as_object().unwrap().len() == 2,
+            "backlink 字段漂移"
+        );
 
         // 3. 复习卡同构（字段集合 6 项 + RFC3339 due 契约）
-        c.review_queue.add_card("c1", "n1",
-            aurora_core::l3_domain::fsrs::Rating::Good);
+        c.review_queue
+            .add_card("c1", "n1", aurora_core::l3_domain::fsrs::Rating::Good);
         let future = chrono::Utc::now() + chrono::Duration::days(30);
         let scheduler = aurora_core::l3_domain::fsrs::FsrsScheduler::new();
         let desktop_cards: Vec<serde_json::Value> = c
@@ -1665,7 +1691,11 @@ mod tests {
             })
             .collect();
         assert_eq!(desktop_cards.len(), 1, "30 天后应到期");
-        assert_eq!(desktop_cards[0].as_object().unwrap().len(), 6, "review 字段漂移");
+        assert_eq!(
+            desktop_cards[0].as_object().unwrap().len(),
+            6,
+            "review 字段漂移"
+        );
         // FFI 侧同语义（经 FFI 评分 → RFC3339 回传契约）
         let due = core.clone().review_card("c1".into(), 3).unwrap();
         assert!(due.contains('T') && (due.contains('+') || due.contains('Z')));
@@ -1691,7 +1721,9 @@ mod tests {
             .unwrap();
 
         // 1. Agent 现场感知: schema/present/note 三段齐
-        let ctx = core.clone().get_agent_context(note_id.clone(), Some("b1".into()));
+        let ctx = core
+            .clone()
+            .get_agent_context(note_id.clone(), Some("b1".into()));
         let ctx: serde_json::Value = serde_json::from_str(&ctx).unwrap();
         assert_eq!(ctx["schema"], "aurora.agent_context/1");
         assert_eq!(ctx["present"], true);
@@ -1702,7 +1734,10 @@ mod tests {
 
         // 2. 不存在笔记 → present false（Agent 明确「不在场」）
         let absent = core.clone().get_agent_context("ghost".into(), None);
-        assert_eq!(serde_json::from_str::<serde_json::Value>(&absent).unwrap()["present"], false);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&absent).unwrap()["present"],
+            false
+        );
 
         // 3. 时间机器: 保存两次 → 两个版本; 列表新→旧; 回溯取旧版
         core.clone()

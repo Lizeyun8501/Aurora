@@ -85,10 +85,7 @@ impl BidiLinkProjection {
 
     /// SQLite 后端构造（links 表由 aurora-migration 建好; 事件驱动
     /// 双写内存 + SQLite — 跨进程持久, 数据源读表）。
-    pub fn new_with_sqlite(
-        kv: std::sync::Arc<dyn KVStore>,
-        conn: rusqlite::Connection,
-    ) -> Self {
+    pub fn new_with_sqlite(kv: std::sync::Arc<dyn KVStore>, conn: rusqlite::Connection) -> Self {
         Self {
             sqlite: Some(std::sync::Mutex::new(conn)),
             forward: RwLock::new(BTreeMap::new()),
@@ -191,20 +188,17 @@ impl BidiLinkProjection {
             .read()
             .unwrap()
             .iter()
-            .flat_map(|(s, ts)| ts.iter().map(move |t| LinkRow {
-                source_note_id: s.clone(),
-                target_note_id: t.clone(),
-            }))
+            .flat_map(|(s, ts)| {
+                ts.iter().map(move |t| LinkRow {
+                    source_note_id: s.clone(),
+                    target_note_id: t.clone(),
+                })
+            })
             .collect()
     }
 
     fn link_count(&self) -> usize {
-        self.forward
-            .read()
-            .unwrap()
-            .values()
-            .map(|s| s.len())
-            .sum()
+        self.forward.read().unwrap().values().map(|s| s.len()).sum()
     }
 }
 
@@ -218,9 +212,9 @@ impl Projection for BidiLinkProjection {
         match self.kv.get(WATERMARK_KEY).await? {
             Some(bytes) => {
                 let s = String::from_utf8_lossy(&bytes);
-                s.trim().parse::<u64>().map_err(|e| {
-                    crate::Error::Internal(format!("watermark parse: {e}"))
-                })
+                s.trim()
+                    .parse::<u64>()
+                    .map_err(|e| crate::Error::Internal(format!("watermark parse: {e}")))
             }
             None => Ok(0),
         }
@@ -243,9 +237,7 @@ impl Projection for BidiLinkProjection {
     }
 
     async fn set_watermark(&self, seq: u64) -> Result<(), crate::Error> {
-        self.kv
-            .set(WATERMARK_KEY, seq.to_string().as_bytes())
-            .await
+        self.kv.set(WATERMARK_KEY, seq.to_string().as_bytes()).await
     }
 
     async fn verify(&self) -> Result<ProjectionHealth, crate::Error> {
@@ -265,7 +257,11 @@ impl Projection for BidiLinkProjection {
         self.forward.write().unwrap().clear();
         self.backward.write().unwrap().clear();
         for row in &all {
-            self.apply_link(&row.source_note_id, &row.target_note_id, &LinkAction::Created);
+            self.apply_link(
+                &row.source_note_id,
+                &row.target_note_id,
+                &LinkAction::Created,
+            );
         }
         Ok(())
     }
@@ -278,7 +274,10 @@ mod tests {
     use crate::l1_infrastructure::storage_engine::MemoryKVStore;
     use std::sync::Arc;
 
-    fn make_bus() -> (LayeredEventBus, Arc<crate::event_bus::layered::InMemoryEventQueue>) {
+    fn make_bus() -> (
+        LayeredEventBus,
+        Arc<crate::event_bus::layered::InMemoryEventQueue>,
+    ) {
         let store = Arc::new(crate::event_bus::layered::InMemoryEventQueue::new());
         let bus = LayeredEventBus::new(Some(store.clone()));
         (bus, store)
@@ -333,8 +332,14 @@ mod tests {
     #[tokio::test]
     async fn rebuild_restores_from_source() {
         let p = make_projection(vec![
-            LinkRow { source_note_id: "x".into(), target_note_id: "y".into() },
-            LinkRow { source_note_id: "z".into(), target_note_id: "y".into() },
+            LinkRow {
+                source_note_id: "x".into(),
+                target_note_id: "y".into(),
+            },
+            LinkRow {
+                source_note_id: "z".into(),
+                target_note_id: "y".into(),
+            },
         ]);
         // 事件进 1 条 → 表 1 条 < 源 2 条 → verify Corrupted → rebuild
         let store = Arc::new(crate::event_bus::layered::InMemoryEventQueue::new());
@@ -352,9 +357,8 @@ mod tests {
     /// V20 Phase 2: SQLite 双写持久 — 跨进程（重启）经 links 表恢复。
     #[tokio::test]
     async fn sqlite_persistence_across_restart() {
-        use crate::traits::kv_store::KVStore;
-        use crate::l1_infrastructure::storage_engine::MemoryKVStore;
         use crate::event_bus::layered::LinkAction;
+        use crate::l1_infrastructure::storage_engine::MemoryKVStore;
 
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("links.db");
@@ -389,7 +393,9 @@ mod tests {
         // 进程二: links_from_sqlite 读表恢复
         let rows = links_from_sqlite(&db);
         assert_eq!(rows.len(), 2, "SQLite 双写落表: {rows:?}");
-        let has_ab = rows.iter().any(|r| r.source_note_id == "a" && r.target_note_id == "b");
+        let has_ab = rows
+            .iter()
+            .any(|r| r.source_note_id == "a" && r.target_note_id == "b");
         assert!(has_ab, "a→b 持久化");
 
         // 删除也持久

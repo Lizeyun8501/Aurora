@@ -88,8 +88,8 @@ impl FsrsScheduler {
     pub fn new() -> Self {
         Self {
             w: [
-                0.4072, 1.1829, 3.1262, 15.6926, 7.2101, 0.5316, 1.0651, 0.0234, 1.6162,
-                0.1544, 1.0824, 2.6561, 0.0068, 0.5431,
+                0.4072, 1.1829, 3.1262, 15.6926, 7.2101, 0.5316, 1.0651, 0.0234, 1.6162, 0.1544,
+                1.0824, 2.6561, 0.0068, 0.5431,
             ],
             desired_retention: 0.9,
             maximum_interval: 36500.0,
@@ -122,12 +122,7 @@ impl FsrsScheduler {
     }
 
     /// 应用评分 → 新状态 + 下次到期。
-    pub fn review(
-        &self,
-        state: &CardState,
-        rating: Rating,
-        now: DateTime<Utc>,
-    ) -> Scheduled {
+    pub fn review(&self, state: &CardState, rating: Rating, now: DateTime<Utc>) -> Scheduled {
         let g = rating.as_u32() as f64;
         let retrievability = self.retrievability(state, now);
 
@@ -163,8 +158,7 @@ impl FsrsScheduler {
         // 下一间隔: R 跌到目标保持率的时间 = S * FACTOR / (R^(1/DECAY) - 1)
         let factor = 19.0 / 81.0;
         let decay = -0.5;
-        let interval_days = (stability * factor
-            / (self.desired_retention.powf(1.0 / decay) - 1.0))
+        let interval_days = (stability * factor / (self.desired_retention.powf(1.0 / decay) - 1.0))
             .round()
             .clamp(1.0, self.maximum_interval);
 
@@ -203,11 +197,7 @@ impl FsrsScheduler {
         } else {
             1.0
         };
-        let easy_bonus = if g == 4.0 {
-            self.w[12]
-        } else {
-            1.0
-        };
+        let easy_bonus = if g == 4.0 { self.w[12] } else { 1.0 };
         let s_dot = (self.w[7]
             * (11.0 - difficulty)
             * state.stability.powf(-self.w[8])
@@ -330,7 +320,11 @@ mod tests {
         let now = Utc::now();
         let card = s.new_card(now);
         let out = s.review(&card, Rating::Good, now);
-        assert!(out.state.stability > 0.5, "S0(Good) 应有合理初值: {}", out.state.stability);
+        assert!(
+            out.state.stability > 0.5,
+            "S0(Good) 应有合理初值: {}",
+            out.state.stability
+        );
         assert!(out.due > now, "下次到期在未来");
         assert_eq!(out.state.reps, 1);
     }

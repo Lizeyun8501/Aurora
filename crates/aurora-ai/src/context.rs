@@ -675,7 +675,7 @@ mod tests {
     #[test]
     fn test_summarize_messages_truncates_long_content() {
         let long = "x".repeat(100);
-        let msgs = vec![
+        let msgs = [
             ContextMessage::user(long.clone()),
             ContextMessage::assistant(long.clone()),
         ];

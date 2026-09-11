@@ -214,6 +214,8 @@ impl NoteDoc {
         self.doc.get_list(CONTAINER_BACKLINKS)
     }
 
+    // V26 编辑器迭代迁移到 ensure_* API（loro 弃用 get_or_create_container）
+    #[allow(deprecated)]
     fn tags_list(&self) -> Result<LoroList, Error> {
         self.meta_map()
             .get_or_create_container("tags", LoroList::new())
@@ -887,7 +889,7 @@ mod tests {
                 title: "写周报".into(),
                 status: NoteTask::STATUS_INBOX.into(),
                 priority: "medium".into(),
-                due_date: Some(T0 + 86400_000),
+                due_date: Some(T0 + 86_400_000),
             },
             T0,
         )
@@ -905,7 +907,7 @@ mod tests {
         .unwrap();
         assert_eq!(note.tasks().len(), 2);
         assert_eq!(note.tasks()[0].title, "写周报");
-        assert_eq!(note.tasks()[0].due_date, Some(T0 + 86400_000));
+        assert_eq!(note.tasks()[0].due_date, Some(T0 + 86_400_000));
 
         // inbox → next 合法
         note.update_task_status("task-1", NoteTask::STATUS_NEXT, T0 + 1)

@@ -153,9 +153,7 @@ impl<K: KVStore> StorageEngine<K> {
             created_at: now_rfc3339(),
         };
         let wal_key = wal_key_of(op_id);
-        self.kv
-            .set(&wal_key, &serde_json::to_vec(&rec)?)
-            .await?;
+        self.kv.set(&wal_key, &serde_json::to_vec(&rec)?).await?;
 
         self.trip(FaultPoint::AfterBegin)?;
 
@@ -336,11 +334,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let eng = make_engine(&dir);
         eng.inject_fault(FaultPoint::AfterBegin);
-        assert!(
-            eng.commit_atomic("op2", "notes/b.md", b"content", b"m")
-                .await
-                .is_err()
-        );
+        assert!(eng
+            .commit_atomic("op2", "notes/b.md", b"content", b"m")
+            .await
+            .is_err());
         let report = eng.recover_on_boot().await.unwrap();
         assert_eq!(report.rolled_back, vec!["notes/b.md"]);
         assert!(eng.kv.scan_prefix(PENDING_PREFIX).await.unwrap().is_empty());
@@ -354,9 +351,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let eng = make_engine(&dir);
         eng.inject_fault(FaultPoint::AfterMetadata);
-        assert!(
-            eng.commit_atomic("op3", "notes/c.md", b"x", b"m").await.is_err()
-        );
+        assert!(eng
+            .commit_atomic("op3", "notes/c.md", b"x", b"m")
+            .await
+            .is_err());
         let report = eng.recover_on_boot().await.unwrap();
         assert_eq!(report.rolled_back.len(), 1);
         assert!(!dir.path().join("notes/c.md").exists());
@@ -369,11 +367,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let eng = make_engine(&dir);
         eng.inject_fault(FaultPoint::AfterFsWrite);
-        assert!(
-            eng.commit_atomic("op4", "notes/d.md", b"final", b"m4")
-                .await
-                .is_err()
-        );
+        assert!(eng
+            .commit_atomic("op4", "notes/d.md", b"final", b"m4")
+            .await
+            .is_err());
         // 文件已落、WAL 残留
         assert!(dir.path().join("notes/d.md").exists());
         assert_eq!(eng.kv.scan_prefix(PENDING_PREFIX).await.unwrap().len(), 1);
@@ -382,7 +379,10 @@ mod tests {
         assert_eq!(report.completed, vec!["notes/d.md"]);
         assert!(eng.kv.scan_prefix(PENDING_PREFIX).await.unwrap().is_empty());
         // 文件内容完好
-        assert_eq!(std::fs::read(dir.path().join("notes/d.md")).unwrap(), b"final");
+        assert_eq!(
+            std::fs::read(dir.path().join("notes/d.md")).unwrap(),
+            b"final"
+        );
     }
 
     // ── 校验和不匹配 → 上报待重建 ──
@@ -392,9 +392,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let eng = make_engine(&dir);
         eng.inject_fault(FaultPoint::AfterFsWrite);
-        assert!(
-            eng.commit_atomic("op5", "notes/e.md", b"v1", b"m").await.is_err()
-        );
+        assert!(eng
+            .commit_atomic("op5", "notes/e.md", b"v1", b"m")
+            .await
+            .is_err());
         // 模拟磁盘位翻转（外部篡改）
         std::fs::write(dir.path().join("notes/e.md"), b"corrupted").unwrap();
         let report = eng.recover_on_boot().await.unwrap();
@@ -409,11 +410,10 @@ mod tests {
     async fn path_traversal_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let eng = make_engine(&dir);
-        assert!(
-            eng.commit_atomic("op6", "../evil.md", b"x", b"m")
-                .await
-                .is_err()
-        );
+        assert!(eng
+            .commit_atomic("op6", "../evil.md", b"x", b"m")
+            .await
+            .is_err());
         assert!(eng.kv.scan_prefix(PENDING_PREFIX).await.unwrap().is_empty());
     }
 
@@ -425,7 +425,9 @@ mod tests {
         let eng = make_engine(&dir);
 
         // 事务A: 完整提交
-        eng.commit_atomic("a", "notes/a.md", b"A", b"ma").await.unwrap();
+        eng.commit_atomic("a", "notes/a.md", b"A", b"ma")
+            .await
+            .unwrap();
         // 事务B: 中断在 fs 后（应补 finish）
         eng.inject_fault(FaultPoint::AfterFsWrite);
         let _ = eng.commit_atomic("b", "notes/b.md", b"B", b"mb").await;

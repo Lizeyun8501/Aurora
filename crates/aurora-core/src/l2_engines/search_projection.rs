@@ -31,9 +31,8 @@ use tracing::{debug, info, warn};
 
 use crate::event_bus::layered::AppEvent;
 use crate::event_bus::projection::{Projection, ProjectionHealth};
-use crate::l1_infrastructure::storage_engine::MemoryKVStore;
 use crate::traits::kv_store::KVStore;
-use crate::traits::search_backend::{IndexEntry, NoteMetadata, SearchBackend, SearchOptions};
+use crate::traits::search_backend::{IndexEntry, NoteMetadata, SearchBackend};
 
 /// 搜索索引投影。
 ///
@@ -112,7 +111,14 @@ impl Projection for SearchIndexProjection {
                 content,
             } => {
                 self.search
-                    .index_note(note_id, content, &NoteMetadata { title: title.clone(), ..Default::default() })
+                    .index_note(
+                        note_id,
+                        content,
+                        &NoteMetadata {
+                            title: title.clone(),
+                            ..Default::default()
+                        },
+                    )
                     .await?;
                 debug!(note_id, "search projection: indexed");
             }
@@ -166,8 +172,13 @@ impl Projection for SearchIndexProjection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event_bus::layered::{EventChannel, InMemoryEventQueue, LayeredEventBus, LinkAction, NoteChanges};
+    use crate::event_bus::layered::{
+        EventChannel, InMemoryEventQueue, LayeredEventBus, LinkAction, NoteChanges,
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::l1_infrastructure::storage_engine::MemoryKVStore;
+    use crate::traits::search_backend::SearchOptions;
 
     /// 内存 SearchBackend（测试用）。
     struct InMemSearch {
@@ -177,7 +188,11 @@ mod tests {
 
     #[async_trait]
     impl SearchBackend for InMemSearch {
-        async fn search(&self, query: &str, _opts: &SearchOptions) -> Result<crate::traits::search_backend::SearchResult, crate::Error> {
+        async fn search(
+            &self,
+            query: &str,
+            _opts: &SearchOptions,
+        ) -> Result<crate::traits::search_backend::SearchResult, crate::Error> {
             let docs = self.docs.read().unwrap();
             let hits = docs
                 .iter()
@@ -189,10 +204,22 @@ mod tests {
                     snippet: title.clone(),
                 })
                 .collect();
-            Ok(crate::traits::search_backend::SearchResult { hits, total: docs.len(), took_ms: 0 })
+            Ok(crate::traits::search_backend::SearchResult {
+                hits,
+                total: docs.len(),
+                took_ms: 0,
+            })
         }
-        async fn index_note(&self, note_id: &str, _content: &str, metadata: &NoteMetadata) -> Result<(), crate::Error> {
-            self.docs.write().unwrap().insert(note_id.into(), metadata.title.clone());
+        async fn index_note(
+            &self,
+            note_id: &str,
+            _content: &str,
+            metadata: &NoteMetadata,
+        ) -> Result<(), crate::Error> {
+            self.docs
+                .write()
+                .unwrap()
+                .insert(note_id.into(), metadata.title.clone());
             Ok(())
         }
         async fn batch_index(&self, notes: &[IndexEntry]) -> Result<(), crate::Error> {
@@ -223,7 +250,10 @@ mod tests {
         IndexEntry {
             note_id: id.into(),
             content: String::new(),
-            metadata: NoteMetadata { title: title.into(), ..Default::default() },
+            metadata: NoteMetadata {
+                title: title.into(),
+                ..Default::default()
+            },
         }
     }
 
@@ -237,8 +267,11 @@ mod tests {
 
     #[tokio::test]
     async fn note_created_and_deleted_project_to_index() {
-        let bus = LayeredEventBus::new(None);
-        let search = Arc::new(InMemSearch { docs: Default::default(), rebuilds: AtomicUsize::new(0) });
+        let _bus = LayeredEventBus::new(None);
+        let search = Arc::new(InMemSearch {
+            docs: Default::default(),
+            rebuilds: AtomicUsize::new(0),
+        });
         let kv = Arc::new(MemoryKVStore::default());
         let proj = make_projection(search.clone(), kv, Box::new(Vec::new));
 
@@ -249,28 +282,48 @@ mod tests {
         })
         .await
         .unwrap();
-        let r = search.search("Hello", &SearchOptions::default()).await.unwrap();
+        let r = search
+            .search("Hello", &SearchOptions::default())
+            .await
+            .unwrap();
         assert_eq!(r.hits.len(), 1);
 
-        proj.apply(&AppEvent::NoteDeleted { note_id: "n1".into() }).await.unwrap();
-        let r = search.search("Hello", &SearchOptions::default()).await.unwrap();
+        proj.apply(&AppEvent::NoteDeleted {
+            note_id: "n1".into(),
+        })
+        .await
+        .unwrap();
+        let r = search
+            .search("Hello", &SearchOptions::default())
+            .await
+            .unwrap();
         assert_eq!(r.hits.len(), 0);
     }
 
     #[tokio::test]
     async fn unrelated_events_are_idempotent_noops() {
-        let search = Arc::new(InMemSearch { docs: Default::default(), rebuilds: AtomicUsize::new(0) });
+        let search = Arc::new(InMemSearch {
+            docs: Default::default(),
+            rebuilds: AtomicUsize::new(0),
+        });
         let kv = Arc::new(MemoryKVStore::default());
         let proj = make_projection(search.clone(), kv, Box::new(Vec::new));
 
         for ev in [
-            AppEvent::CursorMoved { note_id: "n".into(), user_id: "u".into(), pos: 1 },
+            AppEvent::CursorMoved {
+                note_id: "n".into(),
+                user_id: "u".into(),
+                pos: 1,
+            },
             AppEvent::BidiLinkChanged {
                 source_note_id: "a".into(),
                 target_note_id: "b".into(),
                 action: LinkAction::Created,
             },
-            AppEvent::SnapshotRequested { note_id: "n".into(), label: None },
+            AppEvent::SnapshotRequested {
+                note_id: "n".into(),
+                label: None,
+            },
         ] {
             proj.apply(&ev).await.unwrap();
         }
@@ -280,7 +333,10 @@ mod tests {
 
     #[tokio::test]
     async fn metadata_changed_reindexes_from_source() {
-        let search = Arc::new(InMemSearch { docs: Default::default(), rebuilds: AtomicUsize::new(0) });
+        let search = Arc::new(InMemSearch {
+            docs: Default::default(),
+            rebuilds: AtomicUsize::new(0),
+        });
         let kv = Arc::new(MemoryKVStore::default());
         // 数据源: n1 标题已是「新标题」
         let proj = make_projection(search.clone(), kv, Box::new(|| vec![entry("n1", "新标题")]));
@@ -288,11 +344,17 @@ mod tests {
         // 事件不带全文（拉模式）
         proj.apply(&AppEvent::NoteMetadataChanged {
             note_id: "n1".into(),
-            changes: NoteChanges { title: Some("新标题".into()), ..Default::default() },
+            changes: NoteChanges {
+                title: Some("新标题".into()),
+                ..Default::default()
+            },
         })
         .await
         .unwrap();
-        let r = search.search("新标题", &SearchOptions::default()).await.unwrap();
+        let r = search
+            .search("新标题", &SearchOptions::default())
+            .await
+            .unwrap();
         assert_eq!(r.hits.len(), 1);
     }
 
@@ -302,8 +364,12 @@ mod tests {
     #[tokio::test]
     async fn crash_recovery_catches_up_incrementally() {
         let store = InMemoryEventQueue::new();
-        let bus = LayeredEventBus::new(Some(std::sync::Arc::new(store.clone()) as std::sync::Arc<dyn crate::event_bus::layered::EventQueueStore>));
-        let search = Arc::new(InMemSearch { docs: Default::default(), rebuilds: AtomicUsize::new(0) });
+        let bus = LayeredEventBus::new(Some(std::sync::Arc::new(store.clone())
+            as std::sync::Arc<dyn crate::event_bus::layered::EventQueueStore>));
+        let search = Arc::new(InMemSearch {
+            docs: Default::default(),
+            rebuilds: AtomicUsize::new(0),
+        });
         let kv = Arc::new(MemoryKVStore::default());
         let proj = make_projection(search.clone(), kv.clone(), Box::new(Vec::new));
 
@@ -317,7 +383,8 @@ mod tests {
         assert_eq!(bus.catch_up(&proj).await.unwrap(), 3);
 
         // 「重启」: 新总线 + 同 store + 同 KV（水位线=3 已持久化）
-        let bus2 = LayeredEventBus::new(Some(std::sync::Arc::new(store) as std::sync::Arc<dyn crate::event_bus::layered::EventQueueStore>));
+        let bus2 = LayeredEventBus::new(Some(std::sync::Arc::new(store)
+            as std::sync::Arc<dyn crate::event_bus::layered::EventQueueStore>));
         // 重启语义: 先恢复全局 seq（否则新事件 seq 撞历史）
         bus2.restore_seq().unwrap();
         bus2.publish(AppEvent::NoteCreated {
@@ -333,7 +400,10 @@ mod tests {
 
     #[tokio::test]
     async fn rebuild_restores_full_index_from_source() {
-        let search = Arc::new(InMemSearch { docs: Default::default(), rebuilds: AtomicUsize::new(0) });
+        let search = Arc::new(InMemSearch {
+            docs: Default::default(),
+            rebuilds: AtomicUsize::new(0),
+        });
         let kv = Arc::new(MemoryKVStore::default());
         let all = vec![entry("n1", "A"), entry("n2", "B")];
         let proj = make_projection(search.clone(), kv, Box::new(move || all.clone()));

@@ -18,14 +18,14 @@
 //! 以「实现来源声明」替代：`ring`（AES-GCM）与 `libcrux-ml-kem`
 //! 均为恒定时间审计过的实现，此处断言实现路径未被替换（防供应链漂移）。
 
-use crate::crypto_provider_impl::SecurityCryptoProvider;
-use crate::key_hierarchy::{self, MasterKey};
-use crate::vault::LocalDekVault;
-use aurora_core::traits::crypto_provider::CryptoProvider;
-
 // ===========================================================================
 // 1-2. Argon2id
 // ===========================================================================
+
+use crate::crypto_provider_impl::SecurityCryptoProvider;
+use crate::key_hierarchy::MasterKey;
+use crate::vault::LocalDekVault;
+use aurora_core::traits::crypto_provider::CryptoProvider;
 
 /// 审计 1: Argon2id 参数 = RFC 9106 第二推荐档（m=64MiB, t=3, p=4, len=32）。
 /// 实现: `Params::new(65536, 3, 4, Some(32))` — KiB 单位 65536 = 64 MiB。
@@ -37,17 +37,27 @@ fn audit_argon2id_params_and_cost() {
 
     // 派生耗时 — 推荐档在 2 vCPU 上应 ≥ 100ms（弱档 < 50ms）
     let t0 = std::time::Instant::now();
-    let k1 = p.derive_key("correct horse battery staple", &[7u8; 16]).unwrap();
+    let k1 = p
+        .derive_key("correct horse battery staple", &[7u8; 16])
+        .unwrap();
     let elapsed = t0.elapsed();
-    assert!(elapsed.as_millis() >= 100, "Argon2id 耗时 {}ms — 疑似弱参数", elapsed.as_millis());
+    assert!(
+        elapsed.as_millis() >= 100,
+        "Argon2id 耗时 {}ms — 疑似弱参数",
+        elapsed.as_millis()
+    );
 
     // 确定性: 同口令+salt → 同密钥
-    let k2 = p.derive_key("correct horse battery staple", &[7u8; 16]).unwrap();
+    let k2 = p
+        .derive_key("correct horse battery staple", &[7u8; 16])
+        .unwrap();
     assert_eq!(k1, k2, "同输入必须同输出（KDF 确定性）");
 
     // 口令或 salt 任一变化 → 密钥雪崩
     let k3 = p.derive_key("wrong horse", &[7u8; 16]).unwrap();
-    let k4 = p.derive_key("correct horse battery staple", &[8u8; 16]).unwrap();
+    let k4 = p
+        .derive_key("correct horse battery staple", &[8u8; 16])
+        .unwrap();
     assert_ne!(k1, k3);
     assert_ne!(k1, k4);
 
@@ -66,8 +76,8 @@ fn audit_argon2id_params_and_cost() {
 fn audit_dek_fresh_from_os_csprng() {
     let d1 = tempfile::tempdir().unwrap();
     let d2 = tempfile::tempdir().unwrap();
-    let v1 = LocalDekVault::load_or_create(&d1.path()).unwrap();
-    let v2 = LocalDekVault::load_or_create(&d2.path()).unwrap();
+    let v1 = LocalDekVault::load_or_create(d1.path()).unwrap();
+    let v2 = LocalDekVault::load_or_create(d2.path()).unwrap();
     assert_ne!(v1.dek(), v2.dek(), "两次生成的 DEK 必不相同（OsRng）");
     assert_eq!(v1.dek().len(), 32, "DEK = 256bit");
     // 字节分布粗检（全零/全 FF = 源损坏）
@@ -194,12 +204,17 @@ fn audit_key_material_zeroized_on_drop() {
 /// 审计 8: 侧信道 — 恒定时间审计由实现方保证:
 /// - AES-GCM: `ring`（aws-lc 派生, 恒定时间审计过）
 /// - ML-KEM: `libcrux-ml-kem`（Hax/FormalLand 形式化验证项目）
+///
 /// 本地可自动化的替代断言: crate 依赖来源未被替换（版本锁定检查）。
 #[test]
 fn audit_constant_time_impl_sourcing() {
     // 依赖树版本断言（编译期 lockfile 决定; 此处运行期做行为冒烟）
     let p = SecurityCryptoProvider::new();
-    assert_eq!(p.algorithm_version_value(), 1, "算法版本字段（混合降级路径依据）");
+    assert_eq!(
+        p.algorithm_version_value(),
+        1,
+        "算法版本字段（混合降级路径依据）"
+    );
     // ring AES-GCM 与 libcrux ML-KEM 路径各跑一次确保链接未断
     let _ = p.encrypt(b"smoke-32-byte-key-test!!", &[1u8; 32]).unwrap();
     let (pk, _sk) = p.kem_keypair().unwrap();

@@ -697,6 +697,8 @@ pub struct E2ETestManager {
     /// 视觉回归最大允许差异（百分比，默认 0.5%）。
     visual_diff_threshold: f64,
     /// 崩溃恢复超时（毫秒）。
+    /// 规划功能字段（崩溃恢复 E2E）启用前的显式豁免。
+    #[allow(dead_code)]
     crash_recovery_timeout_ms: u64,
 }
 
@@ -981,6 +983,8 @@ pub struct PerformanceRegistry {
     baselines: RwLock<HashMap<String, PerformanceBaseline>>,
     history: RwLock<Vec<PerformanceTestResult>>,
     /// 全局退化阈值（%，默认 10%）。
+    /// 规划功能字段（性能门禁策略）启用前的显式豁免。
+    #[allow(dead_code)]
     default_regression_threshold: f64,
 }
 
@@ -1441,14 +1445,14 @@ mod tests {
 
     #[test]
     fn compare_snapshots_detects_differences() {
-        let mut a = CrdtStateSnapshot {
+        let a = CrdtStateSnapshot {
             replica_id: 1,
             blocks: HashMap::from([("b1".into(), "hello".into())]),
             properties: HashMap::new(),
             block_order: vec!["b1".into()],
             lamport_ts: 1,
         };
-        let mut b = CrdtStateSnapshot {
+        let b = CrdtStateSnapshot {
             replica_id: 2,
             blocks: HashMap::from([("b1".into(), "world".into())]),
             properties: HashMap::new(),
@@ -1662,8 +1666,10 @@ mod tests {
 
     #[test]
     fn coverage_manager_exempt_module() {
-        let mut gate = CoverageGate::default();
-        gate.exempt_modules = vec!["experimental-module".into()];
+        let gate = CoverageGate {
+            exempt_modules: vec!["experimental-module".into()],
+            ..Default::default()
+        };
         let mgr = CoverageManager::new(gate);
         mgr.record(CoverageStats {
             package: "experimental-module".into(),

@@ -29,8 +29,6 @@
 
 use chrono::{Duration, Utc};
 
-use crate::event_bus::layered::AppEvent;
-use crate::event_bus::projection::Projection;
 use crate::l2_engines::task_projection::TaskProjection;
 
 /// 提取出的行动项。
@@ -51,9 +49,9 @@ pub struct ActionItemExtractor;
 
 /// 中文行动动词表（启发式 — 命中即视为行动句）。
 const ACTION_VERBS: &[&str] = &[
-    "提交", "发送", "回复", "整理", "完成", "确认", "预约", "购买", "预定",
-    "联系", "电话", "汇报", "写", "修改", "审核", "复核", "部署", "上线",
-    "修复", "测试", "发布", "准备", "安排", "报名", "缴费", "续费", "归还",
+    "提交", "发送", "回复", "整理", "完成", "确认", "预约", "购买", "预定", "联系", "电话", "汇报",
+    "写", "修改", "审核", "复核", "部署", "上线", "修复", "测试", "发布", "准备", "安排", "报名",
+    "缴费", "续费", "归还",
 ];
 
 /// 紧急词 → 优先级。
@@ -188,8 +186,8 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::event_bus::layered::InMemoryEventQueue;
     use crate::event_bus::layered::LayeredEventBus;
+    use crate::event_bus::layered::{AppEvent, InMemoryEventQueue};
     use crate::l1_infrastructure::storage_engine::MemoryKVStore;
     use crate::l2_engines::task_projection::TaskProjection;
 
@@ -200,7 +198,7 @@ mod tests {
     #[test]
     fn extracts_markdown_tasks_with_metadata() {
         let text = "# 会议纪要\n- [ ] 整理今天的会议记录\n- [x] 发送周报\n普通段落";
-        let items = ActionItemExtractor::extract(&text);
+        let items = ActionItemExtractor::extract(text);
         assert_eq!(items.len(), 2);
 
         assert_eq!(items[0].title, "整理今天的会议记录");
@@ -214,10 +212,15 @@ mod tests {
     fn extracts_chinese_verb_sentences() {
         // 行级提取语义: 一行一项（逗号不分行）; 测试用换行分隔
         let text = "下周前提交季度报告\n尽快修复线上问题\n这是一段普通描述没有行动动词";
-        let items = ActionItemExtractor::extract(&text);
+        let items = ActionItemExtractor::extract(text);
         assert_eq!(items.len(), 2, "两行动作句: {items:?}");
         assert!(items.iter().any(|i| i.title.contains("提交")));
-        assert!(items.iter().any(|i| i.title.contains("修复") && i.priority == "high"), "「尽快」→ high");
+        assert!(
+            items
+                .iter()
+                .any(|i| i.title.contains("修复") && i.priority == "high"),
+            "「尽快」→ high"
+        );
         // 下周 → ~8 天内
         let submit = items.iter().find(|i| i.title.contains("提交")).unwrap();
         let due = submit.due_date.unwrap();

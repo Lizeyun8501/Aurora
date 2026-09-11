@@ -4,6 +4,9 @@
 //! 底层使用 [iroh](https://iroh.computer) 实现。
 
 use async_trait::async_trait;
+
+/// 同步事件回调（对端状态变化通知）。
+type SyncEventCallback = Box<dyn Fn(SyncEvent) + Send + Sync>;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -14,7 +17,7 @@ use crate::traits::sync_target::{
 /// 基于 iroh 的 P2P 同步目标实现。
 pub struct IrohSyncTarget {
     connections: Mutex<HashMap<String, Connection>>,
-    callback: Mutex<Option<Box<dyn Fn(SyncEvent) + Send + Sync>>>,
+    callback: Mutex<Option<SyncEventCallback>>,
     /// V23-I3 / T3: 对端传输数据面（None = sync 大声失败）
     transport: Mutex<Option<Arc<dyn crate::traits::sync_target::PeerTransport>>>,
     /// 本地 oplog 导出/远端合并钩子
@@ -76,8 +79,7 @@ impl SyncTarget for IrohSyncTarget {
         Ok(conn)
     }
 
-    async fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error> {
-
+    async fn sync(&self, _conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error> {
         // V23-I3 / T3: 真搬运往返 — 无传输/无钩子大声失败（零静默占位）。
         // 此前恒返零报告 → SyncRouter 永远认为同步成功 → 降级链永不触发。
         let transport = self
@@ -148,7 +150,7 @@ impl SyncTarget for IrohSyncTarget {
 /// 基于 WebSocket 的同步目标实现。
 pub struct WebSocketSyncTarget {
     connections: Mutex<HashMap<String, Connection>>,
-    callback: Mutex<Option<Box<dyn Fn(SyncEvent) + Send + Sync>>>,
+    callback: Mutex<Option<SyncEventCallback>>,
 }
 
 impl WebSocketSyncTarget {
@@ -251,7 +253,7 @@ impl SyncTarget for WebSocketSyncTarget {
 /// 通过本地网络广播或多播发现邻近节点，实现局域网内高速同步。
 pub struct LanSyncTarget {
     connections: Mutex<HashMap<String, Connection>>,
-    callback: Mutex<Option<Box<dyn Fn(SyncEvent) + Send + Sync>>>,
+    callback: Mutex<Option<SyncEventCallback>>,
     /// V23-I3 / T3: 对端传输数据面（None = sync 大声失败）
     transport: Mutex<Option<Arc<dyn crate::traits::sync_target::PeerTransport>>>,
     /// 本地 oplog 导出/远端合并钩子
@@ -310,12 +312,9 @@ impl SyncTarget for LanSyncTarget {
     async fn sync(&self, conn: &Connection, doc_set: &DocSet) -> Result<SyncReport, crate::Error> {
         // 连接存在性检查限定作用域 — guard 严禁跨 await（死锁教训）
         {
-            let connections = self
-                .connections
-                .lock()
-                .map_err(|_| {
-                    crate::Error::Internal("lan connections mutex poisoned".to_string())
-                })?;
+            let connections = self.connections.lock().map_err(|_| {
+                crate::Error::Internal("lan connections mutex poisoned".to_string())
+            })?;
             if !connections.contains_key(&conn.id) {
                 return Err(crate::Error::NotFound(format!(
                     "connection not found: {}",

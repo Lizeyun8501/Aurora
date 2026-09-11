@@ -24,9 +24,16 @@ pub const GENESIS: &str = "GENESIS";
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChainVerdict {
     /// 全链校验通过（含 legacy 段跳过）。
-    Intact { verified: usize, legacy_skipped: usize },
+    Intact {
+        verified: usize,
+        legacy_skipped: usize,
+    },
     /// 第 `id` 条记录哈希不匹配（重算值 ≠ 存储值）。
-    Broken { id: i64, expected: String, found: String },
+    Broken {
+        id: i64,
+        expected: String,
+        found: String,
+    },
     /// 链断裂：第 `id` 条的 prev_hash ≠ 前一条的 hash。
     Disconnected { id: i64 },
 }
@@ -62,7 +69,13 @@ impl AuditChain {
             .map_err(|e| crate::Error::Internal(format!("audit chain read: {e}")))?;
         let prev = prev_hash.unwrap_or_else(|| GENESIS.to_string());
         let hash = Self::compute(
-            &prev, actor, action, resource_type, resource_id, details_json, created_at,
+            &prev,
+            actor,
+            action,
+            resource_type,
+            resource_id,
+            details_json,
+            created_at,
         );
         conn.execute(
             "INSERT INTO audit_log (actor, action, resource_type, resource_id, details, created_at, prev_hash, hash)
@@ -132,9 +145,8 @@ impl AuditChain {
             .next()
             .map_err(|e| crate::Error::Internal(format!("audit verify: {e}")))?
         {
-            let row_err = |e: rusqlite_chain::Error| {
-                crate::Error::Internal(format!("audit verify row: {e}"))
-            };
+            let row_err =
+                |e: rusqlite_chain::Error| crate::Error::Internal(format!("audit verify row: {e}"));
             let id: i64 = r.get(0).map_err(row_err)?;
             let actor: String = r.get(1).map_err(row_err)?;
             let action: String = r.get(2).map_err(row_err)?;
@@ -157,8 +169,15 @@ impl AuditChain {
                 }
             }
 
-            let recomputed =
-                Self::compute(&prev.unwrap_or_else(|| GENESIS.into()), &actor, &action, &rt, &rid, &details, &created);
+            let recomputed = Self::compute(
+                &prev.unwrap_or_else(|| GENESIS.into()),
+                &actor,
+                &action,
+                &rt,
+                &rid,
+                &details,
+                &created,
+            );
             if recomputed != stored_hash {
                 return Ok(ChainVerdict::Broken {
                     id,
@@ -169,7 +188,10 @@ impl AuditChain {
             verified += 1;
             last_hash = Some(stored_hash);
         }
-        Ok(ChainVerdict::Intact { verified, legacy_skipped: legacy })
+        Ok(ChainVerdict::Intact {
+            verified,
+            legacy_skipped: legacy,
+        })
     }
 }
 
@@ -198,12 +220,21 @@ mod tests {
         let conn = setup();
         for i in 0..5 {
             AuditChain::append(
-                &conn, "user", "note.update", "note", &format!("n{i}"), r#"{"k":1}"#, "2026-09-07T00:00:00Z",
+                &conn,
+                "user",
+                "note.update",
+                "note",
+                &format!("n{i}"),
+                r#"{"k":1}"#,
+                "2026-09-07T00:00:00Z",
             )
             .unwrap();
         }
         match AuditChain::verify(&conn).unwrap() {
-            ChainVerdict::Intact { verified, legacy_skipped } => {
+            ChainVerdict::Intact {
+                verified,
+                legacy_skipped,
+            } => {
                 assert_eq!(verified, 5);
                 assert_eq!(legacy_skipped, 0);
             }
@@ -218,12 +249,18 @@ mod tests {
         let (_, h1) = AuditChain::append(&conn, "u", "a", "note", "n1", "{}", "T1").unwrap();
         let (id2, h2) = AuditChain::append(&conn, "u", "a", "note", "n2", "{}", "T2").unwrap();
         let prev2: String = conn
-            .query_row("SELECT prev_hash FROM audit_log WHERE id = ?1", [id2], |r| r.get(0))
+            .query_row(
+                "SELECT prev_hash FROM audit_log WHERE id = ?1",
+                [id2],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(prev2, h1);
         assert_ne!(h1, h2);
         let prev1: String = conn
-            .query_row("SELECT prev_hash FROM audit_log WHERE rowid = 1", [], |r| r.get(0))
+            .query_row("SELECT prev_hash FROM audit_log WHERE rowid = 1", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(prev1, GENESIS);
     }
@@ -233,10 +270,14 @@ mod tests {
     fn tampering_detected() {
         let conn = setup();
         for i in 0..3 {
-            AuditChain::append(&conn, "u", "a", "note", &format!("n{i}"), r#"{"v":1}"#, "T").unwrap();
+            AuditChain::append(&conn, "u", "a", "note", &format!("n{i}"), r#"{"v":1}"#, "T")
+                .unwrap();
         }
-        conn.execute("UPDATE audit_log SET details = '{\"v\":999}' WHERE id = 2", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE audit_log SET details = '{\"v\":999}' WHERE id = 2",
+            [],
+        )
+        .unwrap();
         match AuditChain::verify(&conn).unwrap() {
             ChainVerdict::Broken { id, .. } => assert_eq!(id, 2),
             other => panic!("expected broken, got {other:?}"),
@@ -250,7 +291,8 @@ mod tests {
         for i in 0..4 {
             AuditChain::append(&conn, "u", "a", "note", &format!("n{i}"), "{}", "T").unwrap();
         }
-        conn.execute("DELETE FROM audit_log WHERE id = 2", []).unwrap();
+        conn.execute("DELETE FROM audit_log WHERE id = 2", [])
+            .unwrap();
         match AuditChain::verify(&conn).unwrap() {
             ChainVerdict::Disconnected { id } => assert_eq!(id, 3),
             other => panic!("expected disconnected, got {other:?}"),
@@ -269,7 +311,10 @@ mod tests {
         .unwrap();
         AuditChain::append(&conn, "u", "a", "note", "n1", "{}", "T1").unwrap();
         match AuditChain::verify(&conn).unwrap() {
-            ChainVerdict::Intact { verified, legacy_skipped } => {
+            ChainVerdict::Intact {
+                verified,
+                legacy_skipped,
+            } => {
                 assert_eq!((verified, legacy_skipped), (1, 1));
             }
             other => panic!("expected intact, got {other:?}"),

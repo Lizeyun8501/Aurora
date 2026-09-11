@@ -47,12 +47,11 @@ pub fn render_note_markdown(
 
 /// mirror 文件相对路径（POSIX 分隔 — 跨端一致）。
 pub fn mirror_rel_path(workspace: &str, title: &str, note_id: &str) -> PathBuf {
-    PathBuf::from(sanitize_seg(workspace))
-        .join(format!(
-            "{}-{}.md",
-            sanitize_seg(title),
-            &note_id.chars().take(8).collect::<String>()
-        ))
+    PathBuf::from(sanitize_seg(workspace)).join(format!(
+        "{}-{}.md",
+        sanitize_seg(title),
+        &note_id.chars().take(8).collect::<String>()
+    ))
 }
 
 /// 防抖调度器（内存态 — 重启后由全量重建/未 flush 事件补齐）。
@@ -64,7 +63,9 @@ pub struct MirrorScheduler {
 
 impl MirrorScheduler {
     pub fn new() -> Self {
-        Self { pending: std::sync::Mutex::new(HashMap::new()) }
+        Self {
+            pending: std::sync::Mutex::new(HashMap::new()),
+        }
     }
 
     /// 事件到达（编辑保存即 feed；同 note 连续编辑合并窗口）。
@@ -75,7 +76,7 @@ impl MirrorScheduler {
 
     /// 取出已过防抖窗口的 note（调用方执行落盘后调 [`Self::complete`]）。
     pub fn flush_due(&self, now: Instant) -> Vec<String> {
-        let mut p = self.pending.lock().unwrap();
+        let p = self.pending.lock().unwrap();
         let due: Vec<String> = p
             .iter()
             .filter(|(_, t)| now.duration_since(**t) >= MIRROR_DEBOUNCE)
@@ -178,8 +179,12 @@ fn sanitize_seg(s: &str) -> String {
 /// YAML 值最小转义（含特殊前导/冒号/引号时加引号）。
 fn yaml_escape(s: &str) -> String {
     let needs = s.is_empty()
-        || s.starts_with(['&', '*', '?', '|', '-', '<', '>', '=', '!', '%', '@', '#', '"', '\'', '{', '['])
-        || s.contains(": ") || s.ends_with(':') || s.contains('#');
+        || s.starts_with([
+            '&', '*', '?', '|', '-', '<', '>', '=', '!', '%', '@', '#', '"', '\'', '{', '[',
+        ])
+        || s.contains(": ")
+        || s.ends_with(':')
+        || s.contains('#');
     if needs {
         format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
     } else {
@@ -243,7 +248,10 @@ mod tests {
     #[test]
     fn rel_path_sanitizes_and_stable() {
         let p1 = mirror_rel_path("默认空间", "我的 笔记: v1?", "abcdef1234567890");
-        assert_eq!(p1, PathBuf::from("默认空间").join("我的 笔记- v1--abcdef12.md"));
+        assert_eq!(
+            p1,
+            PathBuf::from("默认空间").join("我的 笔记- v1--abcdef12.md")
+        );
         // 重命名标题不换锚（note8 消歧）
         let p2 = mirror_rel_path("默认空间", "改名后的标题", "abcdef1234567890");
         assert!(p2.to_string_lossy().ends_with("abcdef12.md"));

@@ -668,8 +668,10 @@ mod tests {
 
     #[test]
     fn test_connector_connect_empty_host_errors() {
-        let mut cfg = ImapConfig::default();
-        cfg.host = String::new();
+        let cfg = ImapConfig {
+            host: String::new(),
+            ..Default::default()
+        };
         let conn = ImapConnector::new("mail", cfg);
         assert!(conn.connect().is_err());
         assert!(conn.state().is_error());

@@ -45,7 +45,7 @@ fn arb_text_maybe_empty() -> impl Strategy<Value = String> {
 
 /// Heading level 1..=6.
 fn arb_heading_level() -> impl Strategy<Value = u8> {
-    (1u8..=6u8)
+    1u8..=6u8
 }
 
 /// A vector of text blocks (1..=12 entries).

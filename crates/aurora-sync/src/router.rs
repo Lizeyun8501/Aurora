@@ -21,19 +21,15 @@
 //! - NAT 穿透失败注入（iroh 连接超时）
 //! - 熔断恢复（冷却期过半开探测）
 //! - 全链路降级（P2P→LAN→云）
+//!
 //! 同一场景序列在任何机器上输出相同的选路结果 — 可断言、可回归。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use async_trait::async_trait;
 use tracing::{info, warn};
 
-use aurora_core::traits::sync_target::{
-    Connection, ConnectionState, DocSet, Endpoint, InMemoryPeerTransport, SyncConfig, SyncEvent,
-    SyncHooks, SyncProtocol, SyncReport, SyncTarget,
-};
+use aurora_core::traits::sync_target::{Connection, DocSet, Endpoint, SyncReport, SyncTarget};
 
 /// core 错误 → sync 错误（执行层归一化）。
 impl From<aurora_core::Error> for crate::Error {
@@ -73,11 +69,10 @@ impl SharedTarget {
         doc_ids: &[String],
     ) -> Result<(Connection, SyncReport), crate::Error> {
         let mut t = self.inner.lock().await;
-        let conn = t
-            .connect(endpoint)
-            .await
-            .map_err(crate::Error::from)?;
-        let docs = DocSet { doc_ids: doc_ids.to_vec() };
+        let conn = t.connect(endpoint).await.map_err(crate::Error::from)?;
+        let docs = DocSet {
+            doc_ids: doc_ids.to_vec(),
+        };
         let report = t.sync(&conn, &docs).await.map_err(crate::Error::from)?;
         Ok((conn, report))
     }
@@ -103,6 +98,8 @@ pub enum RouteTier {
 }
 
 impl RouteTier {
+    // 路由日志结构化输出启用前显式豁免 — V26 DK-08 同步迭代接管
+    #[allow(dead_code)]
     fn as_str(&self) -> &'static str {
         match self {
             RouteTier::P2p => "p2p",
@@ -180,11 +177,14 @@ pub struct FakeClock {
 }
 impl FakeClock {
     pub fn new(start_ms: u64) -> Self {
-        Self { now_ms: std::sync::atomic::AtomicU64::new(start_ms) }
+        Self {
+            now_ms: std::sync::atomic::AtomicU64::new(start_ms),
+        }
     }
     /// 推进虚拟时间。
     pub fn advance(&self, ms: u64) {
-        self.now_ms.fetch_add(ms, std::sync::atomic::Ordering::SeqCst);
+        self.now_ms
+            .fetch_add(ms, std::sync::atomic::Ordering::SeqCst);
     }
 }
 impl Clock for FakeClock {
@@ -243,9 +243,18 @@ impl SyncRouter {
     }
 
     /// DST 构造（注入时钟 — 确定性仿真）。
-    pub fn with_clock(entries: Vec<RouteEntry>, policy: RouterPolicy, clock: Arc<dyn Clock>) -> Self {
-        Self { entries, health: Mutex::new(HashMap::new()),
-            exec_targets: Mutex::new(HashMap::new()), policy, clock }
+    pub fn with_clock(
+        entries: Vec<RouteEntry>,
+        policy: RouterPolicy,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
+            entries,
+            health: Mutex::new(HashMap::new()),
+            exec_targets: Mutex::new(HashMap::new()),
+            policy,
+            clock,
+        }
     }
 
     /// 链路当前可用性（熔断状态机）。
@@ -311,15 +320,14 @@ impl SyncRouter {
     pub fn route(&self) -> Result<RouteDecision, crate::Error> {
         let now = self.clock.now_ms();
         // 档位升序 = 优先级降序
-        let mut sorted: Vec<&RouteEntry> = self
-            .entries
-            .iter()
-            .filter(|e| self.privacy_ok(e))
-            .collect();
+        let mut sorted: Vec<&RouteEntry> =
+            self.entries.iter().filter(|e| self.privacy_ok(e)).collect();
         sorted.sort_by_key(|e| e.tier);
 
         if sorted.is_empty() {
-            return Err(crate::Error::Sync("no link satisfies privacy policy".into()));
+            return Err(crate::Error::Sync(
+                "no link satisfies privacy policy".into(),
+            ));
         }
 
         // 第一轮: 全可用性过滤
@@ -441,16 +449,23 @@ impl SyncRouter {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+
+    use aurora_core::traits::sync_target::{
+        InMemoryPeerTransport, SyncEvent, SyncHooks, SyncProtocol,
+    };
 
     fn entry(tier: RouteTier, url: &str, privacy: PrivacyLevel) -> RouteEntry {
         RouteEntry {
             target: Arc::new(NoopTarget),
             tier,
-            endpoint: Endpoint { url: url.into(), protocol: SyncProtocol::Iroh },
+            endpoint: Endpoint {
+                url: url.into(),
+                protocol: SyncProtocol::Iroh,
+            },
             privacy,
         }
     }
@@ -458,14 +473,28 @@ mod tests {
     struct NoopTarget;
     #[async_trait]
     impl SyncTarget for NoopTarget {
-        async fn connect(&mut self, _e: &Endpoint) -> Result<aurora_core::traits::sync_target::Connection, aurora_core::Error> {
+        async fn connect(
+            &mut self,
+            _e: &Endpoint,
+        ) -> Result<aurora_core::traits::sync_target::Connection, aurora_core::Error> {
             unimplemented!()
         }
-        async fn sync(&self, _c: &aurora_core::traits::sync_target::Connection, _d: &aurora_core::traits::sync_target::DocSet) -> Result<SyncReport, aurora_core::Error> {
+        async fn sync(
+            &self,
+            _c: &aurora_core::traits::sync_target::Connection,
+            _d: &aurora_core::traits::sync_target::DocSet,
+        ) -> Result<SyncReport, aurora_core::Error> {
             unimplemented!()
         }
-        fn watch(&self, _cb: Box<dyn Fn(aurora_core::traits::sync_target::SyncEvent) + Send + Sync>) {}
-        async fn disconnect(&self, _c: &aurora_core::traits::sync_target::Connection) -> Result<(), aurora_core::Error> {
+        fn watch(
+            &self,
+            _cb: Box<dyn Fn(aurora_core::traits::sync_target::SyncEvent) + Send + Sync>,
+        ) {
+        }
+        async fn disconnect(
+            &self,
+            _c: &aurora_core::traits::sync_target::Connection,
+        ) -> Result<(), aurora_core::Error> {
             Ok(())
         }
     }
@@ -473,7 +502,11 @@ mod tests {
     fn router(entries: Vec<RouteEntry>, clock: &Arc<FakeClock>) -> SyncRouter {
         SyncRouter::with_clock(
             entries,
-            RouterPolicy { max_consecutive_failures: 2, cooldown_ms: 10_000, ..Default::default() },
+            RouterPolicy {
+                max_consecutive_failures: 2,
+                cooldown_ms: 10_000,
+                ..Default::default()
+            },
             clock.clone(),
         )
     }
@@ -491,7 +524,10 @@ mod tests {
             &clock,
         );
         let d = r.route().unwrap();
-        assert_eq!((d.tier, d.endpoint_url.as_str()), (RouteTier::P2p, "iroh://a"));
+        assert_eq!(
+            (d.tier, d.endpoint_url.as_str()),
+            (RouteTier::P2p, "iroh://a")
+        );
         assert_eq!(d.reason, "never-used");
     }
 
@@ -504,7 +540,10 @@ mod tests {
                 entry(RouteTier::Cloud, "cloud://c", PrivacyLevel::Encrypted),
                 entry(RouteTier::Lan, "lan://b", PrivacyLevel::E2eeOnly),
             ],
-            RouterPolicy { required_privacy: PrivacyLevel::E2eeOnly, ..Default::default() },
+            RouterPolicy {
+                required_privacy: PrivacyLevel::E2eeOnly,
+                ..Default::default()
+            },
             clock,
         );
         let d = r.route().unwrap();
@@ -526,7 +565,10 @@ mod tests {
         r.report_failure("iroh://a");
         r.report_failure("iroh://a");
         let d = r.route().unwrap();
-        assert_eq!((d.tier, d.endpoint_url.as_str()), (RouteTier::Lan, "lan://b"));
+        assert_eq!(
+            (d.tier, d.endpoint_url.as_str()),
+            (RouteTier::Lan, "lan://b")
+        );
         // 健康快照: P2P 熔断中
         let snap = r.health_snapshot();
         assert!(snap.iter().any(|(u, _, open, _)| u == "iroh://a" && *open));
@@ -542,7 +584,7 @@ mod tests {
         );
         r.report_failure("iroh://a");
         r.report_failure("iroh://a"); // 熔断打开 @ t=1000
-        // 冷却期内: 不可用（全熔断 → fallback probe 标记）
+                                      // 冷却期内: 不可用（全熔断 → fallback probe 标记）
         let d1 = r.route().unwrap();
         assert_eq!(d1.reason, "all-open-fallback-probe");
         // 推进 11s（> cooldown 10s）→ 半开探测可用
@@ -575,14 +617,20 @@ mod tests {
             r.report_failure("lan://b");
         }
         let d = r.route().unwrap();
-        assert_eq!((d.tier, d.endpoint_url.as_str()), (RouteTier::Cloud, "cloud://c"));
+        assert_eq!(
+            (d.tier, d.endpoint_url.as_str()),
+            (RouteTier::Cloud, "cloud://c")
+        );
     }
 
     // ═══ DST 场景 6: EMA RTT 平滑（成本感知基础） ═══
     #[test]
     fn dst_ema_rtt_smooths() {
         let clock = Arc::new(FakeClock::new(1000));
-        let r = router(vec![entry(RouteTier::P2p, "iroh://a", PrivacyLevel::E2eeOnly)], &clock);
+        let r = router(
+            vec![entry(RouteTier::P2p, "iroh://a", PrivacyLevel::E2eeOnly)],
+            &clock,
+        );
         // alpha=0.3: (0→100) → 100; (100→200) → 100*0.7+200*0.3=130
         r.report_success("iroh://a", 100.0);
         r.report_success("iroh://a", 200.0);
@@ -602,12 +650,14 @@ mod tests {
             &clock,
         );
         // 挂接真实执行目标（可连接的 mock）
-        r.attach("iroh://a", SharedTarget::wrap(OkTarget { clock: Some(clock.clone()) }));
+        r.attach(
+            "iroh://a",
+            SharedTarget::wrap(OkTarget {
+                clock: Some(clock.clone()),
+            }),
+        );
 
-        let (decision, report) = r
-            .sync_via_route(&["doc1".to_string()])
-            .await
-            .unwrap();
+        let (decision, report) = r.sync_via_route(&["doc1".to_string()]).await.unwrap();
         assert_eq!(decision.endpoint_url, "iroh://a");
         assert_eq!(report.sent_ops, 1);
 
@@ -617,13 +667,9 @@ mod tests {
     }
 
     /// 可成功连接的 mock target（connect 时推进虚拟时钟 50ms = 确定性耗时）。
+    #[derive(Default)]
     struct OkTarget {
         clock: Option<Arc<FakeClock>>,
-    }
-    impl Default for OkTarget {
-        fn default() -> Self {
-            Self { clock: None }
-        }
     }
     #[async_trait]
     impl SyncTarget for OkTarget {
@@ -633,7 +679,10 @@ mod tests {
             }
             Ok(Connection {
                 id: "c-ok".into(),
-                endpoint: Endpoint { url: "ok".into(), protocol: SyncProtocol::Iroh },
+                endpoint: Endpoint {
+                    url: "ok".into(),
+                    protocol: SyncProtocol::Iroh,
+                },
             })
         }
         async fn sync(
@@ -665,7 +714,11 @@ mod tests {
         async fn connect(&mut self, _ep: &Endpoint) -> Result<Connection, aurora_core::Error> {
             Err(aurora_core::Error::Network("inject: connect failed".into()))
         }
-        async fn sync(&self, _c: &Connection, _d: &DocSet) -> Result<SyncReport, aurora_core::Error> {
+        async fn sync(
+            &self,
+            _c: &Connection,
+            _d: &DocSet,
+        ) -> Result<SyncReport, aurora_core::Error> {
             unreachable!()
         }
         fn watch(&self, _cb: Box<dyn Fn(SyncEvent) + Send + Sync>) {}
@@ -685,7 +738,7 @@ mod tests {
             ],
             &clock,
         );
-        r.attach("iroh://a", SharedTarget::wrap(FailTarget::default()));
+        r.attach("iroh://a", SharedTarget::wrap(FailTarget));
         r.attach("lan://b", SharedTarget::wrap(OkTarget::default()));
 
         // 第一次: P2P 失败（connect 注入失败）
@@ -708,10 +761,20 @@ mod tests {
     #[tokio::test]
     async fn t3_sync_without_transport_fails_loudly() {
         let target = aurora_core::l1_infrastructure::p2p::IrohSyncTarget::new();
-        let ep = Endpoint { url: "iroh://x".into(), protocol: SyncProtocol::Iroh };
+        let ep = Endpoint {
+            url: "iroh://x".into(),
+            protocol: SyncProtocol::Iroh,
+        };
         let mut t = target;
         let conn = t.connect(&ep).await.unwrap();
-        let report = t.sync(&conn, &DocSet { doc_ids: vec!["d".into()] }).await;
+        let report = t
+            .sync(
+                &conn,
+                &DocSet {
+                    doc_ids: vec!["d".into()],
+                },
+            )
+            .await;
         let err = report.unwrap_err().to_string();
         assert!(err.contains("fails loudly"), "必须大声失败: {err}");
     }
@@ -744,9 +807,20 @@ mod tests {
             }),
         }));
 
-        let ep = Endpoint { url: "iroh://y".into(), protocol: SyncProtocol::Iroh };
+        let ep = Endpoint {
+            url: "iroh://y".into(),
+            protocol: SyncProtocol::Iroh,
+        };
         let conn = target.connect(&ep).await.unwrap();
-        let report = target.sync(&conn, &DocSet { doc_ids: vec!["d1".into()] }).await.unwrap();
+        let report = target
+            .sync(
+                &conn,
+                &DocSet {
+                    doc_ids: vec!["d1".into()],
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(report.sent_ops, 1, "本地 oplog 推送 1");
         assert_eq!(report.received_ops, 1, "对端增量合并 1");
         assert_eq!(merged.load(Ordering::SeqCst), 1);
@@ -791,7 +865,10 @@ mod tests {
     #[tokio::test]
     async fn exec_shared_target_concurrent_safety() {
         let shared = SharedTarget::wrap(OkTarget::default());
-        let ep = Endpoint { url: "u".into(), protocol: SyncProtocol::Iroh };
+        let ep = Endpoint {
+            url: "u".into(),
+            protocol: SyncProtocol::Iroh,
+        };
         // 并发 8 个 connect_and_sync — 无死锁无竞态（锁序列化）
         let mut handles = Vec::new();
         for _ in 0..8 {

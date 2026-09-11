@@ -147,21 +147,20 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
     // 句柄 + dedicated blocking thread。
     let kv_for_source = kv_store.clone();
     let search_projection: Arc<aurora_core::l2_engines::search_projection::SearchIndexProjection> =
-        Arc::new(aurora_core::l2_engines::search_projection::SearchIndexProjection::new(
-            search.clone(),
-            kv_store.clone(),
-            Box::new(move || {
-                // 数据源回调（同步签名）: 经独立线程 + 轻量 runtime 驱动 async kv 扫描。
-                // 重建为低频操作（verify 失败/手动），线程开销可接受。
-                let kv = kv_for_source.clone();
-                std::thread::scope(|s| {
-                    s.spawn(move || {
+        Arc::new(
+            aurora_core::l2_engines::search_projection::SearchIndexProjection::new(
+                search.clone(),
+                kv_store.clone(),
+                Box::new(move || {
+                    // 数据源回调（同步签名）: 经独立线程 + 轻量 runtime 驱动 async kv 扫描。
+                    // 重建为低频操作（verify 失败/手动），线程开销可接受。
+                    let kv = kv_for_source.clone();
+                    std::thread::scope(|s| {
+                        s.spawn(move || {
                         tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
-                            .ok()
-                            .and_then(|rt| {
-                                Some(rt.block_on(async {
+                            .ok().map(|rt| rt.block_on(async {
                                     let pairs = kv.scan_prefix("note:").await.unwrap_or_default();
                                     pairs
                                         .iter()
@@ -191,20 +190,20 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
                                         })
                                         .collect::<Vec<_>>()
                                 }))
-                            })
                             .unwrap_or_default()
                     })
                     .join()
                     .unwrap_or_default()
-                })
-            }),
-        ));
+                    })
+                }),
+            ),
+        );
 
     // V20 Phase 2: 双链投影接 SQLite links 表 — 事件驱动双写
     // （内存投影 + links 表持久化），跨进程可用; 数据源读表（rebuild）。
-    let links_conn = rusqlite::Connection::open(&db_path)
+    let links_conn = rusqlite::Connection::open(db_path)
         .map_err(|e| BootstrapError::Core(format!("links connection: {e}")))?;
-    let db_path_for_links = db_path.clone();
+    let db_path_for_links = db_path;
     let bidi_link_projection: Arc<
         aurora_core::l2_engines::bidi_link_projection::BidiLinkProjection,
     > = Arc::new(
@@ -214,9 +213,7 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
         ),
     );
     // 启动期: 从 links 表重建内存投影（跨进程恢复）
-    for row in aurora_core::l2_engines::bidi_link_projection::links_from_sqlite(
-        &db_path_for_links,
-    ) {
+    for row in aurora_core::l2_engines::bidi_link_projection::links_from_sqlite(db_path_for_links) {
         bidi_link_projection.apply_link(
             &row.source_note_id,
             &row.target_note_id,
@@ -230,8 +227,8 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
     // TodayView 有内容 + verify 数量一致性闭环; 任务容器结构化数据
     // 接入 FFI 事件后由存储层提供全量行）。
     let kv_for_tasks = kv_store.clone();
-    let task_projection: Arc<aurora_core::l2_engines::task_projection::TaskProjection> =
-        Arc::new(aurora_core::l2_engines::task_projection::TaskProjection::new(
+    let task_projection: Arc<aurora_core::l2_engines::task_projection::TaskProjection> = Arc::new(
+        aurora_core::l2_engines::task_projection::TaskProjection::new(
             kv_store.clone(),
             Box::new(move || {
                 let kv = kv_for_tasks.clone();
@@ -240,9 +237,7 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
                         tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
-                            .ok()
-                            .and_then(|rt| {
-                                Some(rt.block_on(async {
+                            .ok().map(|rt| rt.block_on(async {
                                     let pairs = kv.scan_prefix("note:").await.unwrap_or_default();
                                     pairs
                                         .iter()
@@ -259,14 +254,14 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
                                         })
                                         .collect::<Vec<_>>()
                                 }))
-                            })
                             .unwrap_or_default()
                     })
                     .join()
                     .unwrap_or_default()
                 })
             }),
-        ));
+        ),
+    );
 
     Ok(AppCoreBuilder::new()
         .kv_store(kv_store)
@@ -305,19 +300,22 @@ mod tests {
         {
             let app = bootstrap(dir.path()).unwrap();
             app.core.startup().unwrap();
-            app.core.event_bus.publish(
-                aurora_core::event_bus::layered::AppEvent::NoteCreated {
+            app.core
+                .event_bus
+                .publish(aurora_core::event_bus::layered::AppEvent::NoteCreated {
                     note_id: "n1".into(),
                     title: "架构投影验证".into(),
                     content: "V20 Phase 1".into(),
-                },
-            );
+                });
             app.core.catch_up_projections().await.unwrap();
 
             let hits = app
                 .core
                 .search
-                .search("架构", &aurora_core::traits::search_backend::SearchOptions::default())
+                .search(
+                    "架构",
+                    &aurora_core::traits::search_backend::SearchOptions::default(),
+                )
                 .await
                 .unwrap();
             assert_eq!(hits.hits.len(), 1, "中文事件应已投影到索引（jieba）");
@@ -327,20 +325,23 @@ mod tests {
         {
             let app2 = bootstrap(dir.path()).unwrap();
             app2.core.startup().unwrap(); // restore_seq + replay
-            app2.core.event_bus.publish(
-                aurora_core::event_bus::layered::AppEvent::NoteCreated {
+            app2.core
+                .event_bus
+                .publish(aurora_core::event_bus::layered::AppEvent::NoteCreated {
                     note_id: "n2".into(),
                     title: "重启后新增笔记".into(),
                     content: String::new(),
-                },
-            );
+                });
             app2.core.catch_up_projections().await.unwrap();
 
             // 分开查询两篇（空查询在 QueryParser 下不可靠）
             let old = app2
                 .core
                 .search
-                .search("架构", &aurora_core::traits::search_backend::SearchOptions::default())
+                .search(
+                    "架构",
+                    &aurora_core::traits::search_backend::SearchOptions::default(),
+                )
                 .await
                 .unwrap();
             let ids: Vec<&str> = old.hits.iter().map(|h| h.note_id.as_str()).collect();
@@ -349,7 +350,10 @@ mod tests {
             let new = app2
                 .core
                 .search
-                .search("重启", &aurora_core::traits::search_backend::SearchOptions::default())
+                .search(
+                    "重启",
+                    &aurora_core::traits::search_backend::SearchOptions::default(),
+                )
                 .await
                 .unwrap();
             let ids2: Vec<&str> = new.hits.iter().map(|h| h.note_id.as_str()).collect();

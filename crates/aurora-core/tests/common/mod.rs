@@ -9,6 +9,9 @@
 //! dependency-light: it relies only on types already exported by `aurora_core`
 //! plus `proptest` strategies for generation.
 
+// 各测试文件按需引用本模块的子集 — 未引用项是共享库的常态, 模块级豁免
+#![allow(dead_code)]
+
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -236,6 +239,4 @@ impl Default for MockSyncBus {
 }
 
 /// Convenience re-exports so test files can `use common::prelude::*;`.
-pub mod prelude {
-    pub use super::{make_document, make_heading_block, make_text_block, MockStorage, MockSyncBus};
-}
+pub mod prelude {}

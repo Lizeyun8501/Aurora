@@ -698,7 +698,7 @@ mod tests {
         let h1 = PerceptualHash::from_grayscale_8x8(&p1);
         let h2 = PerceptualHash::from_grayscale_8x8(&p2);
         let sim = h1.similarity(&h2);
-        assert!(sim >= 0.0 && sim <= 1.0);
+        assert!((0.0..=1.0).contains(&sim));
         // 梯度方向相反 → 64 位全部不同 → 相似度 0
         assert!(sim < 0.6);
     }
@@ -742,8 +742,8 @@ mod tests {
     fn test_duplicate_detector_perceptual() {
         // 梯度图 + 微小扰动（翻转阈值附近 1 个像素）→ 仅 1 位不同
         let mut p1 = [0u8; 64];
-        for i in 0..64 {
-            p1[i] = (i * 4) as u8;
+        for (i, v) in p1.iter_mut().enumerate() {
+            *v = (i * 4) as u8;
         }
         let mut p2 = p1;
         // p1[32] = 128，avg ≈ 126 → bit 32 原本为 1；改为 100 使其低于 avg

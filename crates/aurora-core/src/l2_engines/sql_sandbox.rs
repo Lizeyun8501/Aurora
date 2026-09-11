@@ -42,13 +42,7 @@ pub enum SandboxError {
 }
 
 /// 业务只读表白名单（小写）。
-const ALLOWED_TABLES: &[&str] = &[
-    "notes",
-    "tasks",
-    "links",
-    "notes_fts",
-    "version_snapshots",
-];
+const ALLOWED_TABLES: &[&str] = &["notes", "tasks", "links", "notes_fts", "version_snapshots"];
 
 /// 含 workspace_id 列、需行级过滤的表（白名单子集）。
 const WORKSPACE_TABLES: &[&str] = &["notes", "notes_fts", "version_snapshots"];
@@ -249,7 +243,10 @@ mod tests {
         ] {
             let r = SqlSandbox::validate(sql);
             assert!(
-                matches!(r, Err(SandboxError::NotSelect) | Err(SandboxError::Parse(_))),
+                matches!(
+                    r,
+                    Err(SandboxError::NotSelect) | Err(SandboxError::Parse(_))
+                ),
                 "{sql} → {r:?}"
             );
         }
@@ -276,9 +273,15 @@ mod tests {
     #[test]
     fn rejects_unknown_tables() {
         let r = SqlSandbox::validate("SELECT name FROM sqlite_master");
-        assert!(matches!(r, Err(SandboxError::TableNotAllowed { .. })), "{r:?}");
+        assert!(
+            matches!(r, Err(SandboxError::TableNotAllowed { .. })),
+            "{r:?}"
+        );
         let r2 = SqlSandbox::validate("SELECT * FROM users");
-        assert!(matches!(r2, Err(SandboxError::TableNotAllowed { .. })), "{r2:?}");
+        assert!(
+            matches!(r2, Err(SandboxError::TableNotAllowed { .. })),
+            "{r2:?}"
+        );
     }
 
     /// workspace 行级过滤缺失 → 拒（含 JOIN / 子查询传播）。

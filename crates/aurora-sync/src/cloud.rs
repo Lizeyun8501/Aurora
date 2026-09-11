@@ -252,8 +252,10 @@ mod tests {
 
     #[test]
     fn test_cloud_batch_too_large_rejected() {
-        let mut cfg = CloudConfig::default();
-        cfg.max_batch_bytes = 8;
+        let cfg = CloudConfig {
+            max_batch_bytes: 8,
+            ..Default::default()
+        };
         let engine = CloudSyncEngine::new(cfg);
         let batch = SyncBatch::new("doc1", vec![0u8; 16]);
         let result = engine.upload_batch(batch);
@@ -305,8 +307,10 @@ mod tests {
 
     #[test]
     fn test_cloud_push_notification_disabled() {
-        let mut cfg = CloudConfig::default();
-        cfg.realtime_push = false;
+        let cfg = CloudConfig {
+            realtime_push: false,
+            ..Default::default()
+        };
         let engine = CloudSyncEngine::new(cfg);
         // realtime_push 关闭时应快速返回 Ok
         engine.push_notification("doc1", "b1").expect("no push");

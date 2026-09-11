@@ -123,9 +123,17 @@ mod tests {
     fn registry_shape_frozen() {
         let tools = tool_registry();
         assert_eq!(tools.len(), 4);
-        assert!(tools.iter().all(|t| t.perm == McpPerm::L1), "一期全只读（铁律 11）");
+        assert!(
+            tools.iter().all(|t| t.perm == McpPerm::L1),
+            "一期全只读（铁律 11）"
+        );
         for t in &tools {
-            assert_eq!(t.input_schema["type"], "object", "{name} schema 须 object", name = t.name);
+            assert_eq!(
+                t.input_schema["type"],
+                "object",
+                "{name} schema 须 object",
+                name = t.name
+            );
             assert!(!t.appcore_route.is_empty());
         }
         // 名称路由一一对应
@@ -152,8 +160,14 @@ mod tests {
         }
         // agent_context 的 selected_block 允许 null（可选块选择）
         let agent = arr.iter().find(|t| t["name"] == "agent_context").unwrap();
-        assert_eq!(agent["inputSchema"]["properties"]["selected_block"]["type"][0], "string");
-        assert_eq!(agent["inputSchema"]["properties"]["selected_block"]["type"][1], "null");
+        assert_eq!(
+            agent["inputSchema"]["properties"]["selected_block"]["type"][0],
+            "string"
+        );
+        assert_eq!(
+            agent["inputSchema"]["properties"]["selected_block"]["type"][1],
+            "null"
+        );
     }
 
     /// schema 冻结纪律: required 字段不可消失（追加可选字段合法）。
@@ -161,8 +175,14 @@ mod tests {
     fn schema_required_fields_present() {
         let tools = tool_registry();
         let search = tools.iter().find(|t| t.name == "search_notes").unwrap();
-        assert_eq!(search.input_schema["required"], serde_json::json!(["query"]));
+        assert_eq!(
+            search.input_schema["required"],
+            serde_json::json!(["query"])
+        );
         let read = tools.iter().find(|t| t.name == "read_note").unwrap();
-        assert_eq!(read.input_schema["required"], serde_json::json!(["note_id"]));
+        assert_eq!(
+            read.input_schema["required"],
+            serde_json::json!(["note_id"])
+        );
     }
 }

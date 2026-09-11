@@ -162,6 +162,7 @@ impl AppCore {
     /// 启动时恢复流程（V19 ARCH-003）：
     /// 1. 重放未消费的 Medium 通道事件
     /// 2. 日志记录启动信息
+    ///
     /// 投影增量追赶（V20 §4.5）— 启动时把全部注册投影从各自水位线
     /// 追赶到最新。幂等；verify 失败的投影自动全量重建（自愈）。
     ///
@@ -185,10 +186,9 @@ impl AppCore {
     /// 未注册任务投影时返回 (0, 0)。
     pub fn task_projection_stats(&self) -> (usize, usize) {
         for p in &self.projections {
-            if let Some(tp) = p
-                .as_any()
-                .and_then(|a| a.downcast_ref::<crate::l2_engines::task_projection::TaskProjection>())
-            {
+            if let Some(tp) = p.as_any().and_then(|a| {
+                a.downcast_ref::<crate::l2_engines::task_projection::TaskProjection>()
+            }) {
                 return tp.stats();
             }
         }
@@ -198,10 +198,9 @@ impl AppCore {
     /// 双链反向查询（target 的入链 — 反链面板）。
     pub fn bidi_link_incoming(&self, target_note_id: &str) -> Vec<String> {
         for p in &self.projections {
-            if let Some(bp) = p
-                .as_any()
-                .and_then(|a| a.downcast_ref::<crate::l2_engines::bidi_link_projection::BidiLinkProjection>())
-            {
+            if let Some(bp) = p.as_any().and_then(|a| {
+                a.downcast_ref::<crate::l2_engines::bidi_link_projection::BidiLinkProjection>()
+            }) {
                 return bp.incoming(target_note_id);
             }
         }
@@ -220,18 +219,23 @@ impl AppCore {
         selected_block: Option<&str>,
     ) -> Result<serde_json::Value, crate::Error> {
         let kv = self.kv_store.clone();
-        let (title, content, updated_at) = match kv
-            .get(&format!("note:{}", note_id))
-            .await
-            .map_err(crate::Error::from)?
-        {
+        let (title, content, updated_at) = match kv.get(&format!("note:{}", note_id)).await? {
             Some(bytes) => {
-                let v: serde_json::Value = serde_json::from_slice(&bytes)
-                    .map_err(|e| crate::Error::Serialization(e))?;
+                let v: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(crate::Error::Serialization)?;
                 (
-                    v.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-                    v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string(),
-                    v.get("updated_at").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+                    v.get("title")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    v.get("content")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    v.get("updated_at")
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                 )
             }
             None => {
@@ -267,10 +271,9 @@ impl AppCore {
 
     pub fn bidi_link_outgoing(&self, source_note_id: &str) -> Vec<String> {
         for p in &self.projections {
-            if let Some(bp) = p
-                .as_any()
-                .and_then(|a| a.downcast_ref::<crate::l2_engines::bidi_link_projection::BidiLinkProjection>())
-            {
+            if let Some(bp) = p.as_any().and_then(|a| {
+                a.downcast_ref::<crate::l2_engines::bidi_link_projection::BidiLinkProjection>()
+            }) {
                 return bp.outgoing(source_note_id);
             }
         }
@@ -280,10 +283,9 @@ impl AppCore {
     /// 任务投影今日到期数（含逾期）。
     pub fn task_projection_due_today(&self) -> usize {
         for p in &self.projections {
-            if let Some(tp) = p
-                .as_any()
-                .and_then(|a| a.downcast_ref::<crate::l2_engines::task_projection::TaskProjection>())
-            {
+            if let Some(tp) = p.as_any().and_then(|a| {
+                a.downcast_ref::<crate::l2_engines::task_projection::TaskProjection>()
+            }) {
                 let now_ms = chrono::Utc::now().timestamp_millis();
                 return tp.today(now_ms).len();
             }

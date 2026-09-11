@@ -28,7 +28,9 @@ pub struct TimeMachine {
 
 impl TimeMachine {
     pub fn new(conn: Connection) -> Self {
-        Self { conn: std::sync::Mutex::new(conn) }
+        Self {
+            conn: std::sync::Mutex::new(conn),
+        }
     }
 
     /// 写入快照（version = 该 note 现存最大版本 + 1; 超限裁剪最旧）。
@@ -47,18 +49,13 @@ impl TimeMachine {
         conn.execute(
             "INSERT INTO version_snapshots (note_id, snapshot_data, version, created_at)
              VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![
-                note_id,
-                data,
-                next,
-                chrono::Utc::now().to_rfc3339()
-            ],
+            rusqlite::params![note_id, data, next, chrono::Utc::now().to_rfc3339()],
         )
         .map_err(|e| crate::Error::Database(e.to_string()))?;
         // 治理: 超限删最旧
         conn.execute(
             "DELETE FROM version_snapshots WHERE note_id = ?1 AND version <= ?2",
-            rusqlite::params![note_id, next as i64 - MAX_SNAPSHOTS_PER_NOTE as i64],
+            rusqlite::params![note_id, next - MAX_SNAPSHOTS_PER_NOTE as i64],
         )
         .map_err(|e| crate::Error::Database(e.to_string()))?;
         Ok(next)
@@ -158,7 +155,7 @@ mod tests {
         assert!(oldest.is_none());
         let kept = tm.load("n1", 6).unwrap().unwrap();
         assert_eq!(kept, b"v5"); // 第 6 次写入的内容是 v5（i 从 0 计）
-        // 其他 note 不受影响
+                                 // 其他 note 不受影响
         tm.save("n2", b"x").unwrap();
         assert_eq!(tm.list("n2").unwrap().len(), 1);
     }

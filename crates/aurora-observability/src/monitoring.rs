@@ -13,6 +13,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// 本地通知回调。
+type LocalNotifierFn = Box<dyn Fn(LocalNotification) + Send + Sync>;
+/// 聚合分组: (严重度, 次数, 首次, 最近, 关联告警 id)。
+type AlertGroup = (
+    AlertSeverity,
+    u64,
+    DateTime<Utc>,
+    DateTime<Utc>,
+    Vec<String>,
+);
+
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -531,6 +542,7 @@ pub struct LocalNotification {
 }
 
 /// Webhook 推送器：将告警序列化为 JSON 并发送（异步，tokio）。
+#[derive(Clone)] // 内部 reqwest::Client 为 Arc 共享；告警推送路径需 clone 出锁再 await
 pub struct WebhookPusher {
     config: WebhookConfig,
     client: reqwest::Client,
@@ -596,9 +608,12 @@ pub struct AlertManager {
     rules: RwLock<Vec<AlertRule>>,
     alerts: RwLock<Vec<Alert>>,
     webhook: RwLock<Option<WebhookPusher>>,
+    // (alias below) local notifier type alias declared above struct
     /// 本地通知回调（由前端设置）。
-    local_notifier: RwLock<Option<Box<dyn Fn(LocalNotification) + Send + Sync>>>,
+    local_notifier: RwLock<Option<LocalNotifierFn>>,
     /// 连续触发计数（key: rule_name, value: 连续触发次数）。
+    /// 规划功能（告警升级策略）启用前的显式豁免 — V26 DK-04 GTD 迭代接管。
+    #[allow(dead_code)]
     rule_fire_count: RwLock<HashMap<String, u64>>,
 }
 
@@ -668,53 +683,51 @@ impl AlertManager {
             let triggered = rule.evaluate(value);
 
             if triggered {
-                // 尝试更新已有告警
-                let mut guard = self.alerts.write();
-                let existing = guard.iter_mut().find(|a| {
-                    a.rule_name == rule.name
-                        && a.status != AlertStatus::Resolved
-                        && a.status != AlertStatus::Silenced
-                });
+                // 锁内更新/新建告警（guard 作用域显式限死），锁外统一推送
+                let triggered_snapshot = {
+                    let mut guard = self.alerts.write();
+                    let existing = guard.iter_mut().find(|a| {
+                        a.rule_name == rule.name
+                            && a.status != AlertStatus::Resolved
+                            && a.status != AlertStatus::Silenced
+                    });
 
-                if let Some(alert) = existing {
-                    alert.last_at = Utc::now();
-                    alert.count += 1;
-                    let snapshot = alert.clone();
-                    drop(guard);
-                    // 推送（异步）
-                    if let Some(ref wh) = *self.webhook.read() {
-                        let _ = wh.push(&snapshot).await;
+                    if let Some(alert) = existing {
+                        alert.last_at = Utc::now();
+                        alert.count += 1;
+                        Some(alert.clone())
+                    } else {
+                        // 新建告警
+                        let alert = Alert {
+                            id: Uuid::new_v4().to_string(),
+                            rule_name: rule.name.clone(),
+                            severity: rule.severity,
+                            summary: format!("{}: {value}", rule.description),
+                            description: format!(
+                                "{} {} {} (threshold: {}, current: {})",
+                                rule.metric, rule.operator, rule.threshold, rule.threshold, value
+                            ),
+                            first_at: Utc::now(),
+                            last_at: Utc::now(),
+                            count: 1,
+                            status: AlertStatus::Firing,
+                            labels: HashMap::new(),
+                        };
+                        let snapshot = alert.clone();
+                        guard.push(alert);
+                        info!(
+                            rule = %rule.name,
+                            severity = %rule.severity.label(),
+                            value,
+                            threshold = rule.threshold,
+                            "alert fired"
+                        );
+                        Some(snapshot)
                     }
-                    self.send_local_notification(&snapshot);
-                    new_alerts.push(snapshot);
-                } else {
-                    // 新建告警
-                    let alert = Alert {
-                        id: Uuid::new_v4().to_string(),
-                        rule_name: rule.name.clone(),
-                        severity: rule.severity,
-                        summary: format!("{}: {value}", rule.description),
-                        description: format!(
-                            "{} {} {} (threshold: {}, current: {})",
-                            rule.metric, rule.operator, rule.threshold, rule.threshold, value
-                        ),
-                        first_at: Utc::now(),
-                        last_at: Utc::now(),
-                        count: 1,
-                        status: AlertStatus::Firing,
-                        labels: HashMap::new(),
-                    };
-                    let snapshot = alert.clone();
-                    guard.push(alert);
-                    drop(guard);
-                    info!(
-                        rule = %rule.name,
-                        severity = %rule.severity.label(),
-                        value,
-                        threshold = rule.threshold,
-                        "alert fired"
-                    );
-                    if let Some(ref wh) = *self.webhook.read() {
+                }; // guard dropped here — 释放锁后再 await
+                if let Some(snapshot) = triggered_snapshot {
+                    let wh = self.webhook.read().as_ref().cloned();
+                    if let Some(wh) = wh {
                         let _ = wh.push(&snapshot).await;
                     }
                     self.send_local_notification(&snapshot);
@@ -737,8 +750,9 @@ impl AlertManager {
                         }
                     }
                 } // guard dropped here — 释放锁后再 await
-                // 推送已解决的告警
-                if let Some(ref wh) = *self.webhook.read() {
+                  // 推送已解决的告警
+                let wh = self.webhook.read().as_ref().cloned();
+                if let Some(wh) = wh {
                     for alert in &resolved_alerts {
                         let _ = wh.push(alert).await;
                     }
@@ -1012,16 +1026,7 @@ impl NoiseReducer {
     pub fn aggregate_summary(&self, now: DateTime<Utc>) -> Vec<AggregatedAlert> {
         let queue = self.event_queue.read();
         let cutoff = now - chrono::Duration::seconds(self.aggregation.window_secs as i64);
-        let mut groups: HashMap<
-            String,
-            (
-                AlertSeverity,
-                u64,
-                DateTime<Utc>,
-                DateTime<Utc>,
-                Vec<String>,
-            ),
-        > = HashMap::new();
+        let mut groups: HashMap<String, AlertGroup> = HashMap::new();
 
         for (t, rule) in queue.iter() {
             if *t < cutoff {
@@ -1432,7 +1437,6 @@ impl MonitorService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
 
     // ---- Health Check ----
 

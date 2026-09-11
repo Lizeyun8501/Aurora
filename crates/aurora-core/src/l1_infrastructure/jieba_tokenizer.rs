@@ -30,7 +30,9 @@ pub struct JiebaTokenizer {
 impl Default for JiebaTokenizer {
     fn default() -> Self {
         // 内置词典加载 ~几十 ms（进程首次）；后续 Clone 走 Arc
-        Self { jieba: Arc::new(Jieba::new()) }
+        Self {
+            jieba: Arc::new(Jieba::new()),
+        }
     }
 }
 
@@ -100,9 +102,11 @@ pub fn register_jieba(index: &tantivy::Index) {
 
 /// 注册 analyzer 并共享词典实例（避免查询侧二次加载 ~几十 ms）。
 pub fn register_jieba_with(index: &tantivy::Index, jieba: &Arc<Jieba>) {
-    let analyzer = TextAnalyzer::builder(JiebaTokenizer { jieba: jieba.clone() })
-        .filter(LowerCaser)
-        .build();
+    let analyzer = TextAnalyzer::builder(JiebaTokenizer {
+        jieba: jieba.clone(),
+    })
+    .filter(LowerCaser)
+    .build();
     index.tokenizers().register("jieba", analyzer);
 }
 
@@ -120,8 +124,14 @@ mod tests {
         while stream.advance() {
             words.push(stream.token().text.clone());
         }
-        assert!(words.contains(&"架构".to_string()), "「架构」应被切出: {words:?}");
-        assert!(words.contains(&"投影".to_string()), "「投影」应被切出: {words:?}");
+        assert!(
+            words.contains(&"架构".to_string()),
+            "「架构」应被切出: {words:?}"
+        );
+        assert!(
+            words.contains(&"投影".to_string()),
+            "「投影」应被切出: {words:?}"
+        );
     }
 
     #[test]

@@ -6,11 +6,11 @@ pub mod atomic_transaction; // V19 ARCH-002 原子事务恢复
 #[cfg(feature = "loro-crdt")]
 pub mod crdt; // Loro CRDT 引擎
 pub mod crypto; // 密码学
+pub mod jieba_tokenizer; // V20: 中文分词 tokenizer
 #[cfg(feature = "loro-crdt")]
 pub mod note_doc; // V19 §30.1 五容器笔记文档模型 (DEV-004)
 pub mod ocr;
 pub mod p2p; // iroh P2P 同步
-pub mod jieba_tokenizer; // V20: 中文分词 tokenizer
 pub mod search; // Tantivy 全文检索
 pub mod storage; // SQLite 存储
 pub mod storage_engine; // V20 P0-4 三步原子事务编排器（GAP-04）

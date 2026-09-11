@@ -84,10 +84,7 @@ impl TaskProjection {
             .read()
             .unwrap()
             .values()
-            .filter(|r| {
-                r.status != STATUS_DONE
-                    && r.due_date.map(|d| d <= now_ms).unwrap_or(false)
-            })
+            .filter(|r| r.status != STATUS_DONE && r.due_date.map(|d| d <= now_ms).unwrap_or(false))
             .cloned()
             .collect()
     }
@@ -136,10 +133,7 @@ impl TaskProjection {
             priority: "medium".into(),
             due_date: None,
         };
-        self.rows
-            .write()
-            .unwrap()
-            .insert(row.task_id.clone(), row);
+        self.rows.write().unwrap().insert(row.task_id.clone(), row);
     }
 
     fn note_deleted_cascade(&self, note_id: &str) {
@@ -172,9 +166,7 @@ impl Projection for TaskProjection {
 
     async fn apply(&self, event: &AppEvent) -> Result<(), crate::Error> {
         match event {
-            AppEvent::NoteCreated {
-                note_id, title, ..
-            } => self.note_created_seed(note_id, title),
+            AppEvent::NoteCreated { note_id, title, .. } => self.note_created_seed(note_id, title),
             AppEvent::NoteDeleted { note_id } => self.note_deleted_cascade(note_id),
             AppEvent::TaskStatusChanged {
                 task_id,
@@ -196,9 +188,7 @@ impl Projection for TaskProjection {
     }
 
     async fn set_watermark(&self, seq: u64) -> Result<(), crate::Error> {
-        self.kv
-            .set(WATERMARK_KEY, seq.to_string().as_bytes())
-            .await
+        self.kv.set(WATERMARK_KEY, seq.to_string().as_bytes()).await
     }
 
     async fn verify(&self) -> Result<ProjectionHealth, crate::Error> {
@@ -216,10 +206,7 @@ impl Projection for TaskProjection {
         let all = (self.source)();
         self.rows.write().unwrap().clear();
         for row in all {
-            self.rows
-                .write()
-                .unwrap()
-                .insert(row.task_id.clone(), row);
+            self.rows.write().unwrap().insert(row.task_id.clone(), row);
         }
         Ok(())
     }
@@ -265,7 +252,9 @@ mod tests {
         assert_eq!(p.by_status("inbox").len(), 1);
         assert_eq!(p.stats(), (1, 0));
 
-        bus.publish(AppEvent::NoteDeleted { note_id: "n1".into() });
+        bus.publish(AppEvent::NoteDeleted {
+            note_id: "n1".into(),
+        });
         bus.catch_up(&p).await.unwrap();
         assert_eq!(p.row_count(), 0, "笔记删除级联清任务");
     }
@@ -305,8 +294,17 @@ mod tests {
         assert_eq!(p.by_status("done").len(), 1);
         // t1 done 且 due=1000 已完成不计; t2 未到期(due=9999999 > 5000)
         // → today(5000) 应为空; today(9999999) 才含 t2
-        assert!(p.today(5_000).is_empty(), "均不满足今日条件: {:?}", p.today(5_000));
-        assert_eq!(p.today(9_999_999).len(), 1, "t2 到期截止窗口内: {:?}", p.today(9_999_999));
+        assert!(
+            p.today(5_000).is_empty(),
+            "均不满足今日条件: {:?}",
+            p.today(5_000)
+        );
+        assert_eq!(
+            p.today(9_999_999).len(),
+            1,
+            "t2 到期截止窗口内: {:?}",
+            p.today(9_999_999)
+        );
     }
 
     #[tokio::test]

@@ -11,6 +11,8 @@ use crate::traits::plugin_runtime::{PluginHandle, PluginManifest, PluginRuntime,
 
 /// 基于 Wasmtime 的 WASM 运行时实现。
 pub struct WasmtimeRuntime {
+    // V26 DK-14 插件生态迭代使用（多模块共享同一 Engine）
+    #[allow(dead_code)]
     engine: wasmtime::Engine,
     modules: Mutex<HashMap<String, wasmtime::Module>>,
     stores: Mutex<HashMap<String, wasmtime::Store<()>>>,

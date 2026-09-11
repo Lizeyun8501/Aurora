@@ -998,7 +998,7 @@ impl TraceId {
         Self(format!("{:032x}", Uuid::new_v4().as_u128()))
     }
 
-    pub fn from_str(s: impl Into<String>) -> Self {
+    pub fn from_raw(s: impl Into<String>) -> Self {
         Self(s.into())
     }
 
@@ -1023,7 +1023,7 @@ impl SpanId {
         Self(format!("{:016x}", id))
     }
 
-    pub fn from_str(s: impl Into<String>) -> Self {
+    pub fn from_raw(s: impl Into<String>) -> Self {
         Self(s.into())
     }
 

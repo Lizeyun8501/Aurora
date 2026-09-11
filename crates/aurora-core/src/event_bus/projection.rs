@@ -25,7 +25,7 @@
 
 use async_trait::async_trait;
 
-use crate::event_bus::layered::{EventQueueStore, LayeredEventBus, QueuedEvent};
+use crate::event_bus::layered::{LayeredEventBus, QueuedEvent};
 
 /// 投影健康状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,7 +121,9 @@ impl LayeredEventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event_bus::layered::{AppEvent, EventChannel, InMemoryEventQueue, QueuedEvent};
+    use crate::event_bus::layered::{
+        AppEvent, EventChannel, EventQueueStore, InMemoryEventQueue, QueuedEvent,
+    };
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
@@ -157,19 +159,14 @@ mod tests {
         async fn watermark(&self) -> Result<u64, crate::Error> {
             Ok(self.watermark.load(Ordering::SeqCst))
         }
-        async fn apply(
-            &self,
-            event: &AppEvent,
-        ) -> Result<(), crate::Error> {
+        async fn apply(&self, event: &AppEvent) -> Result<(), crate::Error> {
             let _ = event;
             self.applied.fetch_add(1, Ordering::SeqCst);
             self.watermark.fetch_max(seq_of(event), Ordering::SeqCst);
             Ok(())
         }
         async fn verify(&self) -> Result<ProjectionHealth, crate::Error> {
-            if self.applied.load(Ordering::SeqCst)
-                < self.fail_verify_until.load(Ordering::SeqCst)
-            {
+            if self.applied.load(Ordering::SeqCst) < self.fail_verify_until.load(Ordering::SeqCst) {
                 Ok(ProjectionHealth::Corrupted)
             } else {
                 Ok(ProjectionHealth::Ok)

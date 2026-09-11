@@ -133,16 +133,16 @@ impl Mnemonic {
         // Uj = HMAC-SHA512(salt, U(j-1))
         type HmacSha512 = hmac::Hmac<Sha512>;
         let mut u: Vec<u8> = {
-            let mut mac = HmacSha512::new_from_slice(salt.as_bytes())
-                .expect("HMAC accepts any key length");
+            let mut mac =
+                HmacSha512::new_from_slice(salt.as_bytes()).expect("HMAC accepts any key length");
             mac.update(&mnemonic_bytes);
             mac.update(&1u32.to_be_bytes());
             mac.finalize().into_bytes().to_vec()
         };
         let mut dk = u.clone();
         for _ in 1..2048 {
-            let mut mac = HmacSha512::new_from_slice(salt.as_bytes())
-                .expect("HMAC accepts any key length");
+            let mut mac =
+                HmacSha512::new_from_slice(salt.as_bytes()).expect("HMAC accepts any key length");
             mac.update(&u);
             u = mac.finalize().into_bytes().to_vec();
             for (d, u_byte) in dk.iter_mut().zip(u.iter()) {
@@ -192,8 +192,8 @@ fn entropy_to_indices(entropy: &[u8; ENTROPY_LEN], checksum: u8) -> [u16; MNEMON
 /// 24 个 11-bit 索引 → 33 字节（熵 + 校验和）
 fn indices_to_bytes(indices: &[u16; MNEMONIC_WORDS]) -> [u8; ENTROPY_PLUS_CHECKSUM] {
     let mut buf = [0u8; ENTROPY_PLUS_CHECKSUM];
-    for i in 0..MNEMONIC_WORDS {
-        write_bits(&mut buf, i * 11, 11, indices[i] as u32);
+    for (i, idx) in indices.iter().enumerate() {
+        write_bits(&mut buf, i * 11, 11, *idx as u32);
     }
     buf
 }
@@ -495,7 +495,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(s: &str) -> Result<Vec<u8>, Error> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(Error::Recovery("invalid hex length".into()));
     }
     let mut out = Vec::with_capacity(s.len() / 2);
@@ -761,7 +761,7 @@ mod tests {
         let e2 = qr2.encode().unwrap();
 
         let d0 = DeviceAuthorizationQr::decode(&e0).unwrap();
-        let d1 = DeviceAuthorizationQr::decode(&e1).unwrap();
+        let _d1 = DeviceAuthorizationQr::decode(&e1).unwrap();
         let d2 = DeviceAuthorizationQr::decode(&e2).unwrap();
 
         // 用解码后的两份份额重建秘密

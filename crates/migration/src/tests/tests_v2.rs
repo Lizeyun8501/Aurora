@@ -32,24 +32,28 @@ fn v2_notes_columns_present() {
     }
 }
 
-/// 版本号: 全新库直达当前版本（V3 — audit 哈希链列）。
+/// 版本号: 全新库直达当前版本（V4 — blocks 块级双轨; audit 哈希链列自 V3 起保留）。
 #[test]
-fn v2_schema_version_is_2() {
+fn v4_schema_version_is_current() {
     let mgr = MigrationManager::new_in_memory().unwrap();
     mgr.migrate().unwrap();
-    assert_eq!(CURRENT_SCHEMA_VERSION, 3);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 4);
     // V3: audit_log 必须带 prev_hash / hash 列（T12 哈希链）
     let conn = mgr.into_inner().unwrap();
-    let mut stmt = conn
-        .prepare("PRAGMA table_info(audit_log)")
-        .unwrap();
+    let mut stmt = conn.prepare("PRAGMA table_info(audit_log)").unwrap();
     let cols: Vec<String> = stmt
         .query_map([], |r| r.get::<_, String>(1))
         .unwrap()
         .filter_map(|c| c.ok())
         .collect();
-    assert!(cols.iter().any(|c| c == "prev_hash"), "audit_log 缺 prev_hash: {cols:?}");
-    assert!(cols.iter().any(|c| c == "hash"), "audit_log 缺 hash: {cols:?}");
+    assert!(
+        cols.iter().any(|c| c == "prev_hash"),
+        "audit_log 缺 prev_hash: {cols:?}"
+    );
+    assert!(
+        cols.iter().any(|c| c == "hash"),
+        "audit_log 缺 hash: {cols:?}"
+    );
 }
 
 /// 默认值: 新插入行自动获得 V19 字段默认值。

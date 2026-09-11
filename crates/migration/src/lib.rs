@@ -152,10 +152,10 @@ impl MigrationManager {
             let mut stmt = tx
                 .prepare("PRAGMA table_info(audit_log)")
                 .map_err(|e| MigrationError::Exec(e.to_string()))?;
-            let mut rows = stmt
+            let rows = stmt
                 .query_map([], |r| r.get::<_, String>(1))
                 .map_err(|e| MigrationError::Exec(e.to_string()))?;
-            while let Some(col) = rows.next() {
+            for col in rows {
                 if col.map(|c| c == name).unwrap_or(false) {
                     return Ok(true);
                 }

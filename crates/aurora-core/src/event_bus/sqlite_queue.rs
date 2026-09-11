@@ -124,6 +124,8 @@ impl SqliteEventQueue {
         Ok(())
     }
 
+    // V26 DK-01 投影水位线规划 API — 上线前显式豁免 dead_code
+    #[allow(dead_code)]
     fn enqueue_idempotent(&self, record: &QueuedEvent) -> Result<bool, crate::Error> {
         let conn = self
             .conn
@@ -133,6 +135,7 @@ impl SqliteEventQueue {
         Ok(inserted > 0)
     }
 
+    #[allow(dead_code)] // V26 DK-01 投影水位线规划 API
     fn watermark(&self, projection: &str) -> Result<u64, crate::Error> {
         let conn = self
             .conn
@@ -152,6 +155,7 @@ impl SqliteEventQueue {
         Ok(v.map(|x| x as u64).unwrap_or(0))
     }
 
+    #[allow(dead_code)] // V26 DK-01 投影水位线规划 API
     fn set_watermark(&self, projection: &str, seq: u64) -> Result<(), crate::Error> {
         let conn = self
             .conn
@@ -239,7 +243,12 @@ impl EventQueueStore for SqliteEventQueue {
                 let channel_str: String = row.get(1)?;
                 let event_type: String = row.get(2)?;
                 let payload: String = row.get(3)?;
-                Ok(QueuedEvent::legacy(seq as u64, Self::str_to_channel(&channel_str), event_type, payload))
+                Ok(QueuedEvent::legacy(
+                    seq as u64,
+                    Self::str_to_channel(&channel_str),
+                    event_type,
+                    payload,
+                ))
             })
             .map_err(|e| crate::Error::Database(format!("events_after query: {}", e)))?;
         let mut out = Vec::new();
@@ -267,7 +276,12 @@ impl EventQueueStore for SqliteEventQueue {
                 let channel_str: String = row.get(1)?;
                 let event_type: String = row.get(2)?;
                 let payload: String = row.get(3)?;
-                Ok(QueuedEvent::legacy(seq as u64, Self::str_to_channel(&channel_str), event_type, payload))
+                Ok(QueuedEvent::legacy(
+                    seq as u64,
+                    Self::str_to_channel(&channel_str),
+                    event_type,
+                    payload,
+                ))
             })
             .map_err(|e| crate::Error::Database(format!("sqlite queue query failed: {}", e)))?;
         let mut result = Vec::new();

@@ -30,7 +30,10 @@ pub fn split_markdown_blocks(content: &str) -> Vec<RawBlock> {
 
     let flush_para = |para: &mut String, out: &mut Vec<RawBlock>| {
         if !para.trim().is_empty() {
-            out.push(RawBlock { block_type: "text", content: std::mem::take(para) });
+            out.push(RawBlock {
+                block_type: "text",
+                content: std::mem::take(para),
+            });
         }
     };
 
@@ -48,7 +51,10 @@ pub fn split_markdown_blocks(content: &str) -> Vec<RawBlock> {
                 }
                 in_code = false;
             } else {
-                out.push(RawBlock { block_type: "code", content: line.to_string() });
+                out.push(RawBlock {
+                    block_type: "code",
+                    content: line.to_string(),
+                });
                 in_code = true;
             }
             continue;
@@ -64,13 +70,25 @@ pub fn split_markdown_blocks(content: &str) -> Vec<RawBlock> {
         }
         if is_heading(trimmed) {
             flush_para(&mut para, &mut out);
-            out.push(RawBlock { block_type: "heading", content: line.to_string() });
-        } else if trimmed.starts_with("- [ ] ") || trimmed.starts_with("- [x] ") || trimmed.starts_with("- [X] ") {
+            out.push(RawBlock {
+                block_type: "heading",
+                content: line.to_string(),
+            });
+        } else if trimmed.starts_with("- [ ] ")
+            || trimmed.starts_with("- [x] ")
+            || trimmed.starts_with("- [X] ")
+        {
             flush_para(&mut para, &mut out);
-            out.push(RawBlock { block_type: "task", content: line.to_string() });
+            out.push(RawBlock {
+                block_type: "task",
+                content: line.to_string(),
+            });
         } else if trimmed.starts_with('>') {
             flush_para(&mut para, &mut out);
-            out.push(RawBlock { block_type: "quote", content: line.to_string() });
+            out.push(RawBlock {
+                block_type: "quote",
+                content: line.to_string(),
+            });
         } else if trimmed.is_empty() {
             flush_para(&mut para, &mut out);
         } else {
@@ -89,7 +107,7 @@ pub fn split_markdown_blocks(content: &str) -> Vec<RawBlock> {
 
 fn is_heading(line: &str) -> bool {
     let hashes = line.chars().take_while(|c| *c == '#').count();
-    hashes >= 1 && hashes <= 6 && line[hashes..].starts_with(' ')
+    (1..=6).contains(&hashes) && line[hashes..].starts_with(' ')
 }
 
 /// 块记录（对应 blocks 表）。
@@ -110,7 +128,9 @@ pub struct BlockStore {
 
 impl BlockStore {
     pub fn new(conn: Connection) -> Self {
-        Self { conn: std::sync::Mutex::new(conn) }
+        Self {
+            conn: std::sync::Mutex::new(conn),
+        }
     }
 
     /// 同步一篇笔记的块集（幂等：软删旧块 + 插入新块集）。
@@ -144,7 +164,7 @@ impl BlockStore {
                     workspace_id,
                     b.block_type,
                     serde_json::to_string(&b.content)
-                        .map_err(|e| crate::Error::Serialization(e))?,
+                        .map_err(crate::Error::Serialization)?,
                     (idx as f64) * 100.0,
                     now,
                 ],

@@ -20,7 +20,9 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use aurora_core::traits::plugin_runtime::{PluginHandle, PluginManifest, PluginRuntime, RuntimeType};
+use aurora_core::traits::plugin_runtime::{
+    PluginHandle, PluginManifest, PluginRuntime, RuntimeType,
+};
 
 use crate::iframe_runtime::IframeRuntime;
 use crate::permission::{Permission, PermissionEngine};
@@ -268,12 +270,15 @@ impl PluginManager {
         match mode {
             PluginMode::Wasm => self.wasm_runtime.register(id.clone(), caps),
             PluginMode::Iframe => {
-                self.iframe_runtime.register(id.clone(), &plugin.manifest.entry);
+                self.iframe_runtime
+                    .register(id.clone(), &plugin.manifest.entry);
             }
         }
         // 预授予清单声明的权限
         for perm in &plugin.permissions {
-            let _ = self.permission_engine.grant(&id, perm.clone(), Some("manifest".into()));
+            let _ = self
+                .permission_engine
+                .grant(&id, perm.clone(), Some("manifest".into()));
         }
         info!("plugin registered: {} ({:?})", id, mode);
         self.plugins.write().insert(id, plugin);
@@ -456,7 +461,10 @@ impl PluginManager {
 
 #[async_trait]
 impl PluginRuntime for PluginManager {
-    async fn load(&mut self, manifest: &PluginManifest) -> Result<PluginHandle, aurora_core::Error> {
+    async fn load(
+        &mut self,
+        manifest: &PluginManifest,
+    ) -> Result<PluginHandle, aurora_core::Error> {
         let mode = PluginMode::from(manifest.runtime.clone());
         let plugin = Plugin::new(manifest.clone(), mode);
         let handle = PluginHandle {
@@ -478,17 +486,20 @@ impl PluginRuntime for PluginManager {
     }
 
     async fn unload(&mut self, handle: &PluginHandle) -> Result<(), aurora_core::Error> {
-        self.unload_plugin(&handle.id).map_err(aurora_core::Error::from)
+        self.unload_plugin(&handle.id)
+            .map_err(aurora_core::Error::from)
     }
 
     fn list_hooks(&self, hook_point: &str) -> Vec<PluginHandle> {
         let ids = self.hook_plugin_ids(hook_point);
         let plugins = self.plugins.read();
         ids.iter()
-            .filter_map(|id| plugins.get(id).map(|p| PluginHandle {
-                id: p.id.clone(),
-                manifest: p.manifest.clone(),
-            }))
+            .filter_map(|id| {
+                plugins.get(id).map(|p| PluginHandle {
+                    id: p.id.clone(),
+                    manifest: p.manifest.clone(),
+                })
+            })
             .collect()
     }
 }
@@ -613,7 +624,7 @@ mod tests {
         assert!(!plugin.is_running());
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn test_plugin_manager_load_and_status() {
         let mut mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &["storage"]);
@@ -625,7 +636,7 @@ mod tests {
         assert!(mgr.check_permission("p1", &Permission::Storage));
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn test_plugin_manager_lifecycle_init_start_suspend_resume() {
         let mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &[]);
@@ -644,7 +655,7 @@ mod tests {
         assert_eq!(mgr.status("p1").unwrap(), PluginStatus::Running);
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn test_plugin_manager_invoke_wasm_dispatch() {
         let mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &["storage"]);
@@ -654,7 +665,11 @@ mod tests {
 
         // 调用宿主函数 write_doc（需 Storage，已授予）
         let out = mgr
-            .invoke_plugin("p1", "write_doc", &serde_json::json!({"doc_id": "d", "data": 1}))
+            .invoke_plugin(
+                "p1",
+                "write_doc",
+                &serde_json::json!({"doc_id": "d", "data": 1}),
+            )
             .unwrap();
         assert_eq!(out["ok"], serde_json::json!(true));
         let read = mgr
@@ -663,14 +678,16 @@ mod tests {
         assert_eq!(read, serde_json::json!(1));
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn test_plugin_manager_invoke_iframe_dispatch() {
         let mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Iframe, &[]);
         mgr.register_plugin(Plugin::new(manifest, PluginMode::Iframe));
         mgr.init("p1").unwrap();
         mgr.start("p1").unwrap();
-        let out = mgr.invoke_plugin("p1", "ping", &serde_json::json!({})).unwrap();
+        let out = mgr
+            .invoke_plugin("p1", "ping", &serde_json::json!({}))
+            .unwrap();
         assert_eq!(out, serde_json::json!("pong"));
     }
 
@@ -680,11 +697,13 @@ mod tests {
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &[]);
         mgr.register_plugin(Plugin::new(manifest, PluginMode::Wasm));
         // Loaded 状态调用应失败
-        let err = mgr.invoke_plugin("p1", "ping", &serde_json::json!({})).unwrap_err();
+        let err = mgr
+            .invoke_plugin("p1", "ping", &serde_json::json!({}))
+            .unwrap_err();
         assert!(matches!(err, crate::Error::InvalidInput(_)));
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn test_plugin_manager_unload() {
         let mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &[]);
@@ -694,7 +713,9 @@ mod tests {
         mgr.unload_plugin("p1").unwrap();
         assert_eq!(mgr.status("p1").unwrap(), PluginStatus::Unloaded);
         // 卸载后调用应失败（not running）
-        assert!(mgr.invoke_plugin("p1", "ping", &serde_json::json!({})).is_err());
+        assert!(mgr
+            .invoke_plugin("p1", "ping", &serde_json::json!({}))
+            .is_err());
     }
 
     #[test]
@@ -726,7 +747,7 @@ mod tests {
         assert_eq!(mgr.hook_plugin_ids("on_save").len(), 0);
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn test_plugin_runtime_trait_round_trip() {
         let mut mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Iframe, &[]);
@@ -734,13 +755,16 @@ mod tests {
         // trait 方法初始化需经 manager 自身（trait 仅暴露 load/invoke/unload）
         mgr.init(&handle.id).unwrap();
         mgr.start(&handle.id).unwrap();
-        let out = mgr.invoke(&handle, "ping", &serde_json::json!({})).await.unwrap();
+        let out = mgr
+            .invoke(&handle, "ping", &serde_json::json!({}))
+            .await
+            .unwrap();
         assert_eq!(out, serde_json::json!("pong"));
         mgr.unload(&handle).await.unwrap();
         assert_eq!(mgr.status(&handle.id).unwrap(), PluginStatus::Unloaded);
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn test_plugin_manager_unknown_plugin_errors() {
         let mgr = PluginManager::new();
         assert!(mgr.init("ghost").is_err());
