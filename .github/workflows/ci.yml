@@ -49,6 +49,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # V26 I2: runner 14G 盘被预装 SDK(Android/.NET/Go ≈10G) + rust-cache +
+      # 全量链接临时文件塞满 → ld SIGBUS (exit 101)。标准清理释放 ~10G。
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup || true
+          sudo docker image prune -af || true
+          df -h /
       - uses: dtolnay/rust-toolchain@stable
       - name: Install system dependencies
         run: |
