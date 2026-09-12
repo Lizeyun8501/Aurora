@@ -26,6 +26,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # V26 I2: runner 14G 盘被预装 SDK(≈10G)+编译链接临时文件塞满 → ld SIGBUS。
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup || true
+          sudo docker image prune -af || true
+          df -h /
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -81,6 +88,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # V26 I2: runner 14G 盘被预装 SDK(≈10G)+编译链接临时文件塞满 → ld SIGBUS。
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup || true
+          sudo docker image prune -af || true
+          df -h /
       - uses: dtolnay/rust-toolchain@1.91.0
       - name: Install system dependencies
         run: |
@@ -103,6 +117,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # V26 I2: runner 14G 盘被预装 SDK(≈10G)+编译链接临时文件塞满 → ld SIGBUS。
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup || true
+          sudo docker image prune -af || true
+          df -h /
       - name: Install Tauri system deps
         run: |
           sudo apt-get update
