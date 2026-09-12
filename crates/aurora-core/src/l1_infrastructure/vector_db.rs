@@ -211,8 +211,10 @@ impl VectorStore for SqliteVecStore {
                 let vec_bytes: Vec<u8> = row.get(1)?;
                 let metadata_str: String = row.get(2)?;
                 let vector: Vec<f32> = vec_bytes
-                    .chunks_exact(4)
-                    .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|b| f32::from_ne_bytes(*b))
                     .collect();
                 let metadata: serde_json::Value = serde_json::from_str(&metadata_str)
                     .unwrap_or_else(|e| {

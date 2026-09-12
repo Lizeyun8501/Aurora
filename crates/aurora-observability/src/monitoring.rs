@@ -192,25 +192,21 @@ impl HealthChecker {
             let component = check.check();
             if component.is_critical {
                 match component.status {
-                    HealthStatus::Unhealthy => {
-                        if overall != HealthStatus::Unhealthy {
-                            overall = HealthStatus::Unhealthy;
-                        }
+                    HealthStatus::Unhealthy if overall != HealthStatus::Unhealthy => {
+                        overall = HealthStatus::Unhealthy;
                     }
-                    HealthStatus::Degraded => {
-                        if overall == HealthStatus::Healthy {
-                            overall = HealthStatus::Degraded;
-                        }
+                    HealthStatus::Degraded if overall == HealthStatus::Healthy => {
+                        overall = HealthStatus::Degraded;
                     }
                     _ => {}
                 }
             } else {
                 // Non-critical checks can degrade but not make unhealthy
                 match component.status {
-                    HealthStatus::Degraded | HealthStatus::Unhealthy => {
-                        if overall == HealthStatus::Healthy {
-                            overall = HealthStatus::Degraded;
-                        }
+                    HealthStatus::Degraded | HealthStatus::Unhealthy
+                        if overall == HealthStatus::Healthy =>
+                    {
+                        overall = HealthStatus::Degraded;
                     }
                     _ => {}
                 }

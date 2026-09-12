@@ -252,7 +252,7 @@ impl LinkIndex {
         // 清除指向该文档的反向链接
         self.backward.remove(doc_id);
         // 清除其他文档指向该文档的链接
-        for (_, links) in self.forward.iter_mut() {
+        for links in self.forward.values_mut() {
             links.retain(|l| l.target_doc_id != doc_id);
         }
     }
@@ -764,7 +764,7 @@ impl KnowledgeNetworkEngine {
             })
             .collect();
 
-        docs.sort_by(|a, b| b.1.cmp(&a.1));
+        docs.sort_by_key(|d| std::cmp::Reverse(d.1));
         docs.into_iter().take(limit).collect()
     }
 }

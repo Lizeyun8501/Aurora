@@ -49,9 +49,12 @@ pub struct WriteReceipt {
 ///
 /// Owned 设计（'static boxed 闭包 + Arc）：调用方 move 捕获，WriteContext
 /// 不借用任何栈上局部 — 避免 async 状态机自借用（E0597）。
+/// 字节封装闭包（Boxed 'static — owned ctx 消除 async 自借用）。
+pub type SealFnBox = Box<dyn Fn(&[u8]) -> Result<Vec<u8>, Error> + Send + Sync>;
+
 pub struct SealPair {
-    pub seal: Box<dyn Fn(&[u8]) -> Result<Vec<u8>, Error> + Send + Sync>,
-    pub unseal: Box<dyn Fn(&[u8]) -> Result<Vec<u8>, Error> + Send + Sync>,
+    pub seal: SealFnBox,
+    pub unseal: SealFnBox,
 }
 
 /// 写入上下文 — 唯一写入入口的依赖集合（AppCore + blocks 双轨 + 加密封装）。

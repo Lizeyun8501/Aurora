@@ -50,7 +50,7 @@ pub fn mirror_rel_path(workspace: &str, title: &str, note_id: &str) -> PathBuf {
     PathBuf::from(sanitize_seg(workspace)).join(format!(
         "{}-{}.md",
         sanitize_seg(title),
-        &note_id.chars().take(8).collect::<String>()
+        note_id.chars().take(8).collect::<String>()
     ))
 }
 
