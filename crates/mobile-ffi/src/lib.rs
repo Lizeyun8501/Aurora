@@ -627,12 +627,8 @@ impl UniffiAppCore {
         content: &str,
         _updated_at: &str,
     ) {
-        // blocks 双轨（None = 内存降级模式）
-        if let Some(blocks) = &self.blocks {
-            if let Err(e) = blocks.sync_note_blocks(note_id, None, content) {
-                tracing::warn!(note_id, error = %e, "blocks sync failed");
-            }
-        }
+        // V26 I2: blocks 派生已由 WritePath 承担（重复同步会撞 blocks.id
+        // UNIQUE — 同 hash 同 id 二次 INSERT）。此处仅保留移动端特有副作用。
         // V23-I4: 时间机器快照（每次保存一版; R6 上限 20 自动裁剪）
         if let Some(Err(e)) = self.with_time_machine(|tm| tm.save(note_id, content.as_bytes())) {
             tracing::warn!(note_id, error = %e, "snapshot save failed");

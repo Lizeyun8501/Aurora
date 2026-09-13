@@ -162,9 +162,13 @@ impl BlockStore {
         )
         .map_err(|e| crate::Error::Database(e.to_string()))?;
         for (idx, b) in raw.iter().enumerate() {
+            // V26 I2: id = hash(note_id, content) 恒定 — 同内容再次保存
+            // （时间机器回溯→写回）会命中已软删行, 用 upsert 复活而非 INSERT
+            // （UNIQUE constraint 修复; 同 hash 蕴含同 content_json, 无需改内容）
             conn.execute(
                 "INSERT INTO blocks (id, note_id, workspace_id, block_type, content_json, position, created_at, updated_at, is_deleted)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 0)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 0)
+                 ON CONFLICT(id) DO UPDATE SET is_deleted = 0, position = ?6, updated_at = ?7",
                 rusqlite::params![
                     format!("blk_{}_{}", short_hash(note_id, content), idx),
                     note_id,
