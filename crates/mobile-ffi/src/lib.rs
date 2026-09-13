@@ -146,7 +146,7 @@ pub struct UniffiAppCore {
         aurora_core::mirror::MirrorRoot,
     )>,
     /// V23-I2: blocks 双轨存储（None = 内存降级模式）
-    blocks: Option<aurora_core::blocks::BlockStore>,
+    blocks: Option<std::sync::Arc<aurora_core::blocks::BlockStore>>,
 }
 
 impl UniffiAppCore {
@@ -157,7 +157,7 @@ impl UniffiAppCore {
             let db_path = data_dir.join("aurora.db");
             rusqlite::Connection::open(&db_path)
                 .ok()
-                .map(aurora_core::blocks::BlockStore::new)
+                .map(|conn| std::sync::Arc::new(aurora_core::blocks::BlockStore::new(conn)))
         };
         // V23-I2: Mirror 单向导出（data_dir/mirror — 铁律 9: 永不读回）
         let mirror = Some((
@@ -301,7 +301,7 @@ impl UniffiAppCore {
     }
 
     fn create_note_impl(self: &Arc<Self>, title: String) -> Result<String, MobileError> {
-        let note = NoteRecord::new(title);
+        let mut note = NoteRecord::new(title.clone());
 
         // 创建五容器 Loro 文档（meta/body/blocks/tasks/backlinks）
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -314,38 +314,29 @@ impl UniffiAppCore {
             })?;
 
         if let Some(core) = &self.core {
-            // 真实模式：KVStore 持久化 + SearchBackend 索引
-            let kv = core.kv_store.clone();
-            let key = format!("note:{}", note.id);
-            let value = serde_json::to_vec(&note).map_err(|e| MobileError::OperationFailed {
-                message: format!("serialize: {e}"),
-            })?;
-
-            self.runtime
-                .block_on(async { kv.set(&key, &value).await })
+            // V26 I2/DK-01W: 唯一写入入口 — 与桌面端同源
+            // （NoteDoc 快照 + note:{id} 元数据 + blocks 派生 + NoteCreated 事件）
+            let ctx = aurora_core::write_path::WriteContext {
+                core: core.clone(),
+                blocks: self.blocks.clone(),
+                seal: None, // 移动端明文落盘（加密统一为后续卡；同步层在 oplog 层不受影响）
+            };
+            let note_id = self
+                .runtime
+                .block_on(async { aurora_core::write_path::create_note(&ctx, &title).await })
                 .map_err(|e| MobileError::OperationFailed {
-                    message: format!("kv set: {e}"),
+                    message: format!("write_path create: {e}"),
                 })?;
 
-            // 持久化 Loro 快照
-            self.persist_doc(&note.id, &doc)?;
-
-            // V20 §4.5 事件驱动: 发 NoteCreated 事件（投影消费建索引，
-            // 替代直接 index_note 旁路 — 保证与重建路径同源一致）
-            core.event_bus
-                .publish(aurora_core::event_bus::layered::AppEvent::NoteCreated {
-                    note_id: note.id.clone(),
-                    title: note.title.clone(),
-                    content: note.content.clone(),
-                });
             // 同步驱动投影追赶（移动端单线程 runtime，启动期/写后各一次）
             let core_clone = core.clone();
             self.runtime
                 .block_on(async move { core_clone.catch_up_projections().await })
                 .ok();
 
-            // 缓存 LoroDoc
-            self.docs.lock().unwrap().insert(note.id.clone(), doc);
+            // 缓存 LoroDoc（WritePath 写 KV 后以本地 doc 同步缓存语义）
+            self.docs.lock().unwrap().insert(note_id.clone(), doc);
+            note.id = note_id; // WritePath 生成 id（UUIDv4），与 fallback 记录解耦
         } else {
             // Fallback 模式：内存存储（LoroDoc 仍然提供 CRDT 语义）
             self.docs.lock().unwrap().insert(note.id.clone(), doc);
@@ -720,53 +711,44 @@ impl UniffiAppCore {
         self.persist_doc(&note_id, &doc)?;
 
         if let Some(core) = &self.core {
-            let kv = core.kv_store.clone();
-            let key = format!("note:{}", note_id);
-
-            // 同步元数据 JSON（updated_at）
-            let existing = self
-                .runtime
-                .block_on(async { kv.get(&key).await })
-                .map_err(|e| MobileError::OperationFailed {
-                    message: format!("get: {e}"),
-                })?;
-
-            let mut note: NoteRecord = match existing {
-                Some(bytes) => {
-                    serde_json::from_slice(&bytes).map_err(|e| MobileError::OperationFailed {
-                        message: format!("deserialize: {e}"),
-                    })?
-                }
-                None => return Err(MobileError::NotFound { resource: note_id }),
+            // V26 I2/DK-01W: 唯一写入入口 — 与桌面端同源
+            // （Loro 快照 + 元数据 + blocks 派生 + NoteContentChanged 事件）
+            let ctx = aurora_core::write_path::WriteContext {
+                core: core.clone(),
+                blocks: self.blocks.clone(),
+                seal: None, // 移动端明文落盘（加密统一为后续卡）
             };
-
-            note.content = content.clone();
-            note.updated_at = chrono::Utc::now().to_rfc3339();
-
-            let value = serde_json::to_vec(&note).map_err(|e| MobileError::OperationFailed {
-                message: format!("serialize: {e}"),
-            })?;
-
-            self.runtime
-                .block_on(async { kv.set(&key, &value).await })
-                .map_err(|e| MobileError::OperationFailed {
-                    message: format!("set: {e}"),
+            let _receipt = self
+                .runtime
+                .block_on(async {
+                    aurora_core::write_path::save_note_content(&ctx, &note_id, &content).await
+                })
+                .map_err(|e| match e {
+                    aurora_core::Error::NoteNotFound { .. } => MobileError::NotFound {
+                        resource: note_id.clone(),
+                    },
+                    other => MobileError::OperationFailed {
+                        message: format!("write_path save: {other}"),
+                    },
                 })?;
 
-            // V23-I2: 块级双轨同步（notes 为主源, blocks 并列索引）
-            // Mirror 单向 feed（若配置 mirror 目录 — 3s 防抖落盘）
-            self.sync_blocks_and_mirror(&note.id, &note.title, &content, &note.updated_at);
+            // 缓存失效（下次 doc_for_note 从最新快照重读 — 保持 CRDT 连续性）
+            self.docs.lock().unwrap().remove(&note_id);
 
-            // V20 §4.5 事件驱动: 内容变更 → NoteMetadataChanged（投影从
-            // KVStore 数据源重取最新内容重建索引，写路径与 rebuild 同源）
-            use aurora_core::event_bus::layered::{AppEvent, NoteChanges};
-            core.event_bus.publish(AppEvent::NoteMetadataChanged {
-                note_id: note.id.clone(),
-                changes: NoteChanges {
-                    title: None,
-                    tags: None,
-                },
-            });
+            // Mirror/时间机器取最新元数据（WritePath 已派生 blocks）
+            let meta = self
+                .runtime
+                .block_on(async {
+                    aurora_core::write_path::load_note_meta(&ctx.core, &note_id, None).await
+                })
+                .ok()
+                .flatten();
+            let (title, updated_at) = meta
+                .map(|m| (m.title, m.updated_at))
+                .unwrap_or_else(|| (String::new(), chrono::Utc::now().to_rfc3339()));
+            self.sync_blocks_and_mirror(&note_id, &title, &content, &updated_at);
+
+            // V26: 事件已由 WritePath 发布（NoteContentChanged），此处仅投影追赶
             let core_clone = core.clone();
             self.runtime
                 .block_on(async move { core_clone.catch_up_projections().await })

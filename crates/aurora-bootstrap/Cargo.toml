@@ -7,7 +7,7 @@ license.workspace = true
 description = "Aurora Note app bootstrap: shared AppCore DI wiring for desktop/mobile platform adapters"
 
 [dependencies]
-aurora-core = { path = "../aurora-core" }
+aurora-core = { path = "../aurora-core", features = ["loro-crdt"] } # I2/DK-01W: WritePath 需 Loro 快照（与 mobile-ffi 对齐）
 aurora-security = { path = "../aurora-security" }
 aurora-ai = { path = "../aurora-ai" }
 aurora-migration = { path = "../migration" }
