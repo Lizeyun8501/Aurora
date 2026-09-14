@@ -202,6 +202,10 @@ impl AtomicTransaction {
                     "recovering incomplete write"
                 );
                 // 使用 copy+remove 代替 rename，兼容跨文件系统场景
+                // V26 I3: 自动创建目标父目录 — 恢复路径不因目录缺失而失败
+                if let Some(parent) = target.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
                 if let Err(e) = fs::copy(&tmp, &target) {
                     warn!(
                         path = %pw.file_path,
