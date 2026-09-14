@@ -37,7 +37,7 @@ fn v2_notes_columns_present() {
 fn v4_schema_version_is_current() {
     let mgr = MigrationManager::new_in_memory().unwrap();
     mgr.migrate().unwrap();
-    assert_eq!(CURRENT_SCHEMA_VERSION, 4);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 5);
     // V3: audit_log 必须带 prev_hash / hash 列（T12 哈希链）
     let conn = mgr.into_inner().unwrap();
     let mut stmt = conn.prepare("PRAGMA table_info(audit_log)").unwrap();
@@ -141,4 +141,85 @@ fn v2_composite_index() {
         .unwrap();
     let sql = idx.expect("复合索引应存在");
     assert!(sql.contains("updated_at DESC"), "索引应为复合: {sql}");
+}
+
+/// V5: 目录树统一 + 组织/配套表（DK-01 — V24 整体缺失的表补齐）。
+#[test]
+fn v5_unified_tree_and_org_tables() {
+    let mgr = MigrationManager::new_in_memory().unwrap();
+    mgr.migrate().unwrap();
+
+    let conn = mgr.into_inner().unwrap();
+
+    // notes 统一树列存在且默认值正确
+    let kind: String = conn
+        .query_row("SELECT kind FROM notes LIMIT 0", [], |r| r.get(0))
+        .unwrap_or("note".into());
+    assert_eq!(kind, "note", "kind 列默认 note");
+    let col_exists = |name: &str| -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name = ?1",
+            [name],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|v| v > 0)
+        .unwrap_or(false)
+    };
+    for col in [
+        "kind",
+        "sort_order",
+        "is_pinned",
+        "is_favorite",
+        "lamport_ts",
+    ] {
+        assert!(col_exists(col), "notes.{col} 列缺失");
+    }
+
+    // 组织/配套表存在且可写
+    let tables = [
+        "tags",
+        "note_tags",
+        "smart_folders",
+        "bookmarks",
+        "trash",
+        "attachments",
+        "settings",
+        "projection_watermark",
+    ];
+    for t in tables {
+        let n: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0))
+            .unwrap_or(-1);
+        assert_eq!(n, 0, "表 {t} 应存在且为空");
+    }
+
+    // 冒烟: tags + note_tags 联结 + 水位线写入
+    conn.execute(
+        "INSERT INTO tags (id, name, created_at) VALUES ('t1','rust','2026-01-01')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO tags (id, name, created_at) VALUES ('t2','crdt','2026-01-01')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('projection.search.wm', x'0102')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO projection_watermark (projection, watermark) VALUES ('search-index', 7)",
+        [],
+    )
+    .unwrap();
+    let wm: i64 = conn
+        .query_row(
+            "SELECT watermark FROM projection_watermark WHERE projection='search-index'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(wm, 7);
 }

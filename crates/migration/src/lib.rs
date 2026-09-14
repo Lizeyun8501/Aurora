@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use tracing::{error, info, warn};
 
 /// 当前数据库 Schema 版本。
-pub const CURRENT_SCHEMA_VERSION: i64 = 4;
+pub const CURRENT_SCHEMA_VERSION: i64 = 5;
 
 /// 迁移管理器。
 pub struct MigrationManager {
@@ -80,6 +80,10 @@ impl MigrationManager {
         if current < 4 {
             Self::apply_v4(&mut conn)?;
         }
+        // V5: 目录树统一 + 组织/配套表补齐（V26 I3 / DK-01 — V24 整体缺失）
+        if current < 5 {
+            Self::apply_v5(&mut conn)?;
+        }
 
         info!(version = CURRENT_SCHEMA_VERSION, "migration completed");
         Ok(())
@@ -134,6 +138,107 @@ impl MigrationManager {
         tx.commit()
             .map_err(|e| MigrationError::Exec(e.to_string()))?;
         info!("migration v4 applied: blocks table");
+        Ok(())
+    }
+
+    /// V5: 目录树统一 + 组织/配套表补齐（V26 I3 / DK-01）。
+    ///
+    /// 1. notes 补统一树列（kind 区分笔记本/笔记 — V26 §5.1.1；ADD COLUMN
+    ///    加列不删列，符合"禁止直接改既有表后删列"规则）
+    /// 2. 补 V24 迁移整体缺失的组织表: tags / note_tags / smart_folders /
+    ///    bookmarks / trash + attachments（内容域）+ settings（设置域）
+    /// 3. projection_watermark 投影水位线表（DK-01: 启动时对比事件流决定重建）
+    fn apply_v5(conn: &mut rusqlite::Connection) -> Result<(), MigrationError> {
+        let tx = conn
+            .transaction()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
+
+        // notes 列已在 v1 建表携带 lamport_ts 等 — 逐列按 pragma_table_info
+        // 存在性判断（SQLite 无 ADD COLUMN IF NOT EXISTS）
+        let add_column = |col: &str, ddl: &str| -> Result<(), MigrationError> {
+            let exists: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name = ?1",
+                    [col],
+                    |r| r.get(0),
+                )
+                .map_err(|e| MigrationError::Exec(e.to_string()))?;
+            if exists == 0 {
+                tx.execute(ddl, [])
+                    .map_err(|e| MigrationError::Exec(e.to_string()))?;
+            }
+            Ok(())
+        };
+        add_column(
+            "kind",
+            "ALTER TABLE notes ADD COLUMN kind TEXT NOT NULL DEFAULT 'note'",
+        )?;
+        add_column(
+            "sort_order",
+            "ALTER TABLE notes ADD COLUMN sort_order REAL NOT NULL DEFAULT 0",
+        )?;
+        add_column(
+            "is_pinned",
+            "ALTER TABLE notes ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column(
+            "is_favorite",
+            "ALTER TABLE notes ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column(
+            "lamport_ts",
+            "ALTER TABLE notes ADD COLUMN lamport_ts INTEGER NOT NULL DEFAULT 0",
+        )?;
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_sort ON notes(workspace_id, parent_id, sort_order)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, color TEXT, created_at TEXT NOT NULL)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS note_tags (note_id TEXT NOT NULL REFERENCES notes(id), tag_id TEXT NOT NULL REFERENCES tags(id), PRIMARY KEY (note_id, tag_id))",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS smart_folders (id TEXT PRIMARY KEY, name TEXT NOT NULL, query_json TEXT NOT NULL, created_at TEXT NOT NULL)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS bookmarks (id TEXT PRIMARY KEY, note_id TEXT NOT NULL REFERENCES notes(id), position REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS trash (id TEXT PRIMARY KEY, note_id TEXT NOT NULL REFERENCES notes(id), origin_parent TEXT, deleted_at TEXT NOT NULL)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, note_id TEXT REFERENCES notes(id), asset_hash TEXT NOT NULL, mime_type TEXT NOT NULL, size INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value BLOB)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS projection_watermark (projection TEXT PRIMARY KEY, watermark INTEGER NOT NULL DEFAULT 0)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+
+        tx.commit()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        info!(version = 5, "V5 applied: unified tree + org tables");
         Ok(())
     }
 
