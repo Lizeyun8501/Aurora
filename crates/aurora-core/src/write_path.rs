@@ -241,11 +241,20 @@ pub async fn save_note_content(
         blocks.sync_note_blocks(note_id, Some(&ws), content)?;
     }
 
-    // 4) 事件（High 实时 + seq 回执）
+    // 4) 事件：High 实时（UI）+ Medium 持久化（投影重放驱动搜索索引 —
+    //    SearchIndexProjection 消费 NoteMetadataChanged 从 KV 重取内容重建）
     core.event_bus
         .publish(crate::event_bus::layered::AppEvent::NoteContentChanged {
             note_id: note_id.to_string(),
             block_id: None,
+        });
+    core.event_bus
+        .publish(crate::event_bus::layered::AppEvent::NoteMetadataChanged {
+            note_id: note_id.to_string(),
+            changes: crate::event_bus::layered::NoteChanges {
+                title: None,
+                tags: None,
+            },
         });
 
     Ok(WriteReceipt {
@@ -277,6 +286,14 @@ pub async fn save_note_content(
         .publish(crate::event_bus::layered::AppEvent::NoteContentChanged {
             note_id: note_id.to_string(),
             block_id: None,
+        });
+    core.event_bus
+        .publish(crate::event_bus::layered::AppEvent::NoteMetadataChanged {
+            note_id: note_id.to_string(),
+            changes: crate::event_bus::layered::NoteChanges {
+                title: None,
+                tags: None,
+            },
         });
     Ok(WriteReceipt {
         seq: core.event_bus.last_seq(),
