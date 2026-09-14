@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Aurora Editor Lab — DK-05M-V 输入时序验证页</title>
+  <style>
+    /* 模拟移动 WebView 视口约束 */
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    #editor {
+      min-height: 60vh; max-height: 72vh; overflow-y: auto;
+      border: 1px solid #ddd; padding: 12px; outline: none;
+    }
+    #editor .ProseMirror { outline: none; min-height: 200px; }
+    #status { padding: 8px; background: #f0f4ff; font-size: 12px; }
+    .pass { color: #16a34a; } .fail { color: #dc2626; }
+  </style>
+</head>
+<body>
+  <div id="status">editor-lab ready</div>
+  <div id="editor"></div>
+  <script type="module">
+    // DK-05M-V 输入时序验证页 — ProseMirror + loro-prosemirror 与
+    // 生产编辑器同栈（apps/mobile/src/editor 同配置），纯浏览器环境
+    // （无 AndroidBridge — IME 候选/键盘高度属真机验证项，见报告）。
+    import { EditorState } from 'prosemirror-state';
+    import { EditorView } from 'prosemirror-view';
+    import * as pmStateExports from 'prosemirror-state';
+    import { keymap } from 'prosemirror-keymap';
+    import { baseKeymap } from 'prosemirror-commands';
+    import { LoroDoc } from 'loro-crdt';
+    import { LoroSyncPlugin } from 'loro-prosemirror';
+    import { auroraSchema } from '/src/editor/schema.ts';
+
+    const statusEl = document.getElementById('status');
+    const loro = new LoroDoc();
+    const state = EditorState.create({
+      schema: auroraSchema,
+      doc: auroraSchema.nodes.paragraph.create(),
+      plugins: [keymap(baseKeymap), LoroSyncPlugin({ doc: loro })],
+    });
+    const view = new EditorView(document.getElementById('editor'), { state });
+    window.__view = view;
+    window.__loro = loro;
+    statusEl.textContent = 'editor-lab: view ready (ProseMirror+Loro)';
+
+    // 供 Playwright 断言的探针
+    window.__probe = {
+      pmText: () => view.state.doc.textBetween(0, view.state.doc.content.size, '\n'),
+      docSize: () => view.state.doc.content.size,
+      selectionFrom: () => view.state.selection.from,
+      setCursor: (pos) => {
+        const { TextSelection } = pmStateExports;
+        view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos)));
+        return view.state.selection.from;
+      },
+      insertChars: (s) => {
+        for (const ch of s) view.dispatch(view.state.tr.insertText(ch));
+        return view.state.doc.textContent.length;
+      },
+      /** 模拟 IME 组合输入序列（composition events 手动派发） */
+      runComposition: async (finalText) => {
+        const dom = view.dom;
+        dom.dispatchEvent(new CompositionEvent('compositionstart', { data: '' }));
+        // 组合中段（候选流）— PM 应抑制事务
+        for (const part of ['q', 'quan', 'quanbu']) {
+          dom.dispatchEvent(new CompositionEvent('compositionupdate', { data: part }));
+        }
+        dom.dispatchEvent(new CompositionEvent('compositionend', { data: finalText }));
+        // compositionend 后文本应经 beforeinput/textInput 落入
+        view.dispatch(view.state.tr.insertText(finalText));
+        return view.state.doc.textContent.slice(-finalText.length);
+      },
+      /** 程序化填充长文档（1000 段） */
+      fillLongDoc: (n) => {
+        // 逐段独立 dispatch — LoroSyncPlugin 会在事务中同步 Loro doc 并
+        // 可能 appendTransaction 改映射, 合并长 tr 会让后续位置越界
+        for (let i = 0; i < n; i++) {
+          const para = auroraSchema.nodes.paragraph.create(
+            null,
+            auroraSchema.text(`段落 ${i} — 长文档滚动性能采样行`),
+          );
+          view.dispatch(view.state.tr.insert(view.state.doc.content.size, para));
+        }
+        return view.state.doc.childCount;
+      },
+    };
+  </script>
+</body>
+</html>
