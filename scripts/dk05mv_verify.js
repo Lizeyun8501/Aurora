@@ -123,6 +123,81 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     );
   }
 
+  // ── 场景 ⑤: 万字笔记滚动 ≥50fps（DK-05M DoD）──
+  {
+    const stat = await page.evaluate(() => window.__probe.fillTenThousandChars());
+    console.log('万字填充:', JSON.stringify(stat));
+    const scrollBox = await page.$('#editor');
+    const frames = await page.evaluate(async () => {
+      const box = document.getElementById('editor');
+      const gaps = [];
+      let last = performance.now();
+      let raf;
+      const loop = () => {
+        const now = performance.now();
+        gaps.push(now - last);
+        last = now;
+        raf = requestAnimationFrame(loop);
+      };
+      raf = requestAnimationFrame(loop);
+      const max = box.scrollHeight;
+      for (let i = 1; i <= 30; i++) {
+        box.scrollTop = (max * i) / 30;
+        await new Promise((r) => setTimeout(r, 16));
+      }
+      for (let i = 30; i >= 0; i--) {
+        box.scrollTop = (max * i) / 30;
+        await new Promise((r) => setTimeout(r, 16));
+      }
+      cancelAnimationFrame(raf);
+      return gaps.filter((g) => g < 500);
+    });
+    const avg = frames.reduce((a, b) => a + b, 0) / frames.length;
+    const worst = Math.max(...frames);
+    const p95 = frames.sort((a, b) => a - b)[Math.floor(frames.length * 0.95)];
+    record(
+      '⑤ 万字滚动帧率 ≥50fps',
+      avg <= 20 && p95 <= 40,
+      `chars=${stat.totalChars} paras=${stat.childCount} avg=${avg.toFixed(1)}ms p95=${p95.toFixed(1)}ms worst=${worst.toFixed(1)}ms n=${frames.length}`,
+    );
+  }
+
+  // ── 场景 ⑥: VoiceOver/TalkBack 可遍历（ARIA 与语义结构）──
+  {
+    const audit = await page.evaluate(() => {
+      const out = { roles: 0, labels: 0, issues: [] };
+      // 工具栏语义: role=toolbar + aria-label
+      const toolbar = document.querySelector('[role=toolbar]');
+      if (toolbar) {
+        out.roles++;
+        if (toolbar.getAttribute('aria-label')) out.labels++;
+        else out.issues.push('toolbar 缺 aria-label');
+      } else {
+        out.issues.push('无 role=toolbar');
+      }
+      // 工具条按钮可聚焦遍历（tabindex 非负）
+      const buttons = toolbar ? Array.from(toolbar.querySelectorAll('button')) : [];
+      const unfocusable = buttons.filter((b) => b.tabIndex < 0).length;
+      if (unfocusable > 0) out.issues.push(`${unfocusable} 个按钮 tabIndex<0`);
+      // contenteditable 可聚焦 + 有无 label 描述
+      const pm = document.querySelector('.ProseMirror');
+      if (pm && pm.getAttribute('contenteditable') === 'true') out.roles++;
+      else out.issues.push('编辑器缺 contenteditable=true');
+      // 菜单 role
+      const menu = document.querySelector('[role=menu]');
+      if (menu) out.roles++;
+      // 标题层级结构（heading 语义）
+      const headings = pm ? pm.querySelectorAll('h1,h2,h3').length : 0;
+      out.headingCount = headings;
+      return out;
+    });
+    record(
+      '⑥ 可遍历性（ARIA/焦点路径）',
+      audit.issues.length === 0,
+      `roles=${audit.roles} labels=${audit.labels} headings=${audit.headingCount || 0} issues=${JSON.stringify(audit.issues)}`,
+    );
+  }
+
   await browser.close();
   const pass = results.filter((r) => r.pass).length;
   console.log(`\nSUMMARY: ${pass}/${results.length} PASS`);

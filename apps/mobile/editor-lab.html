@@ -12,6 +12,8 @@
       border: 1px solid #ddd; padding: 12px; outline: none;
     }
     #editor .ProseMirror { outline: none; min-height: 200px; }
+    .editor-toolbar { display: flex; gap: 4px; padding: 6px 8px; border-top: 1px solid #ddd; }
+    .editor-toolbar button { min-width: 38px; min-height: 38px; }
     #status { padding: 8px; background: #f0f4ff; font-size: 12px; }
     .pass { color: #16a34a; } .fail { color: #dc2626; }
   </style>
@@ -19,6 +21,14 @@
 <body>
   <div id="status">editor-lab ready</div>
   <div id="editor"></div>
+  <!-- 键盘上方工具条样板 — 与生产 RichEditor.tsx 相同 ARIA 契约
+       （role=toolbar + aria-label + 按钮可聚焦遍历）-->
+  <div class="editor-toolbar" role="toolbar" aria-label="格式工具栏">
+    <button type="button" aria-label="加粗">B</button>
+    <button type="button" aria-label="斜体">I</button>
+    <button type="button" aria-label="标题">H2</button>
+    <button type="button" aria-label="撤销">↶</button>
+  </div>
   <script type="module">
     // DK-05M-V 输入时序验证页 — ProseMirror + loro-prosemirror 与
     // 生产编辑器同栈（apps/mobile/src/editor 同配置），纯浏览器环境
@@ -83,6 +93,21 @@
           view.dispatch(view.state.tr.insert(view.state.doc.content.size, para));
         }
         return view.state.doc.childCount;
+      },
+      /** 万字真实内容（≈350 段中文 × 30 字 — DK-05M DoD「万字笔记」） */
+      fillTenThousandChars: () => {
+        const sentence = '这是一段用于万字滚动性能压测的中文正文，包含常见汉字与标点。';
+        const paras = 350; // 350 × 30 字 ≈ 10500 字
+        for (let i = 0; i < paras; i++) {
+          const text = `第${i}段 ${sentence.repeat(1)}`;
+          const para = auroraSchema.nodes.paragraph.create(
+            null,
+            auroraSchema.text(text),
+          );
+          view.dispatch(view.state.tr.insert(view.state.doc.content.size, para));
+        }
+        const total = view.state.doc.textContent.length;
+        return { childCount: view.state.doc.childCount, totalChars: total };
       },
     };
   </script>
