@@ -35,6 +35,8 @@ pub enum MobileError {
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct NoteSummary {
     pub id: String,
+    /// MobileApp 目录树消费的别名（与 id 同值）
+    pub note_id: String,
     pub title: String,
     pub updated_at: String,
 }
@@ -110,6 +112,7 @@ impl NoteRecord {
     fn to_summary(&self) -> NoteSummary {
         NoteSummary {
             id: self.id.clone(),
+            note_id: self.id.clone(),
             title: self.title.clone(),
             updated_at: self.updated_at.clone(),
         }

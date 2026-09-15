@@ -235,6 +235,72 @@ const LIST_BTNS: Array<{ key: string; label: string; title: string; cmd: TBCmd }
 // 工具栏组件
 // ---------------------------------------------------------------------------
 
+
+/**
+ * 选中浮动菜单 — DK-05M: 选区非空时显示于选区上方（不遮挡）。
+ * selectionchange 驱动；组合输入期间隐藏（IME 候选优先）。
+ */
+function FloatingMenu({ view }: { view: EditorView | null }) {
+  const [rect, setRect] = useState<{ top: number; left: number } | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!view) return;
+    const update = () => {
+      // 组合输入期间隐藏（IME 候选浮层优先, 避免双重浮层遮挡）
+      if (view.composing) {
+        setRect(null);
+        return;
+      }
+      const { state } = view;
+      if (state.selection.empty) {
+        setRect(null);
+        return;
+      }
+      const coords = view.coordsAtPos(state.selection.from);
+      const hostRect = view.dom.parentElement?.getBoundingClientRect();
+      if (!hostRect) return;
+      setRect({
+        top: Math.max(4, coords.top - hostRect.top - 46),
+        left: Math.max(8, Math.min(coords.left - hostRect.left, hostRect.width - 200)),
+      });
+    };
+    document.addEventListener('selectionchange', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      document.removeEventListener('selectionchange', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [view]);
+
+  if (!view || !rect) return null;
+  const btn = (label: string, title: string, onClick: () => void) => (
+    <button
+      key={title}
+      title={title}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div
+      className="floating-menu"
+      role="menu"
+      aria-label="选中快捷格式"
+      style={{ top: rect.top, left: rect.left }}
+    >
+      {btn('B', '加粗', () => runCmd(view, toggleMark(auroraSchema.marks.strong)))}
+      {btn('I', '斜体', () => runCmd(view, toggleMark(auroraSchema.marks.em)))}
+      {btn('H2', '标题', () =>
+        runCmd(view, setBlockType(auroraSchema.nodes.heading, { level: 2 })))}
+      {btn('</>', '代码', () =>
+        runCmd(view, toggleMark(auroraSchema.marks.code)))}
+    </div>
+  );
+}
+
 function EditorToolbar({ view, tick }: { view: EditorView | null; tick: number }) {
   const { marks, blocks, canUndo, canRedo } = useToolbarState(view, tick);
 
@@ -339,7 +405,14 @@ export function RichEditor({ noteId, fallbackText, onDirty, onSaved, onStatus }:
           }
           dirtyRef.current = false;
         },
-        onUpdate: () => setTick((t) => t + 1),
+        onUpdate: () => {
+          // DK-05M: 输入法组合期间跳过 React 重渲染 — 重渲染会重建
+          // DOM 使光标跳动（DoD「候选期间光标不跳动」）; 组合结束后的
+          // 最后一次事务会自然触发更新
+          const h = handleRef.current;
+          if (h && h.view.composing) return;
+          setTick((t) => t + 1);
+        },
       });
       if (cancelled) {
         handle.destroy();
@@ -433,7 +506,12 @@ export function RichEditor({ noteId, fallbackText, onDirty, onSaved, onStatus }:
   return (
     <div className={`rich-editor-wrap ${status === 'loading' ? 'loading' : ''}`}>
       <div className="rich-editor-host" ref={hostRef} />
-      {status === 'rich' && <EditorToolbar view={handleRef.current?.view ?? null} tick={tick} />}
+      {status === 'rich' && (
+        <>
+          <FloatingMenu view={handleRef.current?.view ?? null} />
+          <EditorToolbar view={handleRef.current?.view ?? null} tick={tick} />
+        </>
+      )}
       {status === 'loading' && (
         <div className="editor-loading-tip">
           <span className="spinner" />

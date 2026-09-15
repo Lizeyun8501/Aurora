@@ -440,8 +440,9 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .menu-item svg { flex: 0 0 auto; color: var(--text-secondary); }
 .menu-item.danger svg { color: var(--danger); }
 
-/* 专注模式 — 隐藏工具栏仅留画布 */
-.editor-page.focus .editor-toolbar { display: none; }
+/* V26 I4/DK-05M: 键盘上方工具条是移动端唯一可用方案 — focus 时保留
+   （viewport interactive-widget=resizes-content 使键盘弹出缩小视口,
+   工具条随 flex 布局贴在键盘上方, 不再被遮挡）*/
 
 /* ============================================================
    工具栏 — 低饱和线性，40px 触控热区
@@ -450,9 +451,14 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .editor-toolbar {
   display: flex; align-items: center; gap: 2px;
   padding: 4px 8px;
+  padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  flex: 0 0 auto;
   overflow-x: auto; -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  border-bottom: none;
+  background: var(--bg-primary);
+  /* 键盘上方贴附: 视口 resizes-content 时 flex 尾部元素天然贴键盘 */
   background: var(--bg-primary); flex: 0 0 auto;
 }
 .editor-toolbar::-webkit-scrollbar { display: none; }
@@ -836,3 +842,24 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .tab-item span { font-size: 11px; font-weight: 400; }
 .tab-item.active span { font-weight: 600; }
 .tab-item.active svg { stroke-width: 2; }
+
+/* ============================================================
+   选中浮动菜单 — DK-05M: 选区非空时显示于选区上方, 不被键盘遮挡
+   （工具条已在键盘上方, 浮动菜单仅做快捷格式, 贴选区定位）
+   ============================================================ */
+.floating-menu {
+  position: absolute; z-index: 75;
+  display: flex; align-items: center; gap: 2px;
+  padding: 2px 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(31, 41, 55, 0.18);
+  animation: fadeIn .12s;
+}
+.floating-menu button {
+  min-width: 38px; min-height: 38px;
+  border: none; background: transparent; border-radius: 6px;
+  font-size: 14px; color: var(--text-primary); cursor: pointer;
+}
+.floating-menu button:active { background: var(--bg-soft, var(--bg-secondary)); }
+.floating-menu button.active { color: var(--brand); font-weight: 600; }

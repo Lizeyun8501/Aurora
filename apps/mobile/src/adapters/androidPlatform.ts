@@ -9,6 +9,8 @@
 
 export interface NoteSummary {
   id: string;
+  /** JNI 侧同义别名（MobileApp 目录树消费 note_id 字段名） */
+  note_id: string;
   title: string;
   updatedAt: string;
 }
@@ -113,7 +115,7 @@ export const platform = {
         return [];
       }
     }
-    return mockNotes().map(({ id, title, updatedAt }) => ({ id, title, updatedAt }));
+    return mockNotes().map(({ id, title, updatedAt }) => ({ id, note_id: id, title, updatedAt }));
   },
 
   createNote(title: string): string | null {
