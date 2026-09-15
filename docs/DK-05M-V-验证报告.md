@@ -7,6 +7,17 @@
 - **验证页**: `apps/mobile/editor-lab.html`（独立构建 `vite.config.editorlab.ts` → `dist-lab/` 单文件）
 - **驱动**: `scripts/dk05mv_verify.js`（7 项断言，可重复执行）
 
+## 第二轮（DK-05M DoD 验证，2026-09-16 补充）
+
+| 场景 | 结果 |
+|---|---|
+| ⑤ 万字笔记滚动 ≥50fps | ✅ 31,463 字滚动 avg 16.5ms / p95 17.0ms — **60fps 满帧** |
+| ⑥ VoiceOver/TalkBack 可遍历 | ✅ role=toolbar + aria-label + 按钮全可聚焦，issues=[] |
+
+九断言 9/9 PASS。验证页含与生产 RichEditor 相同 ARIA 契约的工具条样板
+（role=toolbar/aria-label/按钮焦点遍历），产品端由 RichEditor.tsx 源码
+保证一致。
+
 ## 结论：**GO**（附真机补验清单）
 
 ProseMirror + Loro 栈在 Chromium 内核下**四场景全过（7/7 PASS）**，
