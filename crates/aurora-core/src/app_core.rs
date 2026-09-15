@@ -296,6 +296,9 @@ impl AppCore {
     pub fn startup(&self) -> Result<(), Error> {
         // V20 Phase 1: 先恢复全局 seq（防重启后新事件 seq 撞历史）
         self.event_bus.restore_seq()?;
+        // V26 I3/DK-01 权威源三阶段: blocks 为派生 — 启动时若 blocks 内
+        // 建缺失则从 notes 权威全量重派生（异步部分由调用方驱动
+        // write_path::rebuild_blocks_derivation, 此处不阻塞启动主路径）
         // ARCH-003：重放未消费事件
         match self.event_bus.replay_unconsumed() {
             Ok(events) => {

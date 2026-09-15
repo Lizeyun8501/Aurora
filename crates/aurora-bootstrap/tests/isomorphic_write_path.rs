@@ -160,6 +160,36 @@ async fn desktop_and_mobile_write_paths_are_isomorphic() {
         assert!(n_d >= 2, "标题+列表至少两块, got {n_d}");
     }
 
+    // ── 对拍 3.5: blocks 派生重建（DK-01 权威源 — notes 权威, blocks 派生）──
+    {
+        // 模拟 blocks 损坏/丢失: 清空两端 blocks 表
+        let blocks_d = BlockStore::open(&db_a).unwrap();
+        let blocks_m = BlockStore::open(&db_b).unwrap();
+        {
+            let conn = blocks_d.conn_handle();
+            conn.execute("DELETE FROM blocks", []).unwrap();
+        }
+        {
+            let conn = blocks_m.conn_handle();
+            conn.execute("DELETE FROM blocks", []).unwrap();
+        }
+        // 权威重建
+        let n_d = write_path::rebuild_blocks_derivation(&ctx_d).await.unwrap();
+        let n_m = write_path::rebuild_blocks_derivation(&ctx_m).await.unwrap();
+        assert_eq!(n_d, 1, "desktop rebuilt 1 note");
+        assert_eq!(n_m, 1, "mobile rebuilt 1 note");
+        let rd = blocks_d
+            .list_note_blocks(&id_d)
+            .map(|v| v.len())
+            .unwrap_or(0);
+        let rm = blocks_m
+            .list_note_blocks(&id_m)
+            .map(|v| v.len())
+            .unwrap_or(0);
+        assert_eq!(rd, rm, "rebuild isomorphic");
+        assert!(rd >= 2, "rebuild 后块数恢复, got {rd}");
+    }
+
     // ── 对拍 4: delete 后两端 key 集合一致（全清）──
     write_path::delete_note(&ctx_d, &id_d).await.unwrap();
     write_path::delete_note(&ctx_m, &id_m).await.unwrap();

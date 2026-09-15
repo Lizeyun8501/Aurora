@@ -169,9 +169,12 @@ pub async fn create_note(ctx: &WriteContext, title: &str) -> Result<String, Erro
     persist_doc(core, &id, &doc).await?;
     put_note_meta(core, &id, &record, ctx.seal.as_ref()).await?;
 
-    // 3) blocks 派生（内容 → 块树）
+    // 3) blocks 派生（内容 → 块树）— 派生失败不阻断主流程（DK-01 DoD:
+    //    notes/快照为权威已落盘, blocks 索引滞后可由启动重建补齐）
     if let Some(blocks) = ctx.blocks.as_ref() {
-        blocks.sync_note_blocks(&id, Some(&ws), &doc.body())?;
+        if let Err(e) = blocks.sync_note_blocks(&id, Some(&ws), &doc.body()) {
+            tracing::warn!(note_id = %id, error = %e, "blocks derive failed; non-blocking");
+        }
     }
 
     // 4) 事件（Medium 持久化 → 投影事件驱动；publish 后 seq 即本次事件序号）
@@ -236,9 +239,12 @@ pub async fn save_note_content(
     persist_doc(core, note_id, &doc).await?;
     put_note_meta(core, note_id, &record, ctx.seal.as_ref()).await?;
 
-    // 3) blocks 派生
+    // 3) blocks 派生 — 派生失败不阻断主流程（DK-01 DoD: notes/快照为
+    //    权威已落盘, blocks 索引滞后可由启动重建补齐）
     if let Some(blocks) = ctx.blocks.as_ref() {
-        blocks.sync_note_blocks(note_id, Some(&ws), content)?;
+        if let Err(e) = blocks.sync_note_blocks(note_id, Some(&ws), content) {
+            tracing::warn!(note_id = %note_id, error = %e, "blocks derive failed; non-blocking");
+        }
     }
 
     // 4) 事件：High 实时（UI）+ Medium 持久化（投影重放驱动搜索索引 —
@@ -300,6 +306,47 @@ pub async fn save_note_content(
         aggregate_id: note_id.to_string(),
         committed_at: now_ms,
     })
+}
+
+/// 启动时 blocks 派生全量重建（DK-01 权威源三阶段）。
+///
+/// blocks 为派生索引：缺失/损坏时从 notes.content 权威重建。
+/// 幂等（sync_note_blocks 软删旧块重派生）；单条派生失败仅告警不阻断
+/// （重建整体继续，失败条目留待下次启动补偿）。
+pub async fn rebuild_blocks_derivation(ctx: &WriteContext) -> Result<usize, Error> {
+    let Some(blocks) = ctx.blocks.as_ref() else {
+        return Ok(0); // 无 blocks 后端（内存降级模式）— 无需重建
+    };
+    let core = ctx.core.as_ref();
+    let pairs = core.kv_store.scan_prefix("note:").await?;
+    let mut rebuilt = 0usize;
+    for (key, bytes) in &pairs {
+        let Some(note_id) = key.strip_prefix("note:") else {
+            continue;
+        };
+        // seal 端（桌面）解封读权威内容；明文端（移动）直读
+        let plain = match ctx.seal.as_ref() {
+            Some(seal) => match (seal.unseal)(bytes) {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(note_id = %note_id, error = %e, "rebuild unseal failed; skip");
+                    continue;
+                }
+            },
+            None => bytes.clone(),
+        };
+        let Ok(record) = serde_json::from_slice::<NoteRecord>(&plain) else {
+            tracing::warn!(note_id = %note_id, "rebuild deserialize failed; skip");
+            continue;
+        };
+        if let Err(e) = blocks.sync_note_blocks(note_id, None, &record.content) {
+            tracing::warn!(note_id = %note_id, error = %e, "rebuild derive failed; skip");
+            continue;
+        }
+        rebuilt += 1;
+    }
+    tracing::info!(rebuilt, total = pairs.len(), "blocks derivation rebuilt");
+    Ok(rebuilt)
 }
 
 /// 重命名笔记（NoteMetadataChanged{title} → 双链/搜索投影标题更新）。

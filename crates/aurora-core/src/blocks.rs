@@ -186,6 +186,12 @@ impl BlockStore {
     }
 
     /// 读取一篇笔记的活跃块（position 升序）。
+    /// 测试/维护用：底层连接句柄（故障注入清空表等）。
+    #[doc(hidden)]
+    pub fn conn_handle(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
+        self.conn.lock().expect("blocks conn poisoned")
+    }
+
     pub fn list_note_blocks(&self, note_id: &str) -> Result<Vec<BlockRecord>, crate::Error> {
         let conn = self
             .conn

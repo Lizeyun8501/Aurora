@@ -28,6 +28,26 @@ pub struct BootedApp {
     pub core: Arc<AppCore>,
     /// 本地 DEK 保险库（笔记加解密密钥）。
     pub vault: Arc<LocalDekVault>,
+    /// blocks 存储（派生索引 — DK-01 权威源三阶段的派生侧）。
+    pub blocks: Option<Arc<aurora_core::blocks::BlockStore>>,
+}
+
+impl BootedApp {
+    /// 启动时 blocks 派生重建（DK-01: notes 权威, blocks 派生）。
+    /// 幂等；无 blocks 后端时为 no-op。调用方在 startup 后驱动。
+    pub async fn rebuild_blocks_derivation(
+        &self,
+    ) -> std::result::Result<usize, aurora_core::Error> {
+        let ctx = aurora_core::write_path::WriteContext {
+            core: self.core.clone(),
+            blocks: self.blocks.clone(),
+            // 重建按明文读元数据（notes 元数据本机封存 — 解封路径与写路径一致,
+            // 这里 blocks 派生仅消费 content, 明文端 vault 场景由 desktop 调用方
+            // 传入已解封 ctx; 移动端 seal=None 直读）
+            seal: None,
+        };
+        aurora_core::write_path::rebuild_blocks_derivation(&ctx).await
+    }
 }
 
 /// 启动装配错误。
@@ -71,7 +91,14 @@ pub fn bootstrap(data_dir: &Path) -> Result<BootedApp, BootstrapError> {
     core.startup()?;
     info!(data_dir = ?data_dir, "AppCore startup complete");
 
-    Ok(BootedApp { core, vault })
+    // V26 I3/DK-01: blocks 派生侧（权威源三阶段 — 派生失败不阻断装配）
+    let blocks = aurora_core::blocks::BlockStore::open(&db_path).map(Arc::new);
+
+    Ok(BootedApp {
+        core,
+        vault,
+        blocks,
+    })
 }
 
 /// 构造 AppCore 并注入各 Trait 默认实现（V19 §36.1 步骤 4-5）。
