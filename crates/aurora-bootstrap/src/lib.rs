@@ -67,7 +67,7 @@ impl BootedApp {
             .find(|p| p.name() == "search-index")
             .map(|p| p.watermark());
         let mut wm = 0u64;
-        for fut in wm_fut {
+        if let Some(fut) = wm_fut {
             wm = fut.await.unwrap_or(0);
         }
 
