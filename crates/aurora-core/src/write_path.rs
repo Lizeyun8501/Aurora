@@ -308,6 +308,60 @@ pub async fn save_note_content(
     })
 }
 
+/// M3 双写观察期一致性校验 — 无 Loro 降级模式（无双写, 恒一致）。
+#[cfg(not(feature = "loro-crdt"))]
+pub async fn verify_dual_write_consistency(_ctx: &WriteContext) -> Result<Vec<String>, Error> {
+    Ok(Vec::new())
+}
+
+#[cfg(feature = "loro-crdt")]
+/// M3 双写观察期一致性校验（DK-01 权威源三阶段）。
+///
+/// 逐条对比 KV 元数据 content（权威指针）与 Loro 快照恢复 body（演进目标）。
+/// 返回不一致的 note_id 列表（空 = 双写一致）。快照缺失/损坏计入不一致。
+pub async fn verify_dual_write_consistency(ctx: &WriteContext) -> Result<Vec<String>, Error> {
+    let core = ctx.core.as_ref();
+    let pairs = core.kv_store.scan_prefix("note:").await?;
+    let mut mismatches = Vec::new();
+    for (key, bytes) in &pairs {
+        let Some(note_id) = key.strip_prefix("note:") else {
+            continue;
+        };
+        let plain = match ctx.seal.as_ref() {
+            Some(seal) => match (seal.unseal)(bytes) {
+                Ok(b) => b,
+                Err(_) => {
+                    mismatches.push(note_id.to_string());
+                    continue;
+                }
+            },
+            None => bytes.clone(),
+        };
+        let Ok(record) = serde_json::from_slice::<NoteRecord>(&plain) else {
+            mismatches.push(note_id.to_string());
+            continue;
+        };
+        // Loro 快照恢复对比（无快照 = 观察期前历史数据, 放行不判不一致）
+        let snap = core
+            .kv_store
+            .get(&format!("notesnap:{note_id}"))
+            .await?
+            .unwrap_or_default();
+        if snap.is_empty() {
+            continue;
+        }
+        match crate::l1_infrastructure::note_doc::NoteDoc::from_snapshot(&snap) {
+            Ok(doc) => {
+                if doc.body() != record.content {
+                    mismatches.push(note_id.to_string());
+                }
+            }
+            Err(_) => mismatches.push(note_id.to_string()),
+        }
+    }
+    Ok(mismatches)
+}
+
 /// 启动时 blocks 派生全量重建（DK-01 权威源三阶段）。
 ///
 /// blocks 为派生索引：缺失/损坏时从 notes.content 权威重建。

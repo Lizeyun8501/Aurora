@@ -210,6 +210,24 @@ async fn desktop_and_mobile_write_paths_are_isomorphic() {
         assert_eq!(strategy_d3, "incremental", "重建后恢复增量");
     }
 
+    // ── 对拍 3.7: 双写一致性（M3 观察期 — KV 权威指针 vs Loro 快照恢复）──
+    {
+        let mm_d = write_path::verify_dual_write_consistency(&ctx_d)
+            .await
+            .unwrap();
+        let mm_m = write_path::verify_dual_write_consistency(&ctx_m)
+            .await
+            .unwrap();
+        assert!(
+            mm_d.is_empty(),
+            "desktop dual-write consistent, got {mm_d:?}"
+        );
+        assert!(
+            mm_m.is_empty(),
+            "mobile dual-write consistent, got {mm_m:?}"
+        );
+    }
+
     // ── 对拍 4: delete 后两端 key 集合一致（全清）──
     write_path::delete_note(&ctx_d, &id_d).await.unwrap();
     write_path::delete_note(&ctx_m, &id_m).await.unwrap();
