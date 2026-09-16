@@ -48,6 +48,57 @@ impl BootedApp {
         };
         aurora_core::write_path::rebuild_blocks_derivation(&ctx).await
     }
+
+    /// 启动时投影策略决策（DK-01: 水位线 vs 事件流对比）。
+    ///
+    /// - 水位线超前事件流（数据源回退/换库）→ 全量重建
+    /// - 落后超过 `lag_threshold` 条 → 全量重建（增量重放比全量慢）
+    /// - 其余 → 正常增量 catch_up
+    ///
+    /// 返回 (策略, 描述)。`strategy == "rebuild"` 时调用方应执行
+    /// search_projection_rebuild。
+    pub async fn decide_projection_strategy(&self, lag_threshold: u64) -> (String, String) {
+        let max_seq = self.core.event_bus.last_seq();
+        // 搜索投影水位线（唯一持久化水位线的投影）
+        let wm_fut = self
+            .core
+            .projections()
+            .iter()
+            .find(|p| p.name() == "search-index")
+            .map(|p| p.watermark());
+        let mut wm = 0u64;
+        for fut in wm_fut {
+            wm = fut.await.unwrap_or(0);
+        }
+
+        if wm > max_seq {
+            return (
+                "rebuild".into(),
+                format!("watermark {wm} ahead of event stream {max_seq} (store rolled back?)"),
+            );
+        }
+        let lag = max_seq - wm;
+        if lag > lag_threshold {
+            return (
+                "rebuild".into(),
+                format!("lag {lag} > threshold {lag_threshold}; full rebuild faster than replay"),
+            );
+        }
+        ("incremental".into(), format!("lag {lag} within threshold"))
+    }
+
+    /// 执行搜索投影全量重建（decide_projection_strategy 返回 rebuild 时调用）。
+    pub async fn search_projection_rebuild(&self) -> std::result::Result<(), aurora_core::Error> {
+        for p in self.core.projections() {
+            if p.name() == "search-index" {
+                p.rebuild().await?;
+                let max_seq = self.core.event_bus.last_seq();
+                p.set_watermark(max_seq).await?;
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// 启动装配错误。

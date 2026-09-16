@@ -181,10 +181,18 @@ impl UniffiAppCore {
                 // V20 §4.5: 启动期投影追赶（restore_seq + catch_up 在
                 // startup 后执行，杀进程后索引自动补齐）
                 let core = booted.core.clone();
-                runtime.block_on(async move {
+                let strategy = runtime.block_on(async {
                     let _ = core.startup();
+                    // V26 I3/DK-01: 水位线 vs 事件流对比 — 落后超阈值走全量重建
+                    let (strategy, why) = booted.decide_projection_strategy(1000).await;
+                    tracing::info!(strategy = %strategy, reason = %why, "projection startup strategy");
+                    if strategy == "rebuild" {
+                        let _ = booted.search_projection_rebuild().await;
+                    }
                     let _ = core.catch_up_projections().await;
+                    strategy
                 });
+                let _ = strategy;
                 Ok(Arc::new(Self {
                     core: Some(booted.core),
                     runtime,

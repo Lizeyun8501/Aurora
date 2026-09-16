@@ -190,6 +190,26 @@ async fn desktop_and_mobile_write_paths_are_isomorphic() {
         assert!(rd >= 2, "rebuild 后块数恢复, got {rd}");
     }
 
+    // ── 对拍 3.6: 投影启动策略决策（DK-01 水位线 vs 事件流对比）──
+    {
+        // 正常场景（水位线在事件流内）→ incremental
+        let (strategy_d, _) = desktop.decide_projection_strategy(1000).await;
+        assert_eq!(strategy_d, "incremental", "正常场景应增量");
+
+        // 人为把水位线推到超前（模拟数据源回退）→ rebuild
+        for p in desktop.core.projections() {
+            if p.name() == "search-index" {
+                p.set_watermark(u64::MAX / 2).await.unwrap();
+            }
+        }
+        let (strategy_d2, why) = desktop.decide_projection_strategy(1000).await;
+        assert_eq!(strategy_d2, "rebuild", "水位线超前应重建: {why}");
+        desktop.search_projection_rebuild().await.unwrap();
+        // 重建后水位线复位到事件流末端 → 恢复 incremental
+        let (strategy_d3, _) = desktop.decide_projection_strategy(1000).await;
+        assert_eq!(strategy_d3, "incremental", "重建后恢复增量");
+    }
+
     // ── 对拍 4: delete 后两端 key 集合一致（全清）──
     write_path::delete_note(&ctx_d, &id_d).await.unwrap();
     write_path::delete_note(&ctx_m, &id_m).await.unwrap();
