@@ -624,6 +624,29 @@ impl UniffiAppCore {
     }
 
     /// 时间机器：读取指定版本快照正文（UTF-8 文本）。
+    /// M3 双写观察期巡检（DK-01）— 返回 KV 权威指针与 Loro 快照不一致
+    /// 的 note_id 列表（空 = 双写一致）。UI/运维可周期触发。
+    pub fn verify_dual_write_impl(self: &Arc<Self>) -> Vec<String> {
+        let Some(core) = &self.core else {
+            return Vec::new(); // fallback 模式无双写
+        };
+        let ctx = aurora_core::write_path::WriteContext {
+            core: core.clone(),
+            blocks: self.blocks.clone(),
+            seal: None, // 移动端明文
+        };
+        match self
+            .runtime
+            .block_on(aurora_core::write_path::verify_dual_write_consistency(&ctx))
+        {
+            Ok(mm) => mm,
+            Err(e) => {
+                tracing::warn!(error = %e, "dual-write verify failed");
+                vec!["__verify_error__".to_string()]
+            }
+        }
+    }
+
     pub fn get_snapshot_content_impl(&self, note_id: &str, version: i64) -> Option<String> {
         match self.with_time_machine(|tm| tm.load(note_id, version)) {
             Some(Ok(Some(bytes))) => String::from_utf8(bytes).ok(),
@@ -1453,6 +1476,20 @@ mod tests {
 
         core.clone().delete_note(id).unwrap();
         assert!(core.clone().list_notes().is_empty());
+    }
+
+    /// V26 I3/M3: 双写观察期巡检 — FFI 入口, 健康库返回空列表。
+    #[test]
+    fn verify_dual_write_healthy() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        assert!(!core.is_fallback);
+        let id = core.clone().create_note("巡检笔记".into()).unwrap();
+        core.clone()
+            .save_note_content(id.clone(), "巡检正文内容".into())
+            .unwrap();
+        let mm = core.verify_dual_write_impl();
+        assert!(mm.is_empty(), "双写应一致: {mm:?}");
     }
 
     /// V20 §4.5 事件驱动索引闭环: 创建/搜索/删除全链路经投影。
