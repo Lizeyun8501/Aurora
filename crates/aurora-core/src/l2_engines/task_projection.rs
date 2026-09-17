@@ -36,14 +36,21 @@ use crate::traits::kv_store::KVStore;
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskViewRow {
     pub task_id: String,
+    /// 双锚定之来源笔记（DK-06: 任务保留来源笔记上下文）
     pub note_id: String,
+    /// 双锚定之来源块（来源块的精确位置; 空串 = 无块锚定）
+    pub block_id: String,
     pub title: String,
-    /// GTD 状态: inbox/next/waiting/scheduled/done
+    /// GTD 状态: inbox/next/waiting/scheduled/someday/done/cancelled
     pub status: String,
     /// low/medium/high/urgent
     pub priority: String,
     /// Unix epoch 毫秒
     pub due_date: Option<i64>,
+    /// 预估耗时（分钟; 0 = 未估）
+    pub estimate_minutes: u32,
+    /// 实际耗时累计（分钟 — 由番茄钟/计时会话累加, 禁止手改）
+    pub actual_minutes: u32,
 }
 
 /// 全量数据源回调（全库任务行）。
@@ -104,12 +111,44 @@ impl TaskProjection {
             crate::l2_engines::task_projection::TaskViewRow {
                 task_id: task_id.to_string(),
                 note_id: note_id.to_string(),
+                block_id: String::new(),
                 title: title.to_string(),
                 status: status.to_string(),
                 priority: priority.to_string(),
                 due_date,
+                estimate_minutes: 0,
+                actual_minutes: 0,
             },
         );
+    }
+
+    /// 时间追踪 — 实际耗时累加（DK-06: 由番茄钟/计时会话驱动,
+    /// 禁止手改 progress/actual 语义的守卫点; actual 只能经此累加）。
+    pub fn record_actual_minutes(&self, task_id: &str, minutes: u32) {
+        let mut rows = self.rows.write().unwrap();
+        if let Some(row) = rows.get_mut(task_id) {
+            row.actual_minutes = row.actual_minutes.saturating_add(minutes);
+        }
+    }
+
+    /// 预估耗时设置（estimate 可改 — 与 actual 分离）。
+    pub fn set_estimate_minutes(&self, task_id: &str, minutes: u32) {
+        let mut rows = self.rows.write().unwrap();
+        if let Some(row) = rows.get_mut(task_id) {
+            row.estimate_minutes = minutes;
+        }
+    }
+
+    /// 时间偏差（TodayView 周回顾: 预计 vs 实际偏差率; 无预估返回 None）。
+    pub fn deviation_ratio(&self, task_id: &str) -> Option<f64> {
+        let rows = self.rows.read().unwrap();
+        let row = rows.get(task_id)?;
+        if row.estimate_minutes == 0 {
+            return None;
+        }
+        Some(
+            (row.actual_minutes as f64 - row.estimate_minutes as f64) / row.estimate_minutes as f64,
+        )
     }
 
     /// 统计（TodayView 头部）: (进行中, 已完成)。
@@ -128,10 +167,13 @@ impl TaskProjection {
         let row = TaskViewRow {
             task_id: format!("seed:{note_id}"),
             note_id: note_id.to_string(),
+            block_id: String::new(),
             title: title.to_string(),
             status: STATUS_INBOX.to_string(),
             priority: "medium".into(),
             due_date: None,
+            estimate_minutes: 0,
+            actual_minutes: 0,
         };
         self.rows.write().unwrap().insert(row.task_id.clone(), row);
     }
@@ -230,10 +272,13 @@ mod tests {
         TaskViewRow {
             task_id: id.into(),
             note_id: note.into(),
+            block_id: String::new(),
             title: format!("task-{id}"),
             status: status.into(),
             priority: "medium".into(),
             due_date: due,
+            estimate_minutes: 0,
+            actual_minutes: 0,
         }
     }
 
@@ -324,5 +369,37 @@ mod tests {
         bus.catch_up(&p).await.unwrap();
         assert_eq!(p.row_count(), 2);
         assert_eq!(p.by_status("waiting").len(), 1);
+    }
+
+    /// V26 DK-06: 双锚定字段 + 时间追踪语义（actual 只能累加; 偏差率）。
+    #[tokio::test]
+    async fn dual_anchor_and_time_tracking() {
+        let bus = LayeredEventBus::new(Some(std::sync::Arc::new(
+            crate::event_bus::layered::InMemoryEventQueue::new(),
+        )));
+        let p = make(Vec::new());
+        bus.publish(AppEvent::NoteCreated {
+            note_id: "n1".into(),
+            title: "笔记A".into(),
+            content: String::new(),
+        });
+        bus.catch_up(&p).await.unwrap();
+
+        let row = p.by_status("inbox").into_iter().next().expect("seeded");
+        assert_eq!(row.note_id, "n1");
+        assert_eq!(row.block_id, "", "无块锚定为空");
+        assert_eq!(row.estimate_minutes, 0);
+        assert_eq!(row.actual_minutes, 0);
+
+        p.set_estimate_minutes(&row.task_id, 25);
+        p.record_actual_minutes(&row.task_id, 30);
+        p.record_actual_minutes(&row.task_id, 15);
+        let after = p.by_status("inbox").into_iter().next().unwrap();
+        assert_eq!(after.estimate_minutes, 25);
+        assert_eq!(after.actual_minutes, 45, "两次累加 30+15");
+
+        let dev = p.deviation_ratio(&row.task_id).unwrap();
+        assert!((dev - 0.8).abs() < 1e-9, "deviation {dev}");
+        assert!(p.deviation_ratio("__missing__").is_none());
     }
 }
