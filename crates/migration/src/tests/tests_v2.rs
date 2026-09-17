@@ -37,7 +37,7 @@ fn v2_notes_columns_present() {
 fn v4_schema_version_is_current() {
     let mgr = MigrationManager::new_in_memory().unwrap();
     mgr.migrate().unwrap();
-    assert_eq!(CURRENT_SCHEMA_VERSION, 5);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 6);
     // V3: audit_log 必须带 prev_hash / hash 列（T12 哈希链）
     let conn = mgr.into_inner().unwrap();
     let mut stmt = conn.prepare("PRAGMA table_info(audit_log)").unwrap();
@@ -141,6 +141,32 @@ fn v2_composite_index() {
         .unwrap();
     let sql = idx.expect("复合索引应存在");
     assert!(sql.contains("updated_at DESC"), "索引应为复合: {sql}");
+}
+
+/// V6: 番茄钟会话持久化（DK-06 — 计时切后台不丢数据）。
+#[test]
+fn v6_pomodoro_sessions_table() {
+    let mgr = MigrationManager::new_in_memory().unwrap();
+    mgr.migrate().unwrap();
+    let conn = mgr.into_inner().unwrap();
+    conn.execute(
+        "INSERT INTO pomodoro_sessions (id, task_id, started_at, planned_minutes) VALUES ('s1','t1','2026-09-18T08:00:00Z', 25)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE pomodoro_sessions SET ended_at='2026-09-18T08:25:00Z', actual_minutes=25, completed=1 WHERE id='s1'",
+        [],
+    )
+    .unwrap();
+    let done: i64 = conn
+        .query_row(
+            "SELECT completed FROM pomodoro_sessions WHERE id='s1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(done, 1, "会话完成状态可写");
 }
 
 /// V5: 目录树统一 + 组织/配套表（DK-01 — V24 整体缺失的表补齐）。

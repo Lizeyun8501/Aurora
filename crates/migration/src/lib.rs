@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use tracing::{error, info, warn};
 
 /// 当前数据库 Schema 版本。
-pub const CURRENT_SCHEMA_VERSION: i64 = 5;
+pub const CURRENT_SCHEMA_VERSION: i64 = 6;
 
 /// 迁移管理器。
 pub struct MigrationManager {
@@ -83,6 +83,10 @@ impl MigrationManager {
         // V5: 目录树统一 + 组织/配套表补齐（V26 I3 / DK-01 — V24 整体缺失）
         if current < 5 {
             Self::apply_v5(&mut conn)?;
+        }
+        // V6: 番茄钟会话持久化（V26 M2 / DK-06 — 计时期间切后台不丢数据）
+        if current < 6 {
+            Self::apply_v6(&mut conn)?;
         }
 
         info!(version = CURRENT_SCHEMA_VERSION, "migration completed");
@@ -239,6 +243,39 @@ impl MigrationManager {
         tx.commit()
             .map_err(|e| MigrationError::Exec(e.to_string()))?;
         info!(version = 5, "V5 applied: unified tree + org tables");
+        Ok(())
+    }
+
+    /// V6: 番茄钟会话表（V26 M2 / DK-06）。
+    ///
+    /// 计时期间切后台不丢数据 — 会话 start 即落库, complete 更新实际时长;
+    /// 完成会话由调用方桥接 TaskProjection.record_actual_minutes。
+    fn apply_v6(conn: &mut rusqlite::Connection) -> Result<(), MigrationError> {
+        let tx = conn
+            .transaction()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS pomodoro_sessions (
+                id TEXT PRIMARY KEY,
+                task_id TEXT,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                planned_minutes INTEGER NOT NULL,
+                actual_minutes INTEGER,
+                completed INTEGER NOT NULL DEFAULT 0,
+                white_noise TEXT
+            )",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pomodoro_task ON pomodoro_sessions(task_id)",
+            [],
+        )
+        .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        tx.commit()
+            .map_err(|e| MigrationError::Exec(e.to_string()))?;
+        info!(version = 6, "V6 applied: pomodoro_sessions");
         Ok(())
     }
 
