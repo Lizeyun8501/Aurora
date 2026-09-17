@@ -328,6 +328,9 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
                                                 status: "inbox".into(),
                                                 priority: "medium".into(),
                                                 due_date: None,
+                    block_id: String::new(),
+                    estimate_minutes: 0,
+                    actual_minutes: 0,
                                             })
                                         })
                                         .collect::<Vec<_>>()
