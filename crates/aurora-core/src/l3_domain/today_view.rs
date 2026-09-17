@@ -472,7 +472,7 @@ impl FocusMode {
                 .actual_duration_minutes
                 .unwrap_or(session.planned_duration_minutes)
         };
-        projection.record_actual_minutes(task_id, minutes as u32);
+        projection.record_actual_minutes(task_id, minutes);
         info!(task_id = %task_id, minutes, "session settled to task actual_minutes");
     }
 
