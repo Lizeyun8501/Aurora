@@ -108,7 +108,9 @@ impl NoteTask {
     pub const STATUS_NEXT: &'static str = "next";
     pub const STATUS_WAITING: &'static str = "waiting";
     pub const STATUS_SCHEDULED: &'static str = "scheduled";
+    pub const STATUS_SOMEDAY: &'static str = "someday";
     pub const STATUS_DONE: &'static str = "done";
+    pub const STATUS_CANCELLED: &'static str = "cancelled";
 
     /// GTD 状态机合法迁移（V19 §13 GTD 集成）。
     pub fn is_valid_transition(from: &str, to: &str) -> bool {
@@ -119,15 +121,23 @@ impl NoteTask {
             (from, to),
             (Self::STATUS_INBOX, Self::STATUS_NEXT)
                 | (Self::STATUS_INBOX, Self::STATUS_SCHEDULED)
+                | (Self::STATUS_INBOX, Self::STATUS_SOMEDAY)
                 | (Self::STATUS_INBOX, Self::STATUS_DONE)
                 | (Self::STATUS_NEXT, Self::STATUS_WAITING)
                 | (Self::STATUS_NEXT, Self::STATUS_DONE)
                 | (Self::STATUS_NEXT, Self::STATUS_SCHEDULED)
+                | (Self::STATUS_NEXT, Self::STATUS_CANCELLED)
                 | (Self::STATUS_WAITING, Self::STATUS_NEXT)
                 | (Self::STATUS_WAITING, Self::STATUS_DONE)
+                | (Self::STATUS_WAITING, Self::STATUS_CANCELLED)
                 | (Self::STATUS_SCHEDULED, Self::STATUS_DONE)
                 | (Self::STATUS_SCHEDULED, Self::STATUS_NEXT)
+                | (Self::STATUS_SCHEDULED, Self::STATUS_CANCELLED)
+                | (Self::STATUS_SOMEDAY, Self::STATUS_NEXT)
+                | (Self::STATUS_SOMEDAY, Self::STATUS_SCHEDULED)
+                | (Self::STATUS_SOMEDAY, Self::STATUS_CANCELLED)
                 | (Self::STATUS_DONE, Self::STATUS_NEXT)
+                | (Self::STATUS_CANCELLED, Self::STATUS_NEXT)
         )
     }
 }
