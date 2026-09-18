@@ -331,6 +331,8 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
                     block_id: String::new(),
                     estimate_minutes: 0,
                     actual_minutes: 0,
+                    parent_task_id: String::new(),
+                    progress: 0.0,
                                             })
                                         })
                                         .collect::<Vec<_>>()

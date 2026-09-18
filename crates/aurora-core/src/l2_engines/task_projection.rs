@@ -51,6 +51,11 @@ pub struct TaskViewRow {
     pub estimate_minutes: u32,
     /// 实际耗时累计（分钟 — 由番茄钟/计时会话累加, 禁止手改）
     pub actual_minutes: u32,
+    /// 父任务 id（子任务归属; 空串 = 顶层任务）
+    pub parent_task_id: String,
+    /// 子任务进度（0.0-1.0, 由子任务完成比例**推导** — DK-06: 禁止手改;
+    /// 无子任务的父任务返回自身完成状态: done=1.0 其余 0.0）
+    pub progress: f32,
 }
 
 /// 全量数据源回调（全库任务行）。
@@ -112,6 +117,8 @@ impl TaskProjection {
                 task_id: task_id.to_string(),
                 note_id: note_id.to_string(),
                 block_id: String::new(),
+                parent_task_id: String::new(),
+                progress: 0.0,
                 title: title.to_string(),
                 status: status.to_string(),
                 priority: priority.to_string(),
@@ -151,6 +158,63 @@ impl TaskProjection {
         )
     }
 
+    /// 子任务进度推导（DK-06: progress 由子任务完成比例推导, 禁止手改）。
+    ///
+    /// 对每行重算 progress: 有子任务的父 = done 子任务数 / 子任务总数;
+    /// 叶子任务 = 自身状态（done/cancelled → 1.0, 其余 0.0）。
+    /// 返回发生变化的行数（供事件/测试断言）。
+    pub fn derive_progress(&self) -> usize {
+        let mut rows = self.rows.write().unwrap();
+        // 收集 parent → children 映射
+        let mut children: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for r in rows.values() {
+            if !r.parent_task_id.is_empty() {
+                children
+                    .entry(r.parent_task_id.clone())
+                    .or_default()
+                    .push(r.task_id.clone());
+            }
+        }
+        let mut changed = 0usize;
+        let ids: Vec<String> = rows.keys().cloned().collect();
+        for id in &ids {
+            let new_progress = match children.get(id) {
+                Some(child_ids) => {
+                    let total = child_ids.len();
+                    let done = child_ids
+                        .iter()
+                        .filter(|c| rows.get(*c).map(|r| r.status == "done").unwrap_or(false))
+                        .count();
+                    done as f32 / total as f32
+                }
+                None => {
+                    let st = rows.get(id).map(|r| r.status.as_str()).unwrap_or("");
+                    if st == "done" || st == "cancelled" {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+            };
+            if let Some(row) = rows.get_mut(id) {
+                if (row.progress - new_progress).abs() > f32::EPSILON {
+                    row.progress = new_progress;
+                    changed += 1;
+                }
+            }
+        }
+        changed
+    }
+
+    /// 测试/工具访问器: 行表快照的可变句柄（progress 推导前置数据构造）。
+    #[doc(hidden)]
+    pub fn rows_for_test(
+        &self,
+    ) -> std::sync::RwLockWriteGuard<'_, std::collections::BTreeMap<String, TaskViewRow>> {
+        self.rows.write().unwrap()
+    }
+
     /// 统计（TodayView 头部）: (进行中, 已完成)。
     pub fn stats(&self) -> (usize, usize) {
         let rows = self.rows.read().unwrap();
@@ -168,6 +232,8 @@ impl TaskProjection {
             task_id: format!("seed:{note_id}"),
             note_id: note_id.to_string(),
             block_id: String::new(),
+            parent_task_id: String::new(),
+            progress: 0.0,
             title: title.to_string(),
             status: STATUS_INBOX.to_string(),
             priority: "medium".into(),
@@ -273,6 +339,8 @@ mod tests {
             task_id: id.into(),
             note_id: note.into(),
             block_id: String::new(),
+            parent_task_id: String::new(),
+            progress: 0.0,
             title: format!("task-{id}"),
             status: status.into(),
             priority: "medium".into(),
@@ -401,5 +469,57 @@ mod tests {
         let dev = p.deviation_ratio(&row.task_id).unwrap();
         assert!((dev - 0.8).abs() < 1e-9, "deviation {dev}");
         assert!(p.deviation_ratio("__missing__").is_none());
+    }
+
+    /// V26 DK-06: 子任务进度推导 — 禁止手改, 由完成比例计算。
+    #[tokio::test]
+    async fn parent_progress_derived_from_children() {
+        let p = make(Vec::new());
+        // 构造父子: parent(P) + 子 c1(done) c2(next) — 手工 upsert 不可用
+        // （upsert 无 parent 字段）→ 直接经 derive 前先塞行:
+        // 借 make() source 提供行会绕过 rows map——derive 基于 rows,
+        // 所以先播种再改 status 模拟:
+        let bus = LayeredEventBus::new(Some(std::sync::Arc::new(
+            crate::event_bus::layered::InMemoryEventQueue::new(),
+        )));
+        for (nid, _t) in [("p1", "父"), ("c1", "子一"), ("c2", "子二")] {
+            bus.publish(AppEvent::NoteCreated {
+                note_id: nid.into(),
+                title: _t.into(),
+                content: String::new(),
+            });
+        }
+        bus.catch_up(&p).await.unwrap();
+        // 播种行 task_id = seed:{note_id}; 手动设定父子关系与状态
+        {
+            let mut rows = p.rows_for_test();
+            // parent: p1, 子: c1/c2; c1 done
+            if let Some(r) = rows.get_mut("seed:p1") {
+                r.status = "next".into();
+            }
+            for cid in ["seed:c1", "seed:c2"] {
+                if let Some(r) = rows.get_mut(cid) {
+                    r.parent_task_id = "seed:p1".into();
+                }
+            }
+            if let Some(r) = rows.get_mut("seed:c1") {
+                r.status = "done".into();
+            }
+        }
+        let changed = p.derive_progress();
+        assert!(
+            changed >= 2,
+            "有变更行（父 0→0.5, c1 0→1.0; c2 恒 0.0 无变更）, got {changed}"
+        );
+        let parent = p
+            .by_status("next")
+            .into_iter()
+            .find(|r| r.task_id == "seed:p1")
+            .expect("parent");
+        assert!(
+            (parent.progress - 0.5).abs() < 1e-6,
+            "1/2 子任务完成 → 0.5, got {}",
+            parent.progress
+        );
     }
 }
