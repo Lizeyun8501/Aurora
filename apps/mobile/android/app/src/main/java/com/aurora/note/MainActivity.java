@@ -106,6 +106,15 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String todayFocusSummary() {
+            try {
+                return core.todayFocusSummary();
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        @JavascriptInterface
         public String createNote(String title) {
             try {
                 return core.createNote(title);

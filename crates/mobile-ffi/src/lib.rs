@@ -1360,6 +1360,11 @@ impl UniffiAppCore {
         Self::list_notes_impl(&self)
     }
 
+    /// V26 M2/DK-06: 今日专注周回顾汇总（JSON 字符串直通 WebView）。
+    pub fn today_focus_summary(self: Arc<Self>) -> String {
+        self.today_focus_summary_impl()
+    }
+
     pub fn search_notes(self: Arc<Self>, query: String) -> Vec<SearchResult> {
         Self::search_notes_impl(&self, query)
     }

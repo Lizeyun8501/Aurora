@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { platform, type NoteSummary, type SearchResult } from './adapters/androidPlatform';
 import { Solar, HolidayUtil } from 'lunar-typescript';
 
@@ -188,7 +188,9 @@ function focusSummary(tasks: Task[]): { estimate: number; actual: number; deviat
 /** V26 M2/DK-06: 预计 vs 实际徽标 — 偏差率着色（|d|>0.3 警示）。
  *  FFI 周回顾汇总优先; localStorage 演示级降级; 双零隐藏。 */
 function FocusBadge({ tasks }: { tasks: Task[] }) {
-  const { estimate, actual, deviation } = focusSummary(tasks);
+  // V26 M2/DK-06: Rust 投影真源优先（Android 桥），FFI 不可用降级本地推导
+  const remote = useMemo(() => platform.todayFocusSummary(), []);
+  const { estimate, actual, deviation } = remote ?? focusSummary(tasks);
   if (estimate === 0 && actual === 0) return null;
   const devText = deviation === null ? '' :
     deviation === 0 ? '（持平）' : '（' + (deviation > 0 ? '+' : '') + Math.round(deviation * 100) + '%）';
