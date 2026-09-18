@@ -508,10 +508,12 @@ impl UniffiAppCore {
                 .filter(|r| r.priority == "urgent")
                 .collect()
         } else if undone_only {
+            // V26 M2/DK-06: 7 态全量（someday 计入未完成; cancelled 不计）
             let mut all = tp.by_status("inbox");
             all.extend(tp.by_status("next"));
             all.extend(tp.by_status("waiting"));
             all.extend(tp.by_status("scheduled"));
+            all.extend(tp.by_status("someday"));
             all
         } else {
             tp.by_status("inbox")
@@ -624,6 +626,55 @@ impl UniffiAppCore {
     }
 
     /// 时间机器：读取指定版本快照正文（UTF-8 文本）。
+    /// V26 M2/DK-06: 今日专注周回顾汇总 — (总预估分钟, 总实际分钟, 偏差率)。
+    ///
+    /// 偏差率 = (actual-estimate)/estimate（有预估任务加权; 无预估只累计
+    /// actual）。TodayView 头部「预计 vs 实际」徽标数据源。
+    pub fn today_focus_summary_impl(self: Arc<Self>) -> String {
+        let Some(core) = &self.core else {
+            return r#"{"estimate":0,"actual":0,"deviation":null}"#.into();
+        };
+        let tp = core.projections().iter().find_map(|p| {
+            p.as_any().and_then(|a| {
+                a.downcast_ref::<aurora_core::l2_engines::task_projection::TaskProjection>()
+            })
+        });
+        let Some(tp) = tp else {
+            return r#"{"estimate":0,"actual":0,"deviation":null}"#.into();
+        };
+        let rows: Vec<_> = {
+            let mut all = tp.by_status("done");
+            all.extend(tp.by_status("next"));
+            all.extend(tp.by_status("inbox"));
+            all.extend(tp.by_status("waiting"));
+            all.extend(tp.by_status("scheduled"));
+            all.extend(tp.by_status("someday"));
+            all
+        };
+        let mut est: i64 = 0;
+        let mut act: i64 = 0;
+        for r in &rows {
+            act += r.actual_minutes as i64;
+            if r.estimate_minutes > 0 {
+                est += r.estimate_minutes as i64;
+            }
+        }
+        let deviation: Option<f64> = if est > 0 {
+            Some((act as f64 - est as f64) / est as f64)
+        } else {
+            None
+        };
+        format!(
+            r#"{{"estimate":{},"actual":{},"deviation":{},"tasks":{}}}"#,
+            est,
+            act,
+            deviation
+                .map(|d| format!("{d:.2}"))
+                .unwrap_or_else(|| "null".into()),
+            rows.len()
+        )
+    }
+
     /// M3 双写观察期巡检（DK-01）— 返回 KV 权威指针与 Loro 快照不一致
     /// 的 note_id 列表（空 = 双写一致）。UI/运维可周期触发。
     pub fn verify_dual_write_impl(self: &Arc<Self>) -> Vec<String> {
