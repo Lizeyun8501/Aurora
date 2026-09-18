@@ -284,4 +284,93 @@ mod tests {
             &Ed25519Signature(sig_arr)
         ));
     }
+
+    // =========================================================================
+    // DK-07 安全切片（V26）：IV 防重用 / salt fail-closed / 篡改拒绝
+    // =========================================================================
+
+    /// AES-GCM IV 防重用：同一 key 大量加密，nonce 必须全局唯一。
+    /// 12B 随机 nonce 下 256 次生成碰撞概率 ~2^-96，出现重复即 RNG/实现缺陷。
+    #[test]
+    fn dk07_gcm_nonce_never_reused_same_key() {
+        let provider = SecurityCryptoProvider::new();
+        let key: [u8; 32] = provider.random_bytes(32).try_into().unwrap();
+        let mut seen = std::collections::HashSet::with_capacity(256);
+        for _ in 0..256 {
+            let ct = provider.encrypt(b"payload", &key).unwrap();
+            assert_eq!(ct.nonce.len(), 12, "nonce 必须为 12 字节 GCM 标准");
+            assert!(
+                seen.insert(ct.nonce.clone()),
+                "IV 重用！nonce 重复: {:?}",
+                ct.nonce
+            );
+        }
+    }
+
+    /// Argon2id salt 长度 fail-closed：短 salt 必须报错，绝不静默降级派生。
+    #[test]
+    fn dk07_argon2id_short_salt_rejected() {
+        let provider = SecurityCryptoProvider::new();
+        for n in [0usize, 1, 4, 7] {
+            let salt = vec![0xABu8; n];
+            let r = provider.derive_key("pw", &salt);
+            assert!(r.is_err(), "salt {n}B 必须被拒绝");
+            let msg = r.unwrap_err().to_string();
+            assert!(msg.contains("salt too short"), "错误须指明原因: {msg}");
+        }
+        // 8B 边界值恰好通过（实现约定 minimum 8）
+        let salt8 = vec![0xCDu8; 8];
+        assert!(provider.derive_key("pw", &salt8).is_ok(), "8B salt 应通过");
+    }
+
+    /// C03 fail-closed 三连：密文/tag/nonce 任一篡改 → 拒绝返回明文。
+    #[test]
+    fn dk07_ciphertext_tamper_always_rejected() {
+        let provider = SecurityCryptoProvider::new();
+        let key: [u8; 32] = provider.random_bytes(32).try_into().unwrap();
+        let base = provider.encrypt(b"top secret content", &key).unwrap();
+
+        // 1) 密文体单字节翻转
+        let mut ct = base.clone();
+        let mid = ct.data.len() / 2;
+        ct.data[mid] ^= 0x01;
+        assert!(provider.decrypt(&ct, &key).is_err(), "密文篡改必须拒绝");
+
+        // 2) GCM tag 独立字段翻转
+        let mut ct = base.clone();
+        ct.tag[15] ^= 0x80;
+        assert!(provider.decrypt(&ct, &key).is_err(), "tag 篡改必须拒绝");
+
+        // 3) nonce 篡改
+        let mut ct = base.clone();
+        ct.nonce[0] ^= 0xFF;
+        assert!(provider.decrypt(&ct, &key).is_err(), "nonce 篡改必须拒绝");
+
+        // 4) 错误 key（密钥混淆）
+        let wrong: [u8; 32] = provider.random_bytes(32).try_into().unwrap();
+        assert!(
+            provider.decrypt(&base, &wrong).is_err(),
+            "错误 key 必须拒绝"
+        );
+    }
+
+    /// 加密不改变明文长度语义：密文 = 明文 + 16B tag（GCM 规范）。
+    #[test]
+    fn dk07_ciphertext_len_is_plaintext_plus_tag() {
+        let provider = SecurityCryptoProvider::new();
+        let key: [u8; 32] = provider.random_bytes(32).try_into().unwrap();
+        let pt = b"0123456789"; // 10B
+        let ct = provider.encrypt(pt, &key).unwrap();
+        assert_eq!(ct.data.len(), pt.len(), "GCM 密文体应与明文等长");
+        assert_eq!(ct.tag.len(), 16, "GCM tag 固定 16 字节");
+    }
+
+    /// zeroize 契约：MasterKey 生命周期内可读、drop 不 panic（清零路径触发）。
+    #[test]
+    fn dk07_master_key_zeroize_on_drop() {
+        let mk = crate::key_hierarchy::MasterKey::derive("dk07-test-password").unwrap();
+        assert_eq!(mk.as_bytes().len(), 32, "主密钥 256-bit");
+        assert!(mk.as_bytes().iter().any(|&b| b != 0), "密钥材料不应全零");
+        drop(mk); // Drop::zeroize 触发 volatile 清零路径
+    }
 }
