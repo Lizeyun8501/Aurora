@@ -863,3 +863,10 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 .floating-menu button:active { background: var(--bg-soft, var(--bg-secondary)); }
 .floating-menu button.active { color: var(--brand); font-weight: 600; }
+
+/* V26 M2/DK-06: 预计 vs 实际徽标（周回顾） */
+.focus-badge {
+  font-size: 12px; white-space: nowrap;
+  padding: 1px 6px; border-radius: 8px;
+  background: var(--bg-soft, rgba(0,0,0,0.04));
+}

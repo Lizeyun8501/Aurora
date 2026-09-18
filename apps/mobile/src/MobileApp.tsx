@@ -158,6 +158,12 @@ type TaskStatus = 'next' | 'waiting' | 'plan' | 'done';
 interface Task {
   id: string; text: string; status: TaskStatus;
   due?: string; noteId?: string; createdAt: number;
+  /** V26 M2/DK-06 时间追踪: 预估/实际分钟（actual 只能经番茄钟累加） */
+  estimateMinutes?: number;
+  actualMinutes?: number;
+  /** 子任务归属（有父的行显示进度条 — progress 由子任务推导, 禁止手改） */
+  parentTaskId?: string;
+  progress?: number;
 }
 const TASK_GROUPS: Array<{ id: TaskStatus; label: string }> = [
   { id: 'next', label: '下一步行动' },
@@ -165,6 +171,38 @@ const TASK_GROUPS: Array<{ id: TaskStatus; label: string }> = [
   { id: 'plan', label: '计划' },
   { id: 'done', label: '已完成' },
 ];
+
+/** V26 M2/DK-06: 周回顾汇总 — FFI 优先, localStorage 演示级降级。 */
+function focusSummary(tasks: Task[]): { estimate: number; actual: number; deviation: number | null } {
+  let estimate = 0, actual = 0;
+  for (const t of tasks) {
+    actual += t.actualMinutes ?? 0;
+    estimate += t.estimateMinutes ?? 0;
+  }
+  const remote = (platform as { todayFocusSummary?: () => { estimate: number; actual: number; deviation: number | null } | null }).todayFocusSummary?.();
+  if (remote) return remote;
+  const deviation = estimate > 0 ? (actual - estimate) / estimate : null;
+  return { estimate, actual, deviation };
+}
+
+/** V26 M2/DK-06: 预计 vs 实际徽标 — 偏差率着色（|d|>0.3 警示）。
+ *  FFI 周回顾汇总优先; localStorage 演示级降级; 双零隐藏。 */
+function FocusBadge({ tasks }: { tasks: Task[] }) {
+  const { estimate, actual, deviation } = focusSummary(tasks);
+  if (estimate === 0 && actual === 0) return null;
+  const devText = deviation === null ? '' :
+    deviation === 0 ? '（持平）' : '（' + (deviation > 0 ? '+' : '') + Math.round(deviation * 100) + '%）';
+  const warn = deviation !== null && Math.abs(deviation) > 0.3;
+  return (
+    <span
+      className="focus-badge"
+      title="预计 vs 实际（周回顾）"
+      style={{ color: warn ? 'var(--warning, #b45309)' : 'var(--text-tertiary)' }}
+    >
+      预计 {estimate}′ · 实际 {actual}′{devText}
+    </span>
+  );
+}
 
 function loadTasks(): Task[] {
   try { return JSON.parse(localStorage.getItem('aurora.tasks') ?? '[]'); } catch { return []; }
@@ -472,6 +510,7 @@ function TodayView({ tasks, onTasks, onOpenNote, showToast }: {
         <div className="today-sub">
           <span className="sync-badge"><span className="sync-dot ok" />已同步</span>
           <span>{openCount} 项待办 · {doneToday} 项已完成</span>
+          <FocusBadge tasks={tasks} />
         </div>
       </header>
 

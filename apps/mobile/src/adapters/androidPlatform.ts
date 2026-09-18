@@ -27,6 +27,8 @@ interface AndroidBridge {
   listNotes(): string;
   createNote(title: string): string;
   getNoteContent(noteId: string): string;
+  /** V26 M2/DK-06: 周回顾汇总 JSON — (estimate/actual/deviation/tasks) */
+  todayFocusSummary(): string;
   saveNoteContent(noteId: string, content: string): number;
   deleteNote(noteId: string): number;
   searchNotes(query: string): string;
@@ -140,6 +142,18 @@ export const platform = {
     const b = bridge();
     if (b) return b.getNoteContent(noteId) ?? '';
     return mockNotes().find((n) => n.id === noteId)?.content ?? '';
+  },
+  /** V26 M2/DK-06: 周回顾汇总（fallback 返回 null — UI 降级本地计算） */
+  todayFocusSummary(): { estimate: number; actual: number; deviation: number | null; tasks: number } | null {
+    const b = bridge();
+    if (!b) return null;
+    try {
+      const o = JSON.parse(b.todayFocusSummary());
+      if (typeof o.estimate === 'number' && typeof o.actual === 'number') return o;
+      return null;
+    } catch {
+      return null;
+    }
   },
 
   saveNoteContent(noteId: string, content: string): boolean {
