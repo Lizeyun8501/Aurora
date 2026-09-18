@@ -1045,7 +1045,7 @@ mod pomodoro_bridge_tests {
     fn completed_session_settles_actual_minutes() {
         let tv = FocusMode::new(25, 5);
         let kv = Arc::new(MemoryKVStore::default());
-        let p = TaskProjection::new(kv, Box::new(|| Vec::new()));
+        let p = TaskProjection::new(kv, Box::new(Vec::new));
 
         // 预置任务行（upsert 经 projection 公共 API 由测试构造 source 提供）
         // 直接用 seed: 走 note_created_seed 等价路径 — 这里用 by_status 之前
@@ -1064,7 +1064,7 @@ mod pomodoro_bridge_tests {
     fn unanchored_session_settle_is_noop() {
         let tv = FocusMode::new(25, 5);
         let kv = Arc::new(MemoryKVStore::default());
-        let p = TaskProjection::new(kv, Box::new(|| Vec::new()));
+        let p = TaskProjection::new(kv, Box::new(Vec::new));
         let session = tv.start_session(None, WhiteNoiseKind::Rain);
         let done = tv.end_session(session, true);
         tv.settle_session_to_task(&done, &p); // no-op 不 panic
