@@ -173,6 +173,41 @@ impl WebDavTarget {
         }
     }
 
+    /// GET 任意文件 `{base}{path}`（path 需以 `/` 开头）。
+    ///
+    /// 404 → `Err(NotFound)`（fail-closed；调用方自行决定缺省语义，
+    /// 与 `fetch_index` 的 `Ok(None)` 首次同步语义不同）。
+    pub(crate) async fn get_file(
+        &self,
+        conn: &Connection,
+        path: &str,
+    ) -> Result<Vec<u8>, aurora_core::Error> {
+        let (base, auth) = split_endpoint(conn)?;
+        let url = format!("{base}{path}");
+        let client = self.http.read().clone();
+        let mut req = client.get(&url);
+        if let Some((u, p)) = auth {
+            req = req.basic_auth(u, Some(p));
+        }
+        let resp = req.send().await.map_err(http_err)?;
+        let status = resp.status();
+        if status.is_success() {
+            Ok(resp.bytes().await.map_err(http_err)?.to_vec())
+        } else if status.as_u16() == 404 {
+            Err(aurora_core::Error::NotFound(format!(
+                "webdav file missing: {path}"
+            )))
+        } else if matches!(status.as_u16(), 401 | 403) {
+            Err(aurora_core::Error::PermissionDenied(format!(
+                "webdav auth failed ({url}): {status}"
+            )))
+        } else {
+            Err(aurora_core::Error::Network(format!(
+                "webdav get failed ({url}): HTTP {status}"
+            )))
+        }
+    }
+
     /// GET 单文档 oplog 本体（仅远端较新时由 `recv_update`/`sync` 调用）。
     async fn fetch_oplog(
         &self,
@@ -207,7 +242,7 @@ impl WebDavTarget {
     }
 
     /// PUT 任意文件到 `{base}{path}`（path 需以 `/` 开头），成功返回响应 ETag。
-    async fn put_file(
+    pub(crate) async fn put_file(
         &self,
         conn: &Connection,
         path: &str,
@@ -608,7 +643,7 @@ fn invalid_url(raw: &str, why: &str) -> aurora_core::Error {
 }
 
 /// percent-encode doc_id 为单段安全路径（保留 RFC 3986 unreserved 字符）。
-fn encode_doc_id(doc_id: &str) -> String {
+pub(crate) fn encode_doc_id(doc_id: &str) -> String {
     let mut out = String::with_capacity(doc_id.len());
     for &b in doc_id.as_bytes() {
         match b {

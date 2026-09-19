@@ -22,6 +22,8 @@ pub mod email;
 pub mod webhook;
 // WebDAV 增量同步适配器 — DK-08 第一切片（SyncTarget 真网络实现）
 pub mod webdav;
+// WebDAV 大文件分片上传与断点续传 — DK-08 第三切片（§7.1）
+pub mod webdav_upload;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,7 +41,8 @@ pub use cloud_drive::{
 pub use email::{
     EmailAttachment, EmailDocument, EmailFilter, EmailMessage, EmailSync, ImapConfig, ImapConnector,
 };
-pub use webdav::{WebDavIndex, WebDavIndexEntry, WebDavTarget};
+pub use webdav::{PushOutcome, WebDavIndex, WebDavIndexEntry, WebDavTarget};
+pub use webdav_upload::{ChunkedUploader, UploadManifest, UploadProgress, UploadSession};
 pub use webhook::{HmacVerifier, WebhookConfig, WebhookEvent, WebhookReceiver, WebhookSource};
 
 /// 连接器状态。

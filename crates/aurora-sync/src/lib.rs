@@ -86,15 +86,19 @@ impl From<Error> for aurora_core::Error {
 }
 
 pub use cloud::{CloudConfig, CloudSyncEngine, SyncBatch};
-pub use conflict::{Branch, ConflictResolution, ConflictResolver, SemanticConflict};
+pub use conflict::{
+    Branch, ConflictArtifact, ConflictArtifactStore, ConflictResolution, ConflictResolver,
+    SemanticConflict,
+};
 pub use device::{Device, DeviceId, DeviceManager, DeviceStatus, QrAuthorization};
 pub use external::{
-    CalDavConfig, CalDavConnector, CalendarEvent, CalendarSync, CloudDriveConnector,
-    ConnectorRegistry, ConnectorState, DriveFile, DriveProvider, DropboxConnector, EmailAttachment,
-    EmailDocument, EmailFilter, EmailMessage, EmailSync, GoogleDriveConnector, HmacVerifier,
-    ImapConfig, ImapConnector, OneDriveConnector, SelectiveSyncConfig, SyncConnector, SyncSession,
-    SyncSessionStatus, WebDavConnector, WebDavIndex, WebDavIndexEntry, WebDavTarget, WebhookConfig,
-    WebhookEvent, WebhookReceiver, WebhookSource,
+    CalDavConfig, CalDavConnector, CalendarEvent, CalendarSync, ChunkedUploader,
+    CloudDriveConnector, ConnectorRegistry, ConnectorState, DriveFile, DriveProvider,
+    DropboxConnector, EmailAttachment, EmailDocument, EmailFilter, EmailMessage, EmailSync,
+    GoogleDriveConnector, HmacVerifier, ImapConfig, ImapConnector, OneDriveConnector, PushOutcome,
+    SelectiveSyncConfig, SyncConnector, SyncSession, SyncSessionStatus, UploadManifest,
+    UploadProgress, UploadSession, WebDavConnector, WebDavIndex, WebDavIndexEntry, WebDavTarget,
+    WebhookConfig, WebhookEvent, WebhookReceiver, WebhookSource,
 };
 pub use incremental::{BlockDelta, BlockSignature, IncrementalSync, RollingHash};
 #[cfg(feature = "iroh-transport")]
