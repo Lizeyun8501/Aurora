@@ -45,6 +45,7 @@ impl BootedApp {
             // 这里 blocks 派生仅消费 content, 明文端 vault 场景由 desktop 调用方
             // 传入已解封 ctx; 移动端 seal=None 直读）
             seal: None,
+            content_cipher: None, // S3 接 vault HKDF 实现
         };
         aurora_core::write_path::rebuild_blocks_derivation(&ctx).await
     }

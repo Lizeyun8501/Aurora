@@ -64,6 +64,27 @@ pub struct WriteContext {
     pub blocks: Option<std::sync::Arc<BlockStore>>,
     /// 落盘封装（桌面 Some(vault pair)，移动 None）。
     pub seal: Option<SealPair>,
+    /// 内容级加密（DK-07 S2：桌面 Some，移动 None）。
+    pub content_cipher: Option<std::sync::Arc<ContentCipherPair>>,
+}
+
+/// S2 内容加密裁决：加密笔记必须有 cipher（fail-closed），明文直通。
+/// 返回写入 record.content 的最终字符串（明文或 enc1: 密文）。
+fn seal_content(
+    ctx: &WriteContext,
+    note_id: &str,
+    content: &str,
+    level: &str,
+) -> Result<String, Error> {
+    if level != ENC_AES256GCM {
+        return Ok(content.to_string());
+    }
+    let cipher = ctx.content_cipher.as_ref().ok_or_else(|| {
+        Error::Crypto(format!(
+            "note '{note_id}' is encrypted but no content cipher available (locked?)"
+        ))
+    })?;
+    (cipher.encrypt)(note_id, content)
 }
 
 /// 笔记级加密级别常量（DK-07 S1）。
@@ -73,6 +94,19 @@ pub const ENC_AES256GCM: &str = "aes256gcm";
 /// serde 默认值函数 — 存量 KV JSON（无 encryption 字段）读回 "none"。
 fn default_encryption() -> String {
     ENC_NONE.to_string()
+}
+
+/// 内容级加解密函数类型（(note_id, 内容) → 结果）。
+pub type ContentCipherFn = Box<dyn Fn(&str, &str) -> Result<String, Error> + Send + Sync>;
+
+/// 笔记内容级加密对（DK-07 S2）— 由装配层注入（桌面 = vault HKDF 实现）。
+/// 与 [`SealPair`]（at-rest 整体封装）正交：本对保护**字段级**正文，
+/// 锁定态下即使 unseal 读出 JSON，content 仍是密文。
+pub struct ContentCipherPair {
+    /// (note_id, plaintext) → 密文（enc1: 格式）
+    pub encrypt: ContentCipherFn,
+    /// (note_id, 密文) → 明文（fail-closed：任何异常都不返回内容）
+    pub decrypt: ContentCipherFn,
 }
 
 /// 笔记元数据记录（两端统一格式 — 从 mobile-ffi 上移，权威定义于此）。
@@ -287,8 +321,9 @@ pub async fn save_note_content(
     doc.set_body(content, now_ms)?;
     let ws = doc.meta().workspace_id.clone();
 
-    // 2) 原子保存（快照 → 元数据）
-    record.content = content.to_string();
+    // 2) 原子保存（快照 → 元数据）— 加密笔记 record.content 存密文（S2），
+    //    Loro 快照/blocks 属本机信任边界明文（锁定态排除由 S3 全链路过滤承担）
+    record.content = seal_content(ctx, note_id, content, &record.encryption)?;
     record.updated_at = chrono::Utc::now().to_rfc3339();
     persist_doc(core, note_id, &doc).await?;
     put_note_meta(core, note_id, &record, ctx.seal.as_ref()).await?;
@@ -339,7 +374,7 @@ pub async fn save_note_content(
             id: note_id.to_string(),
         })?;
     let now_ms = chrono::Utc::now().timestamp_millis();
-    record.content = content.to_string();
+    record.content = seal_content(ctx, note_id, content, &record.encryption)?;
     record.updated_at = chrono::Utc::now().to_rfc3339();
     put_note_meta(core, note_id, &record, ctx.seal.as_ref()).await?;
     core.event_bus

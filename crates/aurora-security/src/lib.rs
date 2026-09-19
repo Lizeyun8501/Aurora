@@ -13,6 +13,7 @@ pub mod biometric;
 pub mod crypto_provider_impl;
 pub mod e2ee;
 pub mod key_hierarchy;
+pub mod note_cipher; // DK-07 S2: 笔记级内容加密（HKDF 每笔记密钥 + enc1 格式）
 pub mod post_quantum;
 pub mod recovery;
 pub mod vault;

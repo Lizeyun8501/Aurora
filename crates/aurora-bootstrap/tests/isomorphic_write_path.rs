@@ -49,6 +49,7 @@ fn ctx_for(
         core: booted.core.clone(),
         blocks,
         seal,
+        content_cipher: None, // S3: 桌面端接 vault HKDF 实现
     }
 }
 
