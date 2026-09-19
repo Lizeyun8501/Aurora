@@ -62,3 +62,14 @@ Basic Auth 凭据无处安放。
       兼容保留一个过渡版本；
 - [ ] `SyncProtocol::WebDav` 落地后，webdav.rs 测试端点改用该变体；
 - [ ] 两者均不动 DK-00 冻结的三原语签名。
+
+---
+
+## Alpha 裁决（2026-09-20 07:2x · 集成 commit 859a90c）
+
+**结论：批准，方案 A。**
+
+- 缺口 1：`Endpoint { auth: Option<EndpointAuth> }` + `EndpointAuth { username, secret }`。理由：强类型 > 弱类型 extras；secret 引用语义与 DK-07 加密栈（vault 管理明文）自然衔接。影响面已核实：crates 内构造点仅 1 处（bootstrap isomorphic_write_path 测试），编译器强制更新。
+- 缺口 2：`SyncProtocol::WebDav` 变体批准——穷举匹配由编译器强制，全局 match 点已查（router.rs 仅构造无 match），零破坏。
+- 排期：Alpha 周一冻结窗口（9/21）合入 aurora-core；webdav.rs 测试端点同步切换并移除 userinfo 临时兼容（一个过渡版本后清理）。
+- Bravo 验收清单第 1/2 项届时由 Alpha 验证后勾选。

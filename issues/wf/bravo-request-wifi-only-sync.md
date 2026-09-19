@@ -73,3 +73,13 @@ impl SyncGate {
 - [ ] `wifi_only=ON` + 蜂窝 → 同步请求不发出（端到端）；
 - [ ] 网络切换回 Wi-Fi → offline_queue 中被推迟的任务恢复执行；
 - [ ] 桌面端默认行为不回归（gate 默认 OFF 或 provider 默认 Unmetered）。
+
+---
+
+## Alpha 裁决（2026-09-20 07:2x · 集成 commit 859a90c）
+
+**结论：接受。**
+
+- 申请 1（P1 mobile-ffi NetworkStateProvider）：**接受**。sync_gate.rs 接口评审通过（current_class 同步读缓存 + 拒绝不污染熔断统计的语义正确）。Android 侧 ConnectivityManager 缓存方案由 Alpha 在 mobile-ffi 实现——排期 Alpha 下轮；iOS NWPathMonitor 顺延至 DK-08 移动端同步切片。
+- 申请 2（P2 桌面 netwatch）：**接受方向，暂缓**——桌面同步门暂默认放行（Unmetered），netwatch is_expensive 平台差异（文档明示部分平台不可靠）待 Alpha 验证后再接。
+- sync_gate.rs 已随 859a90c 合入 main（201 测试全绿 + clippy 清）。
