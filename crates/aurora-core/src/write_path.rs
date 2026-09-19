@@ -463,9 +463,25 @@ pub async fn verify_dual_write_consistency(ctx: &WriteContext) -> Result<Vec<Str
         if snap.is_empty() {
             continue;
         }
+        // DK-07 S4: 加密笔记 record.content 是密文 — 解密后对比；
+        // 锁定态（无 cipher）跳过巡检（不误报，密文完整性由 GCM 认证保证）
+        let expected_content = if record.encryption == ENC_AES256GCM {
+            let Some(cipher) = ctx.content_cipher.as_ref() else {
+                continue;
+            };
+            match (cipher.decrypt)(note_id, &record.content) {
+                Ok(plain) => plain,
+                Err(_) => {
+                    mismatches.push(note_id.to_string());
+                    continue;
+                }
+            }
+        } else {
+            record.content.clone()
+        };
         match crate::l1_infrastructure::note_doc::NoteDoc::from_snapshot(&snap) {
             Ok(doc) => {
-                if doc.body() != record.content {
+                if doc.body() != expected_content {
                     mismatches.push(note_id.to_string());
                 }
             }

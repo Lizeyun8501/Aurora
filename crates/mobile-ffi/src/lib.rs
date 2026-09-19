@@ -150,6 +150,8 @@ pub struct UniffiAppCore {
     )>,
     /// V23-I2: blocks 双轨存储（None = 内存降级模式）
     blocks: Option<std::sync::Arc<aurora_core::blocks::BlockStore>>,
+    /// DK-07 S4: 笔记内容级加密器（bootstrap 装配 = Some；降级 = None）
+    content_cipher: Option<std::sync::Arc<aurora_core::write_path::ContentCipherPair>>,
 }
 
 impl UniffiAppCore {
@@ -202,6 +204,7 @@ impl UniffiAppCore {
                     is_fallback: false,
                     mirror,
                     blocks,
+                    content_cipher: Some(booted.content_cipher),
                 }))
             }
             Err(e) => {
@@ -221,6 +224,7 @@ impl UniffiAppCore {
                         aurora_core::mirror::MirrorRoot::new(mirror_root),
                     )),
                     blocks: None,
+                    content_cipher: None, // 降级模式无加密
                 }))
             }
         }
@@ -331,7 +335,7 @@ impl UniffiAppCore {
                 core: core.clone(),
                 blocks: self.blocks.clone(),
                 seal: None, // 移动端明文落盘（加密统一为后续卡；同步层在 oplog 层不受影响）
-                content_cipher: None, // S4 接线
+                content_cipher: self.content_cipher.clone(), // DK-07 S4
             };
             let note_id = self
                 .runtime
@@ -685,8 +689,8 @@ impl UniffiAppCore {
         let ctx = aurora_core::write_path::WriteContext {
             core: core.clone(),
             blocks: self.blocks.clone(),
-            seal: None,           // at-rest 与笔记级加密为两层；笔记级在 S2 接线内容加密
-            content_cipher: None, // S4 接线
+            seal: None, // at-rest 与笔记级加密为两层；笔记级在 S2 接线内容加密
+            content_cipher: self.content_cipher.clone(), // DK-07 S4
         };
         self.runtime
             .block_on(aurora_core::write_path::set_note_encryption(
@@ -704,8 +708,8 @@ impl UniffiAppCore {
         let ctx = aurora_core::write_path::WriteContext {
             core: core.clone(),
             blocks: self.blocks.clone(),
-            seal: None,           // 移动端明文
-            content_cipher: None, // S4 接线
+            seal: None,                                  // 移动端明文
+            content_cipher: self.content_cipher.clone(), // DK-07 S4
         };
         match self
             .runtime
@@ -818,8 +822,8 @@ impl UniffiAppCore {
             let ctx = aurora_core::write_path::WriteContext {
                 core: core.clone(),
                 blocks: self.blocks.clone(),
-                seal: None,           // 移动端明文落盘（加密统一为后续卡）
-                content_cipher: None, // S4 接线
+                seal: None, // 移动端明文落盘（加密统一为后续卡）
+                content_cipher: self.content_cipher.clone(), // DK-07 S4
             };
             let _receipt = self
                 .runtime
@@ -1609,8 +1613,10 @@ mod tests {
     }
 
     /// DK-07 S2 fail-closed: 加密笔记在无 cipher 环境写入必须被拒（不落明文）。
+    /// DK-07 S4: 移动端接入 cipher 后，加密笔记写入 → enc1 密文落库（零明文），
+    /// 双写巡检不误报（快照明文 vs record 密文经解密对比）。
     #[test]
-    fn dk07_s2_encrypted_write_rejected_without_cipher() {
+    fn dk07_s4_mobile_encrypted_write_seals_content() {
         let dir = tempfile::tempdir().unwrap();
         let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
         let id = core.clone().create_note("机密笔记".into()).unwrap();
@@ -1618,13 +1624,12 @@ mod tests {
             .clone()
             .set_note_encryption(id.clone(), "aes256gcm".into()));
 
-        // content_cipher = None（锁定/未接线）→ 写入必须 Err，绝不落明文
-        let r = core
+        // 移动端已有 cipher（S4 bootstrap 装配）→ 写入成功且 record.content 是密文
+        assert!(core
             .clone()
-            .save_note_content(id.clone(), "明文正文".into());
-        assert!(r.is_err(), "无 cipher 写加密笔记必须 fail-closed");
+            .save_note_content(id.clone(), "明文正文".into())
+            .is_ok());
 
-        // KV 权威指针内容不得出现明文
         let app = core.core.as_ref().unwrap();
         let rec = core
             .runtime
@@ -1632,10 +1637,18 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(
-            !rec.content.contains("明文正文"),
-            "明文不得落库: {:?}",
-            rec.content
+            rec.content.starts_with("enc1:"),
+            "落库必须是 enc1 密文: {:?}",
+            &rec.content[..rec.content.len().min(24)]
         );
+        assert!(!rec.content.contains("明文正文"), "明文不得落库");
+
+        // 双写巡检：加密笔记解密对比，不得误报不一致
+        let mm = core.verify_dual_write_impl();
+        assert!(!mm.contains(&id), "加密笔记不应被巡检误报: {mm:?}");
+
+        // Loro body（本机信任边界）保持明文可读 — UI 正常
+        assert_eq!(core.clone().get_note_content(id).unwrap(), "明文正文");
     }
 
     /// DK-07 S1 存量兼容: 旧 JSON（无 encryption 字段）读回默认 "none"。
