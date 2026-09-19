@@ -1134,7 +1134,8 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeGetNote(
         Ok(c) => c,
         Err(_) => return std::ptr::null_mut(),
     };
-    let array = match env.new_object_array(3, &str_class, JObject::null()) {
+    // DK-07 S4: 数组扩展为 4 元素（+encryption）—— 与 UniffiAppCore.NoteSummary 对齐
+    let array = match env.new_object_array(4, &str_class, JObject::null()) {
         Ok(a) => a,
         Err(_) => return std::ptr::null_mut(),
     };
@@ -1144,6 +1145,8 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeGetNote(
     let _ = env.set_object_array_element(&array, 1, unsafe { JObject::from_raw(title) });
     let updated = rust_str_to_jstring(&mut env, &note.updated_at);
     let _ = env.set_object_array_element(&array, 2, unsafe { JObject::from_raw(updated) });
+    let enc = rust_str_to_jstring(&mut env, &note.encryption);
+    let _ = env.set_object_array_element(&array, 3, unsafe { JObject::from_raw(enc) });
     array.into_raw()
 }
 
@@ -1224,6 +1227,43 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeDeleteNote(
         Ok(()) => 0,
         Err(_) => -1,
     }
+}
+
+/// DK-07 S4: 设置笔记加密级别（Java 桥 — MainActivity.setNoteEncryption）。
+/// fail-closed：非法级别/笔记不存在/fallback 模式 → false。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeSetNoteEncryption(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    note_id: JString,
+    level: JString,
+) -> jboolean {
+    let core = unsafe { core_from_handle(handle) };
+    let note_id = match jstring_to_rust(&mut env, &note_id) {
+        Some(s) => s,
+        None => return 0,
+    };
+    let level = match jstring_to_rust(&mut env, &level) {
+        Some(s) => s,
+        None => return 0,
+    };
+    if core.set_note_encryption(note_id, level) {
+        1
+    } else {
+        0
+    }
+}
+
+/// V20 Phase 3: 今日专注汇总（Java 桥 — MainActivity.todayFocusSummary）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeTodayFocusSummary(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    rust_str_to_jstring(&mut env, &core.today_focus_summary())
 }
 
 #[no_mangle]

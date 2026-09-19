@@ -19,11 +19,14 @@ public class UniffiAppCore {
         public final String id;
         public final String title;
         public final String updatedAt;
+        /** DK-07 S4: 加密级别（"none" | "aes256gcm"）— UI 锁标数据面 */
+        public final String encryption;
 
-        public NoteSummary(String id, String title, String updatedAt) {
+        public NoteSummary(String id, String title, String updatedAt, String encryption) {
             this.id = id;
             this.title = title;
             this.updatedAt = updatedAt;
+            this.encryption = encryption;
         }
     }
 
@@ -66,11 +69,21 @@ public class UniffiAppCore {
         java.util.List<NoteSummary> notes = new java.util.ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             String[] parts = nativeGetNote(handle, i);
-            if (parts != null && parts.length >= 3) {
-                notes.add(new NoteSummary(parts[0], parts[1], parts[2]));
+            if (parts != null && parts.length >= 4) {
+                notes.add(new NoteSummary(parts[0], parts[1], parts[2], parts[3]));
             }
         }
         return notes;
+    }
+
+    /** DK-07 S4: 设置笔记加密级别（fail-closed：非法级别/不存在 → false） */
+    public boolean setNoteEncryption(String noteId, String level) {
+        return nativeSetNoteEncryption(handle, noteId, level);
+    }
+
+    /** V20 Phase 3: 今日专注汇总（JSON 或 null） */
+    public String todayFocusSummary() {
+        return nativeTodayFocusSummary(handle);
     }
 
     public java.util.List<SearchResult> searchNotes(String query) {
@@ -159,6 +172,8 @@ public class UniffiAppCore {
     private static native int nativeSearchCount(long handle, String query);
     private static native Object[] nativeGetSearchResult(long handle, int index, String query);
     private static native int nativeDeleteNote(long handle, String noteId);
+    private static native boolean nativeSetNoteEncryption(long handle, String noteId, String level);
+    private static native String nativeTodayFocusSummary(long handle);
     private static native int nativeIsFallback(long handle);
     private static native int nativeSaveNoteContent(long handle, String noteId, String content);
     private static native String nativeGetNoteContent(long handle, String noteId);

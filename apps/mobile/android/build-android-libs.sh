@@ -11,8 +11,12 @@ NDK_ROOT="$SDK_ROOT/ndk/$NDK_VERSION"
 TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64"
 API_LEVEL=24
 
-export PATH="/home/z/.local/rust/usr/bin:$PATH"
-export LD_LIBRARY_PATH="/home/z/.local/rust/usr/lib/x86_64-linux-gnu:/home/z/.local/rust/usr/lib:$LD_LIBRARY_PATH"
+# 工具链：rustup 1.91（MSRV 兼容 time 0.3.47+；旧 .local/rust 1.85 已退役）
+# .cargo/config.toml 已含三 android target 的 NDK linker 配置
+export PATH="/home/z/.cargo/bin:$PATH"
+export RUSTUP_HOME="${RUSTUP_HOME:-/home/z/.rustup}"
+export CARGO_HOME="${CARGO_HOME:-/home/z/.cargo}"
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 
 cd "$REPO_ROOT"
 
