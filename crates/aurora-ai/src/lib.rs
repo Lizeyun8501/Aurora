@@ -25,6 +25,7 @@ pub mod mcp;
 pub mod mock_provider;
 pub mod ollama;
 pub mod orchestration;
+pub mod policy;
 pub mod registry;
 pub mod sandbox;
 
