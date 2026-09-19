@@ -185,6 +185,7 @@ async fn cmd_create_note(title: String) -> Result<String, String> {
             seal: Box::new(seal),
             unseal: Box::new(unseal),
         }),
+        content_cipher: None, // TODO(DK-07): 桌面 UI 接 vault cipher
     };
     let id = aurora_core::write_path::create_note(&ctx, &title)
         .await
@@ -245,6 +246,7 @@ async fn cmd_update_note(
             seal: Box::new(seal),
             unseal: Box::new(unseal),
         }),
+        content_cipher: None, // TODO(DK-07): 桌面 UI 接 vault cipher
     };
     if let Some(t) = title.as_deref() {
         if title.is_some() {
@@ -378,6 +380,7 @@ async fn cmd_delete_note(note_id: String) -> Result<(), String> {
             seal: Box::new(seal),
             unseal: Box::new(unseal),
         }),
+        content_cipher: None, // TODO(DK-07): 桌面 UI 接 vault cipher
     };
     aurora_core::write_path::delete_note(&ctx, &note_id)
         .await
