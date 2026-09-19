@@ -170,6 +170,30 @@ pub async fn load_note_meta(
     Ok(Some(serde_json::from_slice(&plain)?))
 }
 
+/// 打开笔记正文（DK-07 S3 读侧）：明文直通，密文经 cipher 解密。
+///
+/// fail-closed：加密笔记在无 cipher（锁定）环境返回 `Crypto` 错误，
+/// 绝不返回密文原文。
+///
+/// # Errors
+/// - 加密笔记无 cipher 可用（锁定态）
+/// - 解密失败（密文损坏/密钥不符）
+pub fn open_note_content(
+    ctx: &WriteContext,
+    note_id: &str,
+    record: &NoteRecord,
+) -> Result<String, Error> {
+    if record.encryption != ENC_AES256GCM {
+        return Ok(record.content.clone());
+    }
+    let cipher = ctx.content_cipher.as_ref().ok_or_else(|| {
+        Error::Crypto(format!(
+            "note '{note_id}' is encrypted but no content cipher available (locked)"
+        ))
+    })?;
+    (cipher.decrypt)(note_id, &record.content)
+}
+
 /// 设置笔记加密级别（DK-07 S1 写路径 — 用户"锁定/解锁笔记"入口）。
 ///
 /// fail-closed：非法级别拒绝；切换到加密级别时**立即从索引移除**（防锁定

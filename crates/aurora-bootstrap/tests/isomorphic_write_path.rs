@@ -49,7 +49,7 @@ fn ctx_for(
         core: booted.core.clone(),
         blocks,
         seal,
-        content_cipher: None, // S3: 桌面端接 vault HKDF 实现
+        content_cipher: Some(booted.content_cipher.clone()), // DK-07 S3
     }
 }
 
@@ -244,4 +244,56 @@ async fn desktop_and_mobile_write_paths_are_isomorphic() {
     );
     assert_eq!(kv_keys(&desktop, "notesnap:").await.len(), 0);
     assert_eq!(kv_keys(&mobile, "notesnap:").await.len(), 0);
+}
+
+/// DK-07 S3: 桌面端加密笔记闭环 — 密文落库 + 读侧解密 + 明文零残留。
+#[tokio::test]
+async fn dk07_s3_desktop_encrypted_note_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let booted = aurora_bootstrap::bootstrap(dir.path()).unwrap();
+    let blocks = BlockStore::open(&db).map(std::sync::Arc::new);
+    let ctx = WriteContext {
+        core: booted.core.clone(),
+        blocks,
+        seal: None, // 单测聚焦内容级加密（at-rest seal 独立已测）
+        content_cipher: Some(booted.content_cipher.clone()),
+    };
+
+    // 创建 → 设密级 → 写正文
+    let id = aurora_core::write_path::create_note(&ctx, "机密笔记")
+        .await
+        .unwrap();
+    aurora_core::write_path::set_note_encryption(&ctx, &id, "aes256gcm")
+        .await
+        .unwrap();
+    aurora_core::write_path::save_note_content(&ctx, &id, "绝密内容 ${1+1}=2")
+        .await
+        .unwrap();
+
+    // KV 权威指针: content 必须是 enc1: 密文（明文零残留）
+    let rec = aurora_core::write_path::load_note_meta(&booted.core, &id, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rec.encryption, "aes256gcm");
+    assert!(
+        rec.content.starts_with("enc1:"),
+        "落库必须是 enc1 密文: {:?}",
+        &rec.content[..rec.content.len().min(24)]
+    );
+    assert!(!rec.content.contains("绝密"));
+
+    // 读侧: open_note_content 解回明文（fail-closed 语义内）
+    let plain = aurora_core::write_path::open_note_content(&ctx, &id, &rec).unwrap();
+    assert_eq!(plain, "绝密内容 ${1+1}=2");
+
+    // 无 cipher（锁定态）: 解密被拒
+    let locked_ctx = WriteContext {
+        core: booted.core.clone(),
+        blocks: None,
+        seal: None,
+        content_cipher: None,
+    };
+    assert!(aurora_core::write_path::open_note_content(&locked_ctx, &id, &rec).is_err());
 }

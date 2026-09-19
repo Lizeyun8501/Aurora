@@ -30,6 +30,8 @@ pub struct BootedApp {
     pub vault: Arc<LocalDekVault>,
     /// blocks 存储（派生索引 — DK-01 权威源三阶段的派生侧）。
     pub blocks: Option<Arc<aurora_core::blocks::BlockStore>>,
+    /// 笔记内容级加密器（DK-07 S3 — vault HKDF 每笔记密钥，端到端共享）。
+    pub content_cipher: Arc<aurora_core::write_path::ContentCipherPair>,
 }
 
 impl BootedApp {
@@ -45,7 +47,7 @@ impl BootedApp {
             // 这里 blocks 派生仅消费 content, 明文端 vault 场景由 desktop 调用方
             // 传入已解封 ctx; 移动端 seal=None 直读）
             seal: None,
-            content_cipher: None, // S3 接 vault HKDF 实现
+            content_cipher: Some(self.content_cipher.clone()),
         };
         aurora_core::write_path::rebuild_blocks_derivation(&ctx).await
     }
@@ -146,10 +148,27 @@ pub fn bootstrap(data_dir: &Path) -> Result<BootedApp, BootstrapError> {
     // V26 I3/DK-01: blocks 派生侧（权威源三阶段 — 派生失败不阻断装配）
     let blocks = aurora_core::blocks::BlockStore::open(&db_path).map(Arc::new);
 
+    // DK-07 S3: 笔记内容级加密器（vault DEK → HKDF 每笔记密钥）
+    let cipher_backend = aurora_security::note_cipher::NoteContentCipher::new(
+        aurora_security::key_hierarchy::WorkspaceDek::from_bytes("vault-master", *vault.dek()),
+    );
+    let cipher_backend2 = aurora_security::note_cipher::NoteContentCipher::new(
+        aurora_security::key_hierarchy::WorkspaceDek::from_bytes("vault-master", *vault.dek()),
+    );
+    let content_cipher = Arc::new(aurora_core::write_path::ContentCipherPair {
+        encrypt: Box::new(move |note_id: &str, plaintext: &str| {
+            cipher_backend.encrypt(note_id, plaintext)
+        }),
+        decrypt: Box::new(move |note_id: &str, sealed: &str| {
+            cipher_backend2.decrypt(note_id, sealed)
+        }),
+    });
+
     Ok(BootedApp {
         core,
         vault,
         blocks,
+        content_cipher,
     })
 }
 
@@ -251,6 +270,8 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
                                                 title: String,
                                                 content: String,
                                                 updated_at: String,
+                                                #[serde(default)]
+                                                encryption: String,
                                             }
                                             let rec: Rec = serde_json::from_slice(bytes).ok()?;
                                             Some(aurora_core::traits::search_backend::IndexEntry {
@@ -261,8 +282,14 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
                                                         title: rec.title,
                                                         tags: vec![],
                                                         workspace_id: String::new(),
-                                                        // KV 存储当前全部明文（笔记级加密落库待 DK-07 主体接线）
-                                                        encryption: aurora_core::traits::search_backend::IndexEncryption::Plaintext,
+                                                        // DK-07 S3: 密级传播 — 加密笔记进索引前被投影过滤（锁定态不可见）
+                                                        encryption: if rec.encryption
+                                                            == "aes256gcm"
+                                                        {
+                                                            aurora_core::traits::search_backend::IndexEncryption::Encrypted
+                                                        } else {
+                                                            aurora_core::traits::search_backend::IndexEncryption::Plaintext
+                                                        },
                                                         updated_at: chrono::DateTime::parse_from_rfc3339(&rec.updated_at)
                                                             .ok()
                                                             .map(|dt| dt.with_timezone(&chrono::Utc)),
