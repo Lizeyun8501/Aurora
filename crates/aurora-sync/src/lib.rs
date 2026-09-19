@@ -13,7 +13,8 @@
 //! - [`offline_queue`] — 离线队列 (SQLite 持久化 + 优先级 + 幂等键 + 批量压缩)
 //! - [`device`] — 多设备管理 (Ed25519 设备 ID + QR 授权 + 远程吊销 + DEK 失效)
 //! - [`external`] — 外部同步中心 (CalDAV 日历 + IMAP 邮件 + 云盘 + Webhook 接收
-//!   + WebDAV 增量同步适配器 DK-08)
+//!   + WebDAV 增量同步适配器 DK-08 + 分片上传/断点续传)
+//! - [`sync_gate`] — 仅 Wi-Fi 同步门 (DK-08 §7.3：网络分类 + 策略 + 平台源 trait)
 
 pub mod cloud;
 pub mod conflict;
@@ -27,6 +28,7 @@ pub mod lan;
 pub mod offline_queue;
 pub mod p2p;
 pub mod router; // V20 §3.10/Phase 2: SyncRouter 策略路由 + DST
+pub mod sync_gate; // DK-08 §7.3: 仅 Wi-Fi 同步门（策略 + 平台源 trait）
 
 use thiserror::Error;
 
@@ -108,3 +110,4 @@ pub use iroh_transport::{
 pub use lan::{LanPeer, LanSyncEngine, MdnsDiscovery, SyncRoute};
 pub use offline_queue::{OfflineQueue, Priority, QueueItem};
 pub use p2p::{P2pSyncEngine, PeerId, SyncMessage, VersionVector};
+pub use sync_gate::{GateDecision, NetworkClass, NetworkStateProvider, SyncGate};
