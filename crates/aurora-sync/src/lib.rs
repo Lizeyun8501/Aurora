@@ -12,7 +12,8 @@
 //! - [`incremental`] — 增量同步 (CRDT ops 增量 + rsync 块级增量 + zstd 压缩)
 //! - [`offline_queue`] — 离线队列 (SQLite 持久化 + 优先级 + 幂等键 + 批量压缩)
 //! - [`device`] — 多设备管理 (Ed25519 设备 ID + QR 授权 + 远程吊销 + DEK 失效)
-//! - [`external`] — 外部同步中心 (CalDAV 日历 + IMAP 邮件 + 云盘 + Webhook 接收)
+//! - [`external`] — 外部同步中心 (CalDAV 日历 + IMAP 邮件 + 云盘 + Webhook 接收
+//!   + WebDAV 增量同步适配器 DK-08)
 
 pub mod cloud;
 pub mod conflict;
@@ -92,8 +93,8 @@ pub use external::{
     ConnectorRegistry, ConnectorState, DriveFile, DriveProvider, DropboxConnector, EmailAttachment,
     EmailDocument, EmailFilter, EmailMessage, EmailSync, GoogleDriveConnector, HmacVerifier,
     ImapConfig, ImapConnector, OneDriveConnector, SelectiveSyncConfig, SyncConnector, SyncSession,
-    SyncSessionStatus, WebDavConnector, WebhookConfig, WebhookEvent, WebhookReceiver,
-    WebhookSource,
+    SyncSessionStatus, WebDavConnector, WebDavIndex, WebDavIndexEntry, WebDavTarget, WebhookConfig,
+    WebhookEvent, WebhookReceiver, WebhookSource,
 };
 pub use incremental::{BlockDelta, BlockSignature, IncrementalSync, RollingHash};
 #[cfg(feature = "iroh-transport")]

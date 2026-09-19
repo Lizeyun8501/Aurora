@@ -12,13 +12,16 @@
 //! 同步动作产生 [`SyncSession`] 报告。
 //!
 //! # 实现说明
-//! 网络层均为内存 mock 实现 (mock CalDAV/IMAP/WebDAV/HTTP server)，
+//! 网络层除 [`webdav`]（DK-08 真实 HTTP 传输，reqwest + mockito 测试）外
+//! 均为内存 mock 实现 (mock CalDAV/IMAP/云盘/HTTP server)，
 //! 公开 API 与真实实现保持一致，仅需替换内部传输即可接入生产环境。
 
 pub mod calendar;
 pub mod cloud_drive;
 pub mod email;
 pub mod webhook;
+// WebDAV 增量同步适配器 — DK-08 第一切片（SyncTarget 真网络实现）
+pub mod webdav;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -36,6 +39,7 @@ pub use cloud_drive::{
 pub use email::{
     EmailAttachment, EmailDocument, EmailFilter, EmailMessage, EmailSync, ImapConfig, ImapConnector,
 };
+pub use webdav::{WebDavIndex, WebDavIndexEntry, WebDavTarget};
 pub use webhook::{HmacVerifier, WebhookConfig, WebhookEvent, WebhookReceiver, WebhookSource};
 
 /// 连接器状态。
