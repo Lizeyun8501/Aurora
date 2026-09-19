@@ -300,7 +300,7 @@ mod tests {
             let ct = provider.encrypt(b"payload", &key).unwrap();
             assert_eq!(ct.nonce.len(), 12, "nonce 必须为 12 字节 GCM 标准");
             assert!(
-                seen.insert(ct.nonce.clone()),
+                seen.insert(ct.nonce),
                 "IV 重用！nonce 重复: {:?}",
                 ct.nonce
             );
