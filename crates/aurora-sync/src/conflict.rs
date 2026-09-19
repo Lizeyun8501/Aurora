@@ -7,6 +7,13 @@
 //! 2. 语义冲突 UI 手动选择：当 CRDT 合并后仍存在语义层面冲突
 //!    (如同一图片被替换为不同 URL)，通过 [`SemanticConflict`] 提交给用户手动选择。
 //! 3. 分支模式 ([`Branch`])：将冲突版本隔离为独立分支，后续可合并或保留并行。
+//!
+//! # DK-08 S2：真冲突 `.conflict-{ts}.md` 副本
+//!
+//! WebDAV 传输层（[`crate::external::webdav`]）在「双侧分叉且无合并能力」
+//! 时 fail-safe：不覆盖远端主线，把本地可读快照上传为
+//! `{base}/aurora/{doc_id}.conflict-{ts}.md` 副本，并在
+//! [`ConflictArtifactStore`] 登记待人工调和项。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -295,6 +302,108 @@ impl ConflictResolver {
     }
 }
 
+// ============================================================================
+// DK-08 S2：真冲突 `.conflict-{ts}.md` 副本登记簿
+// ============================================================================
+
+/// 真冲突副本（`.conflict-{ts}.md`）的登记条目。
+///
+/// 传输层 fail-safe 上传的「败者版本」人类可读快照；等待人工调和。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictArtifact {
+    pub artifact_id: String,
+    pub doc_id: String,
+    /// 远端副本路径（WebDAV 侧，如 `/dav/aurora/note-1.conflict-20260919T121212Z.md`）。
+    pub remote_path: String,
+    /// 本地 oplog 所基于的远端版本（分叉点）。
+    pub base_version: u64,
+    /// 检测到冲突时的远端实际版本。
+    pub remote_version: u64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// 人工调和完成后标记。
+    pub resolved: bool,
+}
+
+impl ConflictArtifact {
+    pub fn new(
+        doc_id: impl Into<String>,
+        remote_path: impl Into<String>,
+        base_version: u64,
+        remote_version: u64,
+    ) -> Self {
+        Self {
+            artifact_id: uuid::Uuid::new_v4().to_string(),
+            doc_id: doc_id.into(),
+            remote_path: remote_path.into(),
+            base_version,
+            remote_version,
+            created_at: chrono::Utc::now(),
+            resolved: false,
+        }
+    }
+}
+
+/// 真冲突副本登记簿：传输层上传 `.conflict-{ts}.md` 后登记，
+/// 人工调和（采纳/丢弃）后 [`ConflictArtifactStore::mark_resolved`]。
+#[derive(Default)]
+pub struct ConflictArtifactStore {
+    artifacts: Arc<RwLock<HashMap<String, ConflictArtifact>>>,
+}
+
+impl ConflictArtifactStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 登记一条真冲突副本。
+    pub fn record(&self, artifact: ConflictArtifact) -> String {
+        let id = artifact.artifact_id.clone();
+        warn!(
+            doc_id = %artifact.doc_id,
+            path = %artifact.remote_path,
+            base = artifact.base_version,
+            remote = artifact.remote_version,
+            "conflict artifact recorded"
+        );
+        self.artifacts.write().insert(id.clone(), artifact);
+        id
+    }
+
+    /// 待人工调和的副本。
+    pub fn pending(&self) -> Vec<ConflictArtifact> {
+        self.artifacts
+            .read()
+            .values()
+            .filter(|a| !a.resolved)
+            .cloned()
+            .collect()
+    }
+
+    /// 某文档的待调和副本。
+    pub fn pending_for_doc(&self, doc_id: &str) -> Vec<ConflictArtifact> {
+        self.pending()
+            .into_iter()
+            .filter(|a| a.doc_id == doc_id)
+            .collect()
+    }
+
+    /// 人工调和完成。
+    pub fn mark_resolved(&self, artifact_id: &str) -> crate::Result<()> {
+        let mut artifacts = self.artifacts.write();
+        let artifact = artifacts
+            .get_mut(artifact_id)
+            .ok_or_else(|| crate::Error::NotFound(format!("artifact not found: {artifact_id}")))?;
+        artifact.resolved = true;
+        info!(artifact_id, "conflict artifact resolved");
+        Ok(())
+    }
+
+    /// 登记总数（含已调和）。
+    pub fn count(&self) -> usize {
+        self.artifacts.read().len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,5 +567,61 @@ mod tests {
             .resolve(&id, ConflictResolution::LastWriteWins)
             .expect("resolve");
         assert_eq!(value, serde_json::json!("https://remote/img.png"));
+    }
+
+    // ------------------------------------------------------------------
+    // DK-08 S2：真冲突 .conflict-{ts}.md 副本登记簿
+    // ------------------------------------------------------------------
+
+    fn make_artifact(doc: &str) -> ConflictArtifact {
+        ConflictArtifact::new(
+            doc,
+            format!("/dav/aurora/{doc}.conflict-20260919T121212Z.md"),
+            1,
+            3,
+        )
+    }
+
+    #[test]
+    fn test_artifact_record_and_pending() {
+        let store = ConflictArtifactStore::new();
+        let id1 = store.record(make_artifact("doc1"));
+        let id2 = store.record(make_artifact("doc2"));
+        assert_eq!(store.count(), 2);
+        assert_eq!(store.pending().len(), 2);
+        assert_eq!(store.pending_for_doc("doc1").len(), 1);
+        assert!(store.pending_for_doc("doc1")[0]
+            .remote_path
+            .ends_with(".md"));
+        let _ = id1;
+        let _ = id2;
+    }
+
+    #[test]
+    fn test_artifact_mark_resolved() {
+        let store = ConflictArtifactStore::new();
+        let id = store.record(make_artifact("doc1"));
+        assert_eq!(store.pending().len(), 1);
+        store.mark_resolved(&id).expect("resolve artifact");
+        assert_eq!(store.pending().len(), 0);
+        assert_eq!(store.count(), 1, "已调和条目保留用于审计");
+    }
+
+    #[test]
+    fn test_artifact_mark_resolved_unknown_id_errors() {
+        let store = ConflictArtifactStore::new();
+        store.record(make_artifact("doc1"));
+        assert!(store.mark_resolved("missing").is_err());
+        assert_eq!(store.pending().len(), 1, "误操作不影响现有条目");
+    }
+
+    #[test]
+    fn test_artifact_fields_carry_divergence_context() {
+        let artifact = make_artifact("note-9");
+        assert_eq!(artifact.doc_id, "note-9");
+        assert_eq!(artifact.base_version, 1);
+        assert_eq!(artifact.remote_version, 3);
+        assert!(artifact.remote_path.contains(".conflict-"));
+        assert!(!artifact.resolved);
     }
 }

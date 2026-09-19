@@ -70,6 +70,20 @@ pub struct WebDavIndexEntry {
 /// 远端清单：`{base}/aurora/index.json` 的反序列化形态（doc_id → 条目直映射）。
 pub type WebDavIndex = HashMap<String, WebDavIndexEntry>;
 
+/// [`WebDavTarget::push_with_merge`] 的推送结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PushOutcome {
+    /// 远端未分叉：本地内容直接快进推送（无合并发生）。
+    FastForward { new_version: u64 },
+    /// 远端已分叉：CRDT 自动合并后推送（需 `loro-crdt` feature）。
+    AutoMerged {
+        /// 检测到的远端实际版本。
+        remote_base: u64,
+        /// 合并结果写入后的新版本。
+        merged_version: u64,
+    },
+}
+
 /// 同步事件回调（`watch` 注册，Arc 包裹以便快照广播）。
 type SyncEventCallback = Arc<dyn Fn(SyncEvent) + Send + Sync>;
 
@@ -192,17 +206,17 @@ impl WebDavTarget {
         }
     }
 
-    /// PUT oplog 本体，返回服务器回给的 ETag（如有）。
-    async fn put_oplog(
+    /// PUT 任意文件到 `{base}{path}`（path 需以 `/` 开头），成功返回响应 ETag。
+    async fn put_file(
         &self,
         conn: &Connection,
-        doc_id: &str,
-        ops: &[u8],
+        path: &str,
+        body: &[u8],
     ) -> Result<Option<String>, aurora_core::Error> {
         let (base, auth) = split_endpoint(conn)?;
-        let url = format!("{base}/{AURORA_DIR}/{}.oplog", encode_doc_id(doc_id));
+        let url = format!("{base}{path}");
         let client = self.http.read().clone();
-        let mut req = client.put(&url).body(ops.to_vec());
+        let mut req = client.put(&url).body(body.to_vec());
         if let Some((u, p)) = auth {
             req = req.basic_auth(u, Some(p));
         }
@@ -220,9 +234,20 @@ impl WebDavTarget {
             )))
         } else {
             Err(aurora_core::Error::Network(format!(
-                "webdav oplog put failed ({url}): HTTP {status}"
+                "webdav put failed ({url}): HTTP {status}"
             )))
         }
+    }
+
+    /// PUT oplog 本体（`{base}/aurora/{doc_id}.oplog`），成功返回响应 ETag。
+    async fn put_oplog(
+        &self,
+        conn: &Connection,
+        doc_id: &str,
+        ops: &[u8],
+    ) -> Result<Option<String>, aurora_core::Error> {
+        let path = format!("/{AURORA_DIR}/{}.oplog", encode_doc_id(doc_id));
+        self.put_file(conn, &path, ops).await
     }
 
     /// 读-改-写 index.json：把 `entry` 合入调用方已取到的 `existing` 后整体 PUT。
@@ -263,6 +288,176 @@ impl WebDavTarget {
     /// 本端已持有的版本水位（无记录 = 0）。
     fn local_version(&self, doc_id: &str) -> u64 {
         self.tracked.lock().get(doc_id).copied().unwrap_or(0)
+    }
+
+    /// 统一的真冲突错误（fail-safe：不覆盖远端、不丢本地）。
+    fn sync_conflict_err(doc_id: &str, base: u64, remote: u64) -> aurora_core::Error {
+        aurora_core::Error::SyncConflict {
+            note_id: doc_id.to_string(),
+            local: format!("base v{base}"),
+            remote: format!("v{remote}"),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // DK-08 S2：冲突感知推送 + 真冲突 .conflict-{ts}.md 副本
+    // ------------------------------------------------------------------
+
+    /// 冲突感知推送（S2 核心）。
+    ///
+    /// `local_oplog` 为本地文档快照字节，`base_version` 是它所基于的远端版本
+    /// （= 本端水位）。判定逻辑：
+    ///
+    /// - 远端未分叉（v == base）→ 快进推送 → [`PushOutcome::FastForward`]；
+    /// - 远端已分叉（v > base）+ `loro-crdt` feature → 拉 oplog 做
+    ///   **CRDT 自动合并**（import 双方 → export snapshot）→ 推送合并结果
+    ///   → [`PushOutcome::AutoMerged`]；
+    /// - 远端已分叉且无合并能力（默认 feature 集）→ `Err(SyncConflict)`
+    ///   **fail-safe**：零写入、零数据请求，两侧数据均未受损；
+    ///   调用方随后用 [`WebDavTarget::upload_conflict_copy`] 保存本地快照，
+    ///   并在 [`crate::conflict::ConflictArtifactStore`] 登记。
+    pub async fn push_with_merge(
+        &self,
+        conn: &Connection,
+        doc_id: &str,
+        local_oplog: &[u8],
+        base_version: u64,
+    ) -> Result<PushOutcome, aurora_core::Error> {
+        let outcome = self
+            .push_with_merge_inner(conn, doc_id, local_oplog, base_version)
+            .await;
+        if let Err(e) = &outcome {
+            self.emit_err(e).await;
+        }
+        outcome
+    }
+
+    async fn push_with_merge_inner(
+        &self,
+        conn: &Connection,
+        doc_id: &str,
+        local_oplog: &[u8],
+        base_version: u64,
+    ) -> Result<PushOutcome, aurora_core::Error> {
+        let existing = self.fetch_index(conn).await?;
+        let remote_ver = existing
+            .as_ref()
+            .and_then(|idx| idx.get(doc_id))
+            .map(|e| e.version)
+            .unwrap_or(0);
+
+        // fail-fast：分叉且无合并能力 → 立刻冲突退出（零写入）
+        if remote_ver > base_version && !Self::CAN_MERGE {
+            debug!(
+                doc_id,
+                base = base_version,
+                remote = remote_ver,
+                "webdav push: diverged without merge capability"
+            );
+            return Err(Self::sync_conflict_err(doc_id, base_version, remote_ver));
+        }
+
+        let remote_oplog = if remote_ver > base_version {
+            Some(self.fetch_oplog(conn, doc_id).await?)
+        } else {
+            None
+        };
+
+        let diverged = remote_oplog.is_some();
+        let payload = match remote_oplog {
+            None => local_oplog.to_vec(),
+            Some(remote_bytes) => match Self::crdt_merge(local_oplog, &remote_bytes) {
+                Ok(merged) => merged,
+                // oplog 无法 import（非 Loro 内容等）→ 同样 fail-safe
+                Err(_) => {
+                    return Err(Self::sync_conflict_err(doc_id, base_version, remote_ver));
+                }
+            },
+        };
+
+        let new_version = remote_ver.max(base_version) + 1;
+        let etag = self.put_oplog(conn, doc_id, &payload).await?;
+        self.put_index_entry(
+            conn,
+            existing,
+            doc_id,
+            WebDavIndexEntry {
+                version: new_version,
+                etag,
+            },
+        )
+        .await?;
+        self.tracked.lock().insert(doc_id.to_string(), new_version);
+        info!(
+            doc_id,
+            new_version,
+            bytes = payload.len(),
+            "webdav push_with_merge done"
+        );
+        self.emit(SyncEvent::Progress { progress: 1.0 });
+        Ok(if diverged {
+            PushOutcome::AutoMerged {
+                remote_base: remote_ver,
+                merged_version: new_version,
+            }
+        } else {
+            PushOutcome::FastForward { new_version }
+        })
+    }
+
+    /// 真冲突副本：把人类可读快照上传为
+    /// `{base}/aurora/{doc_id}.conflict-{ts}.md`，返回远端路径。
+    ///
+    /// 不触碰主线 oplog 与 index —— 副本仅为人工调和存证。
+    pub async fn upload_conflict_copy(
+        &self,
+        conn: &Connection,
+        doc_id: &str,
+        artifact: &[u8],
+    ) -> Result<String, aurora_core::Error> {
+        let outcome = self
+            .upload_conflict_copy_inner(conn, doc_id, artifact)
+            .await;
+        if let Err(e) = &outcome {
+            self.emit_err(e).await;
+        }
+        outcome
+    }
+
+    async fn upload_conflict_copy_inner(
+        &self,
+        conn: &Connection,
+        doc_id: &str,
+        artifact: &[u8],
+    ) -> Result<String, aurora_core::Error> {
+        let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+        let path = format!("/{AURORA_DIR}/{}.conflict-{ts}.md", encode_doc_id(doc_id));
+        self.put_file(conn, &path, artifact).await?;
+        info!(doc_id, path = %path, bytes = artifact.len(), "conflict copy uploaded");
+        Ok(path)
+    }
+
+    /// 合并能力开关（随 feature 集编译期确定）。
+    const CAN_MERGE: bool = cfg!(feature = "loro-crdt");
+
+    /// CRDT 自动合并：双方 oplog（Loro snapshot/updates）import 进同一文档，
+    /// 导出合并后的 snapshot。CRDT 语义保证双侧修改均保留、无数据丢失。
+    #[cfg(feature = "loro-crdt")]
+    fn crdt_merge(local: &[u8], remote: &[u8]) -> Result<Vec<u8>, aurora_core::Error> {
+        use loro::ExportMode;
+        let doc = loro::LoroDoc::new();
+        doc.import(local)
+            .map_err(|e| aurora_core::Error::Loro(format!("webdav merge: local import: {e}")))?;
+        doc.import(remote)
+            .map_err(|e| aurora_core::Error::Loro(format!("webdav merge: remote import: {e}")))?;
+        doc.export(ExportMode::snapshot())
+            .map_err(|e| aurora_core::Error::Loro(format!("webdav merge: snapshot export: {e}")))
+    }
+
+    /// 默认 feature 集无 loro：不做合并（`CAN_MERGE = false` 已在上游拦截）。
+    #[cfg(not(feature = "loro-crdt"))]
+    fn crdt_merge(_local: &[u8], _remote: &[u8]) -> Result<Vec<u8>, aurora_core::Error> {
+        Err(Self::sync_conflict_err("", 0, 0))
     }
 
     async fn send_update_inner(
@@ -887,5 +1082,267 @@ mod tests {
         assert_eq!(connected.load(Ordering::SeqCst), 1);
         assert_eq!(errors.load(Ordering::SeqCst), 1);
         index_401.assert();
+    }
+
+    // ==================================================================
+    // DK-08 S2：冲突感知推送 + .conflict-{ts}.md 副本
+    // ==================================================================
+
+    /// S2 验收 1：远端未分叉（v == base）→ 快进推送，无合并、无多余读。
+    #[tokio::test]
+    async fn dk08_conflict_push_fast_forward() {
+        let mut server = Server::new_async().await;
+        let index = mock_index(&mut server, r#"{"note-1":{"version":1}}"#, 1).await;
+        let oplog_unused = mock_oplog(&mut server, "note-1", "NEVER", 0).await;
+        let put_oplog = server
+            .mock("PUT", "/aurora/note-1.oplog")
+            .match_body(Matcher::Exact("LOCAL-SNAPSHOT".into()))
+            .with_status(201)
+            .expect(1)
+            .create_async()
+            .await;
+        let put_index = server
+            .mock("PUT", "/aurora/index.json")
+            .match_body(Matcher::Regex("\"version\":2".into()))
+            .with_status(204)
+            .expect(1)
+            .create_async()
+            .await;
+        let mut target = WebDavTarget::new();
+        let conn = connect_to(&server, &mut target).await;
+
+        let out = target
+            .push_with_merge(&conn, "note-1", b"LOCAL-SNAPSHOT", 1)
+            .await
+            .unwrap();
+        assert_eq!(out, PushOutcome::FastForward { new_version: 2 });
+        assert_eq!(target.tracked_snapshot()["note-1"], 2);
+        index.assert();
+        oplog_unused.assert(); // 未分叉 → 不拉远端 oplog
+        put_oplog.assert();
+        put_index.assert();
+    }
+
+    /// S2 验收 2（默认 feature 集，无 loro）：远端分叉 → `Err(SyncConflict)`
+    /// fail-safe —— **零写、零数据读**，两侧数据均未受损。
+    #[tokio::test]
+    #[cfg(not(feature = "loro-crdt"))]
+    async fn dk08_conflict_diverged_fail_safe_zero_writes() {
+        let mut server = Server::new_async().await;
+        let index = mock_index(&mut server, r#"{"note-1":{"version":2}}"#, 1).await;
+        let oplog_unused = mock_oplog(&mut server, "note-1", "REMOTE-OPS", 0).await;
+        let put_oplog = server
+            .mock("PUT", "/aurora/note-1.oplog")
+            .expect(0)
+            .create_async()
+            .await;
+        let put_index = server
+            .mock("PUT", "/aurora/index.json")
+            .expect(0)
+            .create_async()
+            .await;
+        let mut target = WebDavTarget::new();
+        let conn = connect_to(&server, &mut target).await;
+
+        let err = target
+            .push_with_merge(&conn, "note-1", b"LOCAL-SNAPSHOT", 1)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, aurora_core::Error::SyncConflict { .. }),
+            "分叉必须报 SyncConflict，得到 {err:?}"
+        );
+        assert_eq!(
+            target
+                .tracked_snapshot()
+                .get("note-1")
+                .copied()
+                .unwrap_or(0),
+            0,
+            "失败不推进水位"
+        );
+        index.assert();
+        oplog_unused.assert();
+        put_oplog.assert(); // 零写入：远端主线未被覆盖
+        put_index.assert();
+    }
+
+    /// S2 验收 3：真冲突副本上传 `.conflict-{ts}.md`（路径格式断言）
+    /// 并在 ConflictArtifactStore 登记。
+    #[tokio::test]
+    async fn dk08_conflict_upload_copy_and_register() {
+        use crate::conflict::{ConflictArtifact, ConflictArtifactStore};
+
+        let mut server = Server::new_async().await;
+        let put_copy = server
+            .mock(
+                "PUT",
+                Matcher::Regex(r"note-1\.conflict-\d{8}T\d{6}Z\.md".into()),
+            )
+            .match_body(Matcher::Exact("LOCAL-LOSING-SNAPSHOT".into()))
+            .with_status(201)
+            .expect(1)
+            .create_async()
+            .await;
+        let mut target = WebDavTarget::new();
+        let conn = connect_to(&server, &mut target).await;
+
+        let path = target
+            .upload_conflict_copy(&conn, "note-1", b"LOCAL-LOSING-SNAPSHOT")
+            .await
+            .unwrap();
+        assert!(conflict_copy_path_ok(&path), "副本路径格式不符: {path}");
+        put_copy.assert();
+
+        let store = ConflictArtifactStore::new();
+        let id = store.record(ConflictArtifact::new("note-1", &path, 1, 2));
+        assert_eq!(store.pending_for_doc("note-1").len(), 1);
+        store.mark_resolved(&id).unwrap();
+        assert!(store.pending_for_doc("note-1").is_empty());
+    }
+
+    /// 校验 `.conflict-{ts}.md` 路径格式：`/aurora/{doc}.conflict-YYYYMMDDTHHMMSSZ.md`。
+    fn conflict_copy_path_ok(path: &str) -> bool {
+        const TS_LEN: usize = 16; // 8 日期 + 'T' + 6 时间 + 'Z'
+        let Some(rest) = path.strip_prefix("/aurora/note-1.conflict-") else {
+            return false;
+        };
+        let Some(ts) = rest.strip_suffix(".md") else {
+            return false;
+        };
+        ts.len() == TS_LEN
+            && ts.as_bytes()[8] == b'T'
+            && ts.ends_with('Z')
+            && ts
+                .bytes()
+                .enumerate()
+                .all(|(i, b)| i == 8 || i == TS_LEN - 1 || b.is_ascii_digit())
+    }
+
+    // ---------------- loro-crdt：CRDT 自动合并 ----------------
+
+    /// 构造 Loro 文档快照：可选基于 base 导入 + 可选插入编辑。
+    #[cfg(feature = "loro-crdt")]
+    fn doc_from(base: Option<&[u8]>, edit_at: Option<(usize, &str)>) -> Vec<u8> {
+        use loro::{ExportMode, LoroDoc};
+        let doc = LoroDoc::new();
+        if let Some(b) = base {
+            doc.import(b).expect("import base snapshot");
+        }
+        if let Some((pos, s)) = edit_at {
+            doc.get_text("content").insert(pos, s).expect("insert");
+        }
+        doc.export(ExportMode::snapshot()).expect("export snapshot")
+    }
+
+    /// S2 验收 4a：crdt_merge 纯函数正确性 —— 双侧编辑都保留（CRDT 收敛）。
+    #[test]
+    #[cfg(feature = "loro-crdt")]
+    fn crdt_merge_keeps_both_sides() {
+        use loro::LoroDoc;
+        let base = doc_from(None, Some((0, "Hello")));
+        let local = doc_from(Some(&base), Some((5, " local")));
+        let remote = doc_from(Some(&base), Some((0, "Hi ")));
+
+        let merged = WebDavTarget::crdt_merge(&local, &remote).expect("merge");
+        let final_doc = LoroDoc::new();
+        final_doc.import(&merged).expect("import merged");
+        let text = final_doc.get_text("content").to_string();
+        assert!(
+            text.contains("Hello") && text.contains("local") && text.contains("Hi"),
+            "合并结果必须双侧保留，得到: {text}"
+        );
+    }
+
+    /// S2 验收 4b：分叉 + loro → AutoMerged 全链路（HTTP 流 + 水位推进）。
+    #[tokio::test]
+    #[cfg(feature = "loro-crdt")]
+    async fn dk08_conflict_automerge_push() {
+        let base = doc_from(None, Some((0, "Hello")));
+        let local = doc_from(Some(&base), Some((5, " local")));
+        let remote = doc_from(Some(&base), Some((0, "Hi ")));
+
+        let mut server = Server::new_async().await;
+        let index = mock_index(&mut server, r#"{"note-1":{"version":2}}"#, 1).await;
+        let oplog = server
+            .mock("GET", "/aurora/note-1.oplog")
+            .with_status(200)
+            .with_body(remote.clone())
+            .expect(1)
+            .create_async()
+            .await;
+        let put_oplog = server
+            .mock("PUT", "/aurora/note-1.oplog")
+            .with_status(201)
+            .expect(1)
+            .create_async()
+            .await;
+        let put_index = server
+            .mock("PUT", "/aurora/index.json")
+            .match_body(Matcher::Regex("\"version\":3".into()))
+            .with_status(204)
+            .expect(1)
+            .create_async()
+            .await;
+        let mut target = WebDavTarget::new();
+        let conn = connect_to(&server, &mut target).await;
+
+        let out = target
+            .push_with_merge(&conn, "note-1", &local, 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            out,
+            PushOutcome::AutoMerged {
+                remote_base: 2,
+                merged_version: 3
+            }
+        );
+        assert_eq!(target.tracked_snapshot()["note-1"], 3);
+        index.assert(); // 只读一次 index
+        oplog.assert(); // 分叉 → 拉远端 oplog
+        put_oplog.assert(); // 推送合并结果
+        put_index.assert();
+
+        // 远端最终状态 = 合并快照，双侧内容保留
+        // （mockito 是 stub，不能回放 PUT 内容；合并正确性已由 4a 覆盖）
+    }
+
+    /// S2 验收 4c（loro 特性下）：oplog 无法 import（非 Loro 内容）→
+    /// 同样 fail-safe 冲突退出，零写入。
+    #[tokio::test]
+    #[cfg(feature = "loro-crdt")]
+    async fn dk08_conflict_automerge_bad_payload_falls_back_to_conflict() {
+        let mut server = Server::new_async().await;
+        let index = mock_index(&mut server, r#"{"note-1":{"version":2}}"#, 1).await;
+        let oplog = server
+            .mock("GET", "/aurora/note-1.oplog")
+            .with_status(200)
+            .with_body("not-a-loro-snapshot")
+            .expect(1)
+            .create_async()
+            .await;
+        let put_oplog = server
+            .mock("PUT", "/aurora/note-1.oplog")
+            .expect(0)
+            .create_async()
+            .await;
+        let put_index = server
+            .mock("PUT", "/aurora/index.json")
+            .expect(0)
+            .create_async()
+            .await;
+        let mut target = WebDavTarget::new();
+        let conn = connect_to(&server, &mut target).await;
+
+        let err = target
+            .push_with_merge(&conn, "note-1", b"also-not-loro", 1)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, aurora_core::Error::SyncConflict { .. }));
+        index.assert();
+        oplog.assert();
+        put_oplog.assert();
+        put_index.assert();
     }
 }
