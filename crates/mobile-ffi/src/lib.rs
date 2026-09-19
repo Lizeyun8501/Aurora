@@ -675,6 +675,24 @@ impl UniffiAppCore {
         )
     }
 
+    /// DK-07 S1: 设置笔记加密级别（"none" | "aes256gcm"）。
+    /// fail-closed：非法级别或笔记不存在返回 false。
+    pub fn set_note_encryption(self: &Arc<Self>, note_id: String, level: String) -> bool {
+        let Some(core) = &self.core else {
+            return false; // fallback 模式无写入入口
+        };
+        let ctx = aurora_core::write_path::WriteContext {
+            core: core.clone(),
+            blocks: self.blocks.clone(),
+            seal: None, // at-rest 与笔记级加密为两层；笔记级在 S2 接线内容加密
+        };
+        self.runtime
+            .block_on(aurora_core::write_path::set_note_encryption(
+                &ctx, &note_id, &level,
+            ))
+            .is_ok()
+    }
+
     /// M3 双写观察期巡检（DK-01）— 返回 KV 权威指针与 Loro 快照不一致
     /// 的 note_id 列表（空 = 双写一致）。UI/运维可周期触发。
     pub fn verify_dual_write_impl(self: &Arc<Self>) -> Vec<String> {
@@ -1546,6 +1564,71 @@ mod tests {
             .unwrap();
         let mm = core.verify_dual_write_impl();
         assert!(mm.is_empty(), "双写应一致: {mm:?}");
+    }
+
+    /// DK-07 S1: 密级设置持久化 — KV 权威指针读回一致。
+    #[test]
+    fn dk07_s1_note_encryption_level_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        let id = core.clone().create_note("加密笔记".into()).unwrap();
+
+        assert!(core
+            .clone()
+            .set_note_encryption(id.clone(), "aes256gcm".into()));
+
+        let app = core.core.as_ref().unwrap();
+        let rec = core
+            .runtime
+            .block_on(aurora_core::write_path::load_note_meta(app, &id, None))
+            .unwrap()
+            .unwrap();
+        assert_eq!(rec.encryption, "aes256gcm", "密级必须落 KV 权威指针");
+    }
+
+    /// DK-07 S1 fail-closed: 非法密级拒绝且不落库。
+    #[test]
+    fn dk07_s1_invalid_encryption_level_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        let id = core.clone().create_note("试探笔记".into()).unwrap();
+
+        assert!(!core.clone().set_note_encryption(id.clone(), "rot13".into()));
+
+        let app = core.core.as_ref().unwrap();
+        let rec = core
+            .runtime
+            .block_on(aurora_core::write_path::load_note_meta(app, &id, None))
+            .unwrap()
+            .unwrap();
+        assert_eq!(rec.encryption, "none", "非法级别不得改变原状态");
+    }
+
+    /// DK-07 S1 存量兼容: 旧 JSON（无 encryption 字段）读回默认 "none"。
+    #[test]
+    fn dk07_s1_legacy_record_loads_as_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        let app = core.core.as_ref().unwrap();
+        let legacy = serde_json::json!({
+            "id": "n-legacy", "title": "旧笔记", "content": "旧正文",
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"
+        });
+        core.runtime
+            .block_on(async {
+                app.kv_store
+                    .set("note:n-legacy", &serde_json::to_vec(&legacy).unwrap())
+                    .await
+            })
+            .unwrap();
+        let rec = core
+            .runtime
+            .block_on(aurora_core::write_path::load_note_meta(
+                app, "n-legacy", None,
+            ))
+            .unwrap()
+            .unwrap();
+        assert_eq!(rec.encryption, "none", "存量数据 serde default 兼容");
     }
 
     /// V20 §4.5 事件驱动索引闭环: 创建/搜索/删除全链路经投影。

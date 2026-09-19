@@ -66,6 +66,15 @@ pub struct WriteContext {
     pub seal: Option<SealPair>,
 }
 
+/// 笔记级加密级别常量（DK-07 S1）。
+pub const ENC_NONE: &str = "none";
+pub const ENC_AES256GCM: &str = "aes256gcm";
+
+/// serde 默认值函数 — 存量 KV JSON（无 encryption 字段）读回 "none"。
+fn default_encryption() -> String {
+    ENC_NONE.to_string()
+}
+
 /// 笔记元数据记录（两端统一格式 — 从 mobile-ffi 上移，权威定义于此）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteRecord {
@@ -74,6 +83,10 @@ pub struct NoteRecord {
     pub content: String,
     pub created_at: String,
     pub updated_at: String,
+    /// 笔记级加密级别（DK-07 S1）— "none" | "aes256gcm"。
+    /// 自定义 default 保证存量 KV JSON（无此字段）反序列化兼容。
+    #[serde(default = "default_encryption")]
+    pub encryption: String,
 }
 
 impl NoteRecord {
@@ -85,6 +98,7 @@ impl NoteRecord {
             content: String::new(),
             created_at: now.clone(),
             updated_at: now,
+            encryption: ENC_NONE.to_string(),
         }
     }
 }
@@ -120,6 +134,46 @@ pub async fn load_note_meta(
         None => bytes,
     };
     Ok(Some(serde_json::from_slice(&plain)?))
+}
+
+/// 设置笔记加密级别（DK-07 S1 写路径 — 用户"锁定/解锁笔记"入口）。
+///
+/// fail-closed：非法级别拒绝；切换到加密级别时**立即从索引移除**（防锁定
+/// 前旧索引残留——S3 将把密级传播到 bootstrap source，实现全链路过滤）。
+///
+/// # Errors
+/// - 笔记不存在（`NoteNotFound`）
+/// - 非法级别（`InvalidInput`，仅接受 `none` / `aes256gcm`）
+pub async fn set_note_encryption(
+    ctx: &WriteContext,
+    note_id: &str,
+    level: &str,
+) -> Result<(), Error> {
+    if level != ENC_NONE && level != ENC_AES256GCM {
+        return Err(Error::InvalidInput(format!(
+            "invalid encryption level '{level}' (expected '{ENC_NONE}' or '{ENC_AES256GCM}')"
+        )));
+    }
+    let core = ctx.core.as_ref();
+    let mut record = load_note_meta(core, note_id, ctx.seal.as_ref())
+        .await?
+        .ok_or(Error::NoteNotFound {
+            id: note_id.to_string(),
+        })?;
+    record.encryption = level.to_string();
+    record.updated_at = chrono::Utc::now().to_rfc3339();
+    put_note_meta(core, note_id, &record, ctx.seal.as_ref()).await?;
+    // 元数据变更事件 → 搜索投影 reindex（加密后从索引移除, 解密后恢复）
+    core.event_bus
+        .publish(crate::event_bus::layered::AppEvent::NoteMetadataChanged {
+            note_id: note_id.to_string(),
+            changes: crate::event_bus::layered::NoteChanges {
+                title: None,
+                ..Default::default()
+            },
+        });
+    tracing::info!(note_id = %note_id, level = %level, "note encryption level set");
+    Ok(())
 }
 
 /// 加载（或创建）笔记的 Loro 文档：优先从 `notesnap:{id}` 快照恢复。
