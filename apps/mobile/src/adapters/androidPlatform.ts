@@ -13,7 +13,9 @@ export interface NoteSummary {
   note_id: string;
   title: string;
   updatedAt: string;
-}
+
+  /** DK-07: 笔记加密级别（"none" | "aes256gcm"） */
+  encryption: string;}
 
 export interface SearchResult {
   noteId: string;
@@ -29,6 +31,8 @@ interface AndroidBridge {
   getNoteContent(noteId: string): string;
   /** V26 M2/DK-06: 周回顾汇总 JSON — (estimate/actual/deviation/tasks) */
   todayFocusSummary(): string;
+  /** DK-07 S4: 笔记加密切换 — false = 非法级别/笔记不存在/降级 */
+  setNoteEncryption(noteId: string, level: string): boolean;
   saveNoteContent(noteId: string, content: string): number;
   deleteNote(noteId: string): number;
   searchNotes(query: string): string;
@@ -108,6 +112,17 @@ export const platform = {
     return bridge()?.isFallback() ?? false;
   },
 
+  /** DK-07: 设置笔记加密级别（fail-closed：非法级别/降级模式返回 false） */
+  setNoteEncryption(noteId: string, level: 'none' | 'aes256gcm'): boolean {
+    const b = bridge();
+    if (!b) return false;
+    try {
+      return b.setNoteEncryption(noteId, level) === true;
+    } catch {
+      return false;
+    }
+  },
+
   listNotes(): NoteSummary[] {
     const b = bridge();
     if (b) {
@@ -117,7 +132,7 @@ export const platform = {
         return [];
       }
     }
-    return mockNotes().map(({ id, title, updatedAt }) => ({ id, note_id: id, title, updatedAt }));
+    return mockNotes().map(({ id, title, updatedAt }) => ({ id, note_id: id, title, updatedAt, encryption: 'none' }));
   },
 
   createNote(title: string): string | null {

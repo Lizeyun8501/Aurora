@@ -97,11 +97,21 @@ public class MainActivity extends Activity {
                     o.put("id", n.id);
                     o.put("title", n.title);
                     o.put("updatedAt", n.updatedAt);
+                    o.put("encryption", n.encryption);
                     arr.put(o);
                 }
                 return arr.toString();
             } catch (Exception e) {
                 return "[]";
+            }
+        }
+
+        @JavascriptInterface
+        public boolean setNoteEncryption(String noteId, String level) {
+            try {
+                return core.setNoteEncryption(noteId, level);
+            } catch (Exception e) {
+                return false;
             }
         }
 

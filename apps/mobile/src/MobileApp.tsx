@@ -336,6 +336,7 @@ export default function App() {
                 onSoftDelete={softDelete}
                 favs={favs}
                 onToggleFav={toggleFav}
+                setNoteEncryption={(id, level) => platform.setNoteEncryption(id, level)}
               />
             )}
             {view === 'search' && <SearchView onOpen={openNote} />}
@@ -921,13 +922,14 @@ function NodeTree({ notes, onOpen, showToast }: {
   );
 }
 
-function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleFav }: {
+function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleFav, setNoteEncryption }: {
   onOpen: (id: string, title: string) => void;
   showToast: (t: string) => void;
   onNewNote: () => void;
   onSoftDelete: (id: string, title: string) => void;
   favs: string[];
   onToggleFav: (id: string) => void;
+  setNoteEncryption: (id: string, level: 'none' | 'aes256gcm') => boolean;
 }) {
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [query, setQuery] = useState('');
@@ -1004,11 +1006,17 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
               onClick={() => swipingId !== n.id && onOpen(n.id, n.title)}
             >
               <div className="note-card-body">
-                <div className="note-title">{n.title}</div>
+                <div className="note-title">
+                  {n.encryption === 'aes256gcm' && (
+                    <span style={{ marginRight: 4 }} aria-label="已加密" title="加密笔记 — 锁定态搜索/导出不可见">🔒</span>
+                  )}
+                  {n.title}
+                </div>
                 <div className="note-snippet">{noteSnippet(n.id) || '空笔记'}</div>
                 <div className="note-meta">
                   <span>{relativeTime(n.updatedAt)}</span>
                   <span className="tag">Inbox</span>
+                  {n.encryption === 'aes256gcm' && <span className="tag">加密</span>}
                 </div>
               </div>
               <button
@@ -1018,16 +1026,34 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
               >{I.star}</button>
               <span className="note-card-chevron">{I.chev}</span>
               {swipingId === n.id && (
-                <button
-                  className="swipe-delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSoftDelete(n.id, n.title);
-                    setSwipingId(null);
-                    refresh();
-                    showToast('已移入回收站');
-                  }}
-                >删除</button>
+                <>
+                  <button
+                    className="swipe-delete"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSoftDelete(n.id, n.title);
+                      setSwipingId(null);
+                      refresh();
+                      showToast('已移入回收站');
+                    }}
+                  >删除</button>
+                  <button
+                    className="swipe-delete"
+                    style={{ background: 'var(--text-tertiary)' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const to = n.encryption === 'aes256gcm' ? 'none' : 'aes256gcm';
+                      const okk = setNoteEncryption(n.id, to);
+                      setSwipingId(null);
+                      refresh();
+                      showToast(
+                        okk
+                          ? (to === 'aes256gcm' ? '🔒 已加密锁定' : '已解锁')
+                          : '锁定失败（不支持或已锁定）',
+                      );
+                    }}
+                  >{n.encryption === 'aes256gcm' ? '解锁' : '加密'}</button>
+                </>
               )}
             </div>
           ))}

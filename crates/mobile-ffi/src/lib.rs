@@ -39,6 +39,8 @@ pub struct NoteSummary {
     pub note_id: String,
     pub title: String,
     pub updated_at: String,
+    /// DK-07: 笔记加密级别（"none" | "aes256gcm"）— UI 锁标数据面
+    pub encryption: String,
 }
 
 /// 复习卡片条目（V20 Phase 3 FSRS — 今日页「复习」分区）。
@@ -95,6 +97,9 @@ struct NoteRecord {
     content: String,
     created_at: String,
     updated_at: String,
+    /// DK-07: 密级（serde default 兼容存量 KV）
+    #[serde(default)]
+    encryption: String,
 }
 
 impl NoteRecord {
@@ -106,6 +111,7 @@ impl NoteRecord {
             content: String::new(),
             created_at: now.clone(),
             updated_at: now,
+            encryption: "none".into(),
         }
     }
 
@@ -115,6 +121,7 @@ impl NoteRecord {
             note_id: self.id.clone(),
             title: self.title.clone(),
             updated_at: self.updated_at.clone(),
+            encryption: self.encryption.clone(),
         }
     }
 }
