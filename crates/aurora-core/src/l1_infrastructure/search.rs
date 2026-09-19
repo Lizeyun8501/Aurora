@@ -352,13 +352,14 @@ impl SearchBackend for TantivySearchBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::search_backend::SearchOptions;
+    use crate::traits::search_backend::{IndexEncryption, SearchOptions};
 
     fn metadata(title: &str, workspace: &str) -> NoteMetadata {
         NoteMetadata {
             title: title.to_string(),
             tags: vec![],
             workspace_id: workspace.to_string(),
+            encryption: IndexEncryption::default(),
             updated_at: None,
         }
     }

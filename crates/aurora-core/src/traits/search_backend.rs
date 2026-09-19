@@ -49,6 +49,17 @@ pub struct SearchResult {
     pub took_ms: u64,
 }
 
+/// 索引条目加密标记 — DK-07: 非明文条目不进任何索引。
+/// 与 note_doc::EncryptionLevel 解耦（traits 层不依赖 l1，规避 feature gate）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum IndexEncryption {
+    /// 明文（默认 — 当前 KV 存储全部明文）
+    #[default]
+    Plaintext,
+    /// 已加密（Vault 锁定语义 — 内容对索引不可见）
+    Encrypted,
+}
+
 /// 笔记索引元数据。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NoteMetadata {
@@ -58,6 +69,9 @@ pub struct NoteMetadata {
     pub tags: Vec<String>,
     /// 所属 Workspace。
     pub workspace_id: String,
+    /// 加密标记 — DK-07: 非 Plaintext 不进任何索引（Vault 锁定态不可见）。
+    #[serde(default)]
+    pub encryption: IndexEncryption,
     /// 最后更新时间。
     pub updated_at: Option<DateTime<Utc>>,
 }

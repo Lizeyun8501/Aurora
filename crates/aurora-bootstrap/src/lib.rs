@@ -260,6 +260,8 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
                                                         title: rec.title,
                                                         tags: vec![],
                                                         workspace_id: String::new(),
+                                                        // KV 存储当前全部明文（笔记级加密落库待 DK-07 主体接线）
+                                                        encryption: aurora_core::traits::search_backend::IndexEncryption::Plaintext,
                                                         updated_at: chrono::DateTime::parse_from_rfc3339(&rec.updated_at)
                                                             .ok()
                                                             .map(|dt| dt.with_timezone(&chrono::Utc)),

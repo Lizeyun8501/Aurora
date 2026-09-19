@@ -32,7 +32,7 @@ use tracing::{debug, info, warn};
 use crate::event_bus::layered::AppEvent;
 use crate::event_bus::projection::{Projection, ProjectionHealth};
 use crate::traits::kv_store::KVStore;
-use crate::traits::search_backend::{IndexEntry, NoteMetadata, SearchBackend};
+use crate::traits::search_backend::{IndexEncryption, IndexEntry, NoteMetadata, SearchBackend};
 
 /// 搜索索引投影。
 ///
@@ -58,10 +58,22 @@ impl SearchIndexProjection {
         Self { search, kv, source }
     }
 
+    /// 数据源快照 — **DK-07: 过滤加密笔记**（Vault 锁定态不进任何索引，
+    /// DoD「锁定态下搜索/图谱/导出均不可见加密内容」的搜索面）。
+    fn source_entries(&self) -> Vec<IndexEntry> {
+        (self.source)()
+            .into_iter()
+            .filter(|e| e.metadata.encryption == IndexEncryption::Plaintext)
+            .collect()
+    }
+
     /// 重索引单篇（元数据变更场景 — 标题/标签变了但事件不带全文）。
     async fn reindex(&self, note_id: &str) -> Result<(), crate::Error> {
         // 事件不携带全文 → 从数据源拉该笔记最新状态（拉模式投影）
-        let entry = (self.source)().into_iter().find(|e| e.note_id == note_id);
+        let entry = self
+            .source_entries()
+            .into_iter()
+            .find(|e| e.note_id == note_id);
         match entry {
             Some(e) => {
                 self.search
@@ -147,7 +159,7 @@ impl Projection for SearchIndexProjection {
         //    - index > source: 事件投影先于数据源写入（lag，如 bootstrap
         //      纯事件测试场景）→ 放行，稳态后自齐
         //    - 相等: 一致
-        let expected = (self.source)().len();
+        let expected = self.source_entries().len();
         match self.search.doc_count().await {
             Ok(Some(actual)) if actual < expected => {
                 warn!(expected, actual, "search projection index missing docs");
@@ -164,7 +176,7 @@ impl Projection for SearchIndexProjection {
     /// 全量重建：清空并从数据源重放全部笔记。
     async fn rebuild(&self) -> Result<(), crate::Error> {
         info!("search projection: full rebuild");
-        let all = (self.source)();
+        let all = self.source_entries();
         self.search.rebuild_index(&all).await
     }
 }
@@ -434,5 +446,74 @@ mod tests {
         assert!(!bus.low_ready(&ev), "Medium 未 ack 前不得放行");
         bus.ack_medium(ev.pre_medium_seq.max(1));
         assert!(bus.low_ready(&ev));
+    }
+
+    // =========================================================================
+    // DK-07 Vault 切片: 加密笔记不进任何索引（锁定态搜索不可见）
+    // =========================================================================
+
+    /// 加密笔记在数据源中 → rebuild 不得将其写入索引。
+    #[tokio::test]
+    async fn dk07_rebuild_skips_encrypted_entries() {
+        let search = Arc::new(InMemSearch {
+            docs: Default::default(),
+            rebuilds: AtomicUsize::new(0),
+        });
+        let kv = Arc::new(MemoryKVStore::default());
+        let mut enc = entry("e1", "encrypted note");
+        enc.metadata.encryption = IndexEncryption::Encrypted;
+        let source = vec![entry("n1", "plain note"), enc];
+        let proj = make_projection(search.clone(), kv, Box::new(move || source.clone()));
+
+        proj.rebuild().await.unwrap();
+        assert_eq!(search.docs.read().unwrap().len(), 1, "索引只应含明文笔记");
+        let r = search
+            .search("encrypted", &SearchOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(r.hits.len(), 0, "加密内容必须在搜索中不可见");
+        let r2 = search
+            .search("plain", &SearchOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(r2.hits.len(), 1, "明文笔记正常可见");
+    }
+
+    /// 加密笔记 → 元数据变更触发 reindex → 索引中移除（锁定即时生效）。
+    #[tokio::test]
+    async fn dk07_reindex_drops_encrypted_note() {
+        let search = Arc::new(InMemSearch {
+            docs: Default::default(),
+            rebuilds: AtomicUsize::new(0),
+        });
+        let kv = Arc::new(MemoryKVStore::default());
+        // 数据源: n1 已被加密（encryption = Encrypted）
+        let mut enc = entry("n1", "was plaintext");
+        enc.metadata.encryption = IndexEncryption::Encrypted;
+        let source = vec![enc];
+        let proj = make_projection(search.clone(), kv, Box::new(move || source.clone()));
+
+        // 先手工放进索引（模拟加密前的旧索引态）
+        search
+            .index_note("n1", "was plaintext", &NoteMetadata::default())
+            .await
+            .unwrap();
+        assert_eq!(search.docs.read().unwrap().len(), 1);
+
+        // 用户对 n1 触发元数据变更（如加密标记）→ 投影从数据源拉取 → 发现加密 → 移除
+        proj.apply(&AppEvent::NoteMetadataChanged {
+            note_id: "n1".into(),
+            changes: NoteChanges {
+                title: Some("was plaintext".into()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            search.docs.read().unwrap().len(),
+            0,
+            "加密后笔记必须从索引移除（fail-closed）"
+        );
     }
 }
