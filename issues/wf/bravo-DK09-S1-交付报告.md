@@ -149,6 +149,17 @@ blocks + 启动流程）；读回断言走 `load_note_meta` → `record.content`
 | `fmt --all -- --check` | 干净 |
 | 测试名单 grep 核验 | 25 个 `dk09_*` 逐一确认 `ok` |
 
+## §10a. 迁移向导内核交付（commit 4c0d3e9，同分支）
+
+- `src/wizard.rs`：`plan_*` 预扫（ImportPlan serde）/ `ImportManifest`
+  防重（键 source+hash，路径移动不破坏）/ `ProgressEvent` mscp 推送 /
+  `only` 白名单选择性导入——UI 后端支撑四件套
+- markdown/enex 循环两遍化（total 预知）；enex 稳定键 `<文件名>#<idx>`
+- opml 修复：自闭合顶层 outline 此前被静默丢弃（body 循环缺 Empty 臂）
+- 7 个 `dk09_wizard_*` 测试；UI request：
+  `bravo-request-migration-wizard-ui.md`（等 Alpha 三项裁决）
+- 验证：36/36 全绿、clippy 0 告警、fmt 干净、32 个 dk09_* 名单核验 ✓
+
 ## 10. 下一步
 
 1. 附件存储 API（Alpha 冻结窗口）落地 → Bravo 导入器改造（attachment_id
