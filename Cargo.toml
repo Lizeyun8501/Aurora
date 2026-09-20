@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/aurora-core",
+    "crates/aurora-import",
     "crates/aurora-sync",
     "crates/aurora-ai",
     "crates/aurora-security",

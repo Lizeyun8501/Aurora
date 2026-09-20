@@ -1,0 +1,17 @@
+[package]
+name = "aurora-import"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "DK-09 导入器：Markdown 目录 → 笔记（write_path 唯一入口）"
+
+[dependencies]
+aurora-core = { path = "../aurora-core" }
+walkdir = "2"
+tracing = "0.1"
+
+[dev-dependencies]
+# 真实 AppCore 装配（SQLite KV + blocks + 启动流程）— 与桌面端同源
+aurora-bootstrap = { path = "../aurora-bootstrap" }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

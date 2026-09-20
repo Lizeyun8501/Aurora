@@ -482,6 +482,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-import"
+version = "0.1.0"
+dependencies = [
+ "aurora-bootstrap",
+ "aurora-core",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
 name = "aurora-migration"
 version = "0.1.0"
 dependencies = [
