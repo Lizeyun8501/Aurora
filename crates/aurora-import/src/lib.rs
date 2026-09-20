@@ -24,7 +24,10 @@
 
 pub mod enex;
 pub mod enml;
+pub mod html;
 pub mod markdown;
+pub mod notion;
+pub mod opml;
 pub mod report;
 
 use std::collections::HashMap;
@@ -32,6 +35,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use aurora_core::write_path::WriteContext;
+pub use notion::import_notion_export;
+pub use opml::import_opml_file;
 pub use report::ImportError;
 use report::{ImportReport, ImportedEntry, ResourceInfo};
 
@@ -200,6 +205,71 @@ fn decode_base64(s: &str) -> Result<Vec<u8>, String> {
     let cleaned: String = s.chars().filter(|c| !c.is_whitespace()).collect();
     B64.decode(cleaned.as_bytes())
         .map_err(|e| format!("base64: {e}"))
+}
+
+/// HTML 导入选项（M3：目前无附加项，占位保持 API 形状稳定）。
+#[derive(Debug, Clone, Default)]
+pub struct HtmlImportOptions {}
+
+/// 导入单个 HTML 文件（要求良构，见 [`html`] 模块说明）。
+///
+/// 标题规则：`<title>` 元素 → 首个 `h1` → 文件名 stem。
+///
+/// # Errors
+/// 文件读取失败 / HTML 非良构。
+pub async fn import_html_file(
+    ctx: &WriteContext,
+    html_path: &Path,
+    _options: &HtmlImportOptions,
+) -> Result<ImportReport, ImportError> {
+    let started = Instant::now();
+    let raw = std::fs::read_to_string(html_path).map_err(|e| ImportError {
+        path: html_path.to_path_buf(),
+        reason: format!("读取失败: {e}"),
+    })?;
+    let conv = html::html_to_markdown(&raw).map_err(|e| ImportError {
+        path: html_path.to_path_buf(),
+        reason: format!("HTML 转换失败: {e}"),
+    })?;
+
+    let mut report = ImportReport {
+        scanned: 1,
+        ..Default::default()
+    };
+
+    let title = html::extract_title_element(&raw)
+        .or_else(|| html::extract_first_heading(&conv.markdown))
+        .unwrap_or_else(|| {
+            html_path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "未命名 HTML".to_string())
+        });
+
+    match import_one(ctx, &title, &conv.markdown).await {
+        Ok(note_id) => {
+            report.imported += 1;
+            report.note_ids.push(note_id.clone());
+            report.entries.push(ImportedEntry {
+                note_id,
+                title,
+                source: html_path.display().to_string(),
+                tags: Vec::new(),
+                resources: Vec::new(),
+            });
+        }
+        Err(e) => {
+            report.failed += 1;
+            report.errors.push(ImportError {
+                path: html_path.to_path_buf(),
+                reason: format!("写入失败: {e}"),
+            });
+        }
+    }
+    report.warnings.extend(conv.warnings);
+    report.duration_ms = started.elapsed().as_millis();
+    tracing::info!(file = %html_path.display(), "html import done");
+    Ok(report)
 }
 
 /// sidecar 落盘文件名：`<hash 前 12 位>-<basename>`（防撞名 + 防目录逃逸）。

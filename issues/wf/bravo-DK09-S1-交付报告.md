@@ -1,7 +1,7 @@
-# Bravo 交付报告：DK-09 — S1 Markdown 目录导入 + S2 ENEX 导入
+# Bravo 交付报告：DK-09 — S1 Markdown + S2 ENEX + M3 HTML/Notion/OPML
 
 > 执行：Bravo · 2026-09-20 · 分支 `wf/bravo-import`（基于 main 70438e8）
-> S1：0.5 人日 · S2：0.5 人日
+> S1：0.5 人日 · S2：0.5 人日 · M3 格式：0.5 人日
 
 ## 1. 交付物
 
@@ -121,10 +121,40 @@ blocks + 启动流程）；读回断言走 `load_note_meta` → `record.content`
 | `fmt --all -- --check` | 干净 |
 | 测试名单 grep 核验 | 16 个 `dk09_*` 逐一确认 `ok`（S5 教训）|
 
-## 9. 下一切片建议（§7 队列）
+## 9. M3 追加交付 — HTML / Notion 导出 / OPML（同分支）
 
-1. 附件存储 API（见 request，落地后导入器改造 < 1 人日）
-2. ENEX 导入器 CLI/桌面接线（desktop 调用点——先 request）
+| 文件 | 说明 |
+|---|---|
+| `src/html.rs` | 良构 HTML→Markdown（h1-h6/b-strong/i-em/列表/表格/链接/图片 alt/blockquote/代码；实体解码；未闭合报错） |
+| `src/notion.rs` | Notion 导出目录（文件名 32 位 hash 后缀剥离、md 复用无损通道、CSV 数据库记 warning 跳过） |
+| `src/opml.rs` | OPML 大纲（每顶层 outline 一篇笔记，`_note` 属性为节点正文，递归嵌套列表） |
+| `tests/m3_formats.rs` | 8 个 `dk09_m3_*` 测试 |
+| `src/lib.rs` | `import_html_file` / `import_notion_export` / `import_opml_file` 入口（根 re-export） |
+
+要点：
+- 零新依赖（HTML/OPML 复用 quick-xml；HTML 仅承诺良构——Evernote/
+  OneNote/Notion 导出满足，非良构 failed 记账）。
+- OPML 深度语义：顶层 outline 子树顶层项不缩进，孙级起每层 2 空格。
+- Notion CSV（数据库）导入不在本切片（结构化行→笔记需要列映射设计，
+  建议随附件 API 切片后单独排期）。
+- S3 铺路（已在前一 commit）：ImportReport serde 序列化 + 桌面接线
+  request（`bravo-request-import-desktop-wiring.md`）。
+
+### M3 验证矩阵
+
+| 门槛 | 结果 |
+|---|---|
+| `test -p aurora-import` | **30/30 全绿**（8 m3 + 8 enex + 9 md + 4 单元 + 1 doc）|
+| `clippy --all-targets -D warnings` | **0 warning** |
+| `fmt --all -- --check` | 干净 |
+| 测试名单 grep 核验 | 25 个 `dk09_*` 逐一确认 `ok` |
+
+## 10. 下一步
+
+1. 附件存储 API（Alpha 冻结窗口）落地 → Bravo 导入器改造（attachment_id
+   + aurora://attach/{id}，< 1 人日，已排队列）
+2. S3 桌面接线（等 `bravo-request-import-desktop-wiring.md` 裁决）
+3. 迁移向导 UI（防重/选择性导入/进度——M3 前端部分，跨领地）
 
 ---
 
