@@ -6,8 +6,10 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 /// 单条导入失败（文件级，不阻断其余文件）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportError {
     /// 出错的源文件路径。
     pub path: PathBuf,
@@ -24,7 +26,7 @@ impl fmt::Display for ImportError {
 impl std::error::Error for ImportError {}
 
 /// 导入的资源（ENEX `<resource>`）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceInfo {
     /// 资源哈希（ENEX `data@hash`，hex）。
     pub hash: String,
@@ -39,7 +41,7 @@ pub struct ResourceInfo {
 }
 
 /// 单条导入明细（markdown 与 enex 共用）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportedEntry {
     /// 生成的笔记 ID。
     pub note_id: String,
@@ -57,7 +59,7 @@ pub struct ImportedEntry {
 ///
 /// 计数关系：`scanned` = 被视为导入候选的文件/笔记数；
 /// `scanned = imported + failed`；`skipped` = 非 .md 或隐藏文件数（不计入 scanned）。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImportReport {
     /// 被扫描的 .md 文件数（ENEX 为 note 数）。
     pub scanned: usize,

@@ -257,3 +257,20 @@ async fn dk09_import_report_counts_and_empty_dir() {
     assert_eq!(report.errors.len(), 1);
     assert!(report.errors[0].reason.contains("读取失败"));
 }
+
+/// §S3 铺路：ImportReport JSON 序列化往返（桌面 command 返回载荷）。
+#[tokio::test]
+async fn dk09_import_report_json_roundtrip() {
+    let app = test_app().await;
+    let src = app._dir.path().join("r");
+    write_file(&src, "a.md", "hello\n");
+    let report = import_markdown_dir(&app.ctx, &src, &ImportOptions::default())
+        .await
+        .expect("import ok");
+    let json = serde_json::to_string(&report).expect("serialize");
+    let back: aurora_import::report::ImportReport =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(back.imported, 1);
+    assert_eq!(back.entries[0].title, "a");
+    assert_eq!(back.entries[0].note_id, report.entries[0].note_id);
+}

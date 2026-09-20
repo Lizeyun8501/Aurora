@@ -489,6 +489,8 @@ dependencies = [
  "aurora-core",
  "base64 0.22.1",
  "quick-xml",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",
