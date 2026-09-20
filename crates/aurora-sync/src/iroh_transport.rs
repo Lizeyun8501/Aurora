@@ -29,11 +29,28 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 // iroh 1.0 API（对应 V19 §31.2）
-use iroh::endpoint::presets::Empty;
+use iroh::endpoint::presets::Minimal;
 use iroh::{Endpoint, EndpointAddr};
 use loro::LoroDoc;
 
 use crate::p2p::PeerId;
+
+use std::time::Duration;
+
+/// 连接滞留窗口：iroh/noq 在最后一个 `Connection` 句柄 drop 时立即
+/// 应用层关闭（ApplicationClose 0），会作废在途流数据/FIN。收尾侧
+/// 克隆句柄滞留该窗口，保证对端在连接存活期内读完收尾数据。
+/// （内存网络 RTT ~1ms，生产真实网络 1s 足够覆盖正常 RTT 抖动）
+const CONN_LINGER: Duration = Duration::from_secs(1);
+
+/// 克隆连接句柄并滞留 CONN_LINGER 后释放（收尾保护）。
+fn linger_conn(conn: &iroh::endpoint::Connection) {
+    let held = conn.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(CONN_LINGER).await;
+        drop(held);
+    });
+}
 
 /// iroh ALPN 协议标识（V19 §31.2: `aurora-note/1`）。
 pub const AURORA_ALPN: &[u8] = b"aurora-note/1";
@@ -100,9 +117,11 @@ pub struct SyncReport {
 impl IrohTransport {
     /// 创建 iroh Endpoint 并绑定（V19 §31.2 `IrohSyncTarget::new`）。
     ///
-    /// 使用 `Endpoint::empty()` 预设，自动完成基本绑定。
+    /// 使用 `Minimal` 预设（无 relay/发现的纯直连端点），自动完成基本绑定。
     pub async fn new(peer_id: PeerId) -> Result<Self, String> {
-        let endpoint = Endpoint::builder(Empty)
+        // Minimal 预设 = Empty + rustls ring provider（tls-ring 默认 feature）。
+        // Empty 预设不设 crypto provider，bind 必失败（iroh 1.0.3 语义）。
+        let endpoint = Endpoint::builder(Minimal)
             .alpns(vec![AURORA_ALPN.to_vec()])
             .bind()
             .await
@@ -189,19 +208,31 @@ impl IrohTransport {
             debug!("imported {} bytes from peer", received_bytes);
         }
 
-        // 6. 反向同步：新双向流，发送本地缺失更新
+        // 6. 反向同步：服务端主动发起 stream2（其 open_bi 后立即写 VV，
+        //    保证客户端 accept_bi 时数据已在途；若由客户端先开流再等
+        //    服务端写，QUIC 首帧未带数据时服务端 accept_bi 永远不可见，
+        //    双方互等死锁 — V19 协议缺陷，本切片修复）。
+        //    VV 采用长度前缀帧读取（服务端此时不能 FIN，否则客户端无法
+        //    区分 VV 边界；服务端 FIN 延后到 import 完成作为完成信号）。
         let (mut send2, mut recv2) = conn
-            .open_bi()
+            .accept_bi()
             .await
-            .map_err(|e| format!("open_bi reverse failed: {}", e))?;
+            .map_err(|e| format!("accept_bi reverse failed: {}", e))?;
 
-        // 接收远端版本向量
-        let remote_vv_data = recv2
-            .read_to_end(1024)
+        // 接收远端版本向量（长度前缀帧，无 FIN）
+        let mut len_buf = [0u8; 4];
+        recv2
+            .read_exact(&mut len_buf)
             .await
-            .map_err(|e| format!("read remote vv failed: {}", e))?;
+            .map_err(|e| format!("read vv frame len failed: {}", e))?;
+        let vv_len = u32::from_be_bytes(len_buf) as usize;
+        let mut vv_buf = vec![0u8; vv_len];
+        recv2
+            .read_exact(&mut vv_buf)
+            .await
+            .map_err(|e| format!("read vv frame body failed: {}", e))?;
 
-        let remote_vv = loro::VersionVector::decode(&remote_vv_data)
+        let remote_vv = loro::VersionVector::decode(&vv_buf)
             .map_err(|e| format!("decode remote vv failed: {}", e))?;
 
         // 导出本地相对远端的增量
@@ -217,6 +248,15 @@ impl IrohTransport {
         send2
             .finish()
             .map_err(|e| format!("finish reverse send failed: {}", e))?;
+
+        // 7. 等待服务端完成信号：服务端 import 完成后才 FIN stream2，
+        //    客户端收到 EOF 再返回——确保服务端先收尾，避免连接句柄
+        //    drop 触发的自动关闭抢先于在途数据（noq 语义）。
+        recv2
+            .read_to_end(1)
+            .await
+            .map_err(|e| format!("wait server completion failed: {}", e))?;
+        linger_conn(&conn);
 
         info!(
             "sync_with_peer completed: sent={} bytes, received={} bytes",
@@ -278,13 +318,14 @@ impl IrohTransport {
         send.finish()
             .map_err(|e| format!("finish send failed: {}", e))?;
 
-        // 反向：接收远端缺失更新
+        // 反向：服务端主动开流，推送本地版本向量（不 FIN——FIN 延后到
+        // import 完成后作为完成信号），再接收客户端缺失更新
         let (mut send2, mut recv2) = conn
-            .accept_bi()
+            .open_bi()
             .await
-            .map_err(|e| format!("accept_bi reverse failed: {}", e))?;
+            .map_err(|e| format!("open_bi reverse failed: {}", e))?;
 
-        // 发送本地版本向量
+        // 发送本地版本向量（长度前缀帧）
         let local_vv = local_doc.oplog_vv();
         let vv_bytes = local_vv.encode();
         let frame = encode_frame(&vv_bytes);
@@ -292,11 +333,8 @@ impl IrohTransport {
             .write_all(&frame)
             .await
             .map_err(|e| format!("write vv reverse failed: {}", e))?;
-        send2
-            .finish()
-            .map_err(|e| format!("finish vv reverse failed: {}", e))?;
 
-        // 接收远端增量
+        // 接收远端增量（客户端 FIN → EOF）
         let remote_update = recv2
             .read_to_end(MAX_SYNC_MESSAGE_SIZE)
             .await
@@ -309,6 +347,14 @@ impl IrohTransport {
                 .import(&remote_update)
                 .map_err(|e| format!("loro import reverse failed: {}", e))?;
         }
+
+        // 完成信号：import 落地后才 FIN stream2 发送侧，客户端读到 EOF
+        // 才会返回（确保服务端先于客户端收尾）。FIN 本身经连接滞留窗口
+        // 保障送达。
+        send2
+            .finish()
+            .map_err(|e| format!("finish completion signal failed: {}", e))?;
+        linger_conn(&conn);
 
         debug!(
             "accept_sync completed: sent={} bytes, received={} bytes",
@@ -410,5 +456,238 @@ mod tests {
     fn test_aurora_alpn_constant() {
         assert_eq!(AURORA_ALPN, b"aurora-note/1");
         assert_eq!(MAX_SYNC_MESSAGE_SIZE, 10 * 1024 * 1024);
+    }
+
+    // ===== DK-08 §7.4：多节点多 NAT 仿真测试 =====
+    //
+    // 仿真模型：iroh 官方内存测试网络 `TestNetwork`（in-memory 通道替代
+    // 真实 socket）——每个 Endpoint 独立身份 = 各自独立 NAT 后的节点，
+    // 节点间不经任何发现/中转服务，`EndpointAddr` 由测试代码手工交换
+    // （对应生产中设备地址经二维码/账户服务带外交换的模型）。
+    //
+    // 选型说明：真实 UDP 网络在 CI 沙箱不可用（非 lo 接口被防火墙拦截，
+    // 直连路径打开后被弃导致路径饿死）；本地 relay 会合可行但依赖路径
+    // 状态机收敛。内存网络完全确定、无防火墙语义，是 §7.4「多节点拓扑
+    // + CRDT 收敛」验收的合适载体。
+    //
+    // 验收核心：多轮两两同步后**全节点 CRDT 文本收敛一致**（多跳传播）。
+
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    use iroh::test_utils::test_transport::TestNetwork;
+
+    const SYNC_TIMEOUT_SECS: u64 = 15;
+
+    /// 每测试一个内存网络（测试结束自动丢弃）。
+    fn spawn_network() -> TestNetwork {
+        TestNetwork::new()
+    }
+
+    /// 节点绑定：确定性密钥（按 tag 派生）+ 内存传输 + 网内地址查找。
+    ///
+    /// 直接构造 `IrohTransport`（同模块可访问私有字段），避免为测试改动
+    /// 生产构造器。
+    async fn spawn_node(network: &TestNetwork, tag: &str) -> Arc<IrohTransport> {
+        // 确定性 32 字节密钥：同 tag 同身份（可复现）
+        let mut key = [0u8; 32];
+        for (i, b) in tag.bytes().enumerate() {
+            key[i] = b;
+        }
+        key[31] = tag.len() as u8;
+        let secret = iroh::SecretKey::from_bytes(&key);
+
+        let transport = network
+            .create_transport(secret.public())
+            .expect("create test transport");
+        // Minimal 补 crypto provider；TestTransport 预设挂内存传输 + 网内地址查找
+        let endpoint = Endpoint::builder(Minimal)
+            .secret_key(secret)
+            .alpns(vec![AURORA_ALPN.to_vec()])
+            .clear_ip_transports()
+            .preset(transport)
+            .bind()
+            .await
+            .unwrap_or_else(|e| panic!("node {tag}: endpoint bind failed: {e}"));
+        Arc::new(IrohTransport {
+            endpoint,
+            peer_id: Mutex::new(PeerId::from_str(&format!("node-{tag}"))),
+        })
+    }
+
+    /// 各带一处本地编辑的文档（tag 即编辑内容）。
+    fn edited_doc(tag: &str) -> Arc<LoroDoc> {
+        let doc = LoroDoc::new();
+        doc.get_text("content")
+            .insert(0, &format!("[{tag}]"))
+            .expect("insert text");
+        doc.commit();
+        Arc::new(doc)
+    }
+
+    /// 派生 n 个 accept_sync 服务任务（每任务处理恰好一个入站连接）。
+    fn spawn_accepts(
+        t: &Arc<IrohTransport>,
+        doc: &Arc<LoroDoc>,
+        n: usize,
+    ) -> Vec<tokio::task::JoinHandle<Result<SyncReport, String>>> {
+        (0..n)
+            .map(|_| {
+                let t = t.clone();
+                let d = doc.clone();
+                tokio::spawn(async move { t.accept_sync(&d).await })
+            })
+            .collect()
+    }
+
+    /// 客户端角色同步（超时防挂死 CI）。
+    async fn sync_pair(client: &IrohTransport, addr: &EndpointAddr, doc: &LoroDoc) -> SyncReport {
+        timeout(
+            Duration::from_secs(SYNC_TIMEOUT_SECS),
+            client.sync_with_peer(addr.clone(), doc),
+        )
+        .await
+        .expect("client sync timeout")
+        .expect("client sync failed")
+    }
+
+    /// 回收服务端任务：必须全部成功完成（客户端未连上会在此超时暴露）。
+    async fn join_accepts(handles: Vec<tokio::task::JoinHandle<Result<SyncReport, String>>>) {
+        for h in handles {
+            let report = timeout(Duration::from_secs(SYNC_TIMEOUT_SECS), h)
+                .await
+                .expect("accept timeout (client never connected?)")
+                .expect("accept task panicked")
+                .expect("accept failed");
+            assert!(report.success, "accept error: {:?}", report.error);
+        }
+    }
+
+    fn doc_text(doc: &LoroDoc) -> String {
+        doc.get_text("content").to_string()
+    }
+
+    /// 断言全部节点文本一致（CRDT 收敛）且包含每节点编辑。
+    fn assert_converged(docs: &[Arc<LoroDoc>]) {
+        let expected = doc_text(&docs[0]);
+        assert!(!expected.is_empty());
+        for (i, d) in docs.iter().enumerate() {
+            assert_eq!(
+                doc_text(d),
+                expected,
+                "node {i} 未收敛: {:?} vs {:?}",
+                doc_text(d),
+                expected
+            );
+        }
+    }
+
+    /// 星型拓扑收敛（§7.4 验收主体）：辐条→中心（第 1 轮）+ 中心→辐条扇出（第 2 轮）。
+    async fn star_convergence(network: &TestNetwork, spoke_count: usize) {
+        let hub = spawn_node(network, "hub").await;
+        let mut spokes = Vec::with_capacity(spoke_count);
+        for i in 0..spoke_count {
+            spokes.push(spawn_node(network, &format!("s{i}")).await);
+        }
+        let hub_doc = edited_doc("H");
+        let mut docs = vec![hub_doc.clone()];
+        for i in 0..spoke_count {
+            docs.push(edited_doc(&format!("S{i}")));
+        }
+        let spoke_docs: Vec<_> = docs[1..].to_vec();
+
+        // 第 1 轮：辐条 → 中心，中心文档拿全全部编辑
+        let accepts = spawn_accepts(&hub, &hub_doc, spoke_count);
+        for (i, (t, d)) in spokes.iter().zip(&spoke_docs).enumerate() {
+            let r = sync_pair(t, &hub.addr(), d).await;
+            assert!(r.success, "spoke {i} → hub failed: {:?}", r.error);
+            assert!(
+                r.sent_bytes > 0 && r.received_bytes > 0,
+                "双向流必须都有数据"
+            );
+        }
+        join_accepts(accepts).await;
+        let hub_text = doc_text(&hub_doc);
+        assert!(hub_text.contains("[H]"));
+        for i in 0..spoke_count {
+            assert!(
+                hub_text.contains(&format!("[S{i}]")),
+                "hub 缺少 spoke {i} 的编辑"
+            );
+        }
+
+        // 第 2 轮：中心 → 辐条扇出，全节点收敛
+        for (t, d) in spokes.iter().zip(&spoke_docs) {
+            let accepts = spawn_accepts(t, d, 1);
+            let r = sync_pair(&hub, &t.addr(), &hub_doc).await;
+            assert!(r.success, "hub → spoke failed: {:?}", r.error);
+            join_accepts(accepts).await;
+        }
+        assert_converged(&docs);
+    }
+
+    /// §7.4 验收 1：两节点双向同步收敛（基线）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk08_p2p_two_node_bidirectional_converge() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_test_writer()
+            .try_init();
+        let network = spawn_network();
+        let a = spawn_node(&network, "a").await;
+        let b = spawn_node(&network, "b").await;
+        let doc_a = edited_doc("A");
+        let doc_b = edited_doc("B");
+
+        let accepts = spawn_accepts(&b, &doc_b, 1);
+        let report = sync_pair(&a, &b.addr(), &doc_a).await;
+        assert!(report.success, "{:?}", report.error);
+        join_accepts(accepts).await;
+
+        // 双向收敛：双方文本一致且互含对方编辑
+        let ta = doc_text(&doc_a);
+        let tb = doc_text(&doc_b);
+        assert_eq!(ta, tb, "两节点文本必须收敛一致");
+        assert!(ta.contains("[A]") && ta.contains("[B]"), "got: {ta:?}");
+    }
+
+    /// §7.4 验收 2：5 节点星型拓扑（下限验收场景）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk08_p2p_star_five_node_converge() {
+        let network = spawn_network();
+        star_convergence(&network, 4).await;
+    }
+
+    /// §7.4 验收 3：10 节点星型拓扑（上限验收场景）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk08_p2p_star_ten_node_converge() {
+        let network = spawn_network();
+        star_convergence(&network, 9).await;
+    }
+
+    /// §7.4 验收 4：4 节点环形拓扑两轮同步 —— 多跳传播（A 的编辑经
+    /// 邻居逐跳到达对侧节点）后全收敛。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk08_p2p_ring_four_node_multihop_converge() {
+        const N: usize = 4;
+        let network = spawn_network();
+        let mut nodes = Vec::with_capacity(N);
+        let mut docs = Vec::with_capacity(N);
+        for i in 0..N {
+            nodes.push(spawn_node(&network, &format!("r{i}")).await);
+            docs.push(edited_doc(&format!("R{i}")));
+        }
+
+        // 两轮环形两两同步：i ↔ (i+1) % N（环形直径 2 → 两轮必收敛）
+        for _round in 0..2 {
+            for i in 0..N {
+                let j = (i + 1) % N;
+                let accepts = spawn_accepts(&nodes[j], &docs[j], 1);
+                let r = sync_pair(&nodes[i], &nodes[j].addr(), &docs[i]).await;
+                assert!(r.success, "ring {i}→{j} failed: {:?}", r.error);
+                join_accepts(accepts).await;
+            }
+        }
+        assert_converged(&docs);
     }
 }
