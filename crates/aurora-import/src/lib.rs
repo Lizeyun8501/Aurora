@@ -22,15 +22,18 @@
 //! # }
 //! ```
 
+pub mod enex;
+pub mod enml;
 pub mod markdown;
 pub mod report;
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use aurora_core::write_path::WriteContext;
 pub use report::ImportError;
-use report::ImportReport;
+use report::{ImportReport, ImportedEntry, ResourceInfo};
 
 /// 导入选项。
 #[derive(Debug, Clone)]
@@ -139,7 +142,14 @@ pub async fn import_markdown_dir(
         match import_one(ctx, &title, &body).await {
             Ok(note_id) => {
                 report.imported += 1;
-                report.note_ids.push(note_id);
+                report.note_ids.push(note_id.clone());
+                report.entries.push(ImportedEntry {
+                    note_id,
+                    title,
+                    source: path.display().to_string(),
+                    tags: Vec::new(),
+                    resources: Vec::new(),
+                });
             }
             Err(e) => {
                 report.failed += 1;
@@ -172,4 +182,216 @@ async fn import_one(
     let note_id = aurora_core::write_path::create_note(ctx, title).await?;
     aurora_core::write_path::save_note_content(ctx, &note_id, body).await?;
     Ok(note_id)
+}
+
+/// ENEX 导入选项。
+#[derive(Debug, Clone, Default)]
+pub struct EnexImportOptions {
+    /// 资源 sidecar 落盘目录。`None` = 不落盘：en-media 输出
+    /// `attachment://<hash>` 占位 + warning（等待 core 附件 API，见
+    /// `issues/wf/bravo-request-attachment-store-api.md`）。
+    pub attachments_dir: Option<PathBuf>,
+}
+
+/// base64 解码（容忍 ENEX 数据中的空白/换行）。
+fn decode_base64(s: &str) -> Result<Vec<u8>, String> {
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine as _;
+    let cleaned: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    B64.decode(cleaned.as_bytes())
+        .map_err(|e| format!("base64: {e}"))
+}
+
+/// sidecar 落盘文件名：`<hash 前 12 位>-<basename>`（防撞名 + 防目录逃逸）。
+fn safe_attachment_name(file_name: Option<&str>, mime: &str, hash: &str) -> String {
+    let base = match file_name {
+        Some(n) => Path::new(n)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| n.to_string()),
+        None => {
+            let ext = mime.split('/').next_back().unwrap_or("bin");
+            format!("{hash}.{ext}")
+        }
+    };
+    format!("{}-{}", &hash[..hash.len().min(12)], base)
+}
+
+/// mime → 占位文件名的回退扩展名。
+fn placeholder_name(mime: &str, hash: &str) -> String {
+    let ext = mime.split('/').next_back().unwrap_or("bin");
+    format!("{hash}.{ext}")
+}
+
+/// 导入 ENEX 文件（印象笔记导出，Evernote Export DTD 3）。
+///
+/// 流程：quick-xml 流式解析（[`enex::parse_enex`]）→ 逐 note ENML→Markdown
+/// 转换（[`enml::enml_to_markdown`]）→ `write_path` 唯一入口写入。
+///
+/// 资源处理：[`EnexImportOptions::attachments_dir`] 提供时 base64 解码落
+/// sidecar 文件（`<hash12>-<basename>`），en-media 占位指向该文件；
+/// 未提供时输出 `attachment://<hash>` 占位 + warning（附件 API 待
+/// core 侧落地，见 request 文档）。
+///
+/// 单 note 失败记入报告并继续。
+pub async fn import_enex(
+    ctx: &WriteContext,
+    enex_path: &Path,
+    options: &EnexImportOptions,
+) -> Result<ImportReport, ImportError> {
+    let started = Instant::now();
+    let xml = std::fs::read_to_string(enex_path).map_err(|e| ImportError {
+        path: enex_path.to_path_buf(),
+        reason: format!("读取失败: {e}"),
+    })?;
+    let notes = enex::parse_enex(&xml).map_err(|e| ImportError {
+        path: enex_path.to_path_buf(),
+        reason: format!("ENEX 解析失败: {e}"),
+    })?;
+
+    let mut report = ImportReport {
+        scanned: notes.len(),
+        ..Default::default()
+    };
+    let source_base = enex_path.display().to_string();
+
+    // 资源 sidecar 落盘（同 hash 全局只落一次）
+    let mut resource_infos: HashMap<String, ResourceInfo> = HashMap::new();
+    if let Some(att_dir) = &options.attachments_dir {
+        std::fs::create_dir_all(att_dir).map_err(|e| ImportError {
+            path: att_dir.clone(),
+            reason: format!("附件目录创建失败: {e}"),
+        })?;
+        for note in &notes {
+            for r in &note.resources {
+                if resource_infos.contains_key(&r.hash) {
+                    continue;
+                }
+                let bytes = match decode_base64(&r.data_base64) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        report
+                            .warnings
+                            .push(format!("资源 {} 解码失败，已跳过落盘: {e}", &r.hash));
+                        continue;
+                    }
+                };
+                let safe = safe_attachment_name(r.file_name.as_deref(), &r.mime, &r.hash);
+                let out_path = att_dir.join(&safe);
+                if let Err(e) = std::fs::write(&out_path, &bytes) {
+                    report
+                        .warnings
+                        .push(format!("资源 {} 落盘失败: {e}", &r.hash));
+                    continue;
+                }
+                resource_infos.insert(
+                    r.hash.clone(),
+                    ResourceInfo {
+                        hash: r.hash.clone(),
+                        mime: r.mime.clone(),
+                        file_name: r.file_name.clone(),
+                        bytes: bytes.len(),
+                        written_to: Some(out_path),
+                    },
+                );
+            }
+        }
+    }
+
+    for (idx, note) in notes.iter().enumerate() {
+        let title = if note.title.trim().is_empty() {
+            format!("未命名笔记 {}", idx + 1)
+        } else {
+            note.title.clone()
+        };
+        let source = format!("{source_base}#{idx}");
+
+        // en-media 占位映射：hash → (alt 文本, 链接目标)。
+        // 有 sidecar：alt=原始文件名，link=attachments/<落盘名>；
+        // 无 sidecar：alt=占位名，link=attachment://<hash>（附件 API 待落地）。
+        let mut res_map: HashMap<String, (String, String)> = HashMap::new();
+        let mut res_infos: Vec<ResourceInfo> = Vec::new();
+        for r in &note.resources {
+            let info = resource_infos.get(&r.hash);
+            let (alt, link) = match info {
+                Some(i) => {
+                    let alt = i
+                        .file_name
+                        .clone()
+                        .unwrap_or_else(|| placeholder_name(&i.mime, &r.hash));
+                    let link = i
+                        .written_to
+                        .as_ref()
+                        .map(|p| {
+                            let name = p
+                                .file_name()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| placeholder_name(&i.mime, &r.hash));
+                            format!("attachments/{name}")
+                        })
+                        .unwrap_or_else(|| format!("attachment://{}", &r.hash));
+                    (alt, link)
+                }
+                None => {
+                    report.warnings.push(format!(
+                        "[{title}] 资源 {} 未落盘（未提供 attachments_dir），使用 attachment:// 占位",
+                        &r.hash
+                    ));
+                    let ph = placeholder_name(&r.mime, &r.hash);
+                    (ph.clone(), format!("attachment://{}", &r.hash))
+                }
+            };
+            res_map.insert(r.hash.clone(), (alt, link));
+            if let Some(i) = info {
+                res_infos.push(i.clone());
+            }
+        }
+
+        let conv = match enml::enml_to_markdown(&note.content, &res_map) {
+            Ok(c) => c,
+            Err(e) => {
+                report.failed += 1;
+                report.errors.push(ImportError {
+                    path: PathBuf::from(&source),
+                    reason: format!("ENML 转换失败: {e}"),
+                });
+                continue;
+            }
+        };
+        for w in conv.warnings {
+            report.warnings.push(format!("[{title}] {w}"));
+        }
+
+        match import_one(ctx, &title, &conv.markdown).await {
+            Ok(note_id) => {
+                report.imported += 1;
+                report.note_ids.push(note_id.clone());
+                report.entries.push(ImportedEntry {
+                    note_id,
+                    title,
+                    source,
+                    tags: note.tags.clone(),
+                    resources: res_infos,
+                });
+            }
+            Err(e) => {
+                report.failed += 1;
+                report.errors.push(ImportError {
+                    path: PathBuf::from(&source),
+                    reason: format!("写入失败: {e}"),
+                });
+            }
+        }
+    }
+
+    report.duration_ms = started.elapsed().as_millis();
+    tracing::info!(
+        file = %enex_path.display(),
+        scanned = report.scanned,
+        imported = report.imported,
+        failed = report.failed,
+        warnings = report.warnings.len(),
+        "enex import done"
+    );
+    Ok(report)
 }

@@ -1,7 +1,7 @@
-# Bravo 交付报告：DK-09 第一切片 — Markdown 目录导入（M2）
+# Bravo 交付报告：DK-09 — S1 Markdown 目录导入 + S2 ENEX 导入
 
 > 执行：Bravo · 2026-09-20 · 分支 `wf/bravo-import`（基于 main 70438e8）
-> 预算：3–5 人日 · 实际：0.5 人日（复用 DK-08 期间已熟的装配链）
+> S1：0.5 人日 · S2：0.5 人日
 
 ## 1. 交付物
 
@@ -93,7 +93,35 @@ blocks + 启动流程）；读回断言走 `load_note_meta` → `record.content`
 5. **重复文件名**：同名 stem 导入为多篇独立笔记（uuid id），不合并不去重
    （M3 防重/选择性导入再处理，与任务书 §7-3 对齐）。
 
-## 7. 下一切片建议（§7 队列）
+## 7. S2 追加交付 — ENEX 解析导入（同分支）
 
-1. ENEX 导入（XML 解析 + 附件落位——附件 API 缺口预计需 request 文档）
-2. 导入器 CLI/桌面接线（desktop 调用点——先 request）
+| 文件 | 说明 |
+|---|---|
+| `src/enex.rs` | ENEX 流式解析（quick-xml 0.41，CDATA/实体引用/多 note/resource） |
+| `src/enml.rs` | ENML→Markdown 转换（标题/列表/任务/代码/表格/链接/en-media/en-crypt） |
+| `src/lib.rs` | `import_enex(ctx, path, &EnexImportOptions)` 编排 + 资源 sidecar |
+| `tests/enex_import.rs` | 8 个 `dk09_enex_*` 测试（资源 base64 往返逐字节断言） |
+| `issues/wf/bravo-request-attachment-store-api.md` | **request：附件存储 API 提议**（S2 阻塞项，任务书 §7-1 指令） |
+
+要点：
+- 资源过渡方案：`attachments_dir: Option<PathBuf>` sidecar 落盘
+  （`<hash12>-<basename>`），正文 `![名](attachments/<落盘名>)`；
+  未提供目录 → `attachment://<hash>` 占位 + warning。
+- ENML 有损映射原则：文本逐字符保留；结构标签尽力映射；未映射标签
+  透传 + warning；en-crypt 不解密输出占位（后续切片处理）。
+- quick-xml 0.41 注意：`Event::GeneralRef` 为实体引用独立事件
+  （`&amp;` 不再走 Text），已实现预定义实体+数字字符引用解析。
+
+## 8. S2 验证矩阵
+
+| 门槛 | 结果 |
+|---|---|
+| `test -p aurora-import` | **21/21 全绿**（8 enex + 8 markdown + 4 单元 + 1 doc）|
+| `clippy --all-targets -D warnings` | **0 warning** |
+| `fmt --all -- --check` | 干净 |
+| 测试名单 grep 核验 | 16 个 `dk09_*` 逐一确认 `ok`（S5 教训）|
+
+## 9. 下一切片建议（§7 队列）
+
+1. 附件存储 API（见 request，落地后导入器改造 < 1 人日）
+2. ENEX 导入器 CLI/桌面接线（desktop 调用点——先 request）

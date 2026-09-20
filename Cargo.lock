@@ -487,6 +487,8 @@ version = "0.1.0"
 dependencies = [
  "aurora-bootstrap",
  "aurora-core",
+ "base64 0.22.1",
+ "quick-xml",
  "tempfile",
  "tokio",
  "tracing",

@@ -9,6 +9,10 @@ description = "DK-09 导入器：Markdown 目录 → 笔记（write_path 唯一�
 aurora-core = { path = "../aurora-core" }
 walkdir = "2"
 tracing = "0.1"
+# ENEX（印象笔记导出 XML）解析 — 0.41 与依赖树既有节点对齐，零新增编译
+quick-xml = "0.41"
+# 资源（resource data）base64 解码 — 0.22 与依赖树既有节点对齐
+base64 = "0.22"
 
 [dev-dependencies]
 # 真实 AppCore 装配（SQLite KV + blocks + 启动流程）— 与桌面端同源
