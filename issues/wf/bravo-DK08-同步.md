@@ -89,11 +89,21 @@ pub trait SyncTarget: Send + Sync {
 
 ## 6. 验收标准（全绿才算切片完成）
 
-- [ ] `cargo +1.91.0 test -p aurora-sync` 全绿（含你新增 4 测试）
-- [ ] `cargo +1.91.0 clippy -p aurora-sync --all-targets` **零 warning**（CI -D warnings 门槛）
-- [ ] `cargo +1.91.0 fmt --all` 干净
-- [ ] 测试证明**增量语义**（请求次数断言），非全量回退
-- [ ] `wf/bravo-sync` 分支已推远端，commit 信息符合规范
+- [x] `cargo +1.91.0 test -p aurora-sync` 全绿（S1-S4 默认集 201 通过；S5 带 `--features iroh-transport` 211 通过）
+- [x] `cargo +1.91.0 clippy -p aurora-sync --all-targets` **零 warning**（默认集；iroh-transport 集编译干净）
+- [x] `cargo +1.91.0 fmt --all` 干净
+- [x] 测试证明**增量语义**（请求次数断言），非全量回退
+- [x] `wf/bravo-sync` 分支已推远端，commit 信息符合规范（验收后分支已清理）
+
+### Alpha 验收记录（2026-09-20 18:5x · 合入 6558187）
+
+**DK-08 全切片（S1-S5）验收通过，卡关闭。**
+
+- S1 WebDAV 真增量 / S2 CRDT 冲突 / S3 分片续传 / S4 Wi-Fi 门：默认 feature 集 201 测试全绿 + clippy 清（早上会话）
+- S5 多节点多 NAT 仿真（iroh TestNetwork 内存网络）：双节点双向 / 4 节点环多跳 / 5 节点星型 CRDT 收敛断言全绿——**需 `--features iroh-transport`**（见下）
+- 裁决遗留已闭环：`Endpoint.auth` 方案 A + `SyncProtocol::WebDav` 排期 Alpha 周一冻结窗口；mobile-ffi `NetworkStateProvider`（Android ConnectivityManager）Alpha 下轮
+- ⚠️ **CI 盲区（转 Alpha 待办）**：S5 模块被 `#[cfg(feature = "iroh-transport")]` 门控，CI 默认集**不覆盖** S5 测试与生产传输代码。处置：CI 增补 `cargo test -p aurora-sync --features iroh-transport` job（Alpha 排期）
+- 两份 request 裁决已写回对应文档（ffba558）
 
 ## 7. 后续切片队列（第一切片验收后按序领）
 
