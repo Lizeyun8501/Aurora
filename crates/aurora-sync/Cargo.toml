@@ -54,6 +54,10 @@ reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"
 [dev-dependencies]
 # WebDAV stub server（DK-08 测试 — 与 aurora-ai 测试同款）
 mockito = "1"
+# 传输层调试 + iroh 内存测试网络（多节点仿真测试，§7.4；TestTransport
+# 属 unstable-custom-transports 门控，仅测试构建启用）
+tracing-subscriber = "0.3"
+iroh = { workspace = true, features = ["test-utils", "unstable-custom-transports"] }
 
 [features]
 default = []
