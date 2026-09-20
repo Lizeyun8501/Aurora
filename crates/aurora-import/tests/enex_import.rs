@@ -138,6 +138,9 @@ async fn dk09_enex_resource_sidecar_written() {
         &app.ctx,
         &path,
         &EnexImportOptions {
+            manifest_dir: None,
+            progress: None,
+            only: Vec::new(),
             attachments_dir: Some(att_dir.clone()),
         },
     )
@@ -252,6 +255,9 @@ async fn dk09_enex_hash_without_resource_warns() {
         &app.ctx,
         &path,
         &EnexImportOptions {
+            manifest_dir: None,
+            progress: None,
+            only: Vec::new(),
             attachments_dir: Some(app._dir.path().join("att")),
         },
     )

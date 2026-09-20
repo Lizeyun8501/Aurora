@@ -29,6 +29,7 @@ pub mod markdown;
 pub mod notion;
 pub mod opml;
 pub mod report;
+pub mod wizard;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -39,6 +40,10 @@ pub use notion::import_notion_export;
 pub use opml::import_opml_file;
 pub use report::ImportError;
 use report::{ImportReport, ImportedEntry, ResourceInfo};
+pub use wizard::{
+    content_hash_hex, plan_enex_file, plan_markdown_dir, plan_opml_file, ImportKind,
+    ImportManifest, ImportPlan, ManifestEntry, PlanItem, ProgressEvent,
+};
 
 /// 导入选项。
 #[derive(Debug, Clone)]
@@ -48,6 +53,13 @@ pub struct ImportOptions {
     /// 最大递归深度（walkdir 语义：根目录 = 0，根下文件 = 1）。
     /// `usize::MAX` = 不限。
     pub max_depth: usize,
+    /// 会话清单目录（防重）。`Some(dir)` 时读 `dir/manifest.json`，
+    /// 同 (source, content_hash) 跳过，成功后追加写回。`None` = 不防重。
+    pub manifest_dir: Option<PathBuf>,
+    /// 进度推送通道（每处理一个条目发一条，含跳过）。
+    pub progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
+    /// 选择性导入白名单（source 相对路径；空 = 全量）。支持目录前缀。
+    pub only: Vec<String>,
 }
 
 impl Default for ImportOptions {
@@ -55,6 +67,9 @@ impl Default for ImportOptions {
         Self {
             include_hidden: false,
             max_depth: usize::MAX,
+            manifest_dir: None,
+            progress: None,
+            only: Vec::new(),
         }
     }
 }
@@ -80,10 +95,17 @@ pub async fn import_markdown_dir(
     let started = Instant::now();
     let mut report = ImportReport::default();
 
+    let mut manifest = options
+        .manifest_dir
+        .as_deref()
+        .map(wizard::ImportManifest::load)
+        .unwrap_or_default();
+
+    // 第一遍：收集待处理清单（隐藏/非 md/only 过滤；错误记账）
+    let mut files: Vec<(PathBuf, String)> = Vec::new();
     let walker = walkdir::WalkDir::new(dir)
         .max_depth(options.max_depth)
         .sort_by_file_name();
-
     for entry in walker {
         let entry = match entry {
             Ok(e) => e,
@@ -120,7 +142,27 @@ pub async fn import_markdown_dir(
             report.skipped += 1;
             continue;
         }
-        report.scanned += 1;
+        // 选择性导入：only 白名单（相对路径精确或目录前缀）
+        let rel = relative.to_string_lossy().replace('\\', "/");
+        if !options.only.is_empty()
+            && !options
+                .only
+                .iter()
+                .any(|o| o == &rel || rel.starts_with(&format!("{o}/")))
+        {
+            continue;
+        }
+        files.push((path, rel));
+    }
+    report.scanned = files.len();
+    let total = files.len() as u32;
+
+    // 第二遍：写库（manifest 防重 + 进度推送）
+    for (i, (path, rel)) in files.into_iter().enumerate() {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
 
         // 读文本 → 变换
         let content = match std::fs::read_to_string(&path) {
@@ -143,15 +185,35 @@ pub async fn import_markdown_dir(
             report.warnings.push(format!("{name}: {w}"));
         }
 
+        // 会话清单防重：同 (source, hash) 跳过
+        let digest = wizard::content_hash_hex(content.as_bytes());
+        if manifest.contains(&rel, &digest) {
+            report.skipped += 1;
+            if let Some(tx) = &options.progress {
+                let _ = tx.send(ProgressEvent {
+                    current: i as u32 + 1,
+                    total,
+                    source: rel.clone(),
+                });
+            }
+            continue;
+        }
+
         // write_path 唯一入口写入
         match import_one(ctx, &title, &body).await {
             Ok(note_id) => {
                 report.imported += 1;
                 report.note_ids.push(note_id.clone());
+                manifest.record(wizard::ManifestEntry {
+                    source: rel.clone(),
+                    content_hash: digest,
+                    note_id: note_id.clone(),
+                    title: title.clone(),
+                });
                 report.entries.push(ImportedEntry {
                     note_id,
                     title,
-                    source: path.display().to_string(),
+                    source: rel.clone(),
                     tags: Vec::new(),
                     resources: Vec::new(),
                 });
@@ -164,8 +226,21 @@ pub async fn import_markdown_dir(
                 });
             }
         }
+        if let Some(tx) = &options.progress {
+            let _ = tx.send(ProgressEvent {
+                current: i as u32 + 1,
+                total,
+                source: rel,
+            });
+        }
     }
 
+    if let Some(mdir) = &options.manifest_dir {
+        manifest.save(mdir).map_err(|e| ImportError {
+            path: mdir.join("manifest.json"),
+            reason: format!("清单写盘失败: {e}"),
+        })?;
+    }
     report.duration_ms = started.elapsed().as_millis();
     tracing::info!(
         dir = %dir.display(),
@@ -192,6 +267,12 @@ async fn import_one(
 /// ENEX 导入选项。
 #[derive(Debug, Clone, Default)]
 pub struct EnexImportOptions {
+    /// 会话清单目录（防重，键 `<file>#<标题>` + 内容指纹）。
+    pub manifest_dir: Option<PathBuf>,
+    /// 进度推送通道（每 note 一条，含跳过）。
+    pub progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
+    /// 选择性导入白名单（source = `<file>#<标题>`；空 = 全量）。
+    pub only: Vec<String>,
     /// 资源 sidecar 落盘目录。`None` = 不落盘：en-media 输出
     /// `attachment://<hash>` 占位 + warning（等待 core 附件 API，见
     /// `issues/wf/bravo-request-attachment-store-api.md`）。
@@ -323,7 +404,13 @@ pub async fn import_enex(
         scanned: notes.len(),
         ..Default::default()
     };
-    let source_base = enex_path.display().to_string();
+    // 稳定键（only/manifest/进度）：`<文件名>#<idx>`——路径移动不破坏防重；
+    // entries.source 仍用全路径（展示）
+    let source_base = enex_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| enex_path.display().to_string());
+    let entry_source_base = enex_path.display().to_string();
 
     // 资源 sidecar 落盘（同 hash 全局只落一次）
     let mut resource_infos: HashMap<String, ResourceInfo> = HashMap::new();
@@ -368,13 +455,34 @@ pub async fn import_enex(
         }
     }
 
-    for (idx, note) in notes.iter().enumerate() {
+    let mut manifest = options
+        .manifest_dir
+        .as_deref()
+        .map(wizard::ImportManifest::load)
+        .unwrap_or_default();
+
+    // 选择性导入：only 白名单预过滤（source = `<file>#<idx>`）
+    let selected: Vec<(usize, &enex::RawEnexNote)> = notes
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| {
+            options.only.is_empty()
+                || options
+                    .only
+                    .iter()
+                    .any(|o| o == &format!("{source_base}#{idx}"))
+        })
+        .collect();
+    let total = selected.len() as u32;
+
+    for (k, (idx, note)) in selected.into_iter().enumerate() {
         let title = if note.title.trim().is_empty() {
             format!("未命名笔记 {}", idx + 1)
         } else {
             note.title.clone()
         };
         let source = format!("{source_base}#{idx}");
+        let entry_source = format!("{entry_source_base}#{idx}");
 
         // en-media 占位映射：hash → (alt 文本, 链接目标)。
         // 有 sidecar：alt=原始文件名，link=attachments/<落盘名>；
@@ -422,7 +530,7 @@ pub async fn import_enex(
             Err(e) => {
                 report.failed += 1;
                 report.errors.push(ImportError {
-                    path: PathBuf::from(&source),
+                    path: PathBuf::from(&entry_source),
                     reason: format!("ENML 转换失败: {e}"),
                 });
                 continue;
@@ -432,14 +540,34 @@ pub async fn import_enex(
             report.warnings.push(format!("[{title}] {w}"));
         }
 
+        // 会话清单防重：内容指纹 = 标题 + 正文
+        let digest = wizard::content_hash_hex(format!("{title}\u{1f}{}", conv.markdown).as_bytes());
+        if manifest.contains(&source, &digest) {
+            report.skipped += 1;
+            if let Some(tx) = &options.progress {
+                let _ = tx.send(ProgressEvent {
+                    current: k as u32 + 1,
+                    total,
+                    source: source.clone(),
+                });
+            }
+            continue;
+        }
+
         match import_one(ctx, &title, &conv.markdown).await {
             Ok(note_id) => {
                 report.imported += 1;
                 report.note_ids.push(note_id.clone());
+                manifest.record(wizard::ManifestEntry {
+                    source: source.clone(),
+                    content_hash: digest,
+                    note_id: note_id.clone(),
+                    title: title.clone(),
+                });
                 report.entries.push(ImportedEntry {
                     note_id,
                     title,
-                    source,
+                    source: entry_source,
                     tags: note.tags.clone(),
                     resources: res_infos,
                 });
@@ -447,11 +575,25 @@ pub async fn import_enex(
             Err(e) => {
                 report.failed += 1;
                 report.errors.push(ImportError {
-                    path: PathBuf::from(&source),
+                    path: PathBuf::from(&entry_source),
                     reason: format!("写入失败: {e}"),
                 });
             }
         }
+        if let Some(tx) = &options.progress {
+            let _ = tx.send(ProgressEvent {
+                current: k as u32 + 1,
+                total,
+                source: source.clone(),
+            });
+        }
+    }
+
+    if let Some(mdir) = &options.manifest_dir {
+        manifest.save(mdir).map_err(|e| ImportError {
+            path: mdir.join("manifest.json"),
+            reason: format!("清单写盘失败: {e}"),
+        })?;
     }
 
     report.duration_ms = started.elapsed().as_millis();

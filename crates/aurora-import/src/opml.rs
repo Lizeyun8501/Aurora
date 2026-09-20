@@ -56,6 +56,19 @@ pub fn parse_opml(xml: &str) -> Result<Vec<OutlineNode>, String> {
                 let node = parse_outline(&mut reader, e)?;
                 roots.push(node);
             }
+            // 自闭合顶层 outline（无子节点）以 Empty 事件出现
+            Ok(Event::Empty(e)) if e.local_name().as_ref() == b"outline" => {
+                let mut node = OutlineNode::default();
+                for attr in e.attributes().flatten() {
+                    if attr.key.local_name().as_ref() == b"text" {
+                        node.text = attr
+                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                            .map_err(|err| err.to_string())?
+                            .into_owned();
+                    }
+                }
+                roots.push(node);
+            }
             Ok(Event::End(e)) if e.local_name().as_ref() == b"body" => break,
             Ok(Event::Eof) => break,
             Ok(_) => {}

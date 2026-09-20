@@ -12,11 +12,16 @@ walkdir = "2"
 tracing = "0.1"
 # ENEX（印象笔记导出 XML）解析 — 0.41 与依赖树既有节点对齐，零新增编译
 quick-xml = "0.41"
+# 会话清单内容指纹 — 0.10 与依赖树既有节点对齐
+sha2 = "0.10"
+# 进度推送 UnboundedSender（仅 sync 模块；runtime 由使用方提供）
+tokio = { version = "1", default-features = false, features = ["sync"] }
+# manifest.json 读写 — 依赖树既有节点
+serde_json = "1"
 # 资源（resource data）base64 解码 — 0.22 与依赖树既有节点对齐
 base64 = "0.22"
 
 [dev-dependencies]
-serde_json = "1"
 # 真实 AppCore 装配（SQLite KV + blocks + 启动流程）— 与桌面端同源
 aurora-bootstrap = { path = "../aurora-bootstrap" }
 tempfile = "3"
