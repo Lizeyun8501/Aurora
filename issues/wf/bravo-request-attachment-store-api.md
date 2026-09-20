@@ -49,3 +49,14 @@ pub trait AttachmentStore: Send + Sync {
 
 - 批准后由 Alpha 排期到 DK-09 S3/M3 之间任意切片（导入器改造点 < 1 人日）。
 - S2 交付不受阻塞：sidecar + 占位方案已测试覆盖，API 落地后平滑切换。
+
+---
+
+## Alpha 裁决（2026-09-20 20:5x · DK-09 S1+S2 集成时）
+
+**结论：批准，排期 Alpha 冻结窗口（周一 9/21 起的独立切片）。**
+
+- AttachmentStore trait 进 aurora-core（与 SyncTarget 同层）；KV 键设计（attach: 元数据 + attachblob: sha256 内容寻址去重）采纳。
+- write_path 增 `attach_to_note` 唯一入口——纪律正确；**附件数据经 WriteContext.content_cipher 加密落库**（E2EE 盲区第 3 点的闭环方案，DK-07 栈复用）。
+- ENEX 导入器改造点（written_to → attachment_id + aurora://attach/{id}）由 Bravo 在 API 落地后执行（< 1 人日，随 S3 或独立小切片）。
+- `list_by_note` 级联清理语义：删除笔记 → 级联 delete 附件，写进 attach_to_note 的 WriteReceipt 副作用，禁止调用方手动清理。

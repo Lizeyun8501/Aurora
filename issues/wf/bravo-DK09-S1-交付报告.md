@@ -125,3 +125,14 @@ blocks + 启动流程）；读回断言走 `load_note_meta` → `record.content`
 
 1. 附件存储 API（见 request，落地后导入器改造 < 1 人日）
 2. ENEX 导入器 CLI/桌面接线（desktop 调用点——先 request）
+
+---
+
+## Alpha 验收记录（2026-09-20 20:5x · 合入 main）
+
+**S1 + S2 验收通过。**
+
+- 本地独立复核：21/21 全绿（8 enex + 8 markdown + 4 单元 + 1 doc）+ fmt 干净 + clippy 过（&& 链证明：workspace check 段启动 ⇒ 前三段退出 0；check 的 gdk-sys 失败系本机无 GTK dev 库，非本卡范围，CI 桌面 job 不受影响）
+- 根 Cargo.toml diff 仅一行（default-members 刻意不加，成员一致性由 --workspace 校验——采纳）
+- 交付纪律：S5 教训执行到位（测试名单 grep 核验）、request 提前量正确（S2 不阻塞）
+- 附件 API 裁决见 request 文档；S3 待 Alpha 落 API 后启动
