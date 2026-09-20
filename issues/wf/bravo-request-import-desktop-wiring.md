@@ -55,3 +55,11 @@ async fn import_enex(state, file: String, attachments_dir: Option<String>) -> Re
 2. 或授权 Bravo 提 PR 到 apps/desktop/src-tauri（跨领地授权 + 领地边界
    仅限新增 `import_commands.rs` 与 command 注册行）。
 3. sidecar 目录约定 `<data_dir>/imports/<ts>/` 是否采纳。
+
+---
+
+## Alpha 裁决（2026-09-21 06:4x · M3 验收集成时）
+
+**问题 1：采纳选项 1** —— desktop command 与附件 API 同窗口（Alpha 冻结窗口）一次集成：Alpha 落 AttachmentStore API + attach_to_note + import_commands.rs，Bravo 同窗口改导入器（written_to → attachment_id + aurora://attach/{id}），避免两次集成。
+**问题 2：不授权** —— apps/desktop 保持桌面侧领地，command 层属桌面职责；Bravo 联调支持承诺（§3）已记录，调用。
+**问题 3：采纳** —— `<data_dir>/imports/<ts>/` 时间戳命名空间约定；附件 API 落地后导入会话目录可整体迁移为 attachment 关联，向后兼容路径清晰。
