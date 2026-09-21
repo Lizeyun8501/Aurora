@@ -173,6 +173,13 @@ pub async fn import_markdown_dir(
                     path: path.clone(),
                     reason: format!("读取失败: {e}"),
                 });
+                if let Some(tx) = &options.progress {
+                    let _ = tx.send(ProgressEvent {
+                        current: i as u32 + 1,
+                        total,
+                        source: rel.clone(),
+                    });
+                }
                 continue;
             }
         };
@@ -533,6 +540,13 @@ pub async fn import_enex(
                     path: PathBuf::from(&entry_source),
                     reason: format!("ENML 转换失败: {e}"),
                 });
+                if let Some(tx) = &options.progress {
+                    let _ = tx.send(ProgressEvent {
+                        current: k as u32 + 1,
+                        total,
+                        source: source.clone(),
+                    });
+                }
                 continue;
             }
         };

@@ -231,3 +231,31 @@ async fn read_back(app: &TestApp, note_id: &str) -> (String, String) {
         .expect("note 存在");
     (record.title, String::new())
 }
+
+/// §W-8 进度收敛不变量：failed 条目也必须推进度（current 终达 total）。
+#[tokio::test]
+async fn dk09_wizard_progress_converges_on_failure() {
+    let app = test_app().await;
+    // 第二篇 ENML 未闭合 → enml_to_markdown Err → failed 分支
+    let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export application="Evernote">
+  <note><title>好笔记</title><content><![CDATA[<?xml version="1.0"?><en-note><p>ok</p></en-note>]]></content></note>
+  <note><title>坏笔记</title><content><![CDATA[<?xml version="1.0"?><en-note><p>x</div></en-note>]]></content></note>
+</en-export>"#;
+    let path = write_bytes(app._dir.path(), "mix.enex", enex);
+    let (tx, mut rx) = unbounded_channel();
+    let opts = EnexImportOptions {
+        progress: Some(tx),
+        ..Default::default()
+    };
+    let report = import_enex(&app.ctx, &path, &opts).await.expect("ok");
+    assert_eq!(report.imported, 1);
+    assert_eq!(report.failed, 1, "未闭合 ENML 记 failed");
+    let mut events = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        events.push(ev);
+    }
+    assert_eq!(events.len(), 2, "每条目恰好一条进度: {events:?}");
+    let last = events.last().expect("事件非空");
+    assert_eq!((last.current, last.total), (2, 2), "终态 current=total");
+}
