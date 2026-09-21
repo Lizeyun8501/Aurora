@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import tokens from '../design/tokens';
 import CommandPalette, { type PaletteItem } from './CommandPalette';
+import ImportWizard from './ImportWizard';
 
 export interface InvokeFn {
   (cmd: string, args?: Record<string, unknown>): Promise<unknown>;
@@ -125,8 +126,10 @@ function Sidebar(props: {
   onView: (v: MainView) => void;
   onSelect: (id: string) => void;
   onCreate: () => void;
+  /** DK-09：打开迁移向导（ImportWizard 挂载入口）。 */
+  onImport: () => void;
 }) {
-  const { notes, selectedId, view, onView, onSelect, onCreate } = props;
+  const { notes, selectedId, view, onView, onSelect, onCreate, onImport } = props;
   const itemStyle = (active: boolean): React.CSSProperties => ({
     display: 'block',
     width: '100%',
@@ -171,6 +174,23 @@ function Sidebar(props: {
         }}
       >
         ＋ 新建笔记
+      </button>
+      {/* DK-09：迁移向导入口（ImportWizard，授权切片） */}
+      <button
+        onClick={onImport}
+        style={{
+          background: 'transparent',
+          color: tokens.color.textSecondary,
+          border: 'none',
+          borderRadius: tokens.radius.md,
+          padding: `${tokens.spacing.sm}px ${tokens.spacing.md}px`,
+          fontSize: tokens.typography.body.size,
+          cursor: 'pointer',
+          minHeight: tokens.a11y.minTouchTarget,
+          textAlign: 'left',
+        }}
+      >
+        ⤓ 导入笔记
       </button>
       <nav style={{ display: 'flex', gap: tokens.spacing.xs }} aria-label="主导航">
         {(['notes', 'today'] as const).map((v) => (
@@ -357,6 +377,8 @@ export default function DesktopShell() {
   const [stats, setStats] = useState<{ active: number; done: number; due_today: number } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [results, setResults] = useState<PaletteItem[]>([]);
+  /** DK-09：迁移向导开关（内容区条件渲染，不动 MainView 类型面）。 */
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const data = useDataBridge(invoke);
 
@@ -511,8 +533,14 @@ export default function DesktopShell() {
             setView('notes');
           }}
           onCreate={() => data.createNote('未命名')}
+          onImport={() => setWizardOpen(true)}
         />
-        {view === 'today' ? (
+        {wizardOpen ? (
+          /* DK-09 迁移向导（Bravo 授权切片：仅挂载调用，组件自包含） */
+          <main style={{ flex: 1, padding: tokens.spacing.lg, overflowY: 'auto' }}>
+            <ImportWizard invoke={invoke} onClose={() => setWizardOpen(false)} />
+          </main>
+        ) : view === 'today' ? (
           <main style={{ flex: 1, padding: tokens.spacing.lg }}>
             <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size }}>
               今日视图
