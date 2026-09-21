@@ -6,7 +6,9 @@
 use std::path::Path;
 
 use aurora_core::write_path::{load_note_meta, WriteContext};
-use aurora_import::{import_html_file, import_notion_export, import_opml_file, HtmlImportOptions};
+use aurora_import::{
+    import_html_file, import_notion_export, import_opml_file, HtmlImportOptions, OpmlImportOptions,
+};
 
 struct TestApp {
     _dir: tempfile::TempDir,
@@ -184,7 +186,9 @@ async fn dk09_m3_opml_outline_to_note() {
   </body>
 </opml>"#;
     let path = write_bytes(app._dir.path(), "outline.opml", opml);
-    let report = import_opml_file(&app.ctx, &path).await.expect("import ok");
+    let report = import_opml_file(&app.ctx, &path, &OpmlImportOptions::default())
+        .await
+        .expect("import ok");
     assert_eq!(report.scanned, 2);
     assert_eq!(report.imported, 2);
 
@@ -213,7 +217,7 @@ async fn dk09_m3_opml_invalid_xml_is_fatal() {
         "bad.opml",
         "<opml><body><outline text=\"x\">",
     );
-    let err = import_opml_file(&app.ctx, &path)
+    let err = import_opml_file(&app.ctx, &path, &OpmlImportOptions::default())
         .await
         .expect_err("损坏 OPML 必须报错");
     assert!(err.reason.contains("OPML 解析失败"), "got: {err}");

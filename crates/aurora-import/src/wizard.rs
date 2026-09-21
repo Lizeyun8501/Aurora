@@ -273,12 +273,13 @@ pub fn plan_opml_file(opml_path: &Path) -> Result<ImportPlan, ImportError> {
         kind: ImportKind::Opml,
         ..Default::default()
     };
-    for root in &roots {
+    for (k, root) in roots.iter().enumerate() {
         let mut nodes = 0usize;
         count_outline(root, &mut nodes);
-        let src = format!("{file_label}#{}", root.text);
+        // source 键与 import_opml_file 对齐：<文件名>#<idx>（标题可重复）
+        let src = format!("{file_label}#{k}");
         plan.items.push(PlanItem {
-            content_hash: content_hash_hex(src.as_bytes()),
+            content_hash: content_hash_hex(format!("{}\u{1f}{}", root.text, nodes).as_bytes()),
             source: src,
             title: root.text.clone(),
             bytes: nodes as u64,

@@ -37,7 +37,7 @@ use std::time::Instant;
 
 use aurora_core::write_path::WriteContext;
 pub use notion::import_notion_export;
-pub use opml::import_opml_file;
+pub use opml::{import_opml_file, OpmlImportOptions};
 pub use report::ImportError;
 use report::{ImportReport, ImportedEntry, ResourceInfo};
 pub use wizard::{

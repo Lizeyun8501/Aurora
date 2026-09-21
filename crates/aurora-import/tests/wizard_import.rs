@@ -259,3 +259,52 @@ async fn dk09_wizard_progress_converges_on_failure() {
     let last = events.last().expect("事件非空");
     assert_eq!((last.current, last.total), (2, 2), "终态 current=total");
 }
+
+/// §W-9 OPML 向导能力：进度 total/收敛 + manifest 防重 + only。
+#[tokio::test]
+async fn dk09_wizard_opml_progress_and_manifest() {
+    let app = test_app().await;
+    let opml = r#"<?xml version="1.0"?><opml version="2.0"><body>
+      <outline text="甲"><outline text="a1"/></outline>
+      <outline text="乙"/>
+      <outline text="丙"><outline text="c1"/><outline text="c2"/></outline>
+    </body></opml>"#;
+    let path = write_bytes(app._dir.path(), "w.opml", opml);
+    let manifest_dir = app._dir.path().join("imports").join("t9");
+
+    let (tx, mut rx) = unbounded_channel();
+    let opts = aurora_import::OpmlImportOptions {
+        manifest_dir: Some(manifest_dir.clone()),
+        progress: Some(tx),
+        only: Vec::new(),
+    };
+    let r1 = aurora_import::import_opml_file(&app.ctx, &path, &opts)
+        .await
+        .expect("r1");
+    assert_eq!(r1.imported, 3);
+    let mut events = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        events.push(ev);
+    }
+    assert_eq!(events.len(), 3);
+    assert_eq!((events[2].current, events[2].total), (3, 3));
+
+    // 二次导入：全部防重 skip
+    let r2 = aurora_import::import_opml_file(&app.ctx, &path, &opts)
+        .await
+        .expect("r2");
+    assert_eq!(r2.imported, 0);
+    assert_eq!(r2.skipped, 3);
+    assert_eq!(r2.scanned, 3, "scanned = 过滤后应处理数");
+
+    // only 白名单：<文件名>#<idx>
+    let only = aurora_import::OpmlImportOptions {
+        only: vec!["w.opml#2".into()],
+        ..Default::default()
+    };
+    let r3 = aurora_import::import_opml_file(&app.ctx, &path, &only)
+        .await
+        .expect("r3");
+    assert_eq!(r3.imported, 1);
+    assert_eq!(r3.entries[0].title, "丙");
+}

@@ -12,6 +12,8 @@
 use std::fmt::Write as _;
 use std::time::Instant;
 
+use crate::wizard::{ManifestEntry, ProgressEvent};
+
 use aurora_core::write_path::WriteContext;
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -158,13 +160,25 @@ fn outline_to_markdown(node: &OutlineNode, depth: usize, out: &mut String) {
     }
 }
 
+/// OPML 导入选项（向导四件套与 markdown/enex 对齐）。
+#[derive(Debug, Clone, Default)]
+pub struct OpmlImportOptions {
+    /// 会话清单目录（防重，键 `<文件名>#<idx>` + 内容指纹）。
+    pub manifest_dir: Option<std::path::PathBuf>,
+    /// 进度推送通道（每顶层 outline 一条，含跳过）。
+    pub progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
+    /// 选择性导入白名单（source = `<文件名>#<idx>`；空 = 全量）。
+    pub only: Vec<String>,
+}
+
 /// 导入 OPML 文件：每个顶层 outline → 一篇笔记。
 ///
 /// # Errors
-/// 文件读取失败 / OPML 损坏。
+/// 文件读取失败 / OPML 损坏 / 清单写盘失败。
 pub async fn import_opml_file(
     ctx: &WriteContext,
     opml_path: &std::path::Path,
+    options: &OpmlImportOptions,
 ) -> Result<ImportReport, ImportError> {
     let started = Instant::now();
     let xml = std::fs::read_to_string(opml_path).map_err(|e| ImportError {
@@ -176,19 +190,43 @@ pub async fn import_opml_file(
         reason: format!("OPML 解析失败: {e}"),
     })?;
 
-    let mut report = ImportReport {
-        scanned: roots.len(),
-        ..Default::default()
-    };
-    let source_base = opml_path.display().to_string();
+    let mut report = ImportReport::default();
+    // 稳定键（only/manifest/进度）：`<文件名>#<idx>`；entries.source 用全路径（展示）
+    let source_base = opml_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| opml_path.display().to_string());
+    let entry_source_base = opml_path.display().to_string();
 
-    for (idx, root) in roots.iter().enumerate() {
+    // 选择性导入：only 白名单预过滤
+    let selected: Vec<(usize, &OutlineNode)> = roots
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| {
+            options.only.is_empty()
+                || options
+                    .only
+                    .iter()
+                    .any(|o| o == &format!("{source_base}#{idx}"))
+        })
+        .collect();
+    let total = selected.len() as u32;
+    report.scanned = selected.len();
+
+    let mut manifest = options
+        .manifest_dir
+        .as_deref()
+        .map(crate::wizard::ImportManifest::load)
+        .unwrap_or_default();
+
+    for (k, (idx, root)) in selected.into_iter().enumerate() {
         let title = if root.text.trim().is_empty() {
             format!("未命名大纲 {}", idx + 1)
         } else {
             root.text.clone()
         };
         let source = format!("{source_base}#{idx}");
+        let entry_source = format!("{entry_source_base}#{idx}");
 
         let mut body = String::new();
         if let Some(note) = &root.note {
@@ -197,14 +235,34 @@ pub async fn import_opml_file(
         }
         outline_to_markdown(root, 0, &mut body);
 
+        // 会话清单防重：内容指纹 = 标题 + 大纲体
+        let digest = crate::wizard::content_hash_hex(format!("{title}\u{1f}{}", body).as_bytes());
+        if manifest.contains(&source, &digest) {
+            report.skipped += 1;
+            if let Some(tx) = &options.progress {
+                let _ = tx.send(ProgressEvent {
+                    current: k as u32 + 1,
+                    total,
+                    source: source.clone(),
+                });
+            }
+            continue;
+        }
+
         match crate::import_one(ctx, &title, &body).await {
             Ok(note_id) => {
                 report.imported += 1;
                 report.note_ids.push(note_id.clone());
+                manifest.record(ManifestEntry {
+                    source: source.clone(),
+                    content_hash: digest,
+                    note_id: note_id.clone(),
+                    title: title.clone(),
+                });
                 report.entries.push(ImportedEntry {
                     note_id,
                     title,
-                    source,
+                    source: entry_source,
                     tags: Vec::new(),
                     resources: Vec::new(),
                 });
@@ -212,13 +270,26 @@ pub async fn import_opml_file(
             Err(e) => {
                 report.failed += 1;
                 report.errors.push(ImportError {
-                    path: std::path::PathBuf::from(&source),
+                    path: std::path::PathBuf::from(&entry_source),
                     reason: format!("写入失败: {e}"),
                 });
             }
         }
+        if let Some(tx) = &options.progress {
+            let _ = tx.send(ProgressEvent {
+                current: k as u32 + 1,
+                total,
+                source: source.clone(),
+            });
+        }
     }
 
+    if let Some(mdir) = &options.manifest_dir {
+        manifest.save(mdir).map_err(|e| ImportError {
+            path: mdir.join("manifest.json"),
+            reason: format!("清单写盘失败: {e}"),
+        })?;
+    }
     report.duration_ms = started.elapsed().as_millis();
     tracing::info!(
         file = %opml_path.display(),
