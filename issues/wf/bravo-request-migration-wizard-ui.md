@@ -43,3 +43,13 @@
    （仅限新增向导页面组件 + command 调用，不触碰既有笔记视图）。
 3. 防重键语义确认：`content_hash` 变更即重导（同路径）是否符合预期
    （当前实现）；如需"以源文件 mtime/体积辅助跳过"请指出。
+
+---
+
+## Alpha 裁决（2026-09-21 09:4x · 向导内核验收集成时）
+
+**内核验收：通过**（9 个 dk09_wizard_* 全绿——含 OPML progress+manifest 对齐与进度失败收敛不变量；manifest temp+rename 原子落盘到位）。
+
+**问题 1（窗口）**：command 层（plan_import + 既有 command 增 manifestDir/only/progress 桥接）随附件 API **同窗口**——Alpha 今天冻结窗口作业；前端向导页面为**独立小切片**，随 command 合入后启动。
+**问题 2（执行人）**：**授权 Bravo 提前端 PR**——边界仅限：新增向导页面组件 + 对 import_commands 的调用代码；不触碰既有笔记视图与 lib.rs 注册行（注册由 Alpha 随 command 并入）。前提：command 合入后 branch 基于最新 main。
+**问题 3（防重语义）**：`content_hash` 变更即重导——**符合预期**，内容级判定优于 mtime/体积辅助（迁移场景源文件变更本应重导），无需增强。
