@@ -27,6 +27,8 @@ use tracing::{info, warn};
 
 // ── 启动期常量与全局状态 ─────────────────────────────
 
+mod import_commands;
+
 /// 桌面端默认数据目录名。
 const AURORA_DIR_NAME: &str = "aurora";
 /// 默认工作区 ID（单工作区模式；多工作区接入后改为按用户选择注入）。
@@ -36,6 +38,9 @@ const DEFAULT_WORKSPACE_ID: &str = "default";
 static APP_STATE: Mutex<Option<Arc<AppCore>>> = Mutex::new(None);
 /// 本地 DEK 保险库（全局单例）。
 static VAULT_STATE: Mutex<Option<Arc<LocalDekVault>>> = Mutex::new(None);
+/// 附件存储（DK-09 — bootstrap 装配，setup 注入）。
+static ATTACH_STATE: Mutex<Option<Arc<dyn aurora_core::attachment_store::AttachmentStore>>> =
+    Mutex::new(None);
 
 /// 获取用户数据目录路径。
 ///
@@ -92,6 +97,10 @@ pub fn run() {
             cmd_get_backlinks,
             cmd_due_review_cards,
             cmd_review_card,
+            import_commands::cmd_plan_import,
+            import_commands::cmd_import_markdown_dir,
+            import_commands::cmd_import_enex,
+            import_commands::cmd_import_opml,
         ])
         .setup(|app| {
             tracing_subscriber::fmt::init();
@@ -104,6 +113,8 @@ pub fn run() {
             let booted = aurora_bootstrap::bootstrap(&data_dir).map_err(box_err)?;
             *VAULT_STATE.lock().expect("VAULT_STATE mutex poisoned") = Some(booted.vault.clone());
             *APP_STATE.lock().expect("APP_STATE mutex poisoned") = Some(booted.core.clone());
+            *ATTACH_STATE.lock().expect("ATTACH_STATE mutex poisoned") =
+                Some(booted.attachments.clone());
             info!("AppCore startup complete");
 
             // 注册平台能力（托盘/快捷键/剪贴板/通知），供后续 command 使用
@@ -186,6 +197,10 @@ async fn cmd_create_note(title: String) -> Result<String, String> {
             unseal: Box::new(unseal),
         }),
         content_cipher: None, // TODO(DK-07): 桌面 UI 接 vault cipher
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(), // DK-09
     };
     let id = aurora_core::write_path::create_note(&ctx, &title)
         .await
@@ -247,6 +262,10 @@ async fn cmd_update_note(
             unseal: Box::new(unseal),
         }),
         content_cipher: None, // TODO(DK-07): 桌面 UI 接 vault cipher
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(), // DK-09
     };
     if let Some(t) = title.as_deref() {
         if title.is_some() {
@@ -381,6 +400,10 @@ async fn cmd_delete_note(note_id: String) -> Result<(), String> {
             unseal: Box::new(unseal),
         }),
         content_cipher: None, // TODO(DK-07): 桌面 UI 接 vault cipher
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(), // DK-09
     };
     aurora_core::write_path::delete_note(&ctx, &note_id)
         .await

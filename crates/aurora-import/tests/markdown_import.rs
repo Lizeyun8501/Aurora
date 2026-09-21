@@ -30,6 +30,7 @@ async fn test_app() -> TestApp {
             blocks: booted.blocks,
             seal: None,           // 明文落盘（与移动端语义一致）
             content_cipher: None, // 无内容级加密
+            attachments: None,
         },
     }
 }

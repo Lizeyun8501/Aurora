@@ -50,6 +50,7 @@ fn ctx_for(
         blocks,
         seal,
         content_cipher: Some(booted.content_cipher.clone()), // DK-07 S3
+        attachments: Some(booted.attachments.clone()),
     }
 }
 
@@ -258,6 +259,7 @@ async fn dk07_s3_desktop_encrypted_note_roundtrip() {
         blocks,
         seal: None, // 单测聚焦内容级加密（at-rest seal 独立已测）
         content_cipher: Some(booted.content_cipher.clone()),
+        attachments: None,
     };
 
     // 创建 → 设密级 → 写正文
@@ -293,6 +295,7 @@ async fn dk07_s3_desktop_encrypted_note_roundtrip() {
         core: booted.core.clone(),
         blocks: None,
         seal: None,
+        attachments: None,
         content_cipher: None,
     };
     assert!(aurora_core::write_path::open_note_content(&locked_ctx, &id, &rec).is_err());

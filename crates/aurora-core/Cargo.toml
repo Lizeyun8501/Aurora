@@ -55,6 +55,7 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 
 # UUID
+sha2 = { workspace = true }
 uuid = { workspace = true }
 
 # Concurrency

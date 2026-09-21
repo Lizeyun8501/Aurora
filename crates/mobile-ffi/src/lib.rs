@@ -343,6 +343,7 @@ impl UniffiAppCore {
                 blocks: self.blocks.clone(),
                 seal: None, // 移动端明文落盘（加密统一为后续卡；同步层在 oplog 层不受影响）
                 content_cipher: self.content_cipher.clone(), // DK-07 S4
+                attachments: None, // DK-09：移动端暂未注入附件能力
             };
             let note_id = self
                 .runtime
@@ -698,6 +699,7 @@ impl UniffiAppCore {
             blocks: self.blocks.clone(),
             seal: None, // at-rest 与笔记级加密为两层；笔记级在 S2 接线内容加密
             content_cipher: self.content_cipher.clone(), // DK-07 S4
+            attachments: None, // DK-09：移动端暂未注入附件能力
         };
         self.runtime
             .block_on(aurora_core::write_path::set_note_encryption(
@@ -717,6 +719,7 @@ impl UniffiAppCore {
             blocks: self.blocks.clone(),
             seal: None,                                  // 移动端明文
             content_cipher: self.content_cipher.clone(), // DK-07 S4
+            attachments: None,                           // DK-09：移动端暂未注入附件能力
         };
         match self
             .runtime
@@ -831,6 +834,7 @@ impl UniffiAppCore {
                 blocks: self.blocks.clone(),
                 seal: None, // 移动端明文落盘（加密统一为后续卡）
                 content_cipher: self.content_cipher.clone(), // DK-07 S4
+                attachments: None, // DK-09：移动端暂未注入附件能力
             };
             let _receipt = self
                 .runtime

@@ -436,6 +436,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sha3",
  "sled",
  "sqlparser",
@@ -454,6 +455,7 @@ version = "0.1.0"
 dependencies = [
  "aurora-bootstrap",
  "aurora-core",
+ "aurora-import",
  "aurora-security",
  "chrono",
  "dirs-next",

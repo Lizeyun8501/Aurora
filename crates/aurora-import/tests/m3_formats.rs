@@ -24,6 +24,7 @@ async fn test_app() -> TestApp {
             core: booted.core,
             blocks: booted.blocks,
             seal: None,
+            attachments: None,
             content_cipher: None,
         },
     }

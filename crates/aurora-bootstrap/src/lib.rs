@@ -32,6 +32,8 @@ pub struct BootedApp {
     pub blocks: Option<Arc<aurora_core::blocks::BlockStore>>,
     /// 笔记内容级加密器（DK-07 S3 — vault HKDF 每笔记密钥，端到端共享）。
     pub content_cipher: Arc<aurora_core::write_path::ContentCipherPair>,
+    /// 附件存储（DK-09 — 与 AppCore 同 KV，内容寻址 + seal 密封在 write_path）。
+    pub attachments: Arc<dyn aurora_core::attachment_store::AttachmentStore>,
 }
 
 impl BootedApp {
@@ -47,6 +49,7 @@ impl BootedApp {
             // 这里 blocks 派生仅消费 content, 明文端 vault 场景由 desktop 调用方
             // 传入已解封 ctx; 移动端 seal=None 直读）
             seal: None,
+            attachments: None,
             content_cipher: Some(self.content_cipher.clone()),
         };
         aurora_core::write_path::rebuild_blocks_derivation(&ctx).await
@@ -164,11 +167,16 @@ pub fn bootstrap(data_dir: &Path) -> Result<BootedApp, BootstrapError> {
         }),
     });
 
+    let attachments: Arc<dyn aurora_core::attachment_store::AttachmentStore> = Arc::new(
+        aurora_core::attachment_store::KvAttachmentStore::new(core.kv_store.clone()),
+    );
+
     Ok(BootedApp {
         core,
         vault,
         blocks,
         content_cipher,
+        attachments,
     })
 }
 

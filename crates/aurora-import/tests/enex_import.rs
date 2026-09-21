@@ -26,6 +26,7 @@ async fn test_app() -> TestApp {
             blocks: booted.blocks,
             seal: None,           // 明文落盘
             content_cipher: None, // DK-07 S2：none 级不触 cipher
+            attachments: None,
         },
     }
 }

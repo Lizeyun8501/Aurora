@@ -9,6 +9,7 @@
 //! 实现后作为平台适配层的依赖容器。
 
 pub mod app_core;
+pub mod attachment_store; // DK-09: 附件存储 trait + KV 实现
 pub mod blocks; // V23-I2: 块级存储双轨
 pub mod error_codes;
 pub mod event_bus;

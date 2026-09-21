@@ -60,3 +60,23 @@ pub trait AttachmentStore: Send + Sync {
 - write_path 增 `attach_to_note` 唯一入口——纪律正确；**附件数据经 WriteContext.content_cipher 加密落库**（E2EE 盲区第 3 点的闭环方案，DK-07 栈复用）。
 - ENEX 导入器改造点（written_to → attachment_id + aurora://attach/{id}）由 Bravo 在 API 落地后执行（< 1 人日，随 S3 或独立小切片）。
 - `list_by_note` 级联清理语义：删除笔记 → 级联 delete 附件，写进 attach_to_note 的 WriteReceipt 副作用，禁止调用方手动清理。
+
+---
+
+## Alpha 落地回执（2026-09-21 · 冻结窗口切片完成）
+
+**AttachmentStore API 已落地**（aurora-core `attachment_store` 模块 + write_path 入口）：
+
+- `AttachmentStore` trait（async_trait，KVStore 同款风格）+ `KvAttachmentStore` 通用实现：
+  `attach:{id}` 元数据 / `attachblob:{sha256}` 内容寻址去重 / `attachnote:{note}:{id}` 反向索引。
+- `write_path::attach_to_note` / `read_attachment` 唯一入口；`delete_note` 自动级联清附件（失败不阻塞笔记删除，日志留痕）。
+- `WriteContext.attachments: Option<Arc<dyn AttachmentStore>>`；bootstrap `BootedApp` 真实装配，desktop ATTACH_STATE 注入。
+
+**两处技术修正（落地时确认，Bravo 导入器改造点按此执行）**：
+
+1. **加密封装用 `WriteContext.seal`（vault DEK at-rest 字节封装），非 content_cipher**——后者是 `(note_id, &str)` 字符串接口，不适配二进制附件。附件与笔记正文（每笔记 HKDF）分层保护：at-rest 同 vault、字段级不套用。
+2. **删除语义**：delete 只清 meta + 反向索引，**blob 不删**（内容寻址存储惯例：孤儿 blob 由 GC 切片回收，不做引用计数——避免"删 A 误伤 B 同内容附件"）。`read_attachment` 有明文 sha256 完整性校验（fail-closed），GC 前提下安全。
+
+**导入器改造点（Bravo，<1 人日）**：`written_to: Option<PathBuf>` → 保留 sidecar 现状不动；新增 `attachment_id` 路径由 desktop command 层在导入后按需调用 `attach_to_note` 接管（正文链接 `aurora://attach/{id}` 改造随向导前端切片一并做，避免两改）。
+
+**验证**：417 core（含 3 attachment）+ 34 import 测试全绿；bootstrap/import/mobile-ffi --all-targets 编译过；desktop import_commands 已注册（本机无 GTK，CI 桌面 job 验证）。
