@@ -83,3 +83,22 @@ impl SyncGate {
 - 申请 1（P1 mobile-ffi NetworkStateProvider）：**接受**。sync_gate.rs 接口评审通过（current_class 同步读缓存 + 拒绝不污染熔断统计的语义正确）。Android 侧 ConnectivityManager 缓存方案由 Alpha 在 mobile-ffi 实现——排期 Alpha 下轮；iOS NWPathMonitor 顺延至 DK-08 移动端同步切片。
 - 申请 2（P2 桌面 netwatch）：**接受方向，暂缓**——桌面同步门暂默认放行（Unmetered），netwatch is_expensive 平台差异（文档明示部分平台不可靠）待 Alpha 验证后再接。
 - sync_gate.rs 已随 859a90c 合入 main（201 测试全绿 + clippy 清）。
+---
+
+## Alpha 落地回执（2026-09-22 09:5x · commit ae75ab1）
+
+**申请 1 已落地：mobile-ffi NetworkStateProvider（Android ConnectivityManager 缓存方案）。**
+
+- `p2p_sync.rs`：`AndroidNetworkState`（AtomicU8 缓存，进程级单例 `NETWORK_STATE`）+
+  `AndroidNetworkStateProxy`（trait-object 视图）+ `network_state_provider() -> Arc<dyn NetworkStateProvider>`
+  装配入口（SyncGate::new 直接注入）。
+- JNI 桥：`SyncEngine.nativeUpdateNetworkState(state: Int)`——Kotlin 侧约定
+  0=NOT_METERED / 1=METERED / 2=onLost(Offline)；越界值归零=默认放行（不误伤）。
+- 语义对齐：`current_class()` 原子读（廉价、同步、不跨 JNI 阻塞），与 sync_gate
+  「读缓存 + 不污染熔断统计」约定一致；初值 Unmetered（首条回调前不阻塞同步）。
+- 单测 3 项：三态映射 / 越界归零 / trait-object 装配（mobile-ffi 默认集 14 全绿）。
+- 待办移交：Kotlin 侧 NetworkCallback 注册（onCapabilitiesChanged / onLost → JNI 推送）
+  属 Android 工程层，随移动端同步接线切片落地；SyncGate 装配（wifi_only 开关）由
+  Bravo 下一切片接管（接口已就绪）。
+- 验收清单 2/3/4（端到端蜂窝拦截 / 切网恢复 / 桌面默认不回归）：待 SyncGate 接线后
+  端到端验证，本回执仅覆盖平台源就绪。

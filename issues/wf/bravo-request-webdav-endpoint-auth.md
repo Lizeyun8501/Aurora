@@ -73,3 +73,19 @@ Basic Auth 凭据无处安放。
 - 缺口 2：`SyncProtocol::WebDav` 变体批准——穷举匹配由编译器强制，全局 match 点已查（router.rs 仅构造无 match），零破坏。
 - 排期：Alpha 周一冻结窗口（9/21）合入 aurora-core；webdav.rs 测试端点同步切换并移除 userinfo 临时兼容（一个过渡版本后清理）。
 - Bravo 验收清单第 1/2 项届时由 Alpha 验证后勾选。
+---
+
+## Alpha 落地回执（2026-09-22 09:5x · commit ae75ab1）
+
+**方案 A 已合入 main，验收清单第 1/2 项完成。**
+
+- [x] `Endpoint { auth: Option<EndpointAuth> }` + `EndpointAuth { username, secret }` 落地；
+      WebDavTarget **显式 auth 优先**，userinfo 过渡兼容保留（一个过渡版本后清理）；
+      secret 语义 = 引用（DK-07 vault 管理明文），`EndpointAuth` Debug 实现脱敏（`<redacted>`）。
+- [x] `SyncProtocol::WebDav` 变体落地；webdav.rs 测试端点已切换（`endpoint_for` /
+      `endpoint_with_auth` / 新增 `endpoint_explicit_auth`）。
+- [x] 三原语签名零改动（DK-00 冻结不动）。
+- 测试：`dk08_webdav_explicit_auth_precedence`——URL 携错误 userinfo + 显式正确凭据 →
+  mockito Authorization 头断言显式优先；显式凭据错误 → 401 fail-closed。
+  sync 默认集 202 全绿（+1）。router/webdav_upload 6 处构造点 `auth: None`（编译器强制补齐）。
+- 后续：过渡版本结束后移除 userinfo 分支（下次 sync 触碰时顺手清理）。
