@@ -101,8 +101,8 @@ pub trait SyncTarget: Send + Sync {
 
 - S1 WebDAV 真增量 / S2 CRDT 冲突 / S3 分片续传 / S4 Wi-Fi 门：默认 feature 集 201 测试全绿 + clippy 清（早上会话）
 - S5 多节点多 NAT 仿真（iroh TestNetwork 内存网络）：双节点双向 / 4 节点环多跳 / 5 节点星型 CRDT 收敛断言全绿——**需 `--features iroh-transport`**（见下）
-- 裁决遗留已闭环：`Endpoint.auth` 方案 A + `SyncProtocol::WebDav` 排期 Alpha 周一冻结窗口；mobile-ffi `NetworkStateProvider`（Android ConnectivityManager）Alpha 下轮
-- ⚠️ **CI 盲区（转 Alpha 待办）**：S5 模块被 `#[cfg(feature = "iroh-transport")]` 门控，CI 默认集**不覆盖** S5 测试与生产传输代码。处置：CI 增补 `cargo test -p aurora-sync --features iroh-transport` job（Alpha 排期）
+- 裁决遗留已闭环：`Endpoint.auth` 方案 A + `SyncProtocol::WebDav` **已合入（09-22 ae75ab1）**；mobile-ffi `NetworkStateProvider`（Android ConnectivityManager 缓存）**已就绪（09-22 ae75ab1，待 Bravo SyncGate 接线）**
+- ✅ **CI 盲区已补（09-22 ae75ab1）**：test job 增补 `cargo test -p aurora-sync --features iroh-transport`，S5 与生产传输代码回归 CI 覆盖
 - 两份 request 裁决已写回对应文档（ffba558）
 
 ## 7. 后续切片队列（第一切片验收后按序领）
