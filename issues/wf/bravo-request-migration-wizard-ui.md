@@ -53,3 +53,15 @@
 **问题 1（窗口）**：command 层（plan_import + 既有 command 增 manifestDir/only/progress 桥接）随附件 API **同窗口**——Alpha 今天冻结窗口作业；前端向导页面为**独立小切片**，随 command 合入后启动。
 **问题 2（执行人）**：**授权 Bravo 提前端 PR**——边界仅限：新增向导页面组件 + 对 import_commands 的调用代码；不触碰既有笔记视图与 lib.rs 注册行（注册由 Alpha 随 command 并入）。前提：command 合入后 branch 基于最新 main。
 **问题 3（防重语义）**：`content_hash` 变更即重导——**符合预期**，内容级判定优于 mtime/体积辅助（迁移场景源文件变更本应重导），无需增强。
+
+---
+
+## Alpha 验收回执（2026-09-22 · 向导前端 PR）
+
+**验收：通过，已合入 main。**
+
+- **边界合规**：仅新增 `ImportWizard.tsx`（311 行自包含组件）+ `DesktopShell.tsx` 挂载（onImport prop + 条件渲染，不动 MainView 类型面/既有视图）——严格落在授权切片内。
+- **质量**：tsc --noEmit 零错、vite build 36 modules 通过；phase 状态机（select→preview→running→done）+ browser-mock 容错（invoke null 不抛错）与 AppShell 语义一致；错误回退到 preview 带错误展示。
+- **参数约定**：invoke args 用 snake_case（`manifest_dir`/`only`/`attachments_dir`），与 DesktopShell 既有 `cmd_get_note_content { note_id }` 同款 ✓。
+- **提醒**：progress channel 桥接（request §2.1）未接——command 层本期传 None，向导 running 态用 submitting 标志兜底。随下一个切片接（非阻塞）。
+- **分支卫生**：`wf/bravo-import-s3` 与 main 同点（旧内核重推），已清理；下次交付前 `git fetch && git log origin/main..HEAD` 自查防重推。
