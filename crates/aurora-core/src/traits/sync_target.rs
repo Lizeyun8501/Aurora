@@ -14,10 +14,32 @@
 
 use async_trait::async_trait;
 
+/// 端点凭据（V26 DK-08 request `bravo-request-webdav-endpoint-auth` 方案 A）。
+///
+/// `secret` 语义上为**引用/密文**——明文由上层 DK-07 加密栈（vault）管理，
+/// 同步层不落盘、不日志化（Debug 脱敏见实现）。
+#[derive(Clone, PartialEq, Eq)]
+pub struct EndpointAuth {
+    pub username: String,
+    pub secret: String,
+}
+
+impl std::fmt::Debug for EndpointAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EndpointAuth")
+            .field("username", &self.username)
+            .field("secret", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Endpoint {
     pub url: String,
     pub protocol: SyncProtocol,
+    /// 显式凭据（WebDAV Basic Auth 等）。`None` = 无凭据或依赖 URL userinfo
+    /// 过渡兼容（WebDavTarget 优先读本字段，userinfo 仅作过渡保留）。
+    pub auth: Option<EndpointAuth>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +47,8 @@ pub enum SyncProtocol {
     Iroh,
     WebSocket,
     Quic,
+    /// WebDAV 端点（HTTP Basic Auth；适配器 `aurora_sync::external::webdav`）。
+    WebDav,
 }
 
 #[derive(Debug, Clone)]
@@ -291,6 +315,7 @@ mod tests {
                 endpoint: Endpoint {
                     url: "echo://local".into(),
                     protocol: SyncProtocol::WebSocket,
+                    auth: None,
                 },
             })
         }
@@ -367,6 +392,7 @@ mod tests {
                 endpoint: Endpoint {
                     url: "healthy://x".into(),
                     protocol: SyncProtocol::Quic,
+                    auth: None,
                 },
             })
         }
@@ -416,6 +442,7 @@ mod tests {
                 endpoint: Endpoint {
                     url: "broken://x".into(),
                     protocol: SyncProtocol::Quic,
+                    auth: None,
                 },
             })
         }
@@ -464,6 +491,7 @@ mod tests {
                 endpoint: Endpoint {
                     url: "hang://x".into(),
                     protocol: SyncProtocol::Quic,
+                    auth: None,
                 },
             })
         }
@@ -515,6 +543,7 @@ mod tests {
             .connect(&Endpoint {
                 url: "h://x".into(),
                 protocol: SyncProtocol::Quic,
+                auth: None,
             })
             .await
             .unwrap();
@@ -529,6 +558,7 @@ mod tests {
             .connect(&Endpoint {
                 url: "b://x".into(),
                 protocol: SyncProtocol::Quic,
+                auth: None,
             })
             .await
             .unwrap();
@@ -543,6 +573,7 @@ mod tests {
             .connect(&Endpoint {
                 url: "g://x".into(),
                 protocol: SyncProtocol::Quic,
+                auth: None,
             })
             .await
             .unwrap();
@@ -562,6 +593,7 @@ mod tests {
             .connect(&Endpoint {
                 url: "echo://x".into(),
                 protocol: SyncProtocol::Quic,
+                auth: None,
             })
             .await
             .unwrap();
@@ -603,6 +635,7 @@ mod tests {
                 &Endpoint {
                     url: "echo://y".into(),
                     protocol: SyncProtocol::Iroh,
+                    auth: None,
                 },
                 &SyncConfig::default(),
             )

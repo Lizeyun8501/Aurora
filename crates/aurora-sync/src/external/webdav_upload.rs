@@ -280,6 +280,7 @@ mod tests {
         Endpoint {
             url: server.url(),
             protocol: SyncProtocol::WebSocket,
+            auth: None,
         }
     }
 

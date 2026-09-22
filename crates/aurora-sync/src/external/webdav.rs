@@ -600,6 +600,13 @@ fn http_err(e: reqwest::Error) -> aurora_core::Error {
 fn split_endpoint(
     conn: &Connection,
 ) -> Result<(String, Option<(String, String)>), aurora_core::Error> {
+    // 正式方案 A（request `bravo-request-webdav-endpoint-auth` 裁决）：
+    // 显式 `Endpoint.auth` 优先；URL userinfo 为过渡兼容（一个过渡版本后清理）。
+    if let Some(auth) = &conn.endpoint.auth {
+        // base 仍经 split_url 剥离可能残留的 userinfo 段（显式凭据优先语义）。
+        let (base, _) = split_url(&conn.endpoint.url)?;
+        return Ok((base, Some((auth.username.clone(), auth.secret.clone()))));
+    }
     split_url(&conn.endpoint.url)
 }
 
@@ -801,18 +808,31 @@ mod tests {
     fn endpoint_for(server: &Server) -> Endpoint {
         Endpoint {
             url: server.url(),
-            // SyncProtocol 无 WebDAV 变体（见 request 文档）；适配器不匹配该字段
-            protocol: SyncProtocol::WebSocket,
+            protocol: SyncProtocol::WebDav,
+            auth: None,
         }
     }
 
-    /// 带 userinfo 凭据的端点（`user:pass@host`）。
+    /// 带 userinfo 凭据的端点（`user:pass@host`，过渡兼容路径）。
     fn endpoint_with_auth(server: &Server, user: &str, pass: &str) -> Endpoint {
         Endpoint {
             url: server
                 .url()
                 .replacen("://", &format!("://{user}:{pass}@"), 1),
-            protocol: SyncProtocol::WebSocket,
+            protocol: SyncProtocol::WebDav,
+            auth: None,
+        }
+    }
+
+    /// 显式凭据端点（`Endpoint.auth` 字段，正式方案 A）。
+    fn endpoint_explicit_auth(server: &Server, user: &str, pass: &str) -> Endpoint {
+        Endpoint {
+            url: server.url(),
+            protocol: SyncProtocol::WebDav,
+            auth: Some(aurora_core::traits::sync_target::EndpointAuth {
+                username: user.into(),
+                secret: pass.into(),
+            }),
         }
     }
 
@@ -1021,6 +1041,81 @@ mod tests {
         assert!(got.is_empty(), "index 缺失 → 无远端数据可收");
         oplog_unused.assert(); // expect(0)：index 缺失时不得请求 oplog 本体
         index_404.assert(); // sync_version + recv 各一次
+    }
+
+    /// Request 方案 A 验收：显式 `Endpoint.auth` 生效且**优先于** URL userinfo。
+    ///
+    /// - 端点 URL 带错误凭据 userinfo（`wrong:creds@`）+ 显式 auth（正确），
+    ///   mock 断言 Authorization 头 = 显式凭据的 Basic → 显式优先成立；
+    /// - 同款端点仅换显式凭据为错误值 → 401，证明确在比较凭据而非放行。
+    #[tokio::test]
+    async fn dk08_webdav_explicit_auth_precedence() {
+        // base64("u1:p1") —— mockito 精确匹配 Basic 头
+        let expect_header = format!("Basic {}", const_base64(b"u1:p1"));
+        let mut server = Server::new_async().await;
+        let index = server
+            .mock("GET", "/aurora/index.json")
+            .with_status(200)
+            .with_body(r#"{"note-1":{"version":1}}"#)
+            .match_header("authorization", Matcher::Exact(expect_header))
+            .expect(1)
+            .create_async()
+            .await;
+
+        // URL userinfo（错误凭据）+ 显式 auth（正确凭据）→ 显式优先
+        let ep = Endpoint {
+            url: server.url().replacen("://", "://wrong:creds@", 1),
+            protocol: SyncProtocol::WebDav,
+            auth: Some(aurora_core::traits::sync_target::EndpointAuth {
+                username: "u1".into(),
+                secret: "p1".into(),
+            }),
+        };
+        let mut target = WebDavTarget::new();
+        let conn = target.connect(&ep).await.unwrap();
+        target.sync_version(&conn, "note-1").await.unwrap();
+        index.assert(); // 唯一一次请求命中显式凭据头（userinfo 被忽略）
+
+        // 对照：显式凭据错误 → 401 fail-closed
+        let mut server2 = Server::new_async().await;
+        let index2 = server2
+            .mock("GET", "/aurora/index.json")
+            .with_status(401)
+            .expect(1)
+            .create_async()
+            .await;
+        let ep2 = endpoint_explicit_auth(&server2, "u1", "WRONG");
+        let conn2 = target.connect(&ep2).await.unwrap();
+        let r = target.sync_version(&conn2, "note-1").await;
+        assert!(r.is_err(), "错误凭据必须拒绝");
+        index2.assert();
+    }
+
+    /// 最小 base64（标准字母表 + padding；测试用，避免为此引入依赖）。
+    fn const_base64(input: &[u8]) -> String {
+        const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in input.chunks(3) {
+            let b = [
+                chunk[0],
+                chunk.get(1).copied().unwrap_or(0),
+                chunk.get(2).copied().unwrap_or(0),
+            ];
+            let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+            out.push(TBL[(n >> 18) as usize & 63] as char);
+            out.push(TBL[(n >> 12) as usize & 63] as char);
+            out.push(if chunk.len() > 1 {
+                TBL[(n >> 6) as usize & 63] as char
+            } else {
+                '='
+            });
+            out.push(if chunk.len() > 2 {
+                TBL[n as usize & 63] as char
+            } else {
+                '='
+            });
+        }
+        out
     }
 
     /// sync 拉取遍历：多文档增量 + 报告计数（received_ops 只数真拉取的）。

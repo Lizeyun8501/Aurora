@@ -465,6 +465,7 @@ mod tests {
             endpoint: Endpoint {
                 url: url.into(),
                 protocol: SyncProtocol::Iroh,
+                auth: None,
             },
             privacy,
         }
@@ -704,6 +705,7 @@ mod tests {
                 endpoint: Endpoint {
                     url: "ok".into(),
                     protocol: SyncProtocol::Iroh,
+                    auth: None,
                 },
             })
         }
@@ -830,6 +832,7 @@ mod tests {
         let ep = Endpoint {
             url: "iroh://x".into(),
             protocol: SyncProtocol::Iroh,
+            auth: None,
         };
         let mut t = target;
         let conn = t.connect(&ep).await.unwrap();
@@ -876,6 +879,7 @@ mod tests {
         let ep = Endpoint {
             url: "iroh://y".into(),
             protocol: SyncProtocol::Iroh,
+            auth: None,
         };
         let conn = target.connect(&ep).await.unwrap();
         let report = target
@@ -934,6 +938,7 @@ mod tests {
         let ep = Endpoint {
             url: "u".into(),
             protocol: SyncProtocol::Iroh,
+            auth: None,
         };
         // 并发 8 个 connect_and_sync — 无死锁无竞态（锁序列化）
         let mut handles = Vec::new();

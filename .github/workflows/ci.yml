@@ -82,6 +82,10 @@ jobs:
         run: cargo build --workspace --verbose
       - name: Test
         run: cargo test --workspace --exclude aurora-desktop --verbose
+      # DK-08 S5 盲区补齐（bravo-DK08-同步.md 验收记录）：多节点多 NAT 仿真
+      # 与 iroh-transport 生产传输代码被 feature 门控，默认集不覆盖。
+      - name: Test (iroh-transport feature)
+        run: cargo test -p aurora-sync --features iroh-transport --verbose
 
   msrv:
     name: MSRV (1.91)
