@@ -121,6 +121,53 @@ pub async fn import_notion_export(
             report.warnings.push(format!("{name}: {w}"));
         }
 
+        if ctx.attachments.is_some() {
+            // 附件模式（§3.2）：与 markdown 同路径（notion 导出即 md + 资源目录）
+            match aurora_core::write_path::create_note(ctx, &title).await {
+                Ok(note_id) => {
+                    let base = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+                    let mut cache = std::collections::HashMap::new();
+                    let body = crate::attach::rewrite_md_images(
+                        ctx,
+                        &note_id,
+                        &body,
+                        &base,
+                        &mut report,
+                        &mut cache,
+                    )
+                    .await;
+                    match aurora_core::write_path::save_note_content(ctx, &note_id, &body).await {
+                        Ok(_) => {
+                            report.imported += 1;
+                            report.note_ids.push(note_id.clone());
+                            report.entries.push(ImportedEntry {
+                                note_id,
+                                title,
+                                source: path.display().to_string(),
+                                tags: Vec::new(),
+                                resources: Vec::new(),
+                            });
+                        }
+                        Err(e) => {
+                            let _ = aurora_core::write_path::delete_note(ctx, &note_id).await;
+                            report.failed += 1;
+                            report.errors.push(ImportError {
+                                path: path.clone(),
+                                reason: format!("写入失败: {e}"),
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    report.failed += 1;
+                    report.errors.push(ImportError {
+                        path: path.clone(),
+                        reason: format!("写入失败: {e}"),
+                    });
+                }
+            }
+            continue;
+        }
         match crate::import_one(ctx, &title, &body).await {
             Ok(note_id) => {
                 report.imported += 1;

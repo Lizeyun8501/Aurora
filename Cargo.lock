@@ -487,6 +487,7 @@ dependencies = [
 name = "aurora-import"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "aurora-bootstrap",
  "aurora-core",
  "base64 0.22.1",

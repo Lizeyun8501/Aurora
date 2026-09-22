@@ -22,6 +22,7 @@
 //! # }
 //! ```
 
+pub mod attach;
 pub mod enex;
 pub mod enml;
 pub mod html;
@@ -207,6 +208,60 @@ pub async fn import_markdown_dir(
         }
 
         // write_path 唯一入口写入
+        if ctx.attachments.is_some() {
+            // 附件模式（§3.2）：create → 相对路径资源 attach + 重写 → save。
+            // 宽松语义（缺失资源计 missing，链接保留，导入不失败）。
+            match aurora_core::write_path::create_note(ctx, &title).await {
+                Ok(note_id) => {
+                    let base = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+                    let mut cache = std::collections::HashMap::new();
+                    let body = crate::attach::rewrite_md_images(
+                        ctx,
+                        &note_id,
+                        &body,
+                        &base,
+                        &mut report,
+                        &mut cache,
+                    )
+                    .await;
+                    match aurora_core::write_path::save_note_content(ctx, &note_id, &body).await {
+                        Ok(_) => {
+                            report.imported += 1;
+                            report.note_ids.push(note_id.clone());
+                            manifest.record(wizard::ManifestEntry {
+                                source: rel.clone(),
+                                content_hash: digest,
+                                note_id: note_id.clone(),
+                                title: title.clone(),
+                            });
+                        }
+                        Err(e) => {
+                            let _ = aurora_core::write_path::delete_note(ctx, &note_id).await;
+                            report.failed += 1;
+                            report.errors.push(ImportError {
+                                path: path.clone(),
+                                reason: format!("写入失败: {e}"),
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    report.failed += 1;
+                    report.errors.push(ImportError {
+                        path: path.clone(),
+                        reason: format!("写入失败: {e}"),
+                    });
+                }
+            }
+            if let Some(tx) = &options.progress {
+                let _ = tx.send(ProgressEvent {
+                    current: i as u32 + 1,
+                    total,
+                    source: rel.clone(),
+                });
+            }
+            continue;
+        }
         match import_one(ctx, &title, &body).await {
             Ok(note_id) => {
                 report.imported += 1;
@@ -419,45 +474,50 @@ pub async fn import_enex(
         .unwrap_or_else(|| enex_path.display().to_string());
     let entry_source_base = enex_path.display().to_string();
 
-    // 资源 sidecar 落盘（同 hash 全局只落一次）
+    // 资源 sidecar 预落盘（同 hash 全局只落一次）——fallback 语义：仅当
+    // ctx 未注入附件能力时启用；有附件能力走 attach_to_note（§3.1），
+    // sidecar 保持向后兼容（移动端 / 无 vault 测试 / 显式导出落盘）。
     let mut resource_infos: HashMap<String, ResourceInfo> = HashMap::new();
-    if let Some(att_dir) = &options.attachments_dir {
-        std::fs::create_dir_all(att_dir).map_err(|e| ImportError {
-            path: att_dir.clone(),
-            reason: format!("附件目录创建失败: {e}"),
-        })?;
-        for note in &notes {
-            for r in &note.resources {
-                if resource_infos.contains_key(&r.hash) {
-                    continue;
-                }
-                let bytes = match decode_base64(&r.data_base64) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        report
-                            .warnings
-                            .push(format!("资源 {} 解码失败，已跳过落盘: {e}", &r.hash));
+    if ctx.attachments.is_none() {
+        if let Some(att_dir) = &options.attachments_dir {
+            std::fs::create_dir_all(att_dir).map_err(|e| ImportError {
+                path: att_dir.clone(),
+                reason: format!("附件目录创建失败: {e}"),
+            })?;
+            for note in &notes {
+                for r in &note.resources {
+                    if resource_infos.contains_key(&r.hash) {
                         continue;
                     }
-                };
-                let safe = safe_attachment_name(r.file_name.as_deref(), &r.mime, &r.hash);
-                let out_path = att_dir.join(&safe);
-                if let Err(e) = std::fs::write(&out_path, &bytes) {
-                    report
-                        .warnings
-                        .push(format!("资源 {} 落盘失败: {e}", &r.hash));
-                    continue;
+                    let bytes = match decode_base64(&r.data_base64) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            report
+                                .warnings
+                                .push(format!("资源 {} 解码失败，已跳过落盘: {e}", &r.hash));
+                            continue;
+                        }
+                    };
+                    let safe = safe_attachment_name(r.file_name.as_deref(), &r.mime, &r.hash);
+                    let out_path = att_dir.join(&safe);
+                    if let Err(e) = std::fs::write(&out_path, &bytes) {
+                        report
+                            .warnings
+                            .push(format!("资源 {} 落盘失败: {e}", &r.hash));
+                        continue;
+                    }
+                    resource_infos.insert(
+                        r.hash.clone(),
+                        ResourceInfo {
+                            hash: r.hash.clone(),
+                            mime: r.mime.clone(),
+                            file_name: r.file_name.clone(),
+                            bytes: bytes.len(),
+                            written_to: Some(out_path),
+                            attachment_id: None,
+                        },
+                    );
                 }
-                resource_infos.insert(
-                    r.hash.clone(),
-                    ResourceInfo {
-                        hash: r.hash.clone(),
-                        mime: r.mime.clone(),
-                        file_name: r.file_name.clone(),
-                        bytes: bytes.len(),
-                        written_to: Some(out_path),
-                    },
-                );
             }
         }
     }
@@ -491,9 +551,146 @@ pub async fn import_enex(
         let source = format!("{source_base}#{idx}");
         let entry_source = format!("{entry_source_base}#{idx}");
 
+        // 会话清单防重：digest = 标题 + 原始 ENML（不含 link id，跨模式稳定）
+        let digest = wizard::content_hash_hex(format!("{title}\u{1f}{}", note.content).as_bytes());
+        if manifest.contains(&source, &digest) {
+            report.skipped += 1;
+            if let Some(tx) = &options.progress {
+                let _ = tx.send(ProgressEvent {
+                    current: k as u32 + 1,
+                    total,
+                    source: source.clone(),
+                });
+            }
+            continue;
+        }
+
+        if ctx.attachments.is_some() {
+            // ── 附件模式（§3.1）：attach_to_note 唯一入口，fail-closed ──
+            // 任一资源解码/attach 失败 → 删除已建笔记（delete_note 级联附件）
+            // 并计入 failed；正文链接形态 attachment://{id}（§2 定调）。
+            let note_id = match aurora_core::write_path::create_note(ctx, &title).await {
+                Ok(id) => id,
+                Err(e) => {
+                    report.failed += 1;
+                    report.errors.push(ImportError {
+                        path: PathBuf::from(&entry_source),
+                        reason: format!("写入失败: {e}"),
+                    });
+                    if let Some(tx) = &options.progress {
+                        let _ = tx.send(ProgressEvent {
+                            current: k as u32 + 1,
+                            total,
+                            source: source.clone(),
+                        });
+                    }
+                    continue;
+                }
+            };
+            let mut res_map: HashMap<String, (String, String)> = HashMap::new();
+            let mut res_infos: Vec<ResourceInfo> = Vec::new();
+            let mut fail_reason: Option<String> = None;
+            for r in &note.resources {
+                let alt = r
+                    .file_name
+                    .clone()
+                    .unwrap_or_else(|| placeholder_name(&r.mime, &r.hash));
+                let bytes = match decode_base64(&r.data_base64) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        fail_reason = Some(format!("资源 {} 解码失败: {e}", &r.hash));
+                        break;
+                    }
+                };
+                match aurora_core::write_path::attach_to_note(ctx, &note_id, &alt, &r.mime, &bytes)
+                    .await
+                {
+                    Ok(meta) => {
+                        res_map.insert(
+                            r.hash.clone(),
+                            (alt, format!("attachment://{}", meta.attachment_id)),
+                        );
+                        report.attachments_imported += 1;
+                        res_infos.push(ResourceInfo {
+                            hash: r.hash.clone(),
+                            mime: r.mime.clone(),
+                            file_name: r.file_name.clone(),
+                            bytes: bytes.len(),
+                            written_to: None,
+                            attachment_id: Some(meta.attachment_id),
+                        });
+                    }
+                    Err(e) => {
+                        fail_reason = Some(format!("资源 {} attach 失败: {e}", &r.hash));
+                        break;
+                    }
+                }
+            }
+            if fail_reason.is_none() {
+                fail_reason = match enml::enml_to_markdown(&note.content, &res_map) {
+                    Ok(conv) => {
+                        for w in &conv.warnings {
+                            report.warnings.push(format!("[{title}] {w}"));
+                        }
+                        match aurora_core::write_path::save_note_content(
+                            ctx,
+                            &note_id,
+                            &conv.markdown,
+                        )
+                        .await
+                        {
+                            Ok(_) => None,
+                            Err(e) => Some(format!("写入失败: {e}")),
+                        }
+                    }
+                    Err(e) => Some(format!("ENML 转换失败: {e}")),
+                };
+            }
+            if let Some(reason) = fail_reason {
+                let _ = aurora_core::write_path::delete_note(ctx, &note_id).await;
+                report.failed += 1;
+                report.errors.push(ImportError {
+                    path: PathBuf::from(&entry_source),
+                    reason,
+                });
+                if let Some(tx) = &options.progress {
+                    let _ = tx.send(ProgressEvent {
+                        current: k as u32 + 1,
+                        total,
+                        source: source.clone(),
+                    });
+                }
+                continue;
+            }
+            report.imported += 1;
+            report.note_ids.push(note_id.clone());
+            manifest.record(wizard::ManifestEntry {
+                source: source.clone(),
+                content_hash: digest,
+                note_id: note_id.clone(),
+                title: title.clone(),
+            });
+            report.entries.push(ImportedEntry {
+                note_id,
+                title,
+                source: entry_source,
+                tags: note.tags.clone(),
+                resources: res_infos,
+            });
+            if let Some(tx) = &options.progress {
+                let _ = tx.send(ProgressEvent {
+                    current: k as u32 + 1,
+                    total,
+                    source: source.clone(),
+                });
+            }
+            continue;
+        }
+
+        // ── fallback 模式（无附件能力）：sidecar / attachment://<hash> 占位 ──
         // en-media 占位映射：hash → (alt 文本, 链接目标)。
         // 有 sidecar：alt=原始文件名，link=attachments/<落盘名>；
-        // 无 sidecar：alt=占位名，link=attachment://<hash>（附件 API 待落地）。
+        // 无 sidecar：alt=占位名，link=attachment://<hash> + warning。
         let mut res_map: HashMap<String, (String, String)> = HashMap::new();
         let mut res_infos: Vec<ResourceInfo> = Vec::new();
         for r in &note.resources {
@@ -552,20 +749,6 @@ pub async fn import_enex(
         };
         for w in conv.warnings {
             report.warnings.push(format!("[{title}] {w}"));
-        }
-
-        // 会话清单防重：内容指纹 = 标题 + 正文
-        let digest = wizard::content_hash_hex(format!("{title}\u{1f}{}", conv.markdown).as_bytes());
-        if manifest.contains(&source, &digest) {
-            report.skipped += 1;
-            if let Some(tx) = &options.progress {
-                let _ = tx.send(ProgressEvent {
-                    current: k as u32 + 1,
-                    total,
-                    source: source.clone(),
-                });
-            }
-            continue;
         }
 
         match import_one(ctx, &title, &conv.markdown).await {

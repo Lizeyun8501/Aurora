@@ -36,8 +36,11 @@ pub struct ResourceInfo {
     pub file_name: Option<String>,
     /// 解码后字节数。
     pub bytes: usize,
-    /// sidecar 落盘路径（未请求落盘时为 None）。
+    /// sidecar 落盘路径（fallback 模式；附件模式下恒 None）。
     pub written_to: Option<PathBuf>,
+    /// 附件 ID（ctx.attachments 可用时经 attach_to_note 生成，
+    /// 正文引用形态 `attachment://{id}`；sidecar/占位模式为 None）。
+    pub attachment_id: Option<String>,
 }
 
 /// 单条导入明细（markdown 与 enex 共用）。
@@ -65,6 +68,11 @@ pub struct ImportReport {
     pub scanned: usize,
     /// 成功导入的笔记数。
     pub imported: usize,
+    /// 附件落库数（attach_to_note 成功；同 blob 重复 attach 各计一次，
+    /// 精确去重计数见 request `bravo-request-put-existed-flag`）。
+    pub attachments_imported: usize,
+    /// 缺失/不可读资源数（markdown/notion 宽松语义：链接保留，导入不失败）。
+    pub attachments_missing: usize,
     /// 跳过数（非 .md 或隐藏文件/目录内文件）。
     pub skipped: usize,
     /// 导入失败的 .md 文件数。

@@ -24,5 +24,7 @@ base64 = "0.22"
 [dev-dependencies]
 # 真实 AppCore 装配（SQLite KV + blocks + 启动流程）— 与桌面端同源
 aurora-bootstrap = { path = "../aurora-bootstrap" }
+# BrokenStore mock 实现 AttachmentStore trait（依赖树既有节点）
+async-trait = "0.1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
