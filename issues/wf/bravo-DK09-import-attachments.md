@@ -84,3 +84,27 @@ existed 标志；core 侧影响面小，Alpha 快批）。任务书不预批—�
 
 改动超边界 / 接口缺口 → request 文档（`issues/wf/bravo-request-*.md`），
 不硬改。交付后 Alpha 验收回执写回本文档。
+
+
+---
+
+## Alpha 验收回执（2026-09-23 · commit fec3d98）
+
+**✅ 通过合入 main（ff）。**
+
+- [x] 测试全绿：lib 5 + attach_import 6 + doc 8 = 19 tests，T=0；
+      clippy 零 warning（C=0）；fmt 清（F=0）。
+- [x] enex 集成：`dk09_attach_enex_two_resources`——2 资源 attach +
+      `list_by_note` 断言 + 正文 `attachment://` 引用 + hash→id 查表重写 ✓
+- [x] 去重语义：`dk09_attach_dedup_blob_single_copy`（kv blob 键计数）✓
+- [x] 回读一致性：`dk09_attach_readback_plaintext_and_sealed`（seal/明文双模式）✓
+- [x] markdown 缺失容忍：`dk09_attach_md_missing_resource_tolerant` ✓
+- [x] 边界合规：改动全部落在 `aurora-import/**` + Cargo.lock + request 文档；
+      分支 `wf/bravo-import-attach` 干净单 commit。
+- 加分项：`dk09_attach_fail_closed_no_residual`（FailingStore 注入故障 →
+  fail-closed 无残留引用，超出任务书要求）；`dk09_attach_md_cache_reuse`
+  （同路径复用 attachment id）；无附件能力 fallback（`attachment://<hash>`
+  占位 + warning，向后兼容旧调用方）。
+- 遗留：request（put existed 标志）已批复**批准**（见该文档 Alpha 裁决段），
+  Bravo 随补丁交付 `attachments_deduped` 计数 + FailingStore 对齐；
+  渲染侧 `attachment://` scheme 解析（desktop）转 Alpha 切片。

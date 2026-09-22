@@ -48,3 +48,17 @@ meta、仍返回新 attachment_id，去重只在 blob 层）。
 
 不预写——待裁决后 0.5 人日内随补丁交付（含测试：同资源二次 attach →
 existed=true → report.attachments_deduped 计数断言）。
+
+
+---
+
+## Alpha 裁决（2026-09-23 · 验收 fec3d98 时批复）
+
+**✅ 批准**。理由：trait 语义无损（成功仍成功）、影响面极小、有配套测试承诺、
+不阻塞交付的备选口径已先行落地。
+
+**补充一处分 nale**：§3 影响面表称「无其他 mock 需改」不准确——
+`tests/attach_import.rs::FailingStore` 自实现 `AttachmentStore` trait（本切片
+自己引入），签名改 bool 后**该 mock 必须同步对齐**。随补丁时一并处理，
+补丁含「同资源二次 attach → existed=true → attachments_deduped 计数」测试。
+预计 0.5 人日内交付，Alpha 验收后合入。
