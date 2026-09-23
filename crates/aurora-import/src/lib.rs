@@ -316,6 +316,14 @@ pub async fn import_markdown_dir(
 }
 
 /// 单文件写入：`create_note`（标题）+ `save_note_content`（正文）。
+/// sha256 完整 hex（64 字符）——blob 内容寻址键，与 attachment_store
+/// 内部 blob_key 的输入一致（existed 预检用）。
+pub(crate) fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(data);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 async fn import_one(
     ctx: &WriteContext,
     title: &str,
@@ -602,6 +610,14 @@ pub async fn import_enex(
                         break;
                     }
                 };
+                // existed 预检（blob 内容寻址）：命中 = 本次为去重复用
+                let sha_hex = sha256_hex(&bytes);
+                if let Some(store) = ctx.attachments.as_ref() {
+                    // 预检失败不阻断（宽松降级）——attach_to_note 内部仍静默去重
+                    if store.get_blob(&sha_hex).await.unwrap_or(None).is_some() {
+                        report.attachments_deduped += 1;
+                    }
+                }
                 match aurora_core::write_path::attach_to_note(ctx, &note_id, &alt, &r.mime, &bytes)
                     .await
                 {

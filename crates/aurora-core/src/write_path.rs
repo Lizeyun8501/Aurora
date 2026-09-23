@@ -655,7 +655,9 @@ pub async fn attach_to_note(
     };
 
     let meta = crate::attachment_store::make_meta(note_id, file_name, mime, data);
-    store.put(&meta, &stored).await?;
+    // existed（blob 已复用）当前编排层不消费——去重计数由导入器经
+    // get_blob 预检统计（bravo-request-put-existed-flag 批复口径）。
+    let _existed = store.put(&meta, &stored).await?;
     info!(note_id, attachment_id = %meta.attachment_id, size = meta.size, "attachment stored via WritePath");
     Ok(meta)
 }

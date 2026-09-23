@@ -38,7 +38,9 @@ pub struct AttachmentMeta {
 pub trait AttachmentStore: Send + Sync {
     /// 写入（meta 由编排层构造：id/sha256/size 已定；sealed_data 为密封后
     /// 字节——明文模式即原字节）。同 sha256 blob 已存在则复用（去重）。
-    async fn put(&self, meta: &AttachmentMeta, sealed_data: &[u8]) -> Result<(), Error>;
+    /// 返回 blob 是否已存在（true = 内容寻址命中，复用既有 blob，未写新数据；
+    /// request `bravo-request-put-existed-flag` · Alpha 2026-09-23 批复）。
+    async fn put(&self, meta: &AttachmentMeta, sealed_data: &[u8]) -> Result<bool, Error>;
 
     async fn get_meta(&self, attachment_id: &str) -> Result<Option<AttachmentMeta>, Error>;
 
@@ -102,9 +104,10 @@ impl KvAttachmentStore {
 
 #[async_trait]
 impl AttachmentStore for KvAttachmentStore {
-    async fn put(&self, meta: &AttachmentMeta, sealed_data: &[u8]) -> Result<(), Error> {
+    async fn put(&self, meta: &AttachmentMeta, sealed_data: &[u8]) -> Result<bool, Error> {
         let bk = blob_key(&meta.sha256);
-        if !self.kv.exists(&bk).await? {
+        let existed = self.kv.exists(&bk).await?;
+        if !existed {
             self.kv.set(&bk, sealed_data).await?;
         }
         self.kv
@@ -119,7 +122,7 @@ impl AttachmentStore for KvAttachmentStore {
                 meta.attachment_id.as_bytes(),
             )
             .await?;
-        Ok(())
+        Ok(existed)
     }
 
     async fn get_meta(&self, attachment_id: &str) -> Result<Option<AttachmentMeta>, Error> {

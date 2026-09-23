@@ -68,9 +68,11 @@ pub struct ImportReport {
     pub scanned: usize,
     /// 成功导入的笔记数。
     pub imported: usize,
-    /// 附件落库数（attach_to_note 成功；同 blob 重复 attach 各计一次，
-    /// 精确去重计数见 request `bravo-request-put-existed-flag`）。
+    /// 附件落库数（attach_to_note 成功；同 blob 重复 attach 各计一次）。
     pub attachments_imported: usize,
+    /// 去重复用数（attach 时 blob 已存在——put existed 语义；request
+    /// `bravo-request-put-existed-flag` · Alpha 2026-09-23 批复落地）。
+    pub attachments_deduped: usize,
     /// 缺失/不可读资源数（markdown/notion 宽松语义：链接保留，导入不失败）。
     pub attachments_missing: usize,
     /// 跳过数（非 .md 或隐藏文件/目录内文件）。

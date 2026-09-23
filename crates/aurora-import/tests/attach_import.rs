@@ -174,8 +174,10 @@ async fn dk09_attach_dedup_blob_single_copy() {
         .expect("r");
     assert_eq!(report.imported, 2);
     assert_eq!(report.attachments_imported, 2, "各挂一次均计数");
+    // existed 预检：乙笔记 attach 时 blob 已在 → deduped 计 1（批复测试承诺）
+    assert_eq!(report.attachments_deduped, 1, "同资源二次 attach 计去重");
 
-    // blob 前缀扫描：同 sha256 只占一个 blob 键
+    // blob 前缀扫描：同 sha256 只占一个 blob 键（直调段之前——仅导入产物）
     let kv = app.ctx.core.kv_store.clone();
     let sha_hex = {
         use sha2::{Digest, Sha256};
@@ -186,6 +188,19 @@ async fn dk09_attach_dedup_blob_single_copy() {
     let blobs = kv.scan_prefix(&blob_key_prefix()).await.expect("scan");
     assert_eq!(blobs.len(), 1, "blob 应只存一份");
     assert_eq!(blobs[0].0, blob_key(&sha_hex));
+
+    // store 直调语义（put existed 批复口径）：新 blob 首写 false / 复写 true
+    let store = app.ctx.attachments.as_ref().expect("store");
+    let fresh = b"aurora-put-existed-fresh-payload";
+    let meta = aurora_core::attachment_store::make_meta(
+        report.note_ids[0].as_str(),
+        "dup.bin",
+        "application/octet-stream",
+        fresh,
+    );
+    let first = store.put(&meta, fresh).await.expect("first put");
+    let second = store.put(&meta, fresh).await.expect("second put");
+    assert_eq!((first, second), (false, true), "首写 false / 复写 true");
 }
 
 fn blob_key_prefix() -> String {
@@ -241,7 +256,7 @@ async fn dk09_attach_fail_closed_no_residual() {
 
     #[async_trait]
     impl AttachmentStore for BrokenStore {
-        async fn put(&self, _meta: &AttachmentMeta, _sealed: &[u8]) -> Result<(), Error> {
+        async fn put(&self, _meta: &AttachmentMeta, _sealed: &[u8]) -> Result<bool, Error> {
             Err(Error::Internal("broken store".into()))
         }
         async fn get_meta(&self, _id: &str) -> Result<Option<AttachmentMeta>, Error> {

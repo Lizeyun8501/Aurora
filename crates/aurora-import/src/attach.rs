@@ -118,6 +118,18 @@ pub(crate) async fn rewrite_md_images(
                     i = close_target + 1;
                     continue;
                 }
+                // existed 预检：跨笔记同资源 → deduped 计数（宽松语义，
+                // 预检失败不阻断——attach_to_note 内部仍会静默去重）
+                if let Some(store) = ctx.attachments.as_ref() {
+                    if store
+                        .get_blob(&crate::sha256_hex(&data))
+                        .await
+                        .unwrap_or(None)
+                        .is_some()
+                    {
+                        report.attachments_deduped += 1;
+                    }
+                }
                 let id = match attach_to_note(ctx, note_id, &file_name, &mime, &data).await {
                     Ok(meta) => meta.attachment_id,
                     Err(e) => {
