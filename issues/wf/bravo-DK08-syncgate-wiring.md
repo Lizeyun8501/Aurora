@@ -77,3 +77,27 @@ gate→router→offline_queue 链；生产装配（构造注入 / 设置存储 /
 - commit 前缀 `feat(DK-08):` / `test(DK-08):`；
 - fixture/资源 <10KB；单 commit 语义完整；
 - push 前自查 `origin/main..HEAD` 只含本切片文件。
+
+---
+
+## Alpha 验收回执（2026-09-23 晚 · commit 97b5cb2）
+
+**✅ 通过，已 ff 合入 main。** DK-08 §7.3 策略侧接线闭环。
+
+- [x] 测试全绿：aurora-sync 202（既有全数通过 = 零回归实证）+
+      syncgate_wiring 5 = 207 tests，T=0；clippy -D warnings 零告警
+      （C=0）；fmt 清（F=0）。
+- [x] 验收清单五项全对齐：metered 推迟不传输 / offline 推迟 / 运行时
+      切换即时生效 / 恢复重放（Allow→ack 重放 · Defer→保留 attempts）/
+      未注入零回归。
+- 实现质量加分：
+  - `GateOutcome<R>` 迁移设计——`executed()` helper 让既有调用方平滑
+    升级，编译期强制处理 Deferred 分支；
+  - requeue 先 ack 再 enqueue（幂等键索引撞键预防）+ attempts 保留
+    （enqueue 原样入队，降优先语义不破坏）；
+  - Defer 时剩余项不 pop（同窗口网络状态一致，避免无谓 churn）；
+  - gate 在 replay 路径统一前置（重放不绕过门）。
+- [x] 边界合规：diff 仅 aurora-sync 3 文件，分支单 commit。
+- 后续（Alpha 生产装配切片）：bootstrap 构造注入 SyncGate +
+  `wifi_only` 设置存储 trait + desktop/mobile 设置页——已列入 Alpha
+  下轮；端到端（蜂窝拦截/切网恢复）随装配后设备验证。
