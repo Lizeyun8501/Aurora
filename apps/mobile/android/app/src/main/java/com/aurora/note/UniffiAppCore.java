@@ -56,6 +56,16 @@ public class UniffiAppCore {
         return handle;
     }
 
+    /** 查询「仅 Wi-Fi 同步」（DK-08 §7.3；fallback 恒 false）。 */
+    public boolean getWifiOnly() throws Exception {
+        return nativeGetWifiOnly(handle);
+    }
+
+    /** 设置「仅 Wi-Fi 同步」（KV 持久化 + 门即时切换）。 */
+    public void setWifiOnly(boolean on) throws Exception {
+        nativeSetWifiOnly(handle, on);
+    }
+
     public String createNote(String title) throws Exception {
         String id = nativeCreateNote(handle, title);
         if (id == null) {
@@ -166,6 +176,8 @@ public class UniffiAppCore {
     }
 
     private static native long nativeNew(String dataDir);
+    private static native boolean nativeGetWifiOnly(long handle);
+    private static native void nativeSetWifiOnly(long handle, boolean on);
     private static native String nativeCreateNote(long handle, String title);
     private static native int nativeListNotesCount(long handle);
     private static native String[] nativeGetNote(long handle, int index);

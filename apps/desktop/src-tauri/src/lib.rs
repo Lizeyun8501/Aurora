@@ -29,6 +29,7 @@ use tracing::{info, warn};
 
 mod attachment_commands;
 mod import_commands;
+mod sync_commands;
 
 /// 桌面端默认数据目录名。
 const AURORA_DIR_NAME: &str = "aurora";
@@ -42,6 +43,17 @@ static VAULT_STATE: Mutex<Option<Arc<LocalDekVault>>> = Mutex::new(None);
 /// 附件存储（DK-09 — bootstrap 装配，setup 注入）。
 static ATTACH_STATE: Mutex<Option<Arc<dyn aurora_core::attachment_store::AttachmentStore>>> =
     Mutex::new(None);
+/// 同步门（DK-08 §7.3 — bootstrap 装配，setup 注入；wifi_only 运行时切换）。
+static SYNC_GATE_STATE: Mutex<Option<Arc<aurora_sync::sync_gate::SyncGate>>> = Mutex::new(None);
+
+/// 取同步门全局单例（未初始化返回 Err）。
+fn get_sync_gate() -> Result<Arc<aurora_sync::sync_gate::SyncGate>, String> {
+    SYNC_GATE_STATE
+        .lock()
+        .expect("SYNC_GATE_STATE mutex poisoned")
+        .clone()
+        .ok_or_else(|| "应用尚未初始化".into())
+}
 
 /// 获取用户数据目录路径。
 ///
@@ -99,6 +111,8 @@ pub fn run() {
             cmd_due_review_cards,
             cmd_review_card,
             attachment_commands::cmd_read_attachment,
+            sync_commands::cmd_get_wifi_only,
+            sync_commands::cmd_set_wifi_only,
             import_commands::cmd_plan_import,
             import_commands::cmd_import_markdown_dir,
             import_commands::cmd_import_enex,
@@ -112,8 +126,18 @@ pub fn run() {
             info!(data_dir = ?data_dir, "data directory ready");
 
             // 共享装配：迁移 + DEK 保险库 + AppCore DI 注入 + startup（V19 §36.1）
-            let booted = aurora_bootstrap::bootstrap(&data_dir).map_err(box_err)?;
+            let booted = aurora_bootstrap::bootstrap(
+                &data_dir,
+                std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+            )
+            .map_err(box_err)?;
             *VAULT_STATE.lock().expect("VAULT_STATE mutex poisoned") = Some(booted.vault.clone());
+            *SYNC_GATE_STATE
+                .lock()
+                .expect("SYNC_GATE_STATE mutex poisoned") = Some(booted.sync_gate.clone());
+            *sync_commands::BOOTED_STATE
+                .lock()
+                .expect("BOOTED_STATE mutex poisoned") = Some(std::sync::Arc::new(booted));
             *APP_STATE.lock().expect("APP_STATE mutex poisoned") = Some(booted.core.clone());
             *ATTACH_STATE.lock().expect("ATTACH_STATE mutex poisoned") =
                 Some(booted.attachments.clone());

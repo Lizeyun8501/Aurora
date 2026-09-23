@@ -18,7 +18,11 @@ struct TestApp {
 
 fn test_app() -> TestApp {
     let dir = tempfile::tempdir().expect("tempdir");
-    let booted = aurora_bootstrap::bootstrap(dir.path()).expect("bootstrap");
+    let booted = aurora_bootstrap::bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .expect("bootstrap");
     TestApp {
         _dir: dir,
         ctx: WriteContext {
@@ -35,7 +39,11 @@ fn test_app() -> TestApp {
 /// seal 模式 app：bootstrap vault 构造 SealPair（桌面语义）。
 fn test_app_sealed() -> TestApp {
     let dir = tempfile::tempdir().expect("tempdir");
-    let booted = aurora_bootstrap::bootstrap(dir.path()).expect("bootstrap");
+    let booted = aurora_bootstrap::bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .expect("bootstrap");
     let crypto = booted.core.crypto.clone();
     let crypto2 = crypto.clone();
     let vault = booted.vault.clone();
@@ -274,7 +282,11 @@ async fn dk09_attach_fail_closed_no_residual() {
     }
 
     let dir = tempfile::tempdir().expect("tempdir");
-    let booted = aurora_bootstrap::bootstrap(dir.path()).expect("bootstrap");
+    let booted = aurora_bootstrap::bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .expect("bootstrap");
     let app = TestApp {
         _dir: dir,
         ctx: WriteContext {

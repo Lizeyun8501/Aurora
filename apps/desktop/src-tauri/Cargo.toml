@@ -23,6 +23,7 @@ chrono = { workspace = true }
 
 aurora-core = { path = "../../../crates/aurora-core" }
 aurora-import = { path = "../../../crates/aurora-import" }
+aurora-sync = { path = "../../../crates/aurora-sync" }
 aurora-security = { path = "../../../crates/aurora-security" }
 # 共享启动装配（迁移 + DEK 保险库 + AppCore DI 注入 + startup）
 aurora-bootstrap = { path = "../../../crates/aurora-bootstrap" }

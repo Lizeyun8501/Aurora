@@ -316,81 +316,12 @@ pub extern "system" fn Java_com_aurora_note_SyncEngine_nativeClose(
     unsafe { drop(Arc::from_raw(engine_handle as *const SyncEngine)) };
 }
 
-// ===========================================================================
-// NetworkStateProvider — DK-08 §7.3「仅 Wi-Fi 同步」平台网络状态源
-// （request `bravo-request-wifi-only-sync` 申请 1 裁决：ConnectivityManager
-//   缓存方案，Kotlin 推送 / Rust 读缓存）
-// ===========================================================================
-
-/// Android 网络状态缓存（进程级单例）。
-///
-/// 数据链路：Kotlin 侧 `ConnectivityManager.registerNetworkCallback` 在
-/// `onCapabilitiesChanged`（NET_CAPABILITY_NOT_METERED）与 `onLost` 时调
-/// `SyncEngine.nativeUpdateNetworkState(state)` 推送最新分类；
-/// Rust 侧 `current_class()` 为原子读（廉价、同步、不跨 JNI 阻塞），
-/// 与 sync_gate.rs「读缓存 + 不污染熔断统计」的语义约定一致。
-pub struct AndroidNetworkState {
-    /// 0 = Unmetered / 1 = Metered / 2 = Offline（越界按 0 处理：默认放行）。
-    cached: AtomicU8,
-}
-
-/// 进程级单例（JNI 回调与 SyncGate 装配共享）。
-pub static NETWORK_STATE: AndroidNetworkState = AndroidNetworkState {
-    cached: AtomicU8::new(0),
+// 网络状态源已拆至非 gated 模块（DK-08 §7.3 装配切片）——
+// 保留路径兼容 re-export（既有引用/测试不断链）。
+pub use crate::network_state::{
+    network_state_provider, AndroidNetworkState, AndroidNetworkStateProxy, CLASS_METERED,
+    CLASS_OFFLINE, CLASS_UNMETERED, NETWORK_STATE,
 };
-
-pub const CLASS_UNMETERED: u8 = 0;
-pub const CLASS_METERED: u8 = 1;
-pub const CLASS_OFFLINE: u8 = 2;
-
-impl AndroidNetworkState {
-    /// JNI 推送入口（`nativeUpdateNetworkState` 调用；越界值归零 = 放行）。
-    pub fn update(&self, raw: u8) {
-        let v = match raw {
-            CLASS_METERED => CLASS_METERED,
-            CLASS_OFFLINE => CLASS_OFFLINE,
-            _ => CLASS_UNMETERED,
-        };
-        self.cached.store(v, Ordering::Relaxed);
-    }
-}
-
-impl NetworkStateProvider for AndroidNetworkState {
-    fn current_class(&self) -> NetworkClass {
-        match self.cached.load(Ordering::Relaxed) {
-            CLASS_METERED => NetworkClass::Metered,
-            CLASS_OFFLINE => NetworkClass::Offline,
-            _ => NetworkClass::Unmetered,
-        }
-    }
-}
-
-/// Kotlin 回调桥：`SyncEngine.nativeUpdateNetworkState(state: Int)`。
-///
-/// Kotlin 侧约定：0 = NOT_METERED、1 = METERED、2 = 网络丢失（Offline）。
-#[no_mangle]
-pub extern "system" fn Java_com_aurora_note_SyncEngine_nativeUpdateNetworkState(
-    _env: JNIEnv,
-    _class: JClass,
-    state: jint,
-) {
-    NETWORK_STATE.update(state.clamp(0, 255) as u8);
-}
-
-/// SyncGate 装配入口：`Arc<dyn NetworkStateProvider>`（Bravo 接 SyncGate 时注入）。
-pub fn network_state_provider() -> Arc<dyn NetworkStateProvider> {
-    Arc::new(AndroidNetworkStateProxy)
-}
-
-/// [`NETWORK_STATE`] 的 trait-object 视图（`current_class` 委托单例）。
-struct AndroidNetworkStateProxy;
-
-impl NetworkStateProvider for AndroidNetworkStateProxy {
-    fn current_class(&self) -> NetworkClass {
-        NETWORK_STATE.current_class()
-    }
-}
-
 #[cfg(test)]
 mod network_state_tests {
     use super::*;

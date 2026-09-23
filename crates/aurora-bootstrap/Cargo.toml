@@ -7,6 +7,10 @@ license.workspace = true
 description = "Aurora Note app bootstrap: shared AppCore DI wiring for desktop/mobile platform adapters"
 
 [dependencies]
+# wifi_only KV 读写：executor block_on（tokio 上下文内/外均安全——KV async 体为同步包装）
+futures = "0.3"
+# DK-08 §7.3：SyncGate/OfflineQueue 生产装配（仅 Wi-Fi 同步门）
+aurora-sync = { path = "../aurora-sync" }
 aurora-core = { path = "../aurora-core", features = ["loro-crdt"] } # I2/DK-01W: WritePath 需 Loro 快照（与 mobile-ffi 对齐）
 aurora-security = { path = "../aurora-security" }
 aurora-ai = { path = "../aurora-ai" }
@@ -26,5 +30,6 @@ rusqlite = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+aurora-sync = { path = "../aurora-sync" }
 tempfile = "3"
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }

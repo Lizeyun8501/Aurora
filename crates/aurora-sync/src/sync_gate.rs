@@ -86,6 +86,17 @@ impl SyncGate {
     }
 }
 
+/// 桌面默认平台源：恒不计量（netwatch `is_expensive` 平台差异未验证前
+/// 按 request 裁决 09-20 默认放行——桌面「仅 Wi-Fi」开关关闭时 provider
+/// 实际不被消费；未来接 netwatch 时替换此实现）。
+pub struct AlwaysUnmetered;
+
+impl NetworkStateProvider for AlwaysUnmetered {
+    fn current_class(&self) -> NetworkClass {
+        NetworkClass::Unmetered
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +172,14 @@ mod tests {
         assert!(gate.wifi_only());
         assert_eq!(gate.evaluate(), GateDecision::DeferUntilUnmetered);
         gate.set_wifi_only(false);
+        assert_eq!(gate.evaluate(), GateDecision::Allow);
+    }
+
+    /// 桌面默认源：恒 Unmetered（Allow）——wifi_only=ON 也不推迟
+    ///（netwatch 未接入前的裁决口径）。
+    #[test]
+    fn always_unmetered_provider_allows() {
+        let gate = SyncGate::new(Arc::new(AlwaysUnmetered), true);
         assert_eq!(gate.evaluate(), GateDecision::Allow);
     }
 }

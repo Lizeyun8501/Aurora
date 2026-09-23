@@ -34,6 +34,11 @@ pub struct BootedApp {
     pub content_cipher: Arc<aurora_core::write_path::ContentCipherPair>,
     /// 附件存储（DK-09 — 与 AppCore 同 KV，内容寻址 + seal 密封在 write_path）。
     pub attachments: Arc<dyn aurora_core::attachment_store::AttachmentStore>,
+    /// 同步门（DK-08 §7.3 — 策略评估入口；引擎经 Bravo 接线消费）。
+    pub sync_gate: Arc<aurora_sync::sync_gate::SyncGate>,
+    /// 离线同步队列（与 sync_gate 同源装配；内存形态，KV 持久化随引擎
+    /// 生产切片——当前无流量驱动，实例先行就位）。
+    pub offline_queue: Arc<aurora_sync::offline_queue::OfflineQueue>,
 }
 
 impl BootedApp {
@@ -131,7 +136,10 @@ impl From<aurora_core::Error> for BootstrapError {
 /// # Errors
 /// 迁移、DEK 初始化、Trait 构造或 `startup()` 任一步失败均返回
 /// [`BootstrapError`]（启动期早失败）。
-pub fn bootstrap(data_dir: &Path) -> Result<BootedApp, BootstrapError> {
+pub fn bootstrap(
+    data_dir: &Path,
+    network_provider: std::sync::Arc<dyn aurora_sync::sync_gate::NetworkStateProvider>,
+) -> Result<BootedApp, BootstrapError> {
     std::fs::create_dir_all(data_dir)?;
 
     // 打开 SQLite 数据库并执行迁移
@@ -171,13 +179,65 @@ pub fn bootstrap(data_dir: &Path) -> Result<BootedApp, BootstrapError> {
         aurora_core::attachment_store::KvAttachmentStore::new(core.kv_store.clone()),
     );
 
+    // DK-08 §7.3：同步门装配——wifi_only 用户设置自 KV 恢复（默认 OFF，
+    // request 裁决口径）；平台 provider 由调用方注入（移动 =
+    // mobile-ffi AndroidNetworkState，桌面 = AlwaysUnmetered 暂缓 netwatch）。
+    let wifi_only = wifi_only_from_kv(&core)?;
+    let sync_gate = Arc::new(aurora_sync::sync_gate::SyncGate::new(
+        network_provider,
+        wifi_only,
+    ));
+    let offline_queue = Arc::new(aurora_sync::offline_queue::OfflineQueue::new());
+
     Ok(BootedApp {
         core,
         vault,
         blocks,
         content_cipher,
         attachments,
+        sync_gate,
+        offline_queue,
     })
+}
+
+/// `wifi_only` 用户设置的 KV 持久化键。
+pub const WIFI_ONLY_KV_KEY: &str = "settings:sync.wifi_only";
+
+/// 从 KV 读取 `wifi_only`（缺省 = false，request 裁决默认放行）。
+pub(crate) fn wifi_only_from_kv(core: &AppCore) -> Result<bool, BootstrapError> {
+    // futures executor：bootstrap 可能被同步线程或 tokio::test 调用——
+    // tokio block_on 在 runtime 内会 panic；KV async 体为同步包装（无真
+    // 挂起点），executor block_on 跨上下文安全。
+    futures::executor::block_on(async {
+        match core.kv_store.get(WIFI_ONLY_KV_KEY).await {
+            Ok(Some(v)) => Ok(v.as_slice() == b"true"),
+            Ok(None) => Ok(false),
+            Err(e) => Err(BootstrapError::Core(format!("wifi_only load: {e}"))),
+        }
+    })
+}
+
+impl BootedApp {
+    /// 查询「仅 Wi-Fi 同步」开关（KV 权威值）。
+    pub fn wifi_only(&self) -> Result<bool, BootstrapError> {
+        wifi_only_from_kv(&self.core)
+    }
+
+    /// 设置「仅 Wi-Fi 同步」开关：先 KV 持久化（崩溃安全——重启读 KV
+    /// 为准），后同步门运行时切换（即时生效，无需重建）。
+    pub fn set_wifi_only(&self, on: bool) -> Result<(), BootstrapError> {
+        // 同 wifi_only_from_kv：futures executor 跨上下文安全
+        futures::executor::block_on(async {
+            self.core
+                .kv_store
+                .set(WIFI_ONLY_KV_KEY, if on { b"true" } else { b"false" })
+                .await
+                .map_err(|e| BootstrapError::Core(format!("wifi_only save: {e}")))
+        })?;
+        self.sync_gate.set_wifi_only(on);
+        info!(wifi_only = on, "sync gate wifi_only updated");
+        Ok(())
+    }
 }
 
 /// 构造 AppCore 并注入各 Trait 默认实现（V19 §36.1 步骤 4-5）。
@@ -406,7 +466,11 @@ mod tests {
     #[test]
     fn bootstrap_creates_runnable_core() {
         let dir = tempfile::tempdir().unwrap();
-        let app = bootstrap(dir.path()).unwrap();
+        let app = bootstrap(
+            dir.path(),
+            std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+        )
+        .unwrap();
         assert_eq!(app.core.crypto.algorithm_version(), 1);
         assert!(dir.path().join("aurora.db").exists());
         assert!(dir.path().join("keys").join("dek.bin").exists());
@@ -419,7 +483,11 @@ mod tests {
 
         // ── 第一次启动: 发事件 → 投影追赶 ──
         {
-            let app = bootstrap(dir.path()).unwrap();
+            let app = bootstrap(
+                dir.path(),
+                std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+            )
+            .unwrap();
             app.core.startup().unwrap();
             app.core
                 .event_bus
@@ -444,7 +512,11 @@ mod tests {
 
         // ── 第二次启动: seq 恢复 + 新事件 + 增量追赶 ──
         {
-            let app2 = bootstrap(dir.path()).unwrap();
+            let app2 = bootstrap(
+                dir.path(),
+                std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+            )
+            .unwrap();
             app2.core.startup().unwrap(); // restore_seq + replay
             app2.core
                 .event_bus
@@ -485,8 +557,16 @@ mod tests {
     #[test]
     fn bootstrap_is_idempotent_across_restarts() {
         let dir = tempfile::tempdir().unwrap();
-        let first = bootstrap(dir.path()).unwrap();
-        let second = bootstrap(dir.path()).unwrap();
+        let first = bootstrap(
+            dir.path(),
+            std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+        )
+        .unwrap();
+        let second = bootstrap(
+            dir.path(),
+            std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+        )
+        .unwrap();
         assert_eq!(
             first.vault.dek(),
             second.vault.dek(),

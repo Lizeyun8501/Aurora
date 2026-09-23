@@ -17,6 +17,8 @@ uniffi::setup_scaffolding!();
 // V19 §31 DEV-005: iroh P2P 同步引擎（feature-gated）
 #[cfg(feature = "p2p-sync")]
 pub mod p2p_sync;
+// DK-08 §7.3: 网络状态源（非 gated — SyncGate 装配全形态可用）
+pub mod network_state;
 
 // ===========================================================================
 // 类型定义（UniFFI 兼容）
@@ -159,6 +161,8 @@ pub struct UniffiAppCore {
     blocks: Option<std::sync::Arc<aurora_core::blocks::BlockStore>>,
     /// DK-07 S4: 笔记内容级加密器（bootstrap 装配 = Some；降级 = None）
     content_cipher: Option<std::sync::Arc<aurora_core::write_path::ContentCipherPair>>,
+    /// 同步门（DK-08 §7.3 — full 模式装配；fallback 无 sync 能力为 None）。
+    pub sync_gate: Option<std::sync::Arc<aurora_sync::sync_gate::SyncGate>>,
 }
 
 impl UniffiAppCore {
@@ -184,7 +188,8 @@ impl UniffiAppCore {
             })?;
 
         // 尝试完整 bootstrap 装配
-        match aurora_bootstrap::bootstrap(&data_dir) {
+        match aurora_bootstrap::bootstrap(&data_dir, crate::network_state::network_state_provider())
+        {
             Ok(booted) => {
                 tracing::info!("bootstrap success — full mode (loro CRDT enabled)");
                 // V20 §4.5: 启动期投影追赶（restore_seq + catch_up 在
@@ -212,6 +217,7 @@ impl UniffiAppCore {
                     mirror,
                     blocks,
                     content_cipher: Some(booted.content_cipher),
+                    sync_gate: Some(booted.sync_gate),
                 }))
             }
             Err(e) => {
@@ -225,6 +231,7 @@ impl UniffiAppCore {
                     fallback_notes: Mutex::new(Vec::new()),
                     docs: Mutex::new(std::collections::HashMap::new()),
                     is_fallback: true,
+                    sync_gate: None, // 降级模式无 sync 装配
                     // 降级模式仍提供 mirror（本地目录不依赖 core 装配）
                     mirror: Some((
                         aurora_core::mirror::MirrorScheduler::new(),
@@ -320,6 +327,63 @@ impl UniffiAppCore {
     pub fn persist_note_snapshot(&self, note_id: &str) -> Result<(), MobileError> {
         let doc = self.doc_for_note(note_id);
         self.persist_doc(note_id, &doc)
+    }
+
+    /// DK-08 §7.3：查询「仅 Wi-Fi 同步」（KV 权威；fallback 恒 false）。
+    pub fn wifi_only_impl(&self) -> bool {
+        match (&self.core, &self.sync_gate) {
+            (Some(core), Some(_)) => {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .ok();
+                let Some(rt) = rt else { return false };
+                rt.block_on(async {
+                    core.kv_store
+                        .get(aurora_bootstrap::WIFI_ONLY_KV_KEY)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|v| v.as_slice() == b"true")
+                        .unwrap_or(false)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// DK-08 §7.3：设置「仅 Wi-Fi 同步」（KV 持久化 + 门即时切换）。
+    pub fn set_wifi_only_impl(&self, on: bool) -> Result<(), MobileError> {
+        let Some(core) = &self.core else {
+            return Err(MobileError::InitFailed {
+                message: "fallback 模式无同步装配".into(),
+            });
+        };
+        let Some(gate) = &self.sync_gate else {
+            return Err(MobileError::InitFailed {
+                message: "fallback 模式无同步装配".into(),
+            });
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| MobileError::InitFailed {
+                message: format!("wifi_only runtime: {e}"),
+            })?;
+        rt.block_on(async {
+            core.kv_store
+                .set(
+                    aurora_bootstrap::WIFI_ONLY_KV_KEY,
+                    if on { b"true" } else { b"false" },
+                )
+                .await
+        })
+        .map_err(|e| MobileError::InitFailed {
+            message: format!("wifi_only save: {e}"),
+        })?;
+        gate.set_wifi_only(on);
+        tracing::info!(wifi_only = on, "sync gate wifi_only updated");
+        Ok(())
     }
 
     fn create_note_impl(self: &Arc<Self>, title: String) -> Result<String, MobileError> {
@@ -1089,6 +1153,36 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeNew(
     match UniffiAppCore::new(data_dir) {
         Ok(core) => Arc::into_raw(core) as jlong,
         Err(_) => 0,
+    }
+}
+
+/// DK-08 §7.3：查询「仅 Wi-Fi 同步」（JNI — UniffiAppCore.wifiOnly）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeGetWifiOnly(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jboolean {
+    let core = unsafe { core_from_handle(handle) };
+    if core.wifi_only_impl() {
+        1
+    } else {
+        0
+    }
+}
+
+/// DK-08 §7.3：设置「仅 Wi-Fi 同步」（JNI — UniffiAppCore.setWifiOnly）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeSetWifiOnly(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    on: jboolean,
+) {
+    let core = unsafe { core_from_handle(handle) };
+    if let Err(e) = core.set_wifi_only_impl(on != 0) {
+        let msg = e.to_string();
+        let _ = env.throw_new("java/lang/IllegalStateException", &msg);
     }
 }
 

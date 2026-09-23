@@ -90,8 +90,16 @@ async fn read_meta(
 async fn desktop_and_mobile_write_paths_are_isomorphic() {
     let dir_a = tempfile::tempdir().unwrap();
     let dir_b = tempfile::tempdir().unwrap();
-    let desktop = bootstrap(dir_a.path()).expect("desktop bootstrap");
-    let mobile = bootstrap(dir_b.path()).expect("mobile bootstrap");
+    let desktop = bootstrap(
+        dir_a.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .expect("desktop bootstrap");
+    let mobile = bootstrap(
+        dir_b.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .expect("mobile bootstrap");
 
     let db_a = dir_a.path().join("aurora.db");
     let db_b = dir_b.path().join("aurora.db");
@@ -252,7 +260,11 @@ async fn desktop_and_mobile_write_paths_are_isomorphic() {
 async fn dk07_s3_desktop_encrypted_note_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("test.db");
-    let booted = aurora_bootstrap::bootstrap(dir.path()).unwrap();
+    let booted = aurora_bootstrap::bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .unwrap();
     let blocks = BlockStore::open(&db).map(std::sync::Arc::new);
     let ctx = WriteContext {
         core: booted.core.clone(),

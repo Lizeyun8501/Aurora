@@ -612,6 +612,22 @@ export default function DesktopShell() {
     [searchNotes],
   );
 
+  // DK-08 §7.3：仅 Wi-Fi 同步开关（tauri 模式可用；mock 模式隐藏）
+  const [wifiOnly, setWifiOnly] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!invoke) return;
+    invoke('cmd_get_wifi_only')
+      .then((r) => setWifiOnly(r as boolean))
+      .catch(() => setWifiOnly(null));
+  }, [invoke]);
+  const toggleWifiOnly = useCallback(() => {
+    if (!invoke || wifiOnly === null) return;
+    const next = !wifiOnly;
+    invoke('cmd_set_wifi_only', { on: next })
+      .then(() => setWifiOnly(next))
+      .catch(() => {});
+  }, [invoke, wifiOnly]);
+
   const builtins: PaletteItem[] = useMemo(
     () => [
       {
@@ -620,6 +636,16 @@ export default function DesktopShell() {
         title: '新建笔记',
         run: () => data.createNote('未命名'),
       },
+      ...(wifiOnly !== null
+        ? [
+            {
+              kind: 'command' as const,
+              id: 'wifi-only',
+              title: `仅 Wi-Fi 同步${wifiOnly ? '（已开启 — 点击关闭）' : '（已关闭 — 点击开启）'}`,
+              run: toggleWifiOnly,
+            },
+          ]
+        : []),
       {
         kind: 'command',
         id: 'today',

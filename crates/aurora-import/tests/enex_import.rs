@@ -18,7 +18,11 @@ struct TestApp {
 
 async fn test_app() -> TestApp {
     let dir = tempfile::tempdir().expect("tempdir");
-    let booted = aurora_bootstrap::bootstrap(dir.path()).expect("bootstrap");
+    let booted = aurora_bootstrap::bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .expect("bootstrap");
     TestApp {
         _dir: dir,
         ctx: WriteContext {
