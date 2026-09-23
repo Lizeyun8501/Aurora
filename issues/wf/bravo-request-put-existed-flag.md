@@ -62,3 +62,22 @@ existed=true → report.attachments_deduped 计数断言）。
 自己引入），签名改 bool 后**该 mock 必须同步对齐**。随补丁时一并处理，
 补丁含「同资源二次 attach → existed=true → attachments_deduped 计数」测试。
 预计 0.5 人日内交付，Alpha 验收后合入。
+
+## 随补丁验收（2026-09-23 · commit a8dff80）
+
+**✅ 补丁通过，已 ff 合入 main。** request 闭环。
+
+- [x] trait `put → Result<bool>` + KvAttachmentStore 实现（existed 复用
+      `kv.exists` 查询结果，零额外开销）；
+- [x] `write_path::attach_to_note` 透传不消费（注释口径与批复一致）；
+- [x] `attachments_deduped` 预检计数（get_blob 探测，宽松降级不阻断）；
+- [x] nale 落实：`BrokenStore` mock 签名对齐；
+- [x] 承诺测试兑现：deduped 计数断言（同资源二次 attach → 1）+ put 直调
+      语义（首写 false / 复写 true）；
+- [x] core+import 双 crate：测试全绿（T=0，~478 tests）· clippy 零
+      warning（C=0）· fmt 清（F=0）。
+- minor（不阻塞，遗留清理）：`aurora-import/src/lib.rs::sha256_hex` 与
+  `aurora-core::attachment_store::sha256_hex`（pub）重复实现——DRY，下个
+  Bravo 切片顺手删除复用 core 版。
+- 存量（与本次无关）：`blocks.rs` 模块文档 rustdoc warning（中文入未闭合
+  代码块）——doc-test 阶段报警不影响退出码，Alpha 择期修。
