@@ -96,6 +96,17 @@ public class SyncEngine {
         try { close(); } finally { super.finalize(); }
     }
 
+    /**
+     * 网络状态推送入口（NetworkStateRelay 回调；DK-08 §7.3 仅 Wi-Fi 同步）。
+     * 静态 JNI — 对齐 mobile-ffi `Java_com_aurora_note_SyncEngine_nativeUpdateNetworkState`。
+     * 约定：0=NOT_METERED / 1=METERED / 2=Offline；越界值 Rust 侧归零放行。
+     */
+    public static void updateNetworkState(int state) {
+        nativeUpdateNetworkState(state);
+    }
+
+    private static native void nativeUpdateNetworkState(int state);
+
     private static native long nativeStart(long coreHandle);
     private static native String nativeLocalAddr(long engineHandle);
     private static native String[] nativeSyncNote(long engineHandle, long coreHandle,

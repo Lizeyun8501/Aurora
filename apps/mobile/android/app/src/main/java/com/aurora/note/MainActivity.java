@@ -30,6 +30,9 @@ public class MainActivity extends Activity {
 
     private WebView webView;
     private UniffiAppCore core;
+
+    /** DK-08 §7.3：网络状态中继（ConnectivityManager → SyncGate） */
+    private NetworkStateRelay networkRelay;
     /** P2P 同步引擎（懒启动，V19 §31 DEV-005） */
     private SyncEngine syncEngine;
 
@@ -47,6 +50,10 @@ public class MainActivity extends Activity {
             finish();
             return;
         }
+
+        // DK-08 §7.3：网络状态接线（registerDefaultNetworkCallback → JNI 推送）
+        networkRelay = new NetworkStateRelay(this);
+        networkRelay.register();
 
         // WebView 容器
         webView = new WebView(this);
@@ -200,6 +207,7 @@ public class MainActivity extends Activity {
             }
         }
 
+
         /** 保存 Loro 快照（base64，CRDT 合并）+ 持久化。 */
         @JavascriptInterface
         public boolean saveNoteSnapshot(String noteId, String snapshotBase64) {
@@ -311,6 +319,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (networkRelay != null) {
+            networkRelay.unregister();
+            networkRelay = null;
+        }
         if (webView != null) {
             webView.destroy();
             webView = null;
