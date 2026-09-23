@@ -90,6 +90,21 @@ pub fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// 附件 id 合法性校验（读取入口防注入：id 直接参与 KV 键拼接，
+/// `meta_key` / `note_idx_key` 均以 `:` 为分隔——白名单字符集 +
+/// 长度上限，杜绝键穿越 / 分隔符注入）。
+///
+/// 合法 id 形态：`new_attachment_id()` 生成的 `at-<uuid v4>`，校验只锁
+/// 字符集 `[A-Za-z0-9_-]` 与长度 1..=128，不锁前缀（外部来源 id 保持
+/// 兼容；渲染/读取层在调 store 前先过本函数）。
+pub fn validate_attachment_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 // ===== 通用 KV 实现（桌面 SQLite KV / 移动同源共用）=====
 
 pub struct KvAttachmentStore {
@@ -183,6 +198,25 @@ mod tests {
 
     fn store() -> KvAttachmentStore {
         KvAttachmentStore::new(Arc::new(MemoryKVStore::default()))
+    }
+
+    #[test]
+    fn dk09_validate_attachment_id_whitelist() {
+        // 合法：new_attachment_id 形态 + 任意白名单组合
+        assert!(validate_attachment_id(&new_attachment_id()));
+        assert!(validate_attachment_id(
+            "at-550e8400-e29b-41d4-a716-446655440000"
+        ));
+        assert!(validate_attachment_id("a_b-c"));
+        // 非法：空 / 超长 / 键分隔符注入 / 路径穿越 / 非白名单字符
+        assert!(!validate_attachment_id(""));
+        assert!(!validate_attachment_id(&"a".repeat(129)));
+        assert!(validate_attachment_id(&"a".repeat(128)));
+        assert!(!validate_attachment_id("at:meta-key-inject"));
+        assert!(!validate_attachment_id("../../etc/passwd"));
+        assert!(!validate_attachment_id("at-uuid/evil"));
+        assert!(!validate_attachment_id("空格 id"));
+        assert!(!validate_attachment_id("at%2e%2e"));
     }
 
     #[test]

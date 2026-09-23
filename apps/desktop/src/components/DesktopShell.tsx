@@ -36,6 +36,53 @@ export interface NoteContent {
   updated_at: string;
 }
 
+/** `cmd_read_attachment` 返回 DTO（与 src-tauri attachment_commands 对齐） */
+export interface ReadAttachment {
+  attachment_id: string;
+  note_id: string;
+  file_name: string;
+  mime: string;
+  size: number;
+  data_base64: string;
+}
+
+/** 正文中 `attachment://` 引用（DK-09 引用形态定调：`attachment://{id}`） */
+export interface AttachmentRef {
+  /** id（scheme 后本体） */
+  id: string;
+  /** markdown 链接 alt/文本（`![alt](...)` / `[alt](...)` 的 alt 段） */
+  label: string;
+  /** true = 图片语法 `![...]`（预览内联渲染），false = 普通链接 */
+  isImage: boolean;
+}
+
+const ATTACHMENT_LINK_RE = /(!?)\[([^\]\n]*)\]\(attachment:\/\/([^)\s]+)\)/g;
+
+/**
+ * 从 markdown 正文抽取 attachment:// 引用（DK-09 渲染接线）。
+ * - 只识别定调形态 `[...](attachment://{id})`（含图片 `!` 前缀）；
+ * - 同 id 多次引用去重（首处 label/形态生效）；
+ * - id 过白名单校验（与 core validate_attachment_id 同规则）——非法形态
+ *   直接忽略，不发 IPC（防注入面收敛在前端入口）。
+ */
+export function extractAttachmentRefs(content: string): AttachmentRef[] {
+  const seen = new Map<string, AttachmentRef>();
+  for (const m of content.matchAll(ATTACHMENT_LINK_RE)) {
+    const [, bang, label, id] = m;
+    if (seen.has(id)) continue;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) continue;
+    seen.set(id, { id, label: label || id, isImage: bang === '!' });
+  }
+  return [...seen.values()];
+}
+
+/** 人类可读大小（附件卡展示） */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export type MainView = 'notes' | 'today';
 
 /** browser-mock 演示数据 — 形状与内核 NoteSummary/NoteContent 对齐 */
@@ -260,8 +307,113 @@ function Sidebar(props: {
   );
 }
 
-function EditorPane(props: { note: NoteContent | null; loading: boolean }) {
-  const { note, loading } = props;
+/** 单个附件项：加载 `attachment://{id}` → 图片内联 / 文件卡 */
+function AttachmentItem(props: { invoke: InvokeFn | null; id: string; label: string; isImage: boolean }) {
+  const { invoke, id, label, isImage } = props;
+  const [data, setData] = useState<ReadAttachment | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setData(null);
+    setError(null);
+    if (!invoke) {
+      // browser-mock 模式（无 Tauri 宿主）：无内核可读，保持提示态
+      setError('mock 模式无附件内核');
+      return () => {
+        cancelled = true;
+      };
+    }
+    invoke('cmd_read_attachment', { attachment_id: id })
+      .then((r) => {
+        if (!cancelled) setData(r as ReadAttachment);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [invoke, id]);
+
+  if (error) {
+    return (
+      <div
+        style={{
+          padding: tokens.spacing.sm,
+          borderRadius: tokens.radius?.md ?? 6,
+          border: `1px solid ${tokens.color.bgElevated}`,
+          color: tokens.color.textSecondary,
+          fontSize: tokens.typography.caption.size,
+        }}
+      >
+        附件不可读: {label}（{error}）
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size }}>
+        加载附件… {label}
+      </div>
+    );
+  }
+  const src = `data:${data.mime};base64,${data.data_base64}`;
+  if (isImage && data.mime.startsWith('image/')) {
+    return (
+      <figure style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
+        <img
+          src={src}
+          alt={label}
+          style={{ maxWidth: '100%', borderRadius: tokens.radius?.md ?? 6, border: `1px solid ${tokens.color.bgElevated}` }}
+        />
+        <figcaption style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size }}>
+          {data.file_name} · {formatBytes(data.size)}
+        </figcaption>
+      </figure>
+    );
+  }
+  return (
+    <a
+      href={src}
+      download={data.file_name}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: tokens.spacing.xs,
+        padding: `${tokens.spacing.xs}px ${tokens.spacing.sm}px`,
+        borderRadius: tokens.radius?.md ?? 6,
+        border: `1px solid ${tokens.color.bgElevated}`,
+        color: tokens.color.focus ?? tokens.color.textPrimary,
+        textDecoration: 'none',
+        fontSize: tokens.typography.caption.size,
+      }}
+    >
+      📎 {data.file_name} · {formatBytes(data.size)}
+    </a>
+  );
+}
+
+/** 附件区：正文 attachment:// 引用的解析展示（无引用时不渲染） */
+function AttachmentStrip(props: { invoke: InvokeFn | null; content: string }) {
+  const { invoke, content } = props;
+  const refs = useMemo(() => extractAttachmentRefs(content), [content]);
+  if (refs.length === 0) return null;
+  return (
+    <div style={{ marginTop: tokens.spacing.md, display: 'flex', flexDirection: 'column', gap: tokens.spacing.sm }}>
+      {refs.map((r) => (
+        <AttachmentItem key={r.id} invoke={invoke} id={r.id} label={r.label} isImage={r.isImage} />
+      ))}
+    </div>
+  );
+}
+
+function EditorPane(props: {
+  note: NoteContent | null;
+  loading: boolean;
+  invoke: InvokeFn | null;
+}) {
+  const { note, loading, invoke } = props;
   if (loading) {
     return (
       <main style={{ flex: 1, padding: tokens.spacing.lg, color: tokens.color.textSecondary }}>
@@ -332,6 +484,8 @@ function EditorPane(props: { note: NoteContent | null; loading: boolean }) {
       >
         {note.content}
       </pre>
+      {/* DK-09 渲染接线：attachment:// 引用解析（图片内联 / 文件卡） */}
+      <AttachmentStrip invoke={invoke} content={note.content} />
     </main>
   );
 }
@@ -576,7 +730,7 @@ export default function DesktopShell() {
             )}
           </main>
         ) : (
-          <EditorPane note={content} loading={loading} />
+          <EditorPane note={content} loading={loading} invoke={invoke} />
         )}
       </div>
       <StatusBar mode={mode} stats={stats} />

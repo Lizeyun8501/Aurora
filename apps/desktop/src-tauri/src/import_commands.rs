@@ -29,7 +29,8 @@ fn get_core() -> Result<Arc<aurora_core::app_core::AppCore>, String> {
 
 /// 导入用 WriteContext（与笔记 command 同源；seal 对 = vault DEK at-rest，
 /// 形态与 `isomorphic_write_path::ctx_for` desktop 分支一致）。
-fn import_ctx() -> Result<WriteContext, String> {
+/// DK-09 渲染接线起提升为 `pub(crate)`：附件读取 command 同源复用。
+pub(crate) fn import_ctx() -> Result<WriteContext, String> {
     let core = get_core()?;
     let vault_opt = VAULT_STATE
         .lock()

@@ -17,6 +17,8 @@ tracing = { workspace = true }
 tracing-subscriber = "0.3"
 tokio = { workspace = true }
 uuid = { workspace = true }
+# 附件读取 IPC DTO（attachment:// 渲染接线 · DK-09）— 0.22 与依赖树对齐
+base64 = "0.22"
 chrono = { workspace = true }
 
 aurora-core = { path = "../../../crates/aurora-core" }

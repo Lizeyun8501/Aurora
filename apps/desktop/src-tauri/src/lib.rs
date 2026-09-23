@@ -27,6 +27,7 @@ use tracing::{info, warn};
 
 // ── 启动期常量与全局状态 ─────────────────────────────
 
+mod attachment_commands;
 mod import_commands;
 
 /// 桌面端默认数据目录名。
@@ -97,6 +98,7 @@ pub fn run() {
             cmd_get_backlinks,
             cmd_due_review_cards,
             cmd_review_card,
+            attachment_commands::cmd_read_attachment,
             import_commands::cmd_plan_import,
             import_commands::cmd_import_markdown_dir,
             import_commands::cmd_import_enex,

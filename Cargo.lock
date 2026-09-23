@@ -457,6 +457,7 @@ dependencies = [
  "aurora-core",
  "aurora-import",
  "aurora-security",
+ "base64 0.22.1",
  "chrono",
  "dirs-next",
  "serde",
