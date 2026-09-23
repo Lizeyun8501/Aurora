@@ -110,4 +110,5 @@ pub use iroh_transport::{
 pub use lan::{LanPeer, LanSyncEngine, MdnsDiscovery, SyncRoute};
 pub use offline_queue::{OfflineQueue, Priority, QueueItem};
 pub use p2p::{P2pSyncEngine, PeerId, SyncMessage, VersionVector};
+pub use router::{GateOutcome, ReplaySummary};
 pub use sync_gate::{GateDecision, NetworkClass, NetworkStateProvider, SyncGate};

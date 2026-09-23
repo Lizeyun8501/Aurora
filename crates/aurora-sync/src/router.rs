@@ -27,9 +27,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use aurora_core::traits::sync_target::{Connection, DocSet, Endpoint, SyncReport, SyncTarget};
+
+use crate::offline_queue::{OfflineQueue, QueueItem};
+use crate::sync_gate::{GateDecision, SyncGate};
 
 /// core 错误 → sync 错误（执行层归一化）。
 impl From<aurora_core::Error> for crate::Error {
@@ -228,6 +231,46 @@ pub struct SyncRouter {
     exec_targets: Mutex<HashMap<String, Arc<SharedTarget>>>,
     policy: RouterPolicy,
     clock: Arc<dyn Clock>,
+    /// 网络门（DK-08 §7.3 接线）：None = 未注入，行为与现状完全一致。
+    gate: Option<Arc<SyncGate>>,
+}
+
+/// 带门执行结果（`sync_via_route` / `route_and_execute` / 重放统一形态）。
+///
+/// - `Executed`：gate 放行（或未注入）→ 已发起传输，语义同改造前；
+/// - `Deferred`：策略推迟——**未发起传输、不计失败、不进熔断**；
+///   调用方转 `OfflineQueue` 延迟重试（策略拒绝不是错误）。
+#[derive(Debug)]
+pub enum GateOutcome<R> {
+    Executed(RouteDecision, R),
+    Deferred {
+        decision: RouteDecision,
+        gate: GateDecision,
+    },
+}
+
+impl<R> GateOutcome<R> {
+    /// 已执行结果（None = 被门推迟）。
+    pub fn executed(self) -> Option<(RouteDecision, R)> {
+        match self {
+            GateOutcome::Executed(d, r) => Some((d, r)),
+            GateOutcome::Deferred { .. } => None,
+        }
+    }
+
+    /// 是否被门推迟。
+    pub fn is_deferred(&self) -> bool {
+        matches!(self, GateOutcome::Deferred { .. })
+    }
+}
+
+/// 恢复重放统计（[`SyncRouter::replay_offline_queue`]）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReplaySummary {
+    /// 本次成功重放并出队的项数。
+    pub replayed: usize,
+    /// 因 Defer / 执行失败保留在队列的项数。
+    pub retained: usize,
 }
 
 impl SyncRouter {
@@ -239,6 +282,7 @@ impl SyncRouter {
             exec_targets: Mutex::new(HashMap::new()),
             policy,
             clock: Arc::new(SystemClock),
+            gate: None,
         }
     }
 
@@ -254,6 +298,27 @@ impl SyncRouter {
             exec_targets: Mutex::new(HashMap::new()),
             policy,
             clock,
+            gate: None,
+        }
+    }
+
+    /// DST 构造（注入时钟 + 网络门 — gate 接线切片）。
+    ///
+    /// 门注入后，`sync_via_route` / `route_and_execute` / 重放在发起
+    /// 传输前 `evaluate`；`Defer*` 决策不发起传输、不计失败、不进熔断。
+    pub fn with_gate(
+        entries: Vec<RouteEntry>,
+        policy: RouterPolicy,
+        clock: Arc<dyn Clock>,
+        gate: Arc<SyncGate>,
+    ) -> Self {
+        Self {
+            entries,
+            health: Mutex::new(HashMap::new()),
+            exec_targets: Mutex::new(HashMap::new()),
+            policy,
+            clock,
+            gate: Some(gate),
         }
     }
 
@@ -365,15 +430,26 @@ impl SyncRouter {
             .insert(url.to_string(), target);
     }
 
-    /// 执行层闭环: 决策 → 连接+同步（AttachedTarget）→ 健康度回报。
+    /// 执行层闭环: 决策 → **网络门** → 连接+同步（AttachedTarget）→ 健康度回报。
     ///
     /// 未 attach 的 url 走调用方自执行路径（返回决策）。
     /// 失败自动 report_failure（下轮 route 降级）。
+    ///
+    /// 门注入时发起传输前 `evaluate`：`Defer*` 返回 `Deferred`——
+    /// 未发起传输、不计失败、不进熔断；调用方转 OfflineQueue。
     pub async fn sync_via_route(
         &self,
         doc_ids: &[String],
-    ) -> Result<(RouteDecision, SyncReport), crate::Error> {
+    ) -> Result<GateOutcome<SyncReport>, crate::Error> {
         let decision = self.route()?;
+        // 门前置检查（gate 未注入 = Allow，行为与改造前一致）
+        if let Some(gate) = &self.gate {
+            let gd = gate.evaluate();
+            if gd != GateDecision::Allow {
+                info!(?gd, url = %decision.endpoint_url, "sync gated; defer to offline queue");
+                return Ok(GateOutcome::Deferred { decision, gate: gd });
+            }
+        }
         let target = {
             let m = self.exec_targets.lock().unwrap();
             m.get(&decision.endpoint_url).cloned()
@@ -400,7 +476,7 @@ impl SyncRouter {
                 let rtt = (self.clock.now_ms().saturating_sub(started)) as f64;
                 self.report_success(&decision.endpoint_url, rtt);
                 info!(url = %decision.endpoint_url, tier = ?decision.tier, "sync via route ok");
-                Ok((decision, report))
+                Ok(GateOutcome::Executed(decision, report))
             }
             Err(e) => {
                 self.report_failure(&decision.endpoint_url);
@@ -413,22 +489,93 @@ impl SyncRouter {
     pub async fn route_and_execute<R, Fut>(
         &self,
         execute: impl FnOnce(RouteDecision) -> Fut,
-    ) -> Result<(RouteDecision, R), crate::Error>
+    ) -> Result<GateOutcome<R>, crate::Error>
     where
         Fut: std::future::Future<Output = Result<R, crate::Error>>,
     {
         // 路由器只决策一次; 执行失败由调用方回报 report_failure，
         // 下次 route() 自动降级（决策与执行解耦 — 便于 DST 与生产一致）
         let decision = self.route()?;
+        // 门前置检查（发起传输前；未注入 = Allow）
+        if let Some(gate) = &self.gate {
+            let gd = gate.evaluate();
+            if gd != GateDecision::Allow {
+                info!(?gd, url = %decision.endpoint_url, "execute gated; defer to offline queue");
+                return Ok(GateOutcome::Deferred { decision, gate: gd });
+            }
+        }
         let url = decision.endpoint_url.clone();
         match execute(decision.clone()).await {
-            Ok(r) => Ok((decision, r)),
+            Ok(r) => Ok(GateOutcome::Executed(decision, r)),
             Err(e) => {
                 warn!(url = %url, error = %e, "execute failed; degradation next route");
                 self.report_failure(&url);
                 Err(e)
             }
         }
+    }
+
+    /// 恢复重放（DK-08 §7.3）：出队批量 → 逐项 **同样走 gate** → 执行。
+    ///
+    /// - gate 放行且执行成功 → `ack` 出队（幂等键索引一并清理）；
+    /// - gate `Defer*` → 当前项**原样保留**（re-enqueue，幂等键不变、
+    ///   排序不变），**本批剩余项不动**（网络状态同一时刻一致，无需重试）；
+    /// - 执行失败（真错误）→ 保留重入队（attempts 已随 dequeue 递增），
+    ///   不 ack——语义上仍是待重试。
+    ///
+    /// `execute` 是调用方提供的传输通道（与正常同步一致的重放执行体）；
+    /// 网络门在 router 内统一前置检查，重放不绕过 gate。
+    pub async fn replay_offline_queue<R, Fut, F>(
+        &self,
+        queue: &OfflineQueue,
+        batch: usize,
+        mut execute: F,
+    ) -> Result<ReplaySummary, crate::Error>
+    where
+        F: FnMut(QueueItem) -> Fut,
+        Fut: std::future::Future<Output = Result<R, crate::Error>>,
+    {
+        let mut summary = ReplaySummary::default();
+        for _ in 0..batch {
+            // Defer 后剩余项不 pop —— 原样留在队头
+            let Some(item) = queue.dequeue() else {
+                break;
+            };
+            let doc_id = item.doc_id.clone();
+            let key = item.idempotency_key.clone();
+            let gd = self
+                .gate
+                .as_ref()
+                .map(|g| g.evaluate())
+                .unwrap_or(GateDecision::Allow);
+            if gd != GateDecision::Allow {
+                self.requeue(queue, item)?;
+                summary.retained += 1;
+                debug!(?gd, %doc_id, "replay gated; item retained");
+                break;
+            }
+            match execute(item.clone()).await {
+                Ok(_) => {
+                    queue.ack(&key)?;
+                    summary.replayed += 1;
+                    debug!(%doc_id, "replayed");
+                }
+                Err(e) => {
+                    self.requeue(queue, item)?;
+                    summary.retained += 1;
+                    warn!(%doc_id, error = %e, "replay failed; retained");
+                }
+            }
+        }
+        Ok(summary)
+    }
+
+    /// 出队项保留重入队：先清幂等索引（dequeue 后索引仍在，直接
+    /// enqueue 会撞键丢项），再原样入队（created_at 不变 → 排序不变）。
+    fn requeue(&self, queue: &OfflineQueue, item: QueueItem) -> crate::Result<()> {
+        queue.ack(&item.idempotency_key)?;
+        queue.enqueue(item)?;
+        Ok(())
     }
 
     /// 健康度快照（诊断/测试）。
@@ -680,7 +827,12 @@ mod tests {
             }),
         );
 
-        let (decision, report) = r.sync_via_route(&["doc1".to_string()]).await.unwrap();
+        let (decision, report) = r
+            .sync_via_route(&["doc1".to_string()])
+            .await
+            .unwrap()
+            .executed()
+            .expect("gate 未注入恒 Executed");
         assert_eq!(decision.endpoint_url, "iroh://a");
         assert_eq!(report.sent_ops, 1);
 
@@ -817,7 +969,12 @@ mod tests {
         // 依赖策略; 简化断言: 再失败一次熔断后 LAN 接管
         let _ = r.sync_via_route(&["d".to_string()]).await;
         // P2P 连续失败 2 次 = 熔断
-        let (decision, report) = r.sync_via_route(&["d".to_string()]).await.unwrap();
+        let (decision, report) = r
+            .sync_via_route(&["d".to_string()])
+            .await
+            .unwrap()
+            .executed()
+            .expect("gate 未注入恒 Executed");
         assert_eq!(decision.endpoint_url, "lan://b", "熔断后降级 LAN");
         assert_eq!(report.sent_ops, 1);
     }
@@ -925,7 +1082,12 @@ mod tests {
         // 两次失败 → A 熔断 → 降级 LAN 真搬运
         let _ = r.sync_via_route(&["d".to_string()]).await;
         let _ = r.sync_via_route(&["d".to_string()]).await;
-        let (decision, report) = r.sync_via_route(&["d".to_string()]).await.unwrap();
+        let (decision, report) = r
+            .sync_via_route(&["d".to_string()])
+            .await
+            .unwrap()
+            .executed()
+            .expect("gate 未注入恒 Executed");
         assert_eq!(decision.endpoint_url, "lan://b");
         assert_eq!(report.sent_ops, 1, "LAN 真搬运推送");
         assert_eq!(report.received_ops, 1, "LAN 真搬运接收");
