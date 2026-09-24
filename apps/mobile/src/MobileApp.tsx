@@ -54,6 +54,9 @@ const I = {
   sync: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-7.9-4.7M3 12a9 9 0 0 1 9-9 9 9 0 0 1 7.9 4.7"/><path d="M21 3v5h-5M3 21v-5h5"/></svg>
   ),
+  wifi: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>
+  ),
   note: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg>
   ),
@@ -1205,6 +1208,31 @@ function AgentView({ theme }: { theme: string }) {
 // 设置 — V19 页面10 + 次级功能收纳（页面7）
 // ===========================================================================
 
+/** DK-08 §7.3: 仅 Wi-Fi 同步开关 — 初值读桥（KV 持久化在 Rust 侧），切换即时生效。 */
+function WifiOnlyRow({ showToast }: { showToast: (t: string) => void }) {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    setOn(platform.getWifiOnly());
+  }, []);
+  return (
+    <div className="settings-row">
+      <span className="settings-row-icon">{I.wifi}</span>
+      <span className="settings-row-label">
+        仅 Wi-Fi 同步
+        <div className="sub">蜂窝网络下暂停 P2P 同步，回到 Wi-Fi 自动恢复</div>
+      </span>
+      <Switch
+        checked={on}
+        onChange={(v) => {
+          setOn(v);
+          platform.setWifiOnly(v);
+          showToast(v ? '仅 Wi-Fi 同步已开启' : '仅 Wi-Fi 同步已关闭');
+        }}
+      />
+    </div>
+  );
+}
+
 function SettingsView({ theme, onTheme, showToast }: {
   theme: 'light' | 'dark';
   onTheme: (t: 'light' | 'dark') => void;
@@ -1259,6 +1287,7 @@ function SettingsView({ theme, onTheme, showToast }: {
           {syncOpen && (
             <div style={{ padding: '4px 12px 12px' }}><SyncPanel noteId="" /></div>
           )}
+          <WifiOnlyRow showToast={showToast} />
           <div className="settings-row" onClick={() => soon('冲突管理')}>
             <span className="settings-row-icon">{I.note}</span>
             <span className="settings-row-label">冲突管理</span>

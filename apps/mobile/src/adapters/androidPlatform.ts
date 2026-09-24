@@ -33,6 +33,9 @@ interface AndroidBridge {
   todayFocusSummary(): string;
   /** DK-07 S4: 笔记加密切换 — false = 非法级别/笔记不存在/降级 */
   setNoteEncryption(noteId: string, level: string): boolean;
+  /** DK-08 §7.3: 仅 Wi-Fi 同步开关（未初始化/异常 = false 不限制） */
+  getWifiOnly(): boolean;
+  setWifiOnly(on: boolean): void;
   saveNoteContent(noteId: string, content: string): number;
   deleteNote(noteId: string): number;
   searchNotes(query: string): string;
@@ -210,6 +213,22 @@ export const platform = {
         snippet: n.content.slice(0, 80),
         score: 1,
       }));
+  },
+
+  // -------------------------------------------------------------------------
+  // DK-08 §7.3 仅 Wi-Fi 同步 — mock 模式恒 false（不限制）+ 无操作
+  // -------------------------------------------------------------------------
+
+  getWifiOnly(): boolean {
+    return bridge()?.getWifiOnly() ?? false;
+  },
+
+  setWifiOnly(on: boolean): void {
+    try {
+      bridge()?.setWifiOnly(on);
+    } catch {
+      // 浏览器 mock / 桥异常：静默无操作
+    }
   },
 
   // -------------------------------------------------------------------------

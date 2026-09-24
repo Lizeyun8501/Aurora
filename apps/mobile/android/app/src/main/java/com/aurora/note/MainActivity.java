@@ -122,6 +122,26 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** DK-08 §7.3: 查询「仅 Wi-Fi 同步」（未初始化/异常恒 false = 不限制）。 */
+        @JavascriptInterface
+        public boolean getWifiOnly() {
+            try {
+                return core != null && core.getWifiOnly();
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        /** DK-08 §7.3: 设置「仅 Wi-Fi 同步」（KV 持久化 + 门即时切换）。 */
+        @JavascriptInterface
+        public void setWifiOnly(boolean on) {
+            try {
+                if (core != null) core.setWifiOnly(on);
+            } catch (Exception e) {
+                // 桥线程静默：失败值由下次 getWifiOnly 读取反映
+            }
+        }
+
         @JavascriptInterface
         public String todayFocusSummary() {
             try {
