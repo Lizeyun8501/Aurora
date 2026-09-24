@@ -17,7 +17,7 @@ DK-0F 实测三前端两编辑器栈，核心断言在今天（2026-09-24）复�
 | `apps/web` | TipTap（无 CRDT） | 零迭代遗留，无 CI/workspace 特殊引用 |
 | `apps/desktop/src` | 无编辑器内核 | **Tauri 实际加载**（`frontendDist: "../dist"`），M2 全部桌面 UI 交付落点 |
 | `apps/mobile` | ProseMirror + loro-prosemirror 0.4.4 | 唯一接 Loro 的编辑器端 |
-| `shared/ui-components` | TipTap 系 editors | **零真实 import**——mobile 的 `@aurora/ln` alias 指向不存在的 `shared/ln/src`（死路径），desktop 无共享层依赖声明 |
+| `shared/ui-components` | TipTap 系 editors | **双端零真实 import**（2026-09-24 count=0 核实；依赖声明与 vite alias 本身正确） |
 
 ### 与 DK-0F 卡的偏差
 
@@ -49,12 +49,14 @@ M2 执行期间实际走向了相反路线：
 - TipTap 全系依赖从所有 package.json 移除（可选依赖亦不保留，避免双栈复活）;
 - `loro-crdt` / `loro-prosemirror` / `prosemirror-*` 以 peerDependencies 声明于共享层，由宿主（desktop / mobile）提供。
 
-### D3 — 共享层唯一化与三名分裂修复
+### D3 — 共享层启用策略（2026-09-24 勘误修订）
 
-现状三名分裂：目录 `shared/ui-components` ≠ package name `ln-components` ≠ 引用名 `@aurora/ln`（alias 死路径）。收敛为：
+> 初稿曾判定「三名分裂 / `@aurora/ln` alias 死路径」——**勘误：不成立**。该结论源于核实过程中 Bash rg 大输出被压缩的伪影（`@aurora/ui-components` 被截断显示）。实测 mobile 依赖声明（package.json）与 vite alias 均正确指向 `shared/ui-components`，desktop 亦已声明 `@aurora/shared-types`。通道本就畅通，问题只是**无人使用**（双端 import count=0）。
 
-- package name 固定 **`@aurora/ln`**，目录保留 `shared/ui-components`（避免大移动），vite alias 修正为指向 `../../shared/ui-components/src/index.ts`;
-- desktop / mobile 双端 package.json 显式声明并真实 import（blocks 渲染器、stores、hooks 优先——editors 待 D2 上移后接入）;
+收敛为：
+
+- package name 固定现名 **`@aurora/ui-components`**，双端 alias/paths 已就位，无需修改；
+- **零 import 的解法不是修通道，而是产生真实引用**：第一处真实 import 由 D2 编辑器上移自然达成（mobile import 上移后的共享层编辑器）；当前双端 UI 均为共享层的功能等价自实现，强行替换皆属行为变更——**禁止为 DoD 摆拍 import**；
 - `shared/core-api`、`shared/types` 不在本 ADR 范围（契约层归 DK-00/R-02）。
 
 ### D4 — 无障碍
@@ -66,15 +68,15 @@ M2 执行期间实际走向了相反路线：
 ## 任务分解
 
 1. **删除 `apps/web`** + 清理 TipTap 依赖与 vite 残留配置（桌面侧独立可做，先行）
-2. **共享层别名修复**：`@aurora/ln` alias 改指真实路径，desktop/mobile 声明依赖，blocks/stores 至少各 1 处真实 import（达成 DK-0F DoD 的非零引用项）
-3. **编辑器上移**：mobile editor 三件套迁入共享层 editors/，TipTap 系 editors 删除
-4. **桌面编辑器接入**：desktop shell 正文区从预览组件升级为共享层 DocumentEditor（ProseMirror + Loro 绑定）——即 DK-05 的起点，边界划归 DK-05 卡执行
+2. ~~共享层别名修复~~（勘误后撤销：双端通道本就正确，无需修改）
+3. **编辑器上移**：mobile editor 三件套迁入共享层 editors/，schema 以共享层 `auroraSchema.ts`（334 行演进版）为基线吸收 mobile 版（168 行），TipTap 系 editors 删除；完成后共享层达成 ≥1 处真实 import（DK-0F DoD 项落地）
+4. **桌面编辑器接入**：EditorPane 纯文本 `<pre>` 预览升级为共享层 DocumentEditor（ProseMirror + Loro 绑定）——即 DK-05 的起点，边界划归 DK-05 卡执行
 5. 全程每步跑双端编译门禁
 
 ## 退出条件（= DK-0F DoD 复核版）
 
 - [ ] `frontendDist` 唯一指向 desktop 产物，`apps/web` 不存在
-- [ ] `@aurora/ln` 被 desktop 与 mobile 至少各 1 处真实 import（非 alias 死路径）
+- [ ] `@aurora/ui-components` 被至少 1 处真实 import（由任务 3 编辑器上移达成）
 - [ ] 桌面端编辑器与 Loro CRDT 建立绑定（D2 完成后）
 - [ ] 双端编译门禁绿（desktop tsc+vite build / mobile tsc+vite build）
 
@@ -87,4 +89,5 @@ M2 执行期间实际走向了相反路线：
 ## 风险
 
 - loro-prosemirror 桌面端行为需按 DK-05M-V 报告「真机补验清单」思路在桌面侧复验输入时序（滚轮/IME 组合输入）——列入 DK-05 开工首项
-- 三名分裂修复可能触及 CI 路径断言（R-00 门禁脚本），改动时同步核对 workflow 文件
+- 删除 apps/web 前核对 CI workflow 与 tsconfig.base 的路径引用，避免门禁误伤
+- 经验沉淀：代码级事实判定必须走 Read 通道（Bash rg 大输出压缩会产生 `n` 等伪影标识符，本次初稿即被误导）
