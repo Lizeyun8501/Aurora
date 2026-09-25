@@ -194,7 +194,8 @@ jobs:
       - name: Report crash tail
         if: failure()
         run: |
-          echo "::error::dcheck last-compiling>> $(rg 'Compiling|Checking' /tmp/dcheck.log | tail -3 | tr '\n' '§')"
-          rg '^error(\[E[0-9]+\])?:' /tmp/dcheck.log | sort -u | head -12 | while IFS= read -r line; do
-            echo "::error::${line:0:300}"
-          done
+          echo "::error::dcheck-log-bytes>> $(wc -c < /tmp/dcheck.log 2>/dev/null || echo missing)"
+          echo "::error::df>> $(df -h / | tail -1 | tr -s ' ')"
+          echo "::error::free>> $(free -h | sed -n 2p | tr -s ' ')"
+          echo "::error::oom>> $(sudo dmesg 2>/dev/null | rg -i 'oom|killed process' | tail -4 | tr '\n' '§' || echo none)"
+          echo "::error::raw-tail>> $(tail -c 1200 /tmp/dcheck.log 2>/dev/null | tr '\n' '§' | tr '\r' ' ')"
