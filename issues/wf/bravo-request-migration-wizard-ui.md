@@ -74,3 +74,13 @@
 - **前端**（`ImportWizard.tsx`）：tauri 真机建 `Channel`（`on_progress` snake_case，与既有参数同款），`onmessage` 更新进度态；**补齐 running 渲染分支**（此前 phase='running' 时向导主体空白——submitting 兜底失效的隐藏 bug）：条目计数 + progressbar（aria-valuemin/max/now，A 项随带）+ 当前 source 截断展示；browser-mock 传 null（Rust Option→None）「导入中…」兜底；reset 清 progress/submitting。
 - **验证**：desktop tsc --noEmit 零错 + vite build 通过（本环境）；src-tauri 因本环境缺 gtk3 系统库不可本地 check（CI 同款限制，历史既有），tauri 层由 CI `cargo check -p aurora-desktop` 门禁验证（类型面已人工核对：三 Options 均有 progress 字段、ProgressEvent Clone+Serialize 齐、tauri 2 `ipc::Channel` 可选参数）。
 - **语义备注**：进度为尽力通知——`current/total` 为 only 过滤后会话计数，含跳过条目；防重语义不变（(source, content_hash)）。
+
+## Alpha 回执（2026-09-25 续）：CI 验证闭环 + 三处修正
+
+**验证：CI Run 156 全绿**（Rustfmt/Clippy/MSRV/Test/desktop-check 五 job 通过）——上节回执的「tauri 层由 CI 验证」就此闭环。期间修正三处错误（教训：上一节「类型面已人工核对」漏了两处，src-tauri 自 d4bbe22 起 CI 从未真正验证过）：
+
+1. **E0277**：`Option<Channel<ProgressEvent>>` 不满足 tauri CommandArg（Channel 不可包 Option）。改为 command 参数非 Optional `on_progress: Channel<ProgressEvent>`，前端真机必传（browser-mock 不 invoke 无影响）——上节「browser-mock 传 null（Rust Option→None）」的方案作废。
+2. **E0063**：`ImportOptions` 具名字面量初始化漏 `include_hidden`/`max_depth`——三 options 均补 `..Default::default()`。
+3. **E0382**（`lib.rs` setup，49ae86c 引入）+ **E0603**（`ImportReport` 未导出，d4bbe22 起）：BOOTED_STATE 赋值移至字段 clone 之后；aurora-import lib.rs 补 `pub use report::{ImportError, ImportReport}`。并清 unused import/dead_code（CI `-D warnings` 下会红）。
+
+**本地验证基建**：stub pkg-config（`/home/z/fake-pc`）+ PKG_CONFIG_PATH 使本环境可 `cargo check -p aurora-desktop`（sys crate 仅查 pkg-config）——本切片 0 error 0 warning + fmt 绿 + aurora-import 测试全过后再 push。
