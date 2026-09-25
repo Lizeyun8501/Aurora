@@ -83,26 +83,27 @@ jobs:
             libxdo-dev \
             patchelf
       - uses: Swatinem/rust-cache@v2
-      # 2026-09-25: 失败时把错误尾+磁盘状态写入 job summary（匿名可见）——
-      # runner 日志页已要求登录，summary 是唯一免认证诊断通道。
+      # 2026-09-25: 失败时把错误尾写入 job summary（匿名可见）——runner 日志页
+      # 已要求登录，summary 是唯一免认证诊断通道。pipefail 直写，不走 PIPESTATUS。
       - name: Build
         run: |
-          cargo build --workspace --verbose 2>&1 | tee /tmp/build.log
-          test ${PIPESTATUS[0]} -eq 0 || {
-            echo '### Test Build tail' >> "$GITHUB_STEP_SUMMARY"
+          set -o pipefail
+          df -h / > "$GITHUB_STEP_SUMMARY" || true
+          echo '### Build (workspace, exclude aurora-desktop via test)' >> "$GITHUB_STEP_SUMMARY"
+          cargo build --workspace --verbose 2>&1 | tee /tmp/build.log || {
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            tail -60 /tmp/build.log >> "$GITHUB_STEP_SUMMARY"
+            tail -80 /tmp/build.log >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             df -h / >> "$GITHUB_STEP_SUMMARY"
             exit 1
           }
       - name: Test
         run: |
-          cargo test --workspace --exclude aurora-desktop --verbose 2>&1 | tee /tmp/test.log
-          test ${PIPESTATUS[0]} -eq 0 || {
+          set -o pipefail
+          cargo test --workspace --exclude aurora-desktop --verbose 2>&1 | tee /tmp/test.log || {
             echo '### Test run tail' >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            tail -60 /tmp/test.log >> "$GITHUB_STEP_SUMMARY"
+            tail -80 /tmp/test.log >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           }
@@ -158,14 +159,15 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # 2026-09-25: 同 Test job——失败错误尾写入 summary（免认证诊断）。
+      # 2026-09-25: 同 Test job——pipefail 直写 summary（免认证诊断）。
       - name: Check desktop crate
         run: |
-          cargo check -p aurora-desktop 2>&1 | tee /tmp/dcheck.log
-          test ${PIPESTATUS[0]} -eq 0 || {
-            echo '### desktop-check tail' >> "$GITHUB_STEP_SUMMARY"
+          set -o pipefail
+          df -h / > "$GITHUB_STEP_SUMMARY" || true
+          echo '### desktop-check' >> "$GITHUB_STEP_SUMMARY"
+          cargo check -p aurora-desktop 2>&1 | tee /tmp/dcheck.log || {
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            tail -60 /tmp/dcheck.log >> "$GITHUB_STEP_SUMMARY"
+            tail -80 /tmp/dcheck.log >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             df -h / >> "$GITHUB_STEP_SUMMARY"
             exit 1
