@@ -83,11 +83,13 @@ jobs:
             libxdo-dev \
             patchelf
       - uses: Swatinem/rust-cache@v2
-      # 2026-09-25: summary 通道在本 runner 不可写（exit 1 且 summary 空）——
-      # 改走 artifacts（公开 API 匿名可下载）作诊断通道。PIPESTATUS 显式取码。
+      # 2026-09-25 根因收敛：run151 dcheck-log 仅 9.76KB（~200 crate 处挂，exit 101）
+      # → cargo check 无链接也挂 → 非链接期盘满，是 loro 系 C++ 并行编译 OOM
+      # （本地 4G 串行全绿佐证）。三管齐下：Build 排除 desktop（职责分离，
+      # clippy/test 同集合已绿）、desktop-check 加 4G swap、削并行度。
       - name: Build
         run: |
-          cargo build --workspace --verbose 2>&1 | tee /tmp/build.log; rc=${PIPESTATUS[0]}
+          cargo build --workspace --exclude aurora-desktop --verbose 2>&1 | tee /tmp/build.log; rc=${PIPESTATUS[0]}
           echo "BUILD_RC=$rc"; df -h / || true
           exit $rc
       - name: Upload build log
@@ -163,10 +165,20 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # 2026-09-25: 同 Test job——artifacts 诊断通道。
+      # 2026-09-25: loro 系 C++ 编译内存峰值 → 加 4G swap 兜底 + 削并行度。
+      - name: Add swap
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 4G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+      # 2026-09-25: artifacts 为诊断通道（公开可下载）；PIPESTATUS 显式取码。
       - name: Check desktop crate
         run: |
-          cargo check -p aurora-desktop 2>&1 | tee /tmp/dcheck.log; rc=${PIPESTATUS[0]}
+          CARGO_BUILD_JOBS=2 cargo check -p aurora-desktop 2>&1 | tee /tmp/dcheck.log; rc=${PIPESTATUS[0]}
           echo "CHECK_RC=$rc"; df -h / || true
           exit $rc
       - name: Upload dcheck log
