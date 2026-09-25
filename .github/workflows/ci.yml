@@ -189,3 +189,9 @@ jobs:
           path: /tmp/dcheck.log
           retention-days: 3
           if-no-files-found: ignore
+      # 2026-09-25: ::error:: 命令 → annotation（check-run API 匿名可读），
+      # 这是 runner 日志/artifact 全部要求登录后的唯一免认证诊断通道。
+      - name: Report crash tail
+        if: failure()
+        run: |
+          echo "::error::dcheck tail>> $(tail -c 2000 /tmp/dcheck.log | tr '\n' '§' | tr '\r' ' ')"
