@@ -10,8 +10,6 @@
 use aurora_bootstrap::BootedApp;
 use std::sync::{Arc, Mutex};
 
-use crate::APP_STATE;
-
 /// bootstrap 结果的进程级缓存（wifi_only 读写需 BootedApp 方法；
 /// setup 阶段与 APP_STATE 同步注入）。
 pub(crate) static BOOTED_STATE: Mutex<Option<Arc<BootedApp>>> = Mutex::new(None);

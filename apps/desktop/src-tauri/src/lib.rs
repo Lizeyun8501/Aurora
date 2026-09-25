@@ -44,16 +44,8 @@ static VAULT_STATE: Mutex<Option<Arc<LocalDekVault>>> = Mutex::new(None);
 static ATTACH_STATE: Mutex<Option<Arc<dyn aurora_core::attachment_store::AttachmentStore>>> =
     Mutex::new(None);
 /// 同步门（DK-08 §7.3 — bootstrap 装配，setup 注入；wifi_only 运行时切换）。
+/// 注：读取侧暂无调用方（wifi_only 读写经 BootedApp 同源语义），访问器随需再补。
 static SYNC_GATE_STATE: Mutex<Option<Arc<aurora_sync::sync_gate::SyncGate>>> = Mutex::new(None);
-
-/// 取同步门全局单例（未初始化返回 Err）。
-fn get_sync_gate() -> Result<Arc<aurora_sync::sync_gate::SyncGate>, String> {
-    SYNC_GATE_STATE
-        .lock()
-        .expect("SYNC_GATE_STATE mutex poisoned")
-        .clone()
-        .ok_or_else(|| "应用尚未初始化".into())
-}
 
 /// 获取用户数据目录路径。
 ///
@@ -135,12 +127,14 @@ pub fn run() {
             *SYNC_GATE_STATE
                 .lock()
                 .expect("SYNC_GATE_STATE mutex poisoned") = Some(booted.sync_gate.clone());
-            *sync_commands::BOOTED_STATE
-                .lock()
-                .expect("BOOTED_STATE mutex poisoned") = Some(std::sync::Arc::new(booted));
             *APP_STATE.lock().expect("APP_STATE mutex poisoned") = Some(booted.core.clone());
             *ATTACH_STATE.lock().expect("ATTACH_STATE mutex poisoned") =
                 Some(booted.attachments.clone());
+            // BOOTED_STATE 的 move 必须最后——booted 的其余字段先 clone 完
+            // （E0382 borrow-after-move，49ae86c 引入 · 2026-09-25 修）。
+            *sync_commands::BOOTED_STATE
+                .lock()
+                .expect("BOOTED_STATE mutex poisoned") = Some(std::sync::Arc::new(booted));
             info!("AppCore startup complete");
 
             // 注册平台能力（托盘/快捷键/剪贴板/通知），供后续 command 使用

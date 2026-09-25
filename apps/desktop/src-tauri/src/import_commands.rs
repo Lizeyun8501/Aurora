@@ -15,7 +15,7 @@ use aurora_import::{
     plan_opml_file, EnexImportOptions, ImportOptions, OpmlImportOptions, ProgressEvent,
 };
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tauri::ipc::Channel;
 
 use crate::{APP_STATE, ATTACH_STATE, VAULT_STATE};
