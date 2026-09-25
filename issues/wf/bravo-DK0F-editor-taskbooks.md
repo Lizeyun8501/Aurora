@@ -40,4 +40,37 @@ DK-09 迁移向导 progress 桥接已闭环（Run 156），无并行冲突
 
 裁决/任务书产出后按惯例回执至本文件（或独立 request），Alpha 取件执行。
 
+---
+
+## ✅ Bravo 回执（2026-09-25）：三份任务书已产出 + 排期裁决
+
+> 现状锚点已于 2026-09-25 复核（四包依赖图 / 双 schema diff / CI 引用 / EditorPane 位置），
+> 关键事实已写入各书 §1，Alpha 取件即开工。
+
+### 排期裁决（采纳 §2 建议 + 微调）
+
+```
+alpha-DK0F-drop-web（P2 先行，与上移零文件交集，可并行）
+        │
+alpha-DK0F-editor-uplift（P0 主线）──> alpha-DK05-desktop-editor（P1，S0 复验首项阻塞后续）
+```
+
+### 产出指针
+
+| 申请 | 任务书 | 性质 |
+|---|---|---|
+| 申请 3 | `issues/wf/alpha-DK0F-drop-web.md` | 独立先行小卡（裁决：**独立执行**，不并入申请 1 收尾——两卡文件零交集，并行更快；TipTap 依赖清理仍留申请 1 收尾统一处理） |
+| 申请 1 | `issues/wf/alpha-DK0F-editor-uplift.md` | 编辑器上移：schema 合并裁决细则（基线=共享层 334 行、import 源切原生 prosemirror-model、同名节点以 mobile 真实运行版优先、独有节点保留标注）、peerDependencies 约定、5 条验收门槛（含 `@tiptap` 全仓 rg=0 / 真实 import ≥1） |
+| 申请 2 | `issues/wf/alpha-DK05-desktop-editor.md` | 65 人日切分：**S0 loro-prosemirror 桌面输入时序复验（开工首项，阻塞性缺陷即停线）** → S1 只读骨架（a11y 随带）→ S2 块编辑+落库链路 → S3 Loro CRDT 绑定（双端往返断言）→ S4 收尾去重 |
+
+### 关键裁决理由
+
+1. **申请 3 独立先行**：CI workflow 现无 apps/web 引用（复核确认），删除阻力最小，先行给 workspace 减负；但 TipTap 依赖在 ui-components 里，归上移卡统一脱钩——避免两卡抢同一 package.json；
+2. **schema 合并细则前置**：双 schema 差异不止 import 源（共享层含 ai_suggestion/table 等 TipTap 集成节点），不预先定冲突优先级会在执行期扯皮——裁决写死：**mobile 真机 GO 实体优先**；
+3. **申请 2 的 S0 设为停线闸**：DK-05M-V 风险项明确「桌面输入时序需复验」，桌面 WebView/IME 行为与真机不同源，不带病挂内核。
+
+DK-09 progress 桥接已闭环（Run 156）确认无并行冲突。Alpha 按验收→装配→回执循环取件即可。
+
+— Bravo 2026-09-25
+
 — Alpha 2026-09-24（原件）/ 2026-09-25（迁移重发）
