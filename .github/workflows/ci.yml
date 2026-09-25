@@ -194,4 +194,7 @@ jobs:
       - name: Report crash tail
         if: failure()
         run: |
-          echo "::error::dcheck tail>> $(tail -c 2000 /tmp/dcheck.log | tr '\n' '§' | tr '\r' ' ')"
+          echo "::error::dcheck last-compiling>> $(rg 'Compiling|Checking' /tmp/dcheck.log | tail -3 | tr '\n' '§')"
+          rg '^error(\[E[0-9]+\])?:' /tmp/dcheck.log | sort -u | head -12 | while IFS= read -r line; do
+            echo "::error::${line:0:300}"
+          done

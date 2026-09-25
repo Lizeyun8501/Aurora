@@ -159,13 +159,11 @@ export default function ImportWizard({ invoke, onClose }: { invoke: InvokeFn | n
     const only = [...selected];
     const cmd =
       kind === 'markdown' ? 'cmd_import_markdown_dir' : kind === 'enex' ? 'cmd_import_enex' : 'cmd_import_opml';
-    // 进度通道：tauri 真机（invoke 非 mock 注入）时建 Channel，桥接内核
-    // ProgressEvent 流；browser-mock 环境传 null（Rust 侧 Option→None）。
-    let onProgress: Channel<ProgressEvent> | null = null;
-    if (invoke && typeof Channel === 'function') {
-      onProgress = new Channel<ProgressEvent>();
-      onProgress.onmessage = (ev) => setProgress(ev);
-    }
+    // 进度通道：Channel 不可为 null（Rust 侧 command 参数非 Option——
+    // tauri 的 Option<Channel> 不满足 CommandArg），真机必传；browser-mock
+    // 环境不会真正 invoke（call() 直接 throw），无兼容性问题。
+    const onProgress = new Channel<ProgressEvent>();
+    onProgress.onmessage = (ev) => setProgress(ev);
     const args: Record<string, unknown> =
       kind === 'enex'
         ? { file: source, manifest_dir: manifestDir || null, only, attachments_dir: attachmentsDir || null, on_progress: onProgress }

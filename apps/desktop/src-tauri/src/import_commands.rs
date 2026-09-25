@@ -98,15 +98,14 @@ fn manifest(dir: Option<String>) -> Option<PathBuf> {
 /// progress 桥接：内核 `options.progress`（mpsc UnboundedSender）→ Tauri IPC
 /// `Channel<ProgressEvent>`。转发任务在 sender 全部 drop（import 结束）后收尾；
 /// 调用方须在 import 返回后 `JoinHandle::await`，保证最后一批事件 flush。
+/// 注：Channel 不可包 Option（Option 的 CommandArg blanket 要求 Deserialize），
+/// 故 command 参数非 Optional，前端在 tauri 环境下必传。
 fn progress_bridge(
-    chan: Option<Channel<ProgressEvent>>,
+    chan: Channel<ProgressEvent>,
 ) -> (
-    Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
-    Option<tokio::task::JoinHandle<()>>,
+    tokio::sync::mpsc::UnboundedSender<ProgressEvent>,
+    tokio::task::JoinHandle<()>,
 ) {
-    let Some(chan) = chan else {
-        return (None, None);
-    };
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ProgressEvent>();
     let forward = tokio::spawn(async move {
         while let Some(ev) = rx.recv().await {
@@ -114,7 +113,7 @@ fn progress_bridge(
             let _ = chan.send(ev);
         }
     });
-    (Some(tx), Some(forward))
+    (tx, forward)
 }
 
 /// Markdown 目录导入（可选防重 / 选择性 / 进度）。
@@ -123,21 +122,20 @@ pub async fn cmd_import_markdown_dir(
     dir: String,
     manifest_dir: Option<String>,
     only: Option<Vec<String>>,
-    on_progress: Option<Channel<ProgressEvent>>,
+    on_progress: Channel<ProgressEvent>,
 ) -> Result<aurora_import::ImportReport, String> {
     let ctx = import_ctx()?;
     let (progress, forward) = progress_bridge(on_progress);
     let options = ImportOptions {
         manifest_dir: manifest(manifest_dir),
         only: only.unwrap_or_default(),
-        progress,
+        progress: Some(progress),
+        ..Default::default()
     };
     let report = import_markdown_dir(&ctx, &PathBuf::from(&dir), &options)
         .await
         .map_err(|e| format!("导入失败 {}: {}", e.path.display(), e.reason));
-    if let Some(f) = forward {
-        let _ = f.await;
-    }
+    let _ = forward.await;
     report
 }
 
@@ -148,7 +146,7 @@ pub async fn cmd_import_enex(
     manifest_dir: Option<String>,
     only: Option<Vec<String>>,
     attachments_dir: Option<String>,
-    on_progress: Option<Channel<ProgressEvent>>,
+    on_progress: Channel<ProgressEvent>,
 ) -> Result<aurora_import::ImportReport, String> {
     let ctx = import_ctx()?;
     let (progress, forward) = progress_bridge(on_progress);
@@ -156,14 +154,13 @@ pub async fn cmd_import_enex(
         manifest_dir: manifest(manifest_dir),
         only: only.unwrap_or_default(),
         attachments_dir: attachments_dir.map(PathBuf::from),
-        progress,
+        progress: Some(progress),
+        ..Default::default()
     };
     let report = import_enex(&ctx, &PathBuf::from(&file), &options)
         .await
         .map_err(|e| format!("导入失败 {}: {}", e.path.display(), e.reason));
-    if let Some(f) = forward {
-        let _ = f.await;
-    }
+    let _ = forward.await;
     report
 }
 
@@ -173,20 +170,19 @@ pub async fn cmd_import_opml(
     file: String,
     manifest_dir: Option<String>,
     only: Option<Vec<String>>,
-    on_progress: Option<Channel<ProgressEvent>>,
+    on_progress: Channel<ProgressEvent>,
 ) -> Result<aurora_import::ImportReport, String> {
     let ctx = import_ctx()?;
     let (progress, forward) = progress_bridge(on_progress);
     let options = OpmlImportOptions {
         manifest_dir: manifest(manifest_dir),
         only: only.unwrap_or_default(),
-        progress,
+        progress: Some(progress),
+        ..Default::default()
     };
     let report = import_opml_file(&ctx, &PathBuf::from(&file), &options)
         .await
         .map_err(|e| format!("导入失败 {}: {}", e.path.display(), e.reason));
-    if let Some(f) = forward {
-        let _ = f.await;
-    }
+    let _ = forward.await;
     report
 }
