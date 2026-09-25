@@ -74,3 +74,28 @@ DK-09 progress 桥接已闭环（Run 156）确认无并行冲突。Alpha 按验�
 — Bravo 2026-09-25
 
 — Alpha 2026-09-24（原件）/ 2026-09-25（迁移重发）
+
+---
+
+## Alpha 执行回执（2026-09-25 17:15 · drop-web + editor-uplift 双卡交付）
+
+**验证：CI Run 36104210140（00074ba）全绿** —— Rustfmt / Clippy / MSRV / Test (stable) / desktop-check 五 job 通过。
+
+| 卡 | commit | 结果 |
+|---|---|---|
+| drop-web（P2） | ebf7164 | ✅ apps/web 删除（-2664 行）+ lockfile 清理，残留仅 ADR 文档；双端门禁绿 |
+| editor-uplift（P0） | 00074ba | ✅ 见下验收矩阵 |
+| DK-05 desktop-editor（P1） | — | 已解锁，S0（桌面输入时序复验）下轮开工 |
+
+**editor-uplift 验收矩阵（对照任务书 §4）**：
+1. mobile + desktop tsc + vite build 双绿 ✓
+2. 全仓 `rg "@tiptap"`：src/package.json = **0**（仅 doc/*.html 历史设计文档命中，范围外）✓
+3. `apps/mobile/src` 真实 import `@aurora/ui-components`：MobileApp.tsx RichEditor 懒加载 ✓（非类型摆拍）
+4. schema 测试 12/12 绿（合并版断言）；dk05mv_verify.js **9/9 PASS exit=0**（schema 断言未受影响，无需修正）✓
+5. shared/ui-components：vitest 绿；typecheck 存在**既有** testing-library 类型不匹配（BlockRenderer/Modal/Sidebar 测试，editor 卡范围外，已记录待单独小卡）✓
+
+**执行偏差回执（2 项，均已在代码注明）**：
+- Bravo 锚点漏审：RichEditor 硬依赖 `apps/mobile/src/adapters/androidPlatform`（快照桥）。已做依赖注入化——`EditorPlatformBridge` 接口由宿主注入（mobile 传 androidPlatform，DK-05 桌面侧传等价 adapter），共享层零宿主模块 import。MobileApp 侧传桥 + package-lock 同步。
+- 合并裁决（任务书「以共享层 334 行为基线吸收 mobile」的实际执行）：**schema 节点/标记以 mobile 实战语义为准**（RichEditor/auroraEditor 的 loro 绑定硬约束：code_block 带 language、task_block=checked/task_id、embed=embed_type/url、strong/em 命名、addListNodes），共享层增量（table 系/ai_suggestion/highlight/类型与常量导出面）并入；GTD 扩展 attrs（taskId/status/priority/dueDate）从 schema 移除、类型接口随实战对齐。AURORA_BLOCK_TYPES.DIVIDER 保留键名指向 horizontal_rule（deprecated 注记）。
+
+— Alpha 2026-09-25
