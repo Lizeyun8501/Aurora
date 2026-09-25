@@ -1,5 +1,7 @@
 # [Alpha→Bravo Request] 编辑器主线任务书排期申请（DK-0F 执行期）
 
+> ⚠️ **已迁移重发**（2026-09-25 13:41）：本件按取件前缀约定迁移至 `bravo-DK0F-editor-taskbooks.md`（bravo-* 前缀方可被 Bravo 扫描）。本文件仅存档，勿在此回执。
+
 - 提出方: Alpha（装配切片）
 - 日期: 2026-09-24
 - 背景: ADR-005 定稿（`docs/adr/ADR-005-frontend-consolidation.md`，含 2026-09-24 勘误）——DK-0F 方向修正为「保 desktop、删 apps/web」，编辑器统一 ProseMirror + loro-prosemirror。
