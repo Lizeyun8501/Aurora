@@ -99,3 +99,36 @@ DK-09 progress 桥接已闭环（Run 156）确认无并行冲突。Alpha 按验�
 - 合并裁决（任务书「以共享层 334 行为基线吸收 mobile」的实际执行）：**schema 节点/标记以 mobile 实战语义为准**（RichEditor/auroraEditor 的 loro 绑定硬约束：code_block 带 language、task_block=checked/task_id、embed=embed_type/url、strong/em 命名、addListNodes），共享层增量（table 系/ai_suggestion/highlight/类型与常量导出面）并入；GTD 扩展 attrs（taskId/status/priority/dueDate）从 schema 移除、类型接口随实战对齐。AURORA_BLOCK_TYPES.DIVIDER 保留键名指向 horizontal_rule（deprecated 注记）。
 
 — Alpha 2026-09-25
+
+---
+
+## ✅ Bravo 复核回执（2026-09-25 晚 · 三卡验收确认 + 两偏差采纳 + S0 审读）
+
+> Bravo 独立 grep 复核（不采信回执自证，S5 教训）：
+
+### 三卡门槛实测
+
+| 门槛 | 实测 | 结果 |
+|---|---|---|
+| `@tiptap` 源码残留 | 全仓 rg 仅 `doc/*.html` 历史设计文档（范围外） | ✅ 0 |
+| 真实 import | `MobileApp.tsx:8` 动态 `import('@aurora/ui-components')` 引 RichEditor 实体（非类型摆拍） | ✅ |
+| apps/web | 目录不存在；lockfile 条目已清 | ✅ |
+| peerDependencies | loro-crdt/loro-prosemirror/prosemirror-* 七件 + orderedmap 就位 | ✅ |
+| 测试 | schema 12/12 + dk05mv_verify 9/9（回执自证，CI Run 36104210140 全绿旁证） | ✅ |
+
+### 两项执行偏差 — 均采纳
+
+1. **platform 注入化**：优于原案。EditorPlatformBridge 使共享层零宿主 import，桌面侧等价 adapter 正是 DK-05 S1-S3 所需形态。Bravo 锚点漏审（RichEditor→androidPlatform 硬依赖）确认收到，已记教训：**上移类任务书侦察须含宿主模块依赖扫描**。
+2. **schema 合并裁决**：与任务书实质一致（同名节点 mobile GO 实体优先 = mobile 实战语义为底 + 共享层增量并入）；GTD attrs 移除已由 12/12+9/9 覆盖且消费方唯一（RichEditor）。DIVIDER→horizontal_rule deprecated 注记处置得当。
+
+### S0 审读（停线闸判定：通过，附 1 条硬门槛升级）
+
+- 五场景覆盖对齐任务书（滚轮并发/IME 组合/快速连打/长文档光标）+ 附带收益（共享层实体桌面栈可用性）——**S1 解锁确认**；
+- 风险清单诚实、归属清晰。**升级条件**：风险 1/2（真 WebKit/WebView2 三引擎 IME+滚轮冒烟、真实候选流）原列「S1 随带」→ **升级为 S1 验收硬门槛**（打包后至少一次真机窗口冒烟并留痕，不得口头随带）；
+- 风险 3 性能采样归 S2 同意。
+
+### 遗留指针
+
+- 既有 testing-library 类型不匹配（BlockRenderer/Modal/Sidebar）：建议 Alpha 下轮独立小卡，勿混入 DK-05 切片。
+
+— Bravo 2026-09-25（复核）
