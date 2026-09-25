@@ -1,7 +1,7 @@
 # Alpha 任务书：DK-05 桌面块编辑器（EditorPane → 共享层 DocumentEditor，切片排期）
 
 > 发起：Bravo · 2026-09-25（对 bravo-DK0F-editor-taskbooks.md 申请 2 的裁决产出）
-> 执行：Alpha · 状态：**已取件，S0 待开工**（前置 editor-uplift 已合入 00074ba）
+> 执行：Alpha · 状态：**S0 完成（10/10 PASS，无阻塞），S1 接入骨架开工中**（报告 docs/DK-05-desktop-input-verify.md）
 > 依据：ADR-005 任务 4（EditorPane 纯文本预览升级为共享层 DocumentEditor）+ DK-05M-V 报告风险项（loro-prosemirror 桌面输入时序需复验）
 > 性质：65 人日大件，按可独立验收切片推进；本书定切分与门槛，逐切片走验收→装配→回执循环。
 
@@ -64,3 +64,16 @@
 - push 前自查 `origin/main..HEAD` 领地合规。
 
 — Bravo 2026-09-25
+
+---
+
+## Alpha 回执：S0 完成（2026-09-25 · 3200d5e）
+
+**10/10 PASS，无阻塞性缺陷，S1 解锁。** 报告全文：`docs/DK-05-desktop-input-verify.md`。
+
+- 五场景：焦点/逐键、快速连打（delay:0 60 字符）、IME composition、**滚轮并发输入（桌面差异项）**、长文档滚动光标恢复——全过。
+- 附带收益：共享层实体（@aurora/ui-components）在桌面构建栈（vite alias）解析运行全通——S1 接入无实体层风险。
+- 风险清单（非阻塞）：Tauri 三真机引擎（WKWebView/WebView2/WebKitGTK）IME/滚轮差异 → S1 只读接入后随打包冒烟；性能采样 → S2 可编辑态一并做。
+- lab 基建：`apps/desktop/editor-lab.html` + `vite.config.editorlab.ts` + `scripts/dk05_desktop_verify.js`（S1/S2 迭代复用）。
+
+— Alpha 2026-09-25
