@@ -12,7 +12,15 @@ import type { EditorState } from 'prosemirror-state';
 import { toggleMark, setBlockType, wrapIn } from 'prosemirror-commands';
 import { wrapInList, liftListItem } from 'prosemirror-schema-list';
 
-import { platform } from '../adapters/androidPlatform';
+/**
+ * 平台快照桥（依赖注入）— mobile 传 androidPlatform，desktop 侧（DK-05）
+ * 传等价 adapter。共享层不 import 任何宿主平台模块。
+ */
+export interface EditorPlatformBridge {
+  saveNoteContent(noteId: string, content: string): number | boolean;
+  getNoteSnapshot(noteId: string): string;
+  saveNoteSnapshot(noteId: string, snapshotBase64: string): boolean;
+}
 import {
   createAuroraEditor,
   loroDocFromBase64,
@@ -21,12 +29,14 @@ import {
   redo,
   AuroraEditorHandle,
 } from './auroraEditor';
-import { auroraSchema } from './schema';
+import { auroraSchema } from '../schema/auroraSchema';
 
 export type EditorStatus = 'loading' | 'rich' | 'fallback';
 
 interface RichEditorProps {
   noteId: string;
+  /** 平台快照桥（宿主注入：mobile=androidPlatform；DK-05 桌面侧等价 adapter）。 */
+  platform: EditorPlatformBridge;
   /** 降级用纯文本初值（无桥时）。 */
   fallbackText: string;
   onDirty?: () => void;
@@ -359,7 +369,7 @@ function EditorToolbar({ view, tick }: { view: EditorView | null; tick: number }
 // 主组件
 // ---------------------------------------------------------------------------
 
-export function RichEditor({ noteId, fallbackText, onDirty, onSaved, onStatus }: RichEditorProps) {
+export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, onStatus }: RichEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const handleRef = useRef<AuroraEditorHandle | null>(null);

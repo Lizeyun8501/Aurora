@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { auroraSchema, AURORA_BLOCK_TYPES } from '../auroraSchema';
+import { auroraSchema, AURORA_BLOCK_TYPES } from '../schema/auroraSchema';
+
+// DK-0F schema 合并版断言（2026-09-25 editor-uplift）：
+// 实战语义（mobile 版）为基线 —— code_block/horizontal_rule/strong/em
+// 命名 + addListNodes 列表 + task_block(checked/task_id)/embed(embed_type/url)。
 
 describe('auroraSchema', () => {
   it('defines all standard block node types', () => {
@@ -7,14 +11,21 @@ describe('auroraSchema', () => {
     expect(nodeTypes).toContain('doc');
     expect(nodeTypes).toContain('paragraph');
     expect(nodeTypes).toContain('heading');
-    expect(nodeTypes).toContain('code');
+    expect(nodeTypes).toContain('code_block');
     expect(nodeTypes).toContain('blockquote');
     expect(nodeTypes).toContain('table');
     expect(nodeTypes).toContain('table_row');
     expect(nodeTypes).toContain('table_cell');
     expect(nodeTypes).toContain('list_item');
-    expect(nodeTypes).toContain('divider');
+    expect(nodeTypes).toContain('horizontal_rule');
     expect(nodeTypes).toContain('text');
+  });
+
+  it('injects list nodes via addListNodes (mobile 实战链路)', () => {
+    const nodeTypes = Object.keys(auroraSchema.nodes);
+    expect(nodeTypes).toContain('bullet_list');
+    expect(nodeTypes).toContain('ordered_list');
+    expect(nodeTypes).toContain('list_item');
   });
 
   it('defines all Aurora custom block types', () => {
@@ -24,37 +35,42 @@ describe('auroraSchema', () => {
     expect(nodeTypes).toContain('ai_suggestion');
   });
 
-  it('defines all required marks', () => {
+  it('defines all marks (mobile 实战全量 + highlight)', () => {
     const markTypes = Object.keys(auroraSchema.marks);
-    expect(markTypes).toContain('bold');
-    expect(markTypes).toContain('italic');
-    expect(markTypes).toContain('code');
-    expect(markTypes).toContain('link');
-    expect(markTypes).toContain('highlight');
+    expect(markTypes).toEqual(
+      expect.arrayContaining([
+        'strong',
+        'em',
+        'underline',
+        'strikethrough',
+        'code',
+        'link',
+        'highlight',
+      ]),
+    );
   });
 
-  it('task_block has correct default attributes', () => {
+  it('task_block has checked/task_id attrs (GTD 双向绑定)', () => {
     const taskBlock = auroraSchema.nodes.task_block;
     expect(taskBlock).toBeDefined();
-    expect(taskBlock?.attrs).toHaveProperty('taskId');
-    expect(taskBlock?.attrs).toHaveProperty('status');
-    expect(taskBlock?.attrs).toHaveProperty('priority');
-    expect(taskBlock?.attrs).toHaveProperty('dueDate');
+    expect(taskBlock?.spec.attrs).toHaveProperty('checked');
+    expect(taskBlock?.spec.attrs).toHaveProperty('task_id');
   });
 
-  it('embed has required attributes', () => {
+  it('embed has embed_type/url attrs (draggable 实战版)', () => {
     const embed = auroraSchema.nodes.embed;
     expect(embed).toBeDefined();
-    expect(embed?.attrs).toHaveProperty('src');
-    expect(embed?.attrs).toHaveProperty('type');
+    expect(embed?.spec.attrs).toHaveProperty('embed_type');
+    expect(embed?.spec.attrs).toHaveProperty('url');
+    expect(embed?.spec.draggable).toBe(true);
   });
 
   it('ai_suggestion has AI-specific attributes', () => {
     const aiSuggestion = auroraSchema.nodes.ai_suggestion;
     expect(aiSuggestion).toBeDefined();
-    expect(aiSuggestion?.attrs).toHaveProperty('suggestionType');
-    expect(aiSuggestion?.attrs).toHaveProperty('model');
-    expect(aiSuggestion?.attrs).toHaveProperty('accepted');
+    expect(aiSuggestion?.spec.attrs).toHaveProperty('suggestionType');
+    expect(aiSuggestion?.spec.attrs).toHaveProperty('model');
+    expect(aiSuggestion?.spec.attrs).toHaveProperty('accepted');
   });
 
   it('AURORA_BLOCK_TYPES constants match schema node names', () => {
@@ -63,13 +79,15 @@ describe('auroraSchema', () => {
     expect(AURORA_BLOCK_TYPES.AI_SUGGESTION).toBe('ai_suggestion');
     expect(AURORA_BLOCK_TYPES.PARAGRAPH).toBe('paragraph');
     expect(AURORA_BLOCK_TYPES.HEADING).toBe('heading');
+    expect(AURORA_BLOCK_TYPES.CODE_BLOCK).toBe('code_block');
+    expect(AURORA_BLOCK_TYPES.HORIZONTAL_RULE).toBe('horizontal_rule');
   });
 
   it('heading supports levels 1-6', () => {
     const heading = auroraSchema.nodes.heading;
     expect(heading).toBeDefined();
     // parseDOM should have entries for h1 through h6
-    expect(heading?.parseDOM?.length).toBe(6);
+    expect(heading?.spec.parseDOM?.length).toBe(6);
   });
 
   it('table_cell supports colspan and rowspan', () => {
@@ -83,5 +101,12 @@ describe('auroraSchema', () => {
     const highlight = auroraSchema.marks.highlight;
     expect(highlight).toBeDefined();
     expect(highlight?.attrs).toHaveProperty('color');
+  });
+
+  it('code_block carries language attr (dk05mv 数据链)', () => {
+    const codeBlock = auroraSchema.nodes.code_block;
+    expect(codeBlock).toBeDefined();
+    expect(codeBlock?.attrs).toHaveProperty('language');
+    expect(codeBlock?.spec.code).toBe(true);
   });
 });

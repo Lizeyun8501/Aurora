@@ -24,7 +24,7 @@ import {
   canRedo,
 } from 'loro-prosemirror';
 
-import { auroraSchema } from './schema';
+import { auroraSchema } from '../schema/auroraSchema';
 
 export interface AuroraEditorHandle {
   view: EditorView;

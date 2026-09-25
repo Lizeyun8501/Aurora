@@ -3,9 +3,12 @@ import { platform, type NoteSummary, type SearchResult } from './adapters/androi
 import { Solar, HolidayUtil } from 'lunar-typescript';
 
 // 编辑器懒加载 — schema/wasm 初始化失败不拖垮整个应用（白屏防御）
+// DK-0F editor-uplift：三件套上移共享层，mobile 侧零本地编辑器实现（真实 import）
 const RichEditor = React.lazy(() =>
-  import('./editor/RichEditor').then((m) => ({ default: m.RichEditor })),
+  import('@aurora/ui-components').then((m) => ({ default: m.RichEditor })),
 );
+// 平台快照桥注入（共享层不感知 android adapter — DK-0F editor-uplift）
+const editorPlatform = platform as unknown as import('@aurora/ui-components').EditorPlatformBridge;
 
 // ===========================================================================
 // V19 §1.2 图标 — 20px 线性简约，无渐变无填充
@@ -1496,6 +1499,7 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted }: {
       <React.Suspense fallback={<div className="editor-loading-tip"><span className="spinner" />编辑器加载中…</div>}>
         <RichEditor
           noteId={noteId}
+          platform={editorPlatform}
           fallbackText={(() => { try { return platform.getNoteContent(noteId); } catch { return ''; } })()}
           onDirty={() => setStatus('dirty')}
           onSaved={() => setStatus('saved')}
