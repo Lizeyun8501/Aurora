@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Aurora Editor Lab — DK-05 S0 桌面输入时序验证页</title>
+  <style>
+    /* 桌面视口：常规窗口布局 + 独立滚动容器（滚轮场景载体） */
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    #editor {
+      height: 70vh; overflow-y: auto;
+      border: 1px solid #ddd; padding: 12px; outline: none;
+    }
+    #editor .ProseMirror { outline: none; min-height: 200px; }
+    #status { padding: 8px; background: #f0f4ff; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="status">editor-lab ready</div>
+  <div id="editor"></div>
+  <script type="module">
+    // DK-05 S0 桌面输入时序验证页 — 直接挂共享层编辑器实体
+    // （@aurora/ui-components：editor-uplift 卡上移产物），验证：
+    // ① 共享层在桌面构建栈可解析可运行（S1 接入前置）
+    // ② loro-prosemirror 0.4.4 在桌面浏览器引擎下的输入时序
+    //    （滚轮滚动中输入 / IME 组合 / 快速连续输入 — 桌面差异项）
+    import { createAuroraEditor, auroraSchema } from '@aurora/ui-components';
+    import { LoroDoc } from 'loro-crdt';
+
+    const statusEl = document.getElementById('status');
+    const loro = new LoroDoc();
+    // 内存桥（S0 不涉持久化——桌面持久化链路 S2 落库时验）
+    const handle = createAuroraEditor(document.getElementById('editor'), {
+      loroDoc: loro,
+      onSave: () => true,
+    });
+    const view = handle.view;
+    window.__view = view;
+    window.__loro = loro;
+    window.__handle = handle;
+    statusEl.textContent = 'editor-lab: view ready (shared ui-components + loro-prosemirror)';
+
+    window.__probe = {
+      pmText: () => view.state.doc.textBetween(0, view.state.doc.content.size, '\n'),
+      docSize: () => view.state.doc.content.size,
+      childCount: () => view.state.doc.childCount,
+      selectionFrom: () => view.state.selection.from,
+      scrollInfo: () => {
+        const el = document.getElementById('editor');
+        return { top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight };
+      },
+      setCursor: (pos) => {
+        const { TextSelection } = window.__pmState;
+        view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos)));
+        return view.state.selection.from;
+      },
+      insertChars: (s) => {
+        for (const ch of s) view.dispatch(view.state.tr.insertText(ch));
+        return view.state.doc.textContent.length;
+      },
+      /** IME 组合输入序列（composition events 手动派发 + 提交落文） */
+      runComposition: async (finalText) => {
+        const dom = view.dom;
+        dom.dispatchEvent(new CompositionEvent('compositionstart', { data: '' }));
+        for (const part of ['q', 'quan', 'quanbu']) {
+          dom.dispatchEvent(new CompositionEvent('compositionupdate', { data: part }));
+        }
+        dom.dispatchEvent(new CompositionEvent('compositionend', { data: finalText }));
+        view.dispatch(view.state.tr.insertText(finalText));
+        return view.state.doc.textContent.slice(-finalText.length);
+      },
+      /** 长文档填充（滚轮/滚动场景载体，逐段 dispatch — Loro 映射安全） */
+      fillLongDoc: (n) => {
+        for (let i = 0; i < n; i++) {
+          const para = auroraSchema.nodes.paragraph.create(
+            null,
+            auroraSchema.text(`段落 ${i} — 桌面滚轮时序采样行`),
+          );
+          view.dispatch(view.state.tr.insert(view.state.doc.content.size, para));
+        }
+        return view.state.doc.childCount;
+      },
+    };
+    // lab 不打包 prosemirror-state 顶层（经共享层间接依赖）——TextSelection 经
+    // 全局透出给 setCursor：这里从 view.state 的构造器域取。
+    import('prosemirror-state').then((m) => { window.__pmState = m; });
+  </script>
+</body>
+</html>
