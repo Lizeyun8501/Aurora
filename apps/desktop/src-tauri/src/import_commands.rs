@@ -6,16 +6,17 @@
 //!   附件经 `attach_to_note` 唯一入口（seal 密封 / 内容寻址去重）。
 //! - 预扫 `plan_import` 返回 `ImportPlan`（serde 直通，前端向导预览）。
 //! - 三个导入 command 支持可选 `manifest_dir`（防重）与 `only`（选择性）。
-//! - progress channel 留向导前端切片接线（内核 `ProgressEvent` 已就绪，
-//!   本期 command 传 `None`——request §2.3 M2 先返回完整 `ImportReport`）。
+//! - progress 桥接（2026-09-25）：可选 `on_progress: Channel<ProgressEvent>`，
+//!   内核 mpsc sender → Tauri IPC Channel 转发（import 结束后 flush）。
 
 use aurora_core::write_path::WriteContext;
 use aurora_import::{
     import_enex, import_markdown_dir, import_opml_file, plan_enex_file, plan_markdown_dir,
-    plan_opml_file, EnexImportOptions, ImportOptions, OpmlImportOptions,
+    plan_opml_file, EnexImportOptions, ImportOptions, OpmlImportOptions, ProgressEvent,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tauri::ipc::Channel;
 
 use crate::{APP_STATE, ATTACH_STATE, VAULT_STATE};
 
@@ -94,22 +95,50 @@ fn manifest(dir: Option<String>) -> Option<PathBuf> {
     dir.map(PathBuf::from)
 }
 
-/// Markdown 目录导入（可选防重 / 选择性）。
+/// progress 桥接：内核 `options.progress`（mpsc UnboundedSender）→ Tauri IPC
+/// `Channel<ProgressEvent>`。转发任务在 sender 全部 drop（import 结束）后收尾；
+/// 调用方须在 import 返回后 `JoinHandle::await`，保证最后一批事件 flush。
+fn progress_bridge(
+    chan: Option<Channel<ProgressEvent>>,
+) -> (
+    Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
+    Option<tokio::task::JoinHandle<()>>,
+) {
+    let Some(chan) = chan else {
+        return (None, None);
+    };
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ProgressEvent>();
+    let forward = tokio::spawn(async move {
+        while let Some(ev) = rx.recv().await {
+            // Channel::send 失败（前端已关闭）不中断导入——进度是尽力通知。
+            let _ = chan.send(ev);
+        }
+    });
+    (Some(tx), Some(forward))
+}
+
+/// Markdown 目录导入（可选防重 / 选择性 / 进度）。
 #[tauri::command]
 pub async fn cmd_import_markdown_dir(
     dir: String,
     manifest_dir: Option<String>,
     only: Option<Vec<String>>,
+    on_progress: Option<Channel<ProgressEvent>>,
 ) -> Result<aurora_import::ImportReport, String> {
     let ctx = import_ctx()?;
+    let (progress, forward) = progress_bridge(on_progress);
     let options = ImportOptions {
         manifest_dir: manifest(manifest_dir),
         only: only.unwrap_or_default(),
-        ..Default::default()
+        progress,
     };
-    import_markdown_dir(&ctx, &PathBuf::from(&dir), &options)
+    let report = import_markdown_dir(&ctx, &PathBuf::from(&dir), &options)
         .await
-        .map_err(|e| format!("导入失败 {}: {}", e.path.display(), e.reason))
+        .map_err(|e| format!("导入失败 {}: {}", e.path.display(), e.reason));
+    if let Some(f) = forward {
+        let _ = f.await;
+    }
+    report
 }
 
 /// ENEX 导入（`attachments_dir` = 资源 sidecar 目录；None → 占位链接）。
@@ -119,16 +148,23 @@ pub async fn cmd_import_enex(
     manifest_dir: Option<String>,
     only: Option<Vec<String>>,
     attachments_dir: Option<String>,
+    on_progress: Option<Channel<ProgressEvent>>,
 ) -> Result<aurora_import::ImportReport, String> {
     let ctx = import_ctx()?;
+    let (progress, forward) = progress_bridge(on_progress);
     let options = EnexImportOptions {
         manifest_dir: manifest(manifest_dir),
         only: only.unwrap_or_default(),
         attachments_dir: attachments_dir.map(PathBuf::from),
+        progress,
     };
-    import_enex(&ctx, &PathBuf::from(&file), &options)
+    let report = import_enex(&ctx, &PathBuf::from(&file), &options)
         .await
-        .map_err(|e| format!("导入失败 {}: {}", e.path.display(), e.reason))
+        .map_err(|e| format!("导入失败 {}: {}", e.path.display(), e.reason));
+    if let Some(f) = forward {
+        let _ = f.await;
+    }
+    report
 }
 
 /// OPML 导入。
@@ -137,13 +173,20 @@ pub async fn cmd_import_opml(
     file: String,
     manifest_dir: Option<String>,
     only: Option<Vec<String>>,
+    on_progress: Option<Channel<ProgressEvent>>,
 ) -> Result<aurora_import::ImportReport, String> {
     let ctx = import_ctx()?;
+    let (progress, forward) = progress_bridge(on_progress);
     let options = OpmlImportOptions {
         manifest_dir: manifest(manifest_dir),
         only: only.unwrap_or_default(),
+        progress,
     };
-    import_opml_file(&ctx, &PathBuf::from(&file), &options)
+    let report = import_opml_file(&ctx, &PathBuf::from(&file), &options)
         .await
-        .map_err(|e| format!("导入失败 {}: {}", e.path.display(), e.reason))
+        .map_err(|e| format!("导入失败 {}: {}", e.path.display(), e.reason));
+    if let Some(f) = forward {
+        let _ = f.await;
+    }
+    report
 }

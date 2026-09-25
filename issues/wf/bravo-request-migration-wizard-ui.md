@@ -65,3 +65,12 @@
 - **参数约定**：invoke args 用 snake_case（`manifest_dir`/`only`/`attachments_dir`），与 DesktopShell 既有 `cmd_get_note_content { note_id }` 同款 ✓。
 - **提醒**：progress channel 桥接（request §2.1）未接——command 层本期传 None，向导 running 态用 submitting 标志兜底。随下一个切片接（非阻塞）。
 - **分支卫生**：`wf/bravo-import-s3` 与 main 同点（旧内核重推），已清理；下次交付前 `git fetch && git log origin/main..HEAD` 自查防重推。
+
+## Alpha 回执：progress channel 桥接（2026-09-25 · 非阻塞遗留闭环）
+
+**验收：通过（本切片即上述「提醒」项闭环），随本回执 commit 合入 main。**
+
+- **command 层**（`import_commands.rs`）：三个导入 command 增可选 `on_progress: Channel<ProgressEvent>`；`progress_bridge` 内核 mpsc → IPC Channel 转发，import 返回后 `JoinHandle::await` 保证末批事件 flush；前端关闭时 send 失败不中断导入（进度 = 尽力通知）。注册行零改动（参数可选，签名向后兼容）。
+- **前端**（`ImportWizard.tsx`）：tauri 真机建 `Channel`（`on_progress` snake_case，与既有参数同款），`onmessage` 更新进度态；**补齐 running 渲染分支**（此前 phase='running' 时向导主体空白——submitting 兜底失效的隐藏 bug）：条目计数 + progressbar（aria-valuemin/max/now，A 项随带）+ 当前 source 截断展示；browser-mock 传 null（Rust Option→None）「导入中…」兜底；reset 清 progress/submitting。
+- **验证**：desktop tsc --noEmit 零错 + vite build 通过（本环境）；src-tauri 因本环境缺 gtk3 系统库不可本地 check（CI 同款限制，历史既有），tauri 层由 CI `cargo check -p aurora-desktop` 门禁验证（类型面已人工核对：三 Options 均有 progress 字段、ProgressEvent Clone+Serialize 齐、tauri 2 `ipc::Channel` 可选参数）。
+- **语义备注**：进度为尽力通知——`current/total` 为 only 过滤后会话计数，含跳过条目；防重语义不变（(source, content_hash)）。

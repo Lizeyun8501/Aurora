@@ -7,12 +7,14 @@
  *
  * 流程：选源 → 预扫预览（cmd_plan_import，复选 only 白名单）→ 执行
  * （cmd_import_markdown_dir / cmd_import_enex / cmd_import_opml，可选
- * manifest_dir 防重会话目录）→ 报告。M2 语义：执行同步返回完整
- * ImportReport（progress channel 留后续切片）。
+ * manifest_dir 防重会话目录）→ 报告。进度：可选 on_progress IPC Channel
+ * （Rust 侧 mpsc→Channel 桥接，2026-09-25 接线）；browser-mock / 未回调时
+ * 以「导入中…」兜底（进度为尽力通知语义）。
  *
  * 裁决确认的防重语义：manifest 键 (source, content_hash)，内容变更即重导。
  */
 import { useCallback, useMemo, useState } from 'react';
+import { Channel } from '@tauri-apps/api/core';
 import tokens from '../design/tokens';
 
 interface InvokeFn {
@@ -51,6 +53,13 @@ interface ImportReport {
 }
 
 type Kind = 'markdown' | 'enex' | 'opml';
+
+/** 进度事件（Rust `ProgressEvent` serde 直通）。 */
+interface ProgressEvent {
+  current: number;
+  total: number;
+  source: string;
+}
 
 const KINDS: Array<{ kind: Kind; label: string; hint: string; placeholder: string }> = [
   { kind: 'markdown', label: 'Markdown 目录', hint: '逐文件 → 一篇笔记', placeholder: '/path/to/notes' },
@@ -105,6 +114,8 @@ export default function ImportWizard({ invoke, onClose }: { invoke: InvokeFn | n
   const [phase, setPhase] = useState<'select' | 'preview' | 'running' | 'done'>('select');
   /** 提交中标志（独立于 phase，避免 JSX 内对收窄字面量的无效比较）。 */
   const [submitting, setSubmitting] = useState(false);
+  /** 导入进度（on_progress Channel 回调；null = 未收到任何事件，兜底文案）。 */
+  const [progress, setProgress] = useState<ProgressEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ImportReport | null>(null);
 
@@ -123,6 +134,8 @@ export default function ImportWizard({ invoke, onClose }: { invoke: InvokeFn | n
     setPhase('select');
     setError(null);
     setReport(null);
+    setProgress(null);
+    setSubmitting(false);
   };
 
   const runPlan = useCallback(async () => {
@@ -142,15 +155,23 @@ export default function ImportWizard({ invoke, onClose }: { invoke: InvokeFn | n
     setPhase('running');
     setSubmitting(true);
     setError(null);
+    setProgress(null);
     const only = [...selected];
     const cmd =
       kind === 'markdown' ? 'cmd_import_markdown_dir' : kind === 'enex' ? 'cmd_import_enex' : 'cmd_import_opml';
+    // 进度通道：tauri 真机（invoke 非 mock 注入）时建 Channel，桥接内核
+    // ProgressEvent 流；browser-mock 环境传 null（Rust 侧 Option→None）。
+    let onProgress: Channel<ProgressEvent> | null = null;
+    if (invoke && typeof Channel === 'function') {
+      onProgress = new Channel<ProgressEvent>();
+      onProgress.onmessage = (ev) => setProgress(ev);
+    }
     const args: Record<string, unknown> =
       kind === 'enex'
-        ? { file: source, manifest_dir: manifestDir || null, only, attachments_dir: attachmentsDir || null }
+        ? { file: source, manifest_dir: manifestDir || null, only, attachments_dir: attachmentsDir || null, on_progress: onProgress }
         : kind === 'markdown'
-          ? { dir: source, manifest_dir: manifestDir || null, only }
-          : { file: source, manifest_dir: manifestDir || null, only };
+          ? { dir: source, manifest_dir: manifestDir || null, only, on_progress: onProgress }
+          : { file: source, manifest_dir: manifestDir || null, only, on_progress: onProgress };
     try {
       const r = await call<ImportReport>(cmd, args);
       setReport(r);
@@ -161,7 +182,7 @@ export default function ImportWizard({ invoke, onClose }: { invoke: InvokeFn | n
     } finally {
       setSubmitting(false);
     }
-  }, [call, kind, source, manifestDir, attachmentsDir, selected]);
+  }, [call, invoke, kind, source, manifestDir, attachmentsDir, selected]);
 
   const selectedBytes = useMemo(
     () => plan?.items.filter((i) => selected.has(i.source)).reduce((a, i) => a + Number(i.bytes), 0) ?? 0,
@@ -192,6 +213,46 @@ export default function ImportWizard({ invoke, onClose }: { invoke: InvokeFn | n
       </div>
 
       {error && <div style={{ color: tokens.color.danger, fontSize: tokens.typography.caption.size }}>{error}</div>}
+
+      {phase === 'running' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacing.sm }}>
+          <div style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size }}>
+            {progress ? `导入中 ${progress.current}/${progress.total}` : '导入中…'}
+          </div>
+          {progress && (
+            <div
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={progress.total}
+              aria-valuenow={progress.current}
+              style={{ height: 4, background: tokens.color.bgElevated, borderRadius: 2, overflow: 'hidden' }}
+            >
+              <div
+                style={{
+                  width: `${Math.min(100, Math.round((progress.current / Math.max(progress.total, 1)) * 100))}%`,
+                  height: '100%',
+                  background: tokens.color.primary,
+                  transition: 'width .2s ease',
+                }}
+              />
+            </div>
+          )}
+          {progress?.source && (
+            <div
+              style={{
+                color: tokens.color.textSecondary,
+                fontSize: tokens.typography.caption.size,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+              title={progress.source}
+            >
+              {progress.source}
+            </div>
+          )}
+        </div>
+      )}
 
       {phase === 'select' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacing.sm }}>
