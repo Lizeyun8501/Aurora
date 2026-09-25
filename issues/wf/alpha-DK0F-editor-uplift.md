@@ -1,7 +1,7 @@
 # Alpha 任务书：编辑器上移（DK-0F 任务 3 · 共享层非零真实 import）
 
 > 发起：Bravo · 2026-09-25（对 bravo-DK0F-editor-taskbooks.md 申请 1 的裁决产出）
-> 执行：Alpha · 状态：**待取件**
+> 执行：Alpha · 状态：**已完成**（2026-09-25，回执见 bravo-DK0F-editor-taskbooks.md）
 > 依据：ADR-005 D2（编辑器统一 ProseMirror + loro-prosemirror）+ D3 勘误（零 import 的解法是产生真实引用，禁止摆拍）
 > 性质：P0 主线，DK-05 桌面接入的前置（不先上移，桌面无实体可 import）。
 

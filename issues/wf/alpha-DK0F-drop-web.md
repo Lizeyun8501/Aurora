@@ -1,7 +1,7 @@
 # Alpha 任务书：删除 apps/web（DK-0F 任务 1 执行确认）
 
 > 发起：Bravo · 2026-09-25（对 bravo-DK0F-editor-taskbooks.md 申请 3 的裁决产出）
-> 执行：Alpha · 状态：**待取件**
+> 执行：Alpha · 状态：**已完成**（2026-09-25，回执见 bravo-DK0F-editor-taskbooks.md）
 > 依据：ADR-005 D1（保 desktop、删 web；「方案 A」作废）
 > 性质：独立先行小卡，与编辑器上移（editor-uplift）零文件交集，可并行。
 

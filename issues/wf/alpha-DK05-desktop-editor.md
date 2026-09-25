@@ -1,7 +1,7 @@
 # Alpha 任务书：DK-05 桌面块编辑器（EditorPane → 共享层 DocumentEditor，切片排期）
 
 > 发起：Bravo · 2026-09-25（对 bravo-DK0F-editor-taskbooks.md 申请 2 的裁决产出）
-> 执行：Alpha · 状态：**待取件（前置：editor-uplift 卡合入后开工）**
+> 执行：Alpha · 状态：**已取件，S0 待开工**（前置 editor-uplift 已合入 00074ba）
 > 依据：ADR-005 任务 4（EditorPane 纯文本预览升级为共享层 DocumentEditor）+ DK-05M-V 报告风险项（loro-prosemirror 桌面输入时序需复验）
 > 性质：65 人日大件，按可独立验收切片推进；本书定切分与门槛，逐切片走验收→装配→回执循环。
 
