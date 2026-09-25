@@ -9,6 +9,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # 2026-09-25: d4bbe22 起 src-tauri 拉入 aurora-import(loro 系) → 全量链接产物
+  # 再次塞满 14G runner 盘 → ld SIGBUS (exit 101, V26 I2 同款复发)。
+  # 关 debuginfo(-60% 产物) + 关增量编译(-2G 中间态)；CI 无调试需求。
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   fmt:
@@ -78,10 +83,29 @@ jobs:
             libxdo-dev \
             patchelf
       - uses: Swatinem/rust-cache@v2
+      # 2026-09-25: 失败时把错误尾+磁盘状态写入 job summary（匿名可见）——
+      # runner 日志页已要求登录，summary 是唯一免认证诊断通道。
       - name: Build
-        run: cargo build --workspace --verbose
+        run: |
+          cargo build --workspace --verbose 2>&1 | tee /tmp/build.log
+          test ${PIPESTATUS[0]} -eq 0 || {
+            echo '### Test Build tail' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -60 /tmp/build.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            df -h / >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
       - name: Test
-        run: cargo test --workspace --exclude aurora-desktop --verbose
+        run: |
+          cargo test --workspace --exclude aurora-desktop --verbose 2>&1 | tee /tmp/test.log
+          test ${PIPESTATUS[0]} -eq 0 || {
+            echo '### Test run tail' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -60 /tmp/test.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
       # DK-08 S5 盲区补齐（bravo-DK08-同步.md 验收记录）：多节点多 NAT 仿真
       # 与 iroh-transport 生产传输代码被 feature 门控，默认集不覆盖。
       - name: Test (iroh-transport feature)
@@ -134,5 +158,15 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # 2026-09-25: 同 Test job——失败错误尾写入 summary（免认证诊断）。
       - name: Check desktop crate
-        run: cargo check -p aurora-desktop
+        run: |
+          cargo check -p aurora-desktop 2>&1 | tee /tmp/dcheck.log
+          test ${PIPESTATUS[0]} -eq 0 || {
+            echo '### desktop-check tail' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -60 /tmp/dcheck.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            df -h / >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
