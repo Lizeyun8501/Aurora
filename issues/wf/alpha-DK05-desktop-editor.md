@@ -1,7 +1,7 @@
 # Alpha 任务书：DK-05 桌面块编辑器（EditorPane → 共享层 DocumentEditor，切片排期）
 
 > 发起：Bravo · 2026-09-25（对 bravo-DK0F-editor-taskbooks.md 申请 2 的裁决产出）
-> 执行：Alpha · 状态：**S3 完成（6/6 PASS），S4 收尾解锁**（S0 报告 docs/DK-05-desktop-input-verify.md；S2 真机冒烟悬置项见 docs/DK-05-S2-smoke-checklist.md）
+> 执行：Alpha · 状态：**S4 完成 — DK-05 全部里程碑收官（S0-S4 五段验证 42/42 PASS），待 Bravo 复核**（S2 真机冒烟移交清单 docs/DK-05-S2-smoke-checklist.md）
 > 依据：ADR-005 任务 4（EditorPane 纯文本预览升级为共享层 DocumentEditor）+ DK-05M-V 报告风险项（loro-prosemirror 桌面输入时序需复验）
 > 性质：65 人日大件，按可独立验收切片推进；本书定切分与门槛，逐切片走验收→装配→回执循环。
 
@@ -203,5 +203,42 @@ Tauri IPC 探测缺陷（`__TAURI_INTERNALS__` 宿主检查缺失→browser-mock
 1. A2 曾间歇 FAIL：loro→PM 同步回调竞态窗口（60ms 边界），80ms 稳定——flaky 已固化时序 + 诊断字段（status/updatesLen/loroText）入断言 detail。
 2. 快照与 content 双写是**过渡态**：S4 需定单一事实源（建议：快照为编辑态权威、content 为内核/搜索权威，二者由 onSave 原子双写维护，冲突时快照优先——待 S4 裁决）。
 3. Bravo S2 冻结门槛（真机冒烟）仍悬置：`docs/DK-05-S2-smoke-checklist.md` 待桌面环境执行，S4 收尾时并入。
+
+— Alpha 2026-09-26
+
+---
+
+## Alpha 回执：S4 完成 — DK-05 收官（2026-09-26）
+
+**S4 验证 `scripts/dk05_s4_verify.js` 5/5 PASS；全链路回归 S0 10/10、S1 9/9、S2 12/12、S3 6/6（×2）、S4 5/5 = 42/42 PASS；desktop tsc + vite build 绿。**
+
+### S4 交付面
+
+1. **快照导入失败降级加固（S4-1）**：EditAuroraEditor 挂载 try-catch 包裹快照恢复——损坏快照（非法 base64/版本不兼容 import throw）**不再白屏**，console.warn + 降级 S2 md 灌入（content 文本兜底）。B1 断言：注入 `!!!not-valid-loro-snapshot!!!` 后重开，编辑器挂载成功且渲染走 content。
+2. **性能采样（S4-2）**：
+   - 快照恢复首开（生产同款装配，热身态）：**11-14ms**（10 段基准）；
+   - 大文档灌入 300 段：**554-1032ms**（事务批量，Loro 映射安全）；
+   - 笔记切换首开（生产，含 wasm 动态 import 链）：**中位 357ms**（356/357/400 三样本）。
+3. **undo 加载基线语义定型（S4-3）**：快照恢复 = 新 LoroDoc 实例（undoManager 空）→ 撤销栈天然不越过恢复点，无需额外 baseline 标记；S3 B3 + S4 回归持续覆盖。
+4. **双写单一事实源裁决（S4-4，文档化）**：**快照 = 编辑态权威**（恢复/渲染唯一来源），**content = 内核/搜索/导出权威**（WritePath 通路）；onSave 原子双写维护一致性；冲突时快照优先（编辑器所见即所得）。注释已入 EditAuroraEditor。
+5. **上游备忘（S4-5）**：loro-prosemirror 0.4.4 已 attach view 对后续 import 的实时跟随事件通路未触发（`updateNodeOnLoroEvent` by=import 分支实测未生效）——P2P 实时协同渲染属后续迭代；DK-05 生产语义「数据先收敛、挂载时渲染」不受影响（A2 已按此顺序断言）。
+
+### DK-05 全验收对照
+
+| 阶段 | 验收面 | 结果 |
+|---|---|---|
+| S0 | 桌面输入时序（IME/滚轮/焦点五场景） | ✅ 10/10 |
+| S1 | 只读接入 + 全节点渲染 + a11y A 项 | ✅ 9/9（19 类对照表全中） |
+| S2 | 块编辑操作 + 落库往返 + 键盘路径 | ✅ 12/12 |
+| S3 | CRDT 快照往返/双实例增量同步/增量渲染 | ✅ 6/6 |
+| S4 | 降级加固 + 性能采样 + 基线定型 + 裁决 | ✅ 5/5 |
+
+### 悬置项移交（不阻塞收官）
+
+- **S2 冻结硬门槛**：Tauri 打包 + 真机窗口冒烟（IME 组合/滚轮并发/切换/焦点链）——本环境无 cargo/GUI 不可执行，清单 `docs/DK-05-S2-smoke-checklist.md` 待持有桌面环境的复核者执行并留痕；
+- **Rust 编译验证**：S3/S4 两个 command 走 CI desktop-check（cargo check -p aurora-desktop）兜底，本地无 cargo；
+- **上游协同**：loro-prosemirror 实时协同渲染（S4-5）建议后续迭代开独立任务卡。
+
+**DK-05 编辑器主线至此收官，待 Bravo 复核。**
 
 — Alpha 2026-09-26

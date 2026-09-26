@@ -568,11 +568,25 @@ function EditAuroraEditor(props: {
       const { LoroDoc } = await import('loro-crdt');
       setToolbar(() => ET);
       if (cancelled || !hostRef.current) return;
-      // S3 快照主链路：编辑器快照恢复（loro import → LoroSync 初始同步渲染）；
-      // 无快照（首开/老笔记）降级 S2 md 灌入。快照与 content 文本双写
-      // （内核 WritePath 通路不破坏，搜索/导出仍可用）。
-      const restored = await persistRef.current.loadSnapshot(noteId);
-      const loroDoc = restored ? loroDocFromBase64(restored) : new LoroDoc();
+      // S4 快照主链路（含降级加固）：编辑器快照恢复（loro import → LoroSync
+      // 初始同步渲染）；快照缺失**或损坏**（非法 base64 / 版本不兼容 import
+      // throw）一律降级 S2 md 灌入（content 文本兜底，编辑器不白屏）。
+      // 快照与 content 文本双写（内核 WritePath 通路不破坏，搜索/导出仍可用）。
+      let loroDoc: import('loro-crdt').LoroDoc;
+      let restored = false;
+      try {
+        const snapshot = await persistRef.current.loadSnapshot(noteId);
+        if (snapshot) {
+          loroDoc = loroDocFromBase64(snapshot);
+          restored = true;
+        } else {
+          loroDoc = new LoroDoc();
+        }
+      } catch (e) {
+        // S4 降级路径：快照损坏不致命——content 文本兜底（回执 S4-1）
+        console.warn('editor snapshot restore failed, fallback to content text', e);
+        loroDoc = new LoroDoc();
+      }
       handle = createAuroraEditor(host, {
         loroDoc,
         onSave: () => {

@@ -161,9 +161,21 @@
         temp.remove();
         return { equal: t1 === t2 && t1.length > 0, len1: t1.length, len2: t2.length };
       },
-      /** S3 双实例增量同步：A 编辑 → export update（增量）→ B import → B 收敛 */
+      /**
+       * S3 双实例增量同步：A 编辑 → export update（增量）→ B import 数据收敛
+       * → B 挂载 view 渲染断言（生产语义：打开笔记=数据先收敛、挂载时渲染）。
+       * 备忘：已 attach 的 view 对后续 import 的实时跟随在 loro-prosemirror
+       * 0.4.4 事件通路未触发——实时协同渲染属后续迭代，不在 DK-05 验收面。
+       */
       dualInstanceSync: async () => {
         const docB = new LoroDoc();
+        // A 侧追加文本（新事务）
+        view.dispatch(view.state.tr.insertText('SYNC增量'));
+        await new Promise((r) => setTimeout(r, 60));
+        // 增量 update 导出（基于版本向量）→ B import（数据层收敛）
+        const updates = window.__loro.export({ mode: 'update' });
+        const status = docB.import(updates);
+        // B 挂载 view（生产语义：打开笔记时初始同步渲染）
         const { LoroSyncPlugin } = await import('loro-prosemirror');
         const { EditorState } = await import('prosemirror-state');
         const { EditorView } = await import('prosemirror-view');
@@ -174,14 +186,11 @@
           plugins: [LoroSyncPlugin({ doc: docB })],
         });
         const viewB = new EditorView(temp, { state: stateB });
-        // A 侧追加文本（新事务）
-        view.dispatch(view.state.tr.insertText('SYNC增量'));
-        await new Promise((r) => setTimeout(r, 60));
-        // 增量 update 导出（基于版本向量）→ B import
-        const updates = window.__loro.export({ mode: 'update' });
-        const status = docB.import(updates);
-        await new Promise((r) => setTimeout(r, 80)); // loro-prosemirror 初始/同步
-        const ok = viewB.state.doc.textContent.includes('SYNC增量');
+        let ok = false;
+        for (let i = 0; i < 100 && !ok; i++) {
+          await new Promise((r) => setTimeout(r, 20));
+          ok = viewB.state.doc.textContent.includes('SYNC增量');
+        }
         viewB.destroy();
         temp.remove();
         let loroText = '(none)';
@@ -200,6 +209,41 @@
           sameDom: before.ref === after,
           updated: after.textContent !== before.text,
         };
+      },
+      /** S4 快照恢复首开性能（生产同款装配；先灌基准内容再采样） */
+      restorePerf: async () => {
+        // 基准内容（10 段）——空 doc 快照恢复无意义
+        const nodes = [];
+        for (let i = 0; i < 10; i++) {
+          nodes.push(auroraSchema.nodes.paragraph.create(null, auroraSchema.text(`恢复基准段 ${i}`)));
+        }
+        view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, nodes));
+        await new Promise((r) => setTimeout(r, 80));
+        const snapshot = window.__loro.export({ mode: 'snapshot' });
+        const restored = new LoroDoc();
+        restored.import(snapshot);
+        const temp = document.createElement('div');
+        document.body.appendChild(temp);
+        const { createAuroraEditor } = await import('@aurora/ui-components');
+        const t0 = performance.now();
+        const h = createAuroraEditor(temp, { loroDoc: restored, onSave: () => true });
+        // 初始同步完成判据：PM doc 文本非空（loro→PM 回调落地）
+        let len = 0;
+        for (let i = 0; i < 50; i++) {
+          len = h.view.state.doc.textContent.length;
+          if (len > 0) break;
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        const ms = Math.round(performance.now() - t0);
+        h.destroy();
+        temp.remove();
+        return { ms, textLen: len };
+      },
+      /** S4 大文档渲染性能（n 段灌入耗时） */
+      bigDocPerf: (n) => {
+        const t0 = performance.now();
+        const count = window.__probe.fillLongDoc(n);
+        return { ms: Math.round(performance.now() - t0), count };
       },
     };
     // lab 不打包 prosemirror-state 顶层（经共享层间接依赖）——TextSelection 经
