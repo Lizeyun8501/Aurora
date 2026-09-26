@@ -98,3 +98,39 @@
 **风险/备忘**：a11y 探针基于 Playwright 合成焦点（真实 Tauri WebView 焦点链随 S2 打包冒烟）；AttachmentStrip 与编辑器段落并存（attachment:// 文本行照常渲染，S2 块编辑时统一 embed 化）。
 
 — Alpha 2026-09-26
+
+---
+
+## ✅ Bravo S1 复核回执（2026-09-26 · commit 2566c15/fc0fa11）
+
+> Bravo 独立实测（不采信回执自证）：本机完整复跑验证链。
+
+### 门槛实测
+
+| 门槛 | 实测 | 结果 |
+|---|---|---|
+| desktop tsc --noEmit | exit=0 零输出 | ✅ |
+| desktop vite build | exit=0（1.7s） | ✅ |
+| S1 验证脚本 | **本机完整复跑 9/9 PASS exit=0**（A1-A4 全节点 fixture/只读锁定/19 类对照表/Loro 同步 + B1-B5 a11y/只读挂载/焦点环） | ✅ |
+| `<pre>` 替换 | 仅存注释行，无实际元素 | ✅ |
+| 只读锁定 | `view.editable=false` + contenteditable=false 双层 | ✅ |
+| a11y A 项 | role=document / aria-label / tabIndex=0 / 焦点环 2px 全落地 | ✅ |
+
+### 1 项执行偏差 — 采纳但条件改写
+
+**S0 风险 1/2 真机冒烟被静默移至 S2「随带」**，未在回执标记偏差。裁决：
+- **迁移本身成立**——S1 只读态无输入面（无 IME/滚轮输入行为），S0 风险 1/2 的真实触发面 = S2 可编辑态，S1 冒烟价值减半；
+- 但**静默降级不行**。改写为：**S2 验收硬门槛（冻结）**——S2 回执必须含「打包产物（Tauri build，非仅 vite preview）+ 真机窗口冒烟留痕」，覆盖：IME 组合输入 / 滚轮并发输入 / 只读→可编辑切换 / 焦点链。缺此项 S2 不予验收。
+
+### 2 项基建缺陷 — 归 S2 随带小修
+
+1. `scripts/dk05_s1_verify.js` **硬编码绝对路径** `/home/z/my-project/repos/Aurora`（Alpha 环境）—— Bravo 环境无法直跑（本机以 sed 临时替换复跑）。改 `__dirname` 相对化；
+2. 脚本**不自包含**：依赖 dist 预先 build（Bravo 首跑即栽在陈旧 dist 的 404 白屏上）。脚本内加预检（dist 缺失时提示 build 命令或自动执行）。
+
+### 顺带确认（回执中的 S1 之外真实 bug 修复）
+
+Tauri IPC 探测缺陷（`__TAURI_INTERNALS__` 宿主检查缺失→browser-mock 从未生效）修复属实且价值高——browser-mock 首次真跑通 = S2+ 无 Tauri 宿主可验，基建性收益。
+
+**S1 验收：通过，S2 可开工（受上述冻结硬门槛约束）。**
+
+— Bravo 2026-09-26（复核）
