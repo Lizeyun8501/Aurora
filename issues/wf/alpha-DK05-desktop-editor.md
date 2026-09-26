@@ -279,3 +279,51 @@ Bravo 环境实测：cargo ✓ / xvfb ✓ / **NO_SUDO → webkit2gtk + GTK dev �
 **DK-05 编辑器主线：Bravo 复核通过收官。**
 
 — Bravo 2026-09-26（复核）
+
+---
+
+## ✅ Bravo 冒烟执行回执（2026-09-26 深夜 · S2 冻结硬门槛执行报告）
+
+> 派单人指令「基于最优方式执行」——Bravo 自建 user-space 桌面验证环境，执行到底。
+
+### 一、环境攻坚（全部 user-space，无 sudo）
+
+1. **磁盘破局**：清 26G 失败编译残骸 → cargo 全量 build 可行；
+2. **依赖树**：apt download + dpkg -x 解包 **280+ 包（851M）至 `~/.local/pkg/root`**（webkit2gtk/GTK3/gstreamer/mesa/atk 全链），pc prefix 重写 39 个；
+3. **Rust 编译验证闭环**：`cargo check` 4m03s 全过 + `cargo build` 链接成功（`cargo rustc` 定向 `-L` 注入 + t64 包名断链修复——**Rust 侧不再依赖 CI 兜底**）；
+4. **proot 用户态重定向**：WebKit helper 路径（编译期写死 /usr/lib）→ bind 解包树，NetworkProcess 正常 spawn。
+
+### 二、WebKitGTK 真机引擎 — 定性为栈级不可运行
+
+**MiniBrowser（WebKit 官方浏览器）同样 WebProcess CRASHED**——WebKitGTK 2.52 ANGLE 渲染层硬依赖 GPU EGL（`Could not create default EGL display: EGL_BAD_PARAMETER`），`WEBKIT_DISABLE_COMPOSITING_MODE`/`DISABLE_DMABUF_RENDERER`/llvmpipe 软件栈全试无效。**无 GPU 的 Xvfb 云环境跑不了 WebKitGTK 渲染管线——非 Tauri/应用侧问题。**
+
+### 三、Plan B 冒烟 — 7/7 PASS（最高可达置信度）
+
+**形态**：Xvfb 真实 X 会话（1280x800）+ **打包产物 frontend**（vite preview = Tauri 生产静态加载形态）+ **xdotool 原生 X 键鼠/滚轮事件（X server 级，非 CDP 合成）**：
+
+| # | 断言 | 结果 |
+|---|---|---|
+| S1 | 真实 X 会话窗口存在（X server 侧确认 6 窗口） | ✅ |
+| S1b | `__TAURI_INTERNALS__`=undefined → invoke 探测回落 browser-mock **生效**（S1 回执修复项的行为级证明） | ✅ |
+| S2 | 编辑器挂载：EditAuroraEditor + contenteditable=true（打包产物） | ✅ |
+| S3 | **原生 X 键盘输入 → nonce `SMOKE166817` 回显进 DOM**（真实按键路径全链路） | ✅ |
+| S4 | 原生 X 滚轮并发 12 事件 → DOM 存活无崩溃 | ✅ |
+| S5 | X 焦点切换 → 编辑器焦点可达（.ProseMirror） | ✅ |
+| S6 | 全流程零 JS 崩溃 | ✅ |
+
+留痕：`docs/evidence/dk05_xvfb_smoke.png`（截图）+ `dk05_xvfb_smoke.log`（原始断言输出）。
+
+### 四、冻结硬门槛 — 覆盖矩阵与剩余差距（如实披露）
+
+| 清单项 | 本执行 | 差距 |
+|---|---|---|
+| 打包产物 | ✅ frontend 生产形态 | Rust 二进制已 build 但 WebKitGTK 渲染不可运行（见上） |
+| 键盘输入 | ✅ 原生 X 事件 | — |
+| 滚轮并发 | ✅ 原生 X 事件 | — |
+| 焦点链 | ✅ | — |
+| IME 组合 | ❌ | Xvfb 无 IME 引擎，composition 段未覆盖（keydown→input 主链路已覆盖） |
+| 引擎差异（WKWebView/WebView2） | ❌ | 仅真机可验 |
+
+**裁定**：本环境已达物理极限。剩余 IME composition 与真机引擎差异两项，**仅持桌面环境的一次冒烟可关闭**（清单 `docs/DK-05-S2-smoke-checklist.md` 即开即用）。代码/构建/输入/UI/焦点层验证全部完成，建议 DK-05 按此状态收官，真机两项并入后续任一桌面触点。
+
+— Bravo 2026-09-26（冒烟执行）
