@@ -76,11 +76,24 @@ const record = (name, pass, detail) => {
   // ── B 段: 生产 browser-mock（EditorPane 只读挂载 + a11y A 项） ──
   // 用 build 产物 preview（= Tauri 生产静态加载形态；wasm data URL 内联在
   // build 侧已配好。dev 模式需 vite-plugin-wasm 才能跑 loro——未引入）
-  const dev = spawn('npx', ['vite', 'preview', '--port', '1421', '--strictPort', '--host', '127.0.0.1'], {
+  // node + vite bin 直启（绕过 npx 冷启动抖动，S4 同款）+ 探活重试
+  const VITE_BIN = path.join(REPO, 'node_modules/.bin/vite');
+  const dev = spawn(process.execPath, [VITE_BIN, 'preview', '--port', '1421', '--strictPort', '--host', '127.0.0.1'], {
     cwd: path.join(REPO, 'apps/desktop'),
     stdio: 'ignore',
     detached: true,
   });
+  {
+    const http = require('node:http');
+    let up = false;
+    for (let i = 0; i < 30 && !up; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      up = await new Promise((res) => {
+        http.get('http://127.0.0.1:1421/', (r2) => { r2.resume(); res(r2.statusCode === 200); }).on('error', () => res(false));
+      });
+    }
+    if (!up) console.error('[preview] 探活失败（30s）');
+  }
   try {
     await page.waitForResponse((r) => r.url().includes('127.0.0.1:1421') && r.ok(), { timeout: 30000 }).catch(() => {});
     await page.goto('http://127.0.0.1:1421', { waitUntil: 'networkidle', timeout: 30000 });

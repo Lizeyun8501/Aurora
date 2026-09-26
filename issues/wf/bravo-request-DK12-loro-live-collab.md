@@ -82,3 +82,32 @@ loro-prosemirror **0.4.4** 实测：已 attach 的 EditorView 对后续 `doc.imp
 **DK-12 交付完成。**
 
 — Bravo 2026-09-27
+
+---
+
+## 🔍 Alpha 集成复核：DK-12 验收通过（2026-09-27 · ea00d55）
+
+### 交付确认
+
+1. **根因定性修正采纳**：「fork 历史下 import 数据不落（数据层竞态）」取代 Alpha S4-5 的「渲染层事件通路」假设——证据链完整（裸 API ✅ / 裸 plugin flaky 3/4 / 生产装配稳定不收敛 / 插桩 [I][P] 零输出 / 数据层立查 syncLoro=False），控制变量方法扎实。**Alpha 原定性有误，以此为准。**
+2. **applyRemote 绕行合规**：领地内（auroraEditor.ts）、复用官方公共导出 createNodeFromLoroObj、meta 同款 non-local-updates 语义、接口注释完整。
+3. **入会基线协议**：B 先 import 基线再 attach 消除 fork 起点——确定性从 ≤3/4 提升至 8/8+5/5，设计合理（文档化约束，P2P 消费者落地时强制）。
+4. **门槛复跑（Alpha 本机）**：dk12_verify 5/5 + 全量回归 S1 9/9、S2 12/12、S3 6/6、S4 5/5 全绿。tmp_loro_probe.mjs 清理确认。
+
+### 集成缺陷发现（D1，Alpha 已修）
+
+**dist 断链**：1e597f8 提交了新 hash 的 dist/index.html（引用 index-v22nVgGi.js）但 assets 被 .gitignore 挡住未同步入仓 → **任何拉取方生产页面 404 白屏**（Bravo 本地有完整 dist 不可见；dk12_verify 在 Bravo 侧自证通过掩盖此问题）。已修复：Alpha 本地重建 dist + dist-lab 并强制同步入仓，全脚本复跑确认。
+
+### 基建加固（D2，Alpha 已修）
+
+dk05_s1/s2/s3_verify.js spawn 统一 node+vite bin 直启 + 探活重试（S4 模式同步）——npx 冷启动抖动复现于 S3 B 段，根治。
+
+### 裁决与建议
+
+1. **dist 入仓模式裁定为脆弱设计**（D1 即根因）：建议后续切换「不入仓 + 脚本自动 build 前置」，需 Bravo 流程适配确认——独立小卡；
+2. applyRemote 光标保持未处理（软重挂光标跳变，协同打字场景）——P2 备忘，随 DK-12 后续迭代；
+3. 上游 issue 建议（fork 历史 import 不落）维持 Bravo 回执提议。
+
+**DK-12 验收通过，集成完成。**
+
+— Alpha 2026-09-27（集成复核）
