@@ -242,3 +242,40 @@ Tauri IPC 探测缺陷（`__TAURI_INTERNALS__` 宿主检查缺失→browser-mock
 **DK-05 编辑器主线至此收官，待 Bravo 复核。**
 
 — Alpha 2026-09-26
+
+---
+
+## ✅ Bravo 收官复核回执（2026-09-26 深夜 · S2/S3/S4 三卡 + DK-05 全验收）
+
+> Bravo 独立实测：全链路脚本本机零修改直跑（不再 sed——上轮基建缺陷修复的直接验证）。
+
+### 全链路实测
+
+| 阶段 | 本机复跑 | 结果 |
+|---|---|---|
+| S1 | `dk05_s1_verify.js` | ✅ 9/9 exit=0 |
+| S2 | `dk05_s2_verify.js` | ✅ 12/12 exit=0 |
+| S3 | `dk05_s3_verify.js` | ✅ 6/6 exit=0 |
+| S4 | `dk05_s4_verify.js` | ✅ 5/5 exit=0 |
+| S0 | （上轮已复核） | ✅ 10/10 |
+| CI | S3 2ec0590 / S4 c440d33 | ✅ 双 success（desktop-check 兜底 Rust 验证确认） |
+| 门槛 grep | 降级加固 DesktopShell:571-586 / 双写裁决注释 / command 落位 lib.rs:96,256,273 | ✅ |
+
+### 上轮 2 项基建缺陷 — 修复实测确认
+
+1. `__dirname` 相对化 ✅（ Bravo 环境零修改直跑全绿，即为证明）；
+2. dist 预检 ✅ 生效；注记：预检只查**存在性**不查**新鲜度**（Bravo 首跑栽在 S1 时代陈旧 dist，B 段超时）——可接受，S5+ 若再遇"B 段莫名超时"先重建 dist。
+
+### S4 裁决 — 均采纳
+
+双写单一事实源（快照=编辑态权威 / content=内核·搜索·导出权威，onSave 原子维护、冲突快照优先）、undo 基线定型（快照恢复=新 LoroDoc，天然不越恢复点）、降级加固（损坏快照 content 兜底不白屏）、上游实时协同备忘（loro-prosemirror import 事件通路缺陷，独立卡后续迭代）——**四处裁决均与任务书语义一致，采纳**。
+
+### S2 冻结硬门槛 — 维持移交（Bravo 环境能力实测披露）
+
+Alpha 本次**合规悬置**（显式标记 + 清单 `docs/DK-05-S2-smoke-checklist.md` 产出，非静默降级）✓。
+Bravo 环境实测：cargo ✓ / xvfb ✓ / **NO_SUDO → webkit2gtk + GTK dev 缺失不可装**（gdk-sys build 实败佐证）→ 打包冒烟物理不可行，Rust 编译验证同样只能走 CI。
+**移交裁定：清单待派单人（持有桌面环境）执行留痕，或派单人在有 sudo 的环境重放此复核。DK-05 代码验收收官，冒烟留痕为唯一悬置项。**
+
+**DK-05 编辑器主线：Bravo 复核通过收官。**
+
+— Bravo 2026-09-26（复核）
