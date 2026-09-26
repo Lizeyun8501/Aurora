@@ -79,6 +79,44 @@
         }
         return view.state.doc.childCount;
       },
+      /** S1 只读锁定开关（view.setProps — 与生产 ReadOnlyAuroraEditor 同 API） */
+      setEditable: (on) => {
+        view.setProps({ editable: () => on });
+        return view.editable;
+      },
+      /** S1 全节点 fixture — schema 合并对照表全类型各一实例（一个事务替换） */
+      loadFullSchemaDoc: () => {
+        const s = auroraSchema;
+        const t = (txt, marks) => (marks ? s.text(txt, marks) : s.text(txt));
+        const para = (txt, marks) =>
+          s.nodes.paragraph.create(null, txt ? [t(txt, marks)] : null);
+        const cell = (txt) =>
+          s.nodes.table_cell.create(null, s.nodes.paragraph.create(null, txt ? [t(txt)] : null));
+        const row = (cells) => s.nodes.table_row.create(null, cells);
+        const li = (txt) => s.nodes.list_item.create(null, para(txt));
+        const nodes = [
+          s.nodes.heading.create({ level: 1 }, [t('一级标题')]),
+          s.nodes.heading.create({ level: 2 }, [t('二级标题')]),
+          s.nodes.heading.create({ level: 3 }, [t('三级标题')]),
+          para('普通段落含内联标记', [s.marks.strong.create()]),
+          para('斜体下划线', [s.marks.em.create(), s.marks.underline.create()]),
+          s.nodes.code_block.create({ language: 'rust' }, [t('fn main() {}')]),
+          s.nodes.blockquote.create(null, para('引用块内容')),
+          s.nodes.bullet_list.create(null, [li('无序项一'), li('无序项二')]),
+          s.nodes.ordered_list.create(null, [li('有序项一'), li('有序项二')]),
+          s.nodes.task_block.create({ checked: true, task_id: 'T-1' }, [t('已完成任务')]),
+          s.nodes.task_block.create({ checked: false, task_id: 'T-2' }, [t('进行中任务')]),
+          s.nodes.table.create(null, [
+            row([cell('列A'), cell('列B')]),
+            row([cell('1'), cell('2')]),
+          ]),
+          s.nodes.horizontal_rule.create(),
+          s.nodes.embed.create({ embed_type: 'image', url: 'https://example.com/a.png', title: '示例图' }),
+          s.nodes.ai_suggestion.create({ suggestionType: 'continue', model: 'glm' }, [t('AI 建议文本')]),
+        ];
+        view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, nodes));
+        return view.state.doc.childCount;
+      },
     };
     // lab 不打包 prosemirror-state 顶层（经共享层间接依赖）——TextSelection 经
     // 全局透出给 setCursor：这里从 view.state 的构造器域取。

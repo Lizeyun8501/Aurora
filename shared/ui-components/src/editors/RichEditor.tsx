@@ -252,7 +252,6 @@ const LIST_BTNS: Array<{ key: string; label: string; title: string; cmd: TBCmd }
  */
 function FloatingMenu({ view }: { view: EditorView | null }) {
   const [rect, setRect] = useState<{ top: number; left: number } | null>(null);
-  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     if (!view) return;

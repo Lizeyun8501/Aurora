@@ -1,0 +1,111 @@
+/**
+ * DK-05 S1 只读接入验证 — Playwright(Chromium) 驱动
+ *
+ * A 段（editor-lab file://）: schema 全节点 fixture 块级渲染
+ *   （对照 schema 合并对照表全类型）+ 只读锁定 + Loro 同步。
+ * B 段（生产 vite dev, browser-mock 模式）: EditorPane 只读挂载 +
+ *   R-04 A 项正文区 a11y 探针（role/aria-label/tabIndex/焦点环）。
+ */
+const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
+const { spawn } = require('node:child_process');
+
+const results = [];
+const record = (name, pass, detail) => {
+  results.push({ name, pass });
+  console.log(`${pass ? 'PASS' : 'FAIL'} ${name}: ${detail}`);
+};
+
+(async () => {
+  // --no-proxy-server: 本环境 Chromium 层有代理配置，localhost 直连会被劫持
+  const browser = await chromium.launch({ args: ['--no-proxy-server'] });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+
+  // ── A 段: editor-lab 全节点 fixture ──
+  await page.goto('file:///home/z/my-project/repos/Aurora/apps/desktop/dist-lab/editor-lab.html');
+  await page.waitForFunction(() => window.__probe && window.__pmState, null, { timeout: 20000 });
+
+  const childCount = await page.evaluate(() => window.__probe.loadFullSchemaDoc());
+  record('A1 全节点 fixture 加载（15 块类型）', childCount === 15, `childCount=${childCount}`);
+
+  const editable = await page.evaluate(() => window.__probe.setEditable(false));
+  record('A2 只读锁定生效', editable === false, `view.editable=${editable}`);
+
+  // 块级 DOM 渲染（对照 schema 合并对照表 — 实战语义版）
+  const dom = await page.evaluate(() => {
+    const $ = (sel) => document.querySelectorAll(sel).length;
+    return {
+      h1: $('h1'), h2: $('h2'), h3: $('h3'),
+      strong: $('strong'), em: $('em'), u: $('u'),
+      codeBlock: $('pre code'),
+      blockquote: $('blockquote'),
+      ul: $('ul'), ol: $('ol'), li: $('li'),
+      taskBlock: $('div.task-block'),
+      taskChecked: $('div.task-block[data-checked="true"]'),
+      table: $('table'), tr: $('tr'), td: $('td'),
+      hr: $('hr'),
+      embed: $('div.embed-block'),
+      aiSuggestion: $('div.ai-suggestion'),
+    };
+  });
+  const expected = { h1: 1, h2: 1, h3: 1, strong: 1, em: 1, u: 1, codeBlock: 1, blockquote: 1, ul: 1, ol: 1, li: 4, taskBlock: 2, taskChecked: 1, table: 1, tr: 2, td: 4, hr: 1, embed: 1, aiSuggestion: 1 };
+  const bad = Object.entries(expected).filter(([k, v]) => dom[k] !== v);
+  record('A3 块级渲染对照表（19 类全对）', bad.length === 0,
+    bad.length ? `偏差: ${bad.map(([k, v]) => `${k}=${dom[k]}≠${v}`).join(', ')}` : '19 类计数全中');
+
+  const loroOk = await page.evaluate(() => {
+    const snap = window.__loro.export({ mode: 'snapshot' });
+    return snap && snap.length > 200; // 15 块 + 文本 — 同步进 LoroDoc
+  });
+  record('A4 fixture 同步进 LoroDoc', loroOk, 'snapshot 导出非空');
+
+  // ── B 段: 生产 browser-mock（EditorPane 只读挂载 + a11y A 项） ──
+  // 用 build 产物 preview（= Tauri 生产静态加载形态；wasm data URL 内联在
+  // build 侧已配好。dev 模式需 vite-plugin-wasm 才能跑 loro——未引入）
+  const dev = spawn('npx', ['vite', 'preview', '--port', '1421', '--strictPort', '--host', '127.0.0.1'], {
+    cwd: '/home/z/my-project/repos/Aurora/apps/desktop',
+    stdio: 'ignore',
+    detached: true,
+  });
+  try {
+    await page.waitForResponse((r) => r.url().includes('127.0.0.1:1421') && r.ok(), { timeout: 30000 }).catch(() => {});
+    await page.goto('http://127.0.0.1:1421', { waitUntil: 'networkidle', timeout: 30000 });
+    // 点选第一条演示笔记（V23 迭代复盘）
+    await page.click('text=V23 迭代复盘', { timeout: 15000 });
+    await page.waitForSelector('[role="document"] .ProseMirror', { timeout: 20000 });
+
+    const a11y = await page.evaluate(() => {
+      const el = document.querySelector('[role="document"]');
+      const pm = el?.querySelector('.ProseMirror');
+      return {
+        role: el?.getAttribute('role'),
+        label: el?.getAttribute('aria-label'),
+        tabIndex: el?.getAttribute('tabIndex'),
+        contentEditable: pm?.getAttribute('contenteditable'),
+        paras: pm?.querySelectorAll('p').length ?? 0,
+        text: pm?.textContent ?? '',
+      };
+    });
+    record('B1 role=document + aria-label', a11y.role === 'document' && !!a11y.label, `label="${a11y.label}"`);
+    record('B2 焦点可达（tabIndex=0）', a11y.tabIndex === '0', `tabIndex=${a11y.tabIndex}`);
+    record('B3 只读挂载（contenteditable=false）', a11y.contentEditable === 'false', `ce=${a11y.contentEditable}`);
+    record('B4 演示笔记段落渲染', a11y.paras >= 5 && a11y.text.includes('I0 安全收口'), `paras=${a11y.paras}`);
+
+    // 焦点环可见（R-04: focus 态 outline）
+    const ring = await page.evaluate(() => {
+      const el = document.querySelector('[role="document"]');
+      el.focus();
+      return new Promise((res) => setTimeout(() => {
+        const s = getComputedStyle(el);
+        res({ width: s.outlineWidth, color: s.outlineColor, focused: document.activeElement === el });
+      }, 120));
+    });
+    record('B5 焦点环可见（focus 态 outline 2px）', ring.focused && ring.width === '2px', `outline=${ring.width} ${ring.color}`);
+  } finally {
+    try { process.kill(-dev.pid); } catch { /* already gone */ }
+  }
+
+  browser.close();
+  const failed = results.filter((r) => !r.pass).length;
+  console.log(`\nSUMMARY: ${results.length - failed}/${results.length} PASS${failed ? ` — ${failed} FAIL` : ''}`);
+  process.exit(failed ? 1 : 0);
+})();

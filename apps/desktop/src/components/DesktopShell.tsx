@@ -14,8 +14,9 @@
  * 样式全部引用 design/tokens（单一事实源 — 禁止硬编码色值）。
  * 无障碍: 焦点环 2px focus 色 / 触控目标 ≥44px / 对比度 ≥4.5:1（tokens.a11y）。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import tokens from '../design/tokens';
+import type { AuroraEditorHandle } from '@aurora/ui-components';
 import CommandPalette, { type PaletteItem } from './CommandPalette';
 import ImportWizard from './ImportWizard';
 
@@ -470,23 +471,91 @@ function EditorPane(props: {
           color: tokens.color.textSecondary,
         }}
       >
-        更新于 {note.updated_at} · 只读预览（编辑器 Shell 按 I2 块级编辑挂载）
+        更新于 {note.updated_at} · 只读预览（DK-05 S1 · 编辑器内核只读挂载）
       </p>
-      <pre
-        style={{
-          margin: 0,
-          whiteSpace: 'pre-wrap',
-          fontFamily: tokens.typography.mono,
-          fontSize: tokens.typography.body.size,
-          lineHeight: tokens.typography.body.lineHeight,
-          color: tokens.color.textPrimary,
-        }}
-      >
-        {note.content}
-      </pre>
+      {/* DK-05 S1: <pre> → 共享层编辑器只读挂载（loro-prosemirror 渲染管线，
+          仿 dk05mv/desktop-input-verify 同栈；attachment:// 引用解析随带保留） */}
+      <ReadOnlyAuroraEditor content={note.content} />
       {/* DK-09 渲染接线：attachment:// 引用解析（图片内联 / 文件卡） */}
       <AttachmentStrip invoke={invoke} content={note.content} />
     </main>
+  );
+}
+
+/**
+ * DK-05 S1 只读渲染 — 共享层编辑器实体挂载（loro-prosemirror 0.4.4 管线）。
+ *
+ * - 内容链路：NoteContent.content（纯文本）按行拆段落，经 PM 事务灌入
+ *   （LoroSyncPlugin 自动同步进 LoroDoc — S3 双向绑定的反向预演）；
+ * - 懒加载：动态 import 共享层实体（loro wasm 3.2MB），未选中笔记不加载；
+ * - 只读锁定：editable() => false（S2 编辑态移除此行）；
+ * - a11y（R-04 A 项·正文区）：role=document + aria-label + tabIndex=0
+ *   焦点可达 + focus 焦点环可见（tokens.a11y）。
+ */
+function ReadOnlyAuroraEditor(props: { content: string }) {
+  const { content } = props;
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    let handle: AuroraEditorHandle | null = null;
+    let cancelled = false;
+    (async () => {
+      const { createAuroraEditor } = await import('@aurora/ui-components');
+      const { TextSelection } = await import('prosemirror-state');
+      const { LoroDoc } = await import('loro-crdt');
+      if (cancelled || !hostRef.current) return;
+      handle = createAuroraEditor(host, { loroDoc: new LoroDoc(), onSave: () => true });
+      const view = handle.view;
+      // 纯文本 → 段落（逐段 dispatch — LoroSyncPlugin 事务映射安全，
+      // 与 lab fillLongDoc 同模式）
+      const lines = content.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        if (i > 0) {
+          const size = view.state.doc.content.size;
+          view.dispatch(
+            view.state.tr.insert(size, view.state.schema.nodes.paragraph.create()),
+          );
+          view.dispatch(
+            view.state.tr.setSelection(
+              TextSelection.create(view.state.doc, view.state.doc.content.size - 1),
+            ),
+          );
+        }
+        if (lines[i]) view.dispatch(view.state.tr.insertText(lines[i]));
+      }
+      // S1 只读锁定 — 焦点由外层 role=document 容器承担（tabIndex=0）
+      view.setProps({ editable: () => false });
+    })().catch((e) => console.error('ReadOnlyAuroraEditor init failed', e));
+    return () => {
+      cancelled = true;
+      handle?.destroy();
+    };
+  }, [content]);
+
+  return (
+    <div
+      ref={hostRef}
+      role="document"
+      aria-label="笔记正文（只读预览）"
+      tabIndex={0}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      style={{
+        outline: 'none',
+        ...(focused
+          ? {
+              outline: `${tokens.a11y.focusRingWidth}px solid ${tokens.color.focus}`,
+              outlineOffset: 2,
+            }
+          : {}),
+        // ProseMirror 宿主最小高度 + 只读态光标语义
+        minHeight: 120,
+        cursor: 'default',
+      }}
+    />
   );
 }
 
@@ -537,9 +606,15 @@ export default function DesktopShell() {
   const data = useDataBridge(invoke);
 
   useEffect(() => {
-    // Tauri IPC 探测（与 bootstrap.ts 同语义）; 当前环境回落 browser-mock
-    import('@tauri-apps/api/core')
-      .then((m) => setInvoke(m.invoke as InvokeFn))
+    // Tauri IPC 探测（与 bootstrap.ts 同语义）; 当前环境回落 browser-mock。
+    // 注意：@tauri-apps/api 包在纯浏览器也可 import 成功，但 invoke 底层依赖
+    // window.__TAURI_INTERNALS__（Tauri v2 注入）——必须同时检查宿主标志，
+    // 否则 invoke 调用期抛错整树白屏（S1 验证中发现的探测缺陷）。
+    Promise.all([
+      import('@tauri-apps/api/core'),
+      Promise.resolve(typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window),
+    ])
+      .then(([m, hasHost]) => setInvoke(hasHost ? (m.invoke as InvokeFn) : null))
       .catch(() => setInvoke(null));
   }, []);
 

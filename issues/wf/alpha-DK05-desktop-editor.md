@@ -1,7 +1,7 @@
 # Alpha 任务书：DK-05 桌面块编辑器（EditorPane → 共享层 DocumentEditor，切片排期）
 
 > 发起：Bravo · 2026-09-25（对 bravo-DK0F-editor-taskbooks.md 申请 2 的裁决产出）
-> 执行：Alpha · 状态：**S0 完成（10/10 PASS，无阻塞），S1 接入骨架开工中**（报告 docs/DK-05-desktop-input-verify.md）
+> 执行：Alpha · 状态：**S1 完成（9/9 PASS），S2 块编辑操作解锁**（S0 报告 docs/DK-05-desktop-input-verify.md）
 > 依据：ADR-005 任务 4（EditorPane 纯文本预览升级为共享层 DocumentEditor）+ DK-05M-V 报告风险项（loro-prosemirror 桌面输入时序需复验）
 > 性质：65 人日大件，按可独立验收切片推进；本书定切分与门槛，逐切片走验收→装配→回执循环。
 
@@ -77,3 +77,24 @@
 - lab 基建：`apps/desktop/editor-lab.html` + `vite.config.editorlab.ts` + `scripts/dk05_desktop_verify.js`（S1/S2 迭代复用）。
 
 — Alpha 2026-09-25
+
+---
+
+## Alpha 回执：S1 完成（2026-09-26 · 接入骨架/只读渲染）
+
+**验收全过：desktop tsc + vite build 绿 + 全节点块级渲染正确（19 类对照表全中）+ a11y A 项落地。** 验证脚本 `scripts/dk05_s1_verify.js` 9/9 PASS。
+
+**交付面**：
+- `DesktopShell.tsx`：EditorPane `<pre>` → `ReadOnlyAuroraEditor`（共享层实体懒加载挂载；纯文本按行拆段落经 PM 事务灌入，LoroSync 自动同步 loro——S3 双向绑定反向预演；`editable() => false` 只读锁定，S2 摘除即编辑态）。
+- a11y（R-04 A 项·正文区）：`role=document` + `aria-label=笔记正文（只读预览）` + `tabIndex=0` 焦点可达 + focus 焦点环 2px（tokens.a11y）。
+- 配套：desktop `vite.config.ts` 加共享层 alias + esnext（loro wasm top-level await）+ wasm data URL 内联（3.2MB）+ `server.fs.allow` 仓库根；package.json 补 prosemirror/loro 依赖（对齐 mobile）。
+- 顺带清理：RichEditor FloatingMenu 死代码（tick/setTick 未用——desktop tsc 把共享层拉入范围暴露）。
+- editor-lab 扩展：`loadFullSchemaDoc()`（schema 全类型 fixture 各一实例）+ `setEditable()` 开关。
+
+**执行中发现并修复的既有缺陷**（S1 之外的真实 bug）：
+1. **Tauri IPC 探测缺陷**：`@tauri-apps/api` 包在纯浏览器也可 import 成功，但 invoke 底层依赖 `window.__TAURI_INTERNALS__`——原探测漏宿主检查，browser-mock 回落从未真正生效（调用期抛错整树白屏）。已修：宿主标志同时检查。browser-mock 模式首次真跑通。
+2. **dev 模式 wasm 限制备忘**：vite dev 不支持 loro 的 wasm ESM import（需 vite-plugin-wasm，未引入）；验证走 build 产物 `vite preview`（= Tauri 生产静态加载形态，wasm 内联已配）。若后续要 dev 模式调试编辑器再加插件。
+
+**风险/备忘**：a11y 探针基于 Playwright 合成焦点（真实 Tauri WebView 焦点链随 S2 打包冒烟）；AttachmentStrip 与编辑器段落并存（attachment:// 文本行照常渲染，S2 块编辑时统一 embed 化）。
+
+— Alpha 2026-09-26
