@@ -6,8 +6,23 @@
  * B 段（生产 vite dev, browser-mock 模式）: EditorPane 只读挂载 +
  *   R-04 A 项正文区 a11y 探针（role/aria-label/tabIndex/焦点环）。
  */
-const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
+let chromium;
+try { ({ chromium } = require('playwright')); }
+catch { ({ chromium } = require('/home/z/.npm-global/lib/node_modules/playwright')); }
 const { spawn } = require('node:child_process');
+const path = require('node:path');
+const fs = require('node:fs');
+
+// 仓库根相对定位（Bravo 复核基建缺陷①：禁硬编码绝对路径）
+const REPO = path.join(__dirname, '..');
+const LAB = `file://${path.join(REPO, 'apps/desktop/dist-lab/editor-lab.html')}`;
+const DIST_INDEX = path.join(REPO, 'apps/desktop/dist/index.html');
+
+// Bravo 复核基建缺陷②：脚本自包含预检——dist 陈旧/缺失时明确提示
+if (!fs.existsSync(DIST_INDEX)) {
+  console.error('dist/index.html 不存在 — 先执行: cd apps/desktop && npx vite build');
+  process.exit(2);
+}
 
 const results = [];
 const record = (name, pass, detail) => {
@@ -21,7 +36,7 @@ const record = (name, pass, detail) => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 
   // ── A 段: editor-lab 全节点 fixture ──
-  await page.goto('file:///home/z/my-project/repos/Aurora/apps/desktop/dist-lab/editor-lab.html');
+  await page.goto(LAB);
   await page.waitForFunction(() => window.__probe && window.__pmState, null, { timeout: 20000 });
 
   const childCount = await page.evaluate(() => window.__probe.loadFullSchemaDoc());
@@ -62,7 +77,7 @@ const record = (name, pass, detail) => {
   // 用 build 产物 preview（= Tauri 生产静态加载形态；wasm data URL 内联在
   // build 侧已配好。dev 模式需 vite-plugin-wasm 才能跑 loro——未引入）
   const dev = spawn('npx', ['vite', 'preview', '--port', '1421', '--strictPort', '--host', '127.0.0.1'], {
-    cwd: '/home/z/my-project/repos/Aurora/apps/desktop',
+    cwd: path.join(REPO, 'apps/desktop'),
     stdio: 'ignore',
     detached: true,
   });
@@ -71,10 +86,10 @@ const record = (name, pass, detail) => {
     await page.goto('http://127.0.0.1:1421', { waitUntil: 'networkidle', timeout: 30000 });
     // 点选第一条演示笔记（V23 迭代复盘）
     await page.click('text=V23 迭代复盘', { timeout: 15000 });
-    await page.waitForSelector('[role="document"] .ProseMirror', { timeout: 20000 });
+    await page.waitForSelector('[role="textbox"] .ProseMirror', { timeout: 20000 }); // S2 起正文区 role=textbox
 
     const a11y = await page.evaluate(() => {
-      const el = document.querySelector('[role="document"]');
+      const el = document.querySelector('[role="textbox"]');
       const pm = el?.querySelector('.ProseMirror');
       return {
         role: el?.getAttribute('role'),
@@ -85,14 +100,14 @@ const record = (name, pass, detail) => {
         text: pm?.textContent ?? '',
       };
     });
-    record('B1 role=document + aria-label', a11y.role === 'document' && !!a11y.label, `label="${a11y.label}"`);
+    record('B1 role=textbox + aria-label', a11y.role === 'textbox' && !!a11y.label, `label="${a11y.label}"`); // S2 起正文区 role=textbox
     record('B2 焦点可达（tabIndex=0）', a11y.tabIndex === '0', `tabIndex=${a11y.tabIndex}`);
-    record('B3 只读挂载（contenteditable=false）', a11y.contentEditable === 'false', `ce=${a11y.contentEditable}`);
+    record('B3 编辑区挂载（contenteditable 就绪）', a11y.contentEditable === 'true', `ce=${a11y.contentEditable}`); // S2 起可编辑态
     record('B4 演示笔记段落渲染', a11y.paras >= 5 && a11y.text.includes('I0 安全收口'), `paras=${a11y.paras}`);
 
     // 焦点环可见（R-04: focus 态 outline）
     const ring = await page.evaluate(() => {
-      const el = document.querySelector('[role="document"]');
+      const el = document.querySelector('[role="textbox"]');
       el.focus();
       return new Promise((res) => setTimeout(() => {
         const s = getComputedStyle(el);

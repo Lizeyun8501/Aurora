@@ -310,7 +310,7 @@ function FloatingMenu({ view }: { view: EditorView | null }) {
   );
 }
 
-function EditorToolbar({ view, tick }: { view: EditorView | null; tick: number }) {
+export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: number }) {
   const { marks, blocks, canUndo, canRedo } = useToolbarState(view, tick);
 
   const btn = (

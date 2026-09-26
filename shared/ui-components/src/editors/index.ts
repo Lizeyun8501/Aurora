@@ -22,5 +22,6 @@ export {
   canRedo,
 } from './auroraEditor';
 export type { AuroraEditorHandle, CreateAuroraEditorOptions } from './auroraEditor';
-export { RichEditor } from './RichEditor';
+export { RichEditor, EditorToolbar } from './RichEditor';
 export type { EditorPlatformBridge } from './RichEditor';
+export { mdToDoc, mdToNodes, docToMd } from './auroraMarkdown';

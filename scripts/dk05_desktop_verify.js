@@ -10,7 +10,10 @@
  * 环境：dist-lab/editor-lab.html（apps/desktop/vite.config.editorlab.ts 构建，
  * 单文件内联）。发现阻塞性缺陷 → 回执并停线（不带病挂内核）。
  */
-const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
+const path = require('node:path');
+let chromium;
+try { ({ chromium } = require('playwright')); }
+catch { ({ chromium } = require('/home/z/.npm-global/lib/node_modules/playwright')); }
 
 (async () => {
   const browser = await chromium.launch();
@@ -21,7 +24,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     console.log(`${pass ? 'PASS' : 'FAIL'} ${name}: ${detail}`);
   };
 
-  await page.goto('file:///home/z/my-project/repos/Aurora/apps/desktop/dist-lab/editor-lab.html');
+  await page.goto(`file://${path.join(__dirname, '../apps/desktop/dist-lab/editor-lab.html')}`);
   await page.waitForFunction(() => window.__view && window.__probe && window.__pmState, null, { timeout: 20000 });
 
   // ── 场景 ①: 焦点与逐键输入落 doc ──

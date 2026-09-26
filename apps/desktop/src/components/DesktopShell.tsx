@@ -134,12 +134,24 @@ function useDataBridge(invoke: InvokeFn | null) {
       async getContent(noteId: string): Promise<NoteContent | null> {
         if (invoke) {
           try {
-            return (await invoke('cmd_get_note_content', { note_id: noteId })) as NoteContent;
+            // DK-05 S2: 修正命令名 — 内核 handler 是 cmd_get_note（原
+            // cmd_get_note_content 不存在，tauri 模式下会 404 回落 mock）
+            return (await invoke('cmd_get_note', { note_id: noteId })) as NoteContent;
           } catch {
             /* fallthrough to mock */
           }
         }
         return MOCK_CONTENT[noteId] ?? null;
+      },
+      /** DK-05 S2 落库：编辑产物（markdown-ish 文本）经既有 cmd_update_note（禁绕过） */
+      async saveContent(noteId: string, content: string): Promise<void> {
+        if (invoke) {
+          await invoke('cmd_update_note', { note_id: noteId, content });
+          return;
+        }
+        // browser-mock: 内存更新（往返一致验证通路）+ 测试钩子
+        if (MOCK_CONTENT[noteId]) MOCK_CONTENT[noteId].content = content;
+        (window as any).__lastSaved = { noteId, content };
       },
       async todayStats(): Promise<{ active: number; done: number; due_today: number } | null> {
         if (invoke) {
@@ -413,8 +425,9 @@ function EditorPane(props: {
   note: NoteContent | null;
   loading: boolean;
   invoke: InvokeFn | null;
+  persistNote: (noteId: string, content: string) => Promise<void>;
 }) {
-  const { note, loading, invoke } = props;
+  const { note, loading, invoke, persistNote } = props;
   if (loading) {
     return (
       <main style={{ flex: 1, padding: tokens.spacing.lg, color: tokens.color.textSecondary }}>
@@ -471,11 +484,15 @@ function EditorPane(props: {
           color: tokens.color.textSecondary,
         }}
       >
-        更新于 {note.updated_at} · 只读预览（DK-05 S1 · 编辑器内核只读挂载）
+        更新于 {note.updated_at} · DK-05 S2 · 编辑态（工具条块操作 / 防抖落库）
       </p>
-      {/* DK-05 S1: <pre> → 共享层编辑器只读挂载（loro-prosemirror 渲染管线，
-          仿 dk05mv/desktop-input-verify 同栈；attachment:// 引用解析随带保留） */}
-      <ReadOnlyAuroraEditor content={note.content} />
+      {/* DK-05 S2: 可编辑态挂载（S1 只读 → 编辑态 + 块操作工具条 +
+          markdown-ish 序列化落库 cmd_update_note + 防抖/flush） */}
+      <EditAuroraEditor
+        noteId={note.note_id}
+        content={note.content}
+        onPersist={(text) => void persistNote(note.note_id, text)}
+      />
       {/* DK-09 渲染接线：attachment:// 引用解析（图片内联 / 文件卡） */}
       <AttachmentStrip invoke={invoke} content={note.content} />
     </main>
@@ -483,19 +500,30 @@ function EditorPane(props: {
 }
 
 /**
- * DK-05 S1 只读渲染 — 共享层编辑器实体挂载（loro-prosemirror 0.4.4 管线）。
+ * DK-05 S2 可编辑编辑器 — 共享层实体挂载（loro-prosemirror 管线）+ 块操作。
  *
- * - 内容链路：NoteContent.content（纯文本）按行拆段落，经 PM 事务灌入
- *   （LoroSyncPlugin 自动同步进 LoroDoc — S3 双向绑定的反向预演）；
- * - 懒加载：动态 import 共享层实体（loro wasm 3.2MB），未选中笔记不加载；
- * - 只读锁定：editable() => false（S2 编辑态移除此行）；
- * - a11y（R-04 A 项·正文区）：role=document + aria-label + tabIndex=0
- *   焦点可达 + focus 焦点环可见（tokens.a11y）。
+ * - 内容链路：content（markdown-ish）→ mdToNodes 初始 doc；编辑产物
+ *   docToMd → onPersist → cmd_update_note（禁绕过既有 command）；
+ * - 防抖/flush：createAuroraEditor 内建 onSave debounce 1s（scheduleSave），
+ *   unmount/切笔记 cleanup 先 flushSave()（同步）再 destroy（退出前 flush）；
+ * - 块操作：共享层 EditorToolbar（heading/列表/task/code_block/undo/redo，
+ *   LoroUndoPlugin 撤销栈）；onUpdate 刷新激活态（tick）；
+ * - a11y（R-04 A 项·正文区）：role=textbox + aria-label + tabIndex=0 +
+ *   focus 焦点环；工具条 role=toolbar 原生 button（Tab 可达 + Enter 激活）。
  */
-function ReadOnlyAuroraEditor(props: { content: string }) {
-  const { content } = props;
+function EditAuroraEditor(props: {
+  noteId: string;
+  content: string;
+  onPersist: (text: string) => void;
+}) {
+  const { noteId, content, onPersist } = props;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [focused, setFocused] = useState(false);
+  const [view, setView] = useState<import('prosemirror-view').EditorView | null>(null);
+  const [tick, setTick] = useState(0);
+  const [Toolbar, setToolbar] = useState<React.ComponentType<{ view: import('prosemirror-view').EditorView | null; tick: number }> | null>(null);
+  const persistRef = useRef(onPersist);
+  persistRef.current = onPersist;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -503,59 +531,79 @@ function ReadOnlyAuroraEditor(props: { content: string }) {
     let handle: AuroraEditorHandle | null = null;
     let cancelled = false;
     (async () => {
-      const { createAuroraEditor } = await import('@aurora/ui-components');
-      const { TextSelection } = await import('prosemirror-state');
+      const { createAuroraEditor, docToMd, mdToNodes, EditorToolbar: ET } = await import('@aurora/ui-components');
       const { LoroDoc } = await import('loro-crdt');
+      setToolbar(() => ET);
       if (cancelled || !hostRef.current) return;
-      handle = createAuroraEditor(host, { loroDoc: new LoroDoc(), onSave: () => true });
-      const view = handle.view;
-      // 纯文本 → 段落（逐段 dispatch — LoroSyncPlugin 事务映射安全，
-      // 与 lab fillLongDoc 同模式）
-      const lines = content.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        if (i > 0) {
-          const size = view.state.doc.content.size;
-          view.dispatch(
-            view.state.tr.insert(size, view.state.schema.nodes.paragraph.create()),
-          );
-          view.dispatch(
-            view.state.tr.setSelection(
-              TextSelection.create(view.state.doc, view.state.doc.content.size - 1),
-            ),
-          );
-        }
-        if (lines[i]) view.dispatch(view.state.tr.insertText(lines[i]));
+      handle = createAuroraEditor(host, {
+        loroDoc: new LoroDoc(),
+        onSave: () => {
+          // debounce 1s 到期（或 flushSave）——编辑产物序列化落库
+          if (handle) persistRef.current(docToMd(handle.view.state.doc));
+        },
+        onUpdate: () => setTick((t) => t + 1), // 工具条激活态刷新
+      });
+      const v = handle.view;
+      // markdown-ish → 初始 doc（LoroSync 初始同步前写入，双方收敛一致）
+      const nodes = mdToNodes(v.state.schema, content);
+      if (nodes.length) {
+        v.dispatch(v.state.tr.replaceWith(0, v.state.doc.content.size, nodes));
       }
-      // S1 只读锁定 — 焦点由外层 role=document 容器承担（tabIndex=0）
-      view.setProps({ editable: () => false });
-    })().catch((e) => console.error('ReadOnlyAuroraEditor init failed', e));
+      if (!cancelled) setView(v);
+    })().catch((e) => console.error('EditAuroraEditor init failed', e));
     return () => {
       cancelled = true;
+      setView(null);
+      // 退出前 flush：同步序列化落库（切笔记/unmount 语义），再销毁
+      try {
+        handle?.flushSave();
+      } catch { /* 初始同步未完成时无内容可flush */ }
       handle?.destroy();
     };
-  }, [content]);
+  }, [noteId, content]);
 
   return (
-    <div
-      ref={hostRef}
-      role="document"
-      aria-label="笔记正文（只读预览）"
-      tabIndex={0}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
-      style={{
-        outline: 'none',
-        ...(focused
-          ? {
-              outline: `${tokens.a11y.focusRingWidth}px solid ${tokens.color.focus}`,
-              outlineOffset: 2,
-            }
-          : {}),
-        // ProseMirror 宿主最小高度 + 只读态光标语义
-        minHeight: 120,
-        cursor: 'default',
-      }}
-    />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
+      {/* 桌面工具条样式 — className 与共享层 EditorToolbar 对齐（mobile.css 桌面等价，
+          token 单一事实源） */}
+      <style>{`
+        .editor-toolbar { display: flex; align-items: center; gap: 2px;
+          padding: 4px 0; overflow-x: auto; scrollbar-width: none; }
+        .editor-toolbar::-webkit-scrollbar { display: none; }
+        .tb-btn { min-width: 32px; height: 32px; display: flex; align-items: center;
+          justify-content: center; border: none; border-radius: 6px;
+          background: transparent; color: ${tokens.color.textSecondary};
+          font-size: 14px; cursor: pointer; }
+        .tb-btn:hover { background: ${tokens.color.bgElevated}; }
+        .tb-btn.active { background: ${tokens.color.focus}22;
+          color: ${tokens.color.focus}; font-weight: 600; }
+        .tb-sep { flex: 0 0 1px; height: 18px; margin: 0 6px;
+          background: ${tokens.color.textDisabled}; }
+        .ProseMirror { outline: none; min-height: 120px; }
+      `}</style>
+      {/* 块操作工具条（共享层实体）：heading 升降级/列表/task/code_block/undo/redo；
+          原生 button — Tab 可达 + Enter/Space 激活（R-04 键盘全操作路径） */}
+      {view && Toolbar && <Toolbar view={view} tick={tick} />}
+      <div
+        ref={hostRef}
+        role="textbox"
+        aria-multiline="true"
+        aria-label="笔记正文"
+        tabIndex={0}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={{
+          outline: 'none',
+          ...(focused
+            ? {
+                outline: `${tokens.a11y.focusRingWidth}px solid ${tokens.color.focus}`,
+                outlineOffset: 2,
+              }
+            : {}),
+          cursor: 'text',
+        }}
+      />
+    </div>
   );
 }
 
@@ -831,7 +879,7 @@ export default function DesktopShell() {
             )}
           </main>
         ) : (
-          <EditorPane note={content} loading={loading} invoke={invoke} />
+          <EditorPane note={content} loading={loading} invoke={invoke} persistNote={data.saveContent} />
         )}
       </div>
       <StatusBar mode={mode} stats={stats} />

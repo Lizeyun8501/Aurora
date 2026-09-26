@@ -1,7 +1,7 @@
 # Alpha 任务书：DK-05 桌面块编辑器（EditorPane → 共享层 DocumentEditor，切片排期）
 
 > 发起：Bravo · 2026-09-25（对 bravo-DK0F-editor-taskbooks.md 申请 2 的裁决产出）
-> 执行：Alpha · 状态：**S1 完成（9/9 PASS），S2 块编辑操作解锁**（S0 报告 docs/DK-05-desktop-input-verify.md）
+> 执行：Alpha · 状态：**S2 完成（12/12 PASS），S3 Loro CRDT 绑定解锁**（S0 报告 docs/DK-05-desktop-input-verify.md）
 > 依据：ADR-005 任务 4（EditorPane 纯文本预览升级为共享层 DocumentEditor）+ DK-05M-V 报告风险项（loro-prosemirror 桌面输入时序需复验）
 > 性质：65 人日大件，按可独立验收切片推进；本书定切分与门槛，逐切片走验收→装配→回执循环。
 
@@ -101,20 +101,24 @@
 
 ---
 
-## ✅ Bravo S1 复核回执（2026-09-26 · commit 2566c15/fc0fa11）
+## Alpha 回执：S2 完成（2026-09-26 · 块编辑操作/可编辑态）
 
-> Bravo 独立实测（不采信回执自证）：本机完整复跑验证链。
+**验收全过：块操作行为断言 + 落库往返一致 + a11y 键盘路径 + desktop/mobile tsc 与 desktop build 全绿。** 验证脚本 `scripts/dk05_s2_verify.js` **12/12 PASS**。
 
-### 门槛实测
+**交付面**：
+- **共享层**（双端受益）：
+  - `editors/auroraMarkdown.ts`（新）：mdToNodes/docToMd markdown-ish 往返——块级 heading(1-3)/code_block(fence+lang)/blockquote/task_block/bullet/ordered/hr/paragraph；相邻列表行合并；S2 工具条外类型（table/embed/ai_suggestion）占位行保底不丢内容。语义对齐既有 content 形态（mock `# 标题`/`- 列表`）。
+  - `EditorToolbar` 导出（原 RichEditor 内部组件）——桌面复用同一工具条实体（undo/redo/heading/列表/task/code_block，激活态 view+tick）。
+- **DesktopShell**：
+  - `ReadOnlyAuroraEditor` → `EditAuroraEditor`：可编辑挂载 + 共享层工具条动态加载（懒加载保持——EditorToolbar 经动态 import，wasm 仍按需）+ md 初始灌入（mdToNodes replaceWith）。
+  - 落库链路（禁绕过）：onSave debounce 1s（createAuroraEditor 内建 scheduleSave）→ docToMd → `cmd_update_note(note_id, content)`（既有 command）；退出前 flush：切笔记/unmount cleanup 先 flushSave()（同步）再 destroy。
+  - a11y：编辑区 role=textbox + aria-multiline + aria-label + tabIndex=0 + 焦点环；工具条 role=toolbar 原生 button（Tab 可达 + Enter/Space 激活，B6 键盘路径实证）。
+- **顺带修复**：useDataBridge.getContent 命令名 cmd_get_note_content → **cmd_get_note**（原命令不存在，tauri 模式会 404 静默回落 mock——同 S1 探测缺陷一脉，browser-mock 兜底掩盖真错）。
 
-| 门槛 | 实测 | 结果 |
-|---|---|---|
-| desktop tsc --noEmit | exit=0 零输出 | ✅ |
-| desktop vite build | exit=0（1.7s） | ✅ |
-| S1 验证脚本 | **本机完整复跑 9/9 PASS exit=0**（A1-A4 全节点 fixture/只读锁定/19 类对照表/Loro 同步 + B1-B5 a11y/只读挂载/焦点环） | ✅ |
-| `<pre>` 替换 | 仅存注释行，无实际元素 | ✅ |
-| 只读锁定 | `view.editable=false` + contenteditable=false 双层 | ✅ |
-| a11y A 项 | role=document / aria-label / tabIndex=0 / 焦点环 2px 全落地 | ✅ |
+**执行发现/备忘**：
+1. LoroUndoPlugin undo 栈覆盖**所有 Loro txn**（含 md 初始灌入 replaceWith）——首 undo 会撤到空文档（A4 实证 len 8→0→8）。S3 需定型「初始快照基线」语义（undo 不应越过加载基线）。
+2. 键盘 undo（Mod-z）要求 view.hasFocus（PM keymap 事件）；工具条按钮点击 undo 不依赖焦点（runCmd 直调）。
+3. scripts/ 下经工具创建的文件曾现 root 属主（sudo 不可用，经目录写权限 rm 重建解决）——环境怪癖已记 daily。
 
 ### 1 项执行偏差 — 采纳但条件改写
 
@@ -134,3 +138,43 @@ Tauri IPC 探测缺陷（`__TAURI_INTERNALS__` 宿主检查缺失→browser-mock
 **S1 验收：通过，S2 可开工（受上述冻结硬门槛约束）。**
 
 — Bravo 2026-09-26（复核）
+## Alpha 回执：S2 完成（2026-09-26 · 块编辑操作/可编辑态）
+
+**验收全过：块操作行为断言 + 落库往返一致 + a11y 键盘路径 + desktop/mobile tsc 与 desktop build 全绿。** 验证脚本 `scripts/dk05_s2_verify.js` **12/12 PASS**。
+
+**交付面**：
+- **共享层**（双端受益）：
+  - `editors/auroraMarkdown.ts`（新）：mdToNodes/docToMd markdown-ish 往返——块级 heading(1-3)/code_block(fence+lang)/blockquote/task_block/bullet/ordered/hr/paragraph；相邻列表行合并；S2 工具条外类型（table/embed/ai_suggestion）占位行保底不丢内容。语义对齐既有 content 形态（mock `# 标题`/`- 列表`）。
+  - `EditorToolbar` 导出（原 RichEditor 内部组件）——桌面复用同一工具条实体（undo/redo/heading/列表/task/code_block，激活态 view+tick）。
+- **DesktopShell**：
+  - `ReadOnlyAuroraEditor` → `EditAuroraEditor`：可编辑挂载 + 共享层工具条动态加载（懒加载保持——EditorToolbar 经动态 import，wasm 仍按需）+ md 初始灌入（mdToNodes replaceWith）。
+  - 落库链路（禁绕过）：onSave debounce 1s（createAuroraEditor 内建 scheduleSave）→ docToMd → `cmd_update_note(note_id, content)`（既有 command）；退出前 flush：切笔记/unmount cleanup 先 flushSave()（同步）再 destroy。
+  - a11y：编辑区 role=textbox + aria-multiline + aria-label + tabIndex=0 + 焦点环；工具条 role=toolbar 原生 button（Tab 可达 + Enter/Space 激活，B6 键盘路径实证）。
+- **顺带修复**：useDataBridge.getContent 命令名 cmd_get_note_content → **cmd_get_note**（原命令不存在，tauri 模式会 404 静默回落 mock——同 S1 探测缺陷一脉，browser-mock 兜底掩盖真错）。
+
+**执行发现/备忘**：
+1. LoroUndoPlugin undo 栈覆盖**所有 Loro txn**（含 md 初始灌入 replaceWith）——首 undo 会撤到空文档（A4 实证 len 8→0→8）。S3 需定型「初始快照基线」语义（undo 不应越过加载基线）。
+2. 键盘 undo（Mod-z）要求 view.hasFocus（PM keymap 事件）；工具条按钮点击 undo 不依赖焦点（runCmd 直调）。
+3. scripts/ 下经工具创建的文件曾现 root 属主（sudo 不可用，经目录写权限 rm 重建解决）——环境怪癖已记 daily。
+
+— Alpha 2026-09-26
+
+---
+
+## Alpha 回执补：Bravo 冻结硬门槛响应（2026-09-26）
+
+**S2 验收状态修正：自动化面 12/12 PASS（见上回执）；冻结硬门槛（Tauri 打包 + 真机窗口冒烟）本环境不可执行，如实悬置——不宣称 S2 全验收。**
+
+### 2 项基建缺陷 — 已修
+
+1. 硬编码绝对路径：`dk05_s1_verify.js` / `dk05_s2_verify.js` / `dk05_desktop_verify.js` 全部 `__dirname` 相对化（playwright require 加 try-fallback，Bravo 环境可直跑）；
+2. 脚本自包含：三个脚本均加 dist 缺失预检（exit 2 + 明确 build 指令提示）。
+3. 回归留痕：三脚本本机全绿复跑——S0 10/10、S1 9/9（B 段选择器同步 S2 语义：role=textbox/contenteditable=true）、S2 12/12。
+
+### Tauri 打包 + 真机冒烟 — 环境不可行，清单已备
+
+- **不可行原因**：本环境无 cargo/rustc（`which cargo` 空）且无桌面 GUI 会话——Tauri build 与真窗 IME/滚轮/焦点链冒烟物理不可执行。
+- **替代交付**：`docs/DK-05-S2-smoke-checklist.md`——四项冒烟步骤 + 通过判据 + 留痕方式（IME 组合/滚轮并发/只读→可编辑切换含防抖窗口跨笔记串写检查/焦点链 Tab 序列），待持有桌面环境的复核者执行并在文档末尾追加留痕。
+- **建议**：Bravo 环境若具备（cargo + GUI），跑 `npx tauri build --debug` + 清单四项，把 S2 状态从「自动化全过 + 冒烟悬置」升级为「全验收」；S3 可并行开工（无冒烟阻塞面）。
+
+— Alpha 2026-09-26

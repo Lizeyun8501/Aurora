@@ -117,6 +117,34 @@
         view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, nodes));
         return view.state.doc.childCount;
       },
+      /** S2 markdown-ish 往返（共享层 mdToNodes/docToMd 纯函数） */
+      mdRoundTrip: async (text) => {
+        const { mdToNodes, docToMd } = await import('@aurora/ui-components');
+        const doc = auroraSchema.nodes.doc.create(
+          null,
+          mdToNodes(auroraSchema, text),
+        );
+        return docToMd(doc);
+      },
+      /** S2 md 初始灌入（与生产 EditAuroraEditor 同链路）→ 顶层类型清单 */
+      loadMd: async (text) => {
+        const { mdToNodes } = await import('@aurora/ui-components');
+        const nodes = mdToNodes(auroraSchema, text);
+        view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, nodes));
+        return view.state.doc.content.content.map((n) =>
+          `${n.type.name}${n.type.name === 'heading' ? n.attrs.level : ''}`);
+      },
+      /** S2 task 勾选翻转（checked attr 事务） */
+      toggleTask: (pos) => {
+        const node = view.state.doc.nodeAt(pos);
+        if (!node || node.type.name !== 'task_block') return 'not-task';
+        view.dispatch(view.state.tr.setNodeMarkup(pos, null, {
+          ...node.attrs,
+          checked: !node.attrs.checked,
+        }));
+        return view.state.doc.nodeAt(pos).attrs.checked;
+      },
+      docTypes: () => view.state.doc.content.content.map((n) => `${n.type.name}${n.type.name === 'heading' ? n.attrs.level : ''}`),
     };
     // lab 不打包 prosemirror-state 顶层（经共享层间接依赖）——TextSelection 经
     // 全局透出给 setCursor：这里从 view.state 的构造器域取。
