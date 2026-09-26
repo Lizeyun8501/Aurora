@@ -22,7 +22,10 @@ import {
   redo,
   canUndo,
   canRedo,
+  createNodeFromLoroObj,
+  loroSyncPluginKey,
 } from 'loro-prosemirror';
+import { Fragment, Slice } from 'prosemirror-model';
 
 import { auroraSchema } from '../schema/auroraSchema';
 
@@ -31,6 +34,15 @@ export interface AuroraEditorHandle {
   doc: LoroDoc;
   /** 立即保存（丢弃 debounce 计时）。 */
   flushSave: () => void;
+  /**
+   * 远端更新接入（DK-12 实时协同渲染）：import 远端增量 + 显式渲染跟随。
+   * loro-prosemirror 0.4.4 的 import 事件→updateNodeOnLoroEvent 渲染通路
+   * 实测存在竞态（事件到达、数据收敛，但插件订阅回调时序不稳定），
+   * 故 import 后显式从 Loro 重建 PM doc（复用官方 createNodeFromLoroObj，
+   * 语义=「远端批量到达即软重挂」，渲染正确性优先、增量粒度放弃）。
+   * 返回 import 状态（{success, pending} 或抛错）。
+   */
+  applyRemote: (updates: Uint8Array) => unknown;
   /** 销毁视图与订阅。 */
   destroy: () => void;
 }
@@ -125,6 +137,27 @@ export function createAuroraEditor(
         saveTimer = null;
       }
       onSave(doExport());
+    },
+    applyRemote(updates: Uint8Array) {
+      // DK-12：import 远端增量 + 显式渲染跟随（绕行 0.4.4 竞态，见接口注释）
+      const status = loroDoc.import(updates);
+      const pluginState = loroSyncPluginKey.getState(view.state);
+      const mapping = pluginState?.mapping ?? new Map();
+      // 类型强转同 LoroSyncPlugin({doc}) 上方注释：loro-prosemirror 固定容器形状与通用泛型不兼容（运行时无差异）
+      const node = createNodeFromLoroObj(
+        auroraSchema,
+        loroDoc.getMap('doc') as unknown as Parameters<typeof createNodeFromLoroObj>[1],
+        mapping as unknown as Parameters<typeof createNodeFromLoroObj>[2],
+      );
+      const tr = view.state.tr.replace(
+        0,
+        view.state.doc.content.size,
+        new Slice(Fragment.from(node), 0, 0),
+      );
+      // 标记非本地更新：与插件 updateNodeOnLoroEvent 同款 meta 语义
+      tr.setMeta(loroSyncPluginKey, { type: 'non-local-updates' });
+      view.dispatch(tr);
+      return status;
     },
     destroy() {
       if (saveTimer) clearTimeout(saveTimer);

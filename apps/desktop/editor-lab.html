@@ -210,6 +210,40 @@
           updated: after.textContent !== before.text,
         };
       },
+      /** DK-12 实时协同渲染探针（DoD 验收）：B 同源 doc 入会同步基线 → attach（生产同款装配）
+       *  → A 编辑 → update 增量 → B applyRemote（import + 显式渲染跟随）→ 收敛断言 ≤2s */
+      liveCollabProbe: async () => {
+        const temp = document.createElement('div');
+        temp.id = 'lab-live-collab';
+        document.body.appendChild(temp);
+        const hB = await (async () => {
+          const { createAuroraEditor, loroDocFromBase64 } = await import('@aurora/ui-components');
+          const docB = loroDocFromBase64(null);
+          docB.import(window.__loro.export({ mode: 'snapshot' })); // 入会基线同步（防 fork：空文档 init commit 会与 A 历史分叉）
+          docB.commit();
+          return createAuroraEditor(temp, { loroDoc: docB, onSave: () => true });
+        })();
+        await new Promise((r) => setTimeout(r, 250)); // 等 init（setTimeout 0 + 初始同步）
+        const viewB = hB.view;
+
+        // A 编辑 → commit → update 增量 → B applyRemote
+        view.dispatch(view.state.tr.insertText('LIVE远程段'));
+        await new Promise((r) => setTimeout(r, 100));
+        window.__loro.commit();
+        const updates = window.__loro.export({ mode: 'update' });
+        const t0 = performance.now();
+        const status = hB.applyRemote(updates);
+
+        let converged = false, elapsed = 0;
+        while (elapsed < 2000 && !converged) {
+          await new Promise((r) => setTimeout(r, 50));
+          elapsed = performance.now() - t0;
+          converged = viewB.state.doc.textContent.includes('LIVE远程段');
+        }
+        const bDomText = temp.textContent.slice(0, 50);
+        viewB.destroy(); temp.remove();
+        return { converged, elapsed: Math.round(elapsed), status: JSON.stringify(status), bDomText };
+      },
       /** S4 快照恢复首开性能（生产同款装配；先灌基准内容再采样） */
       restorePerf: async () => {
         // 基准内容（10 段）——空 doc 快照恢复无意义
