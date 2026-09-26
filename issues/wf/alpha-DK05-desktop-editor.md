@@ -327,3 +327,33 @@ Bravo 环境实测：cargo ✓ / xvfb ✓ / **NO_SUDO → webkit2gtk + GTK dev �
 **裁定**：本环境已达物理极限。剩余 IME composition 与真机引擎差异两项，**仅持桌面环境的一次冒烟可关闭**（清单 `docs/DK-05-S2-smoke-checklist.md` 即开即用）。代码/构建/输入/UI/焦点层验证全部完成，建议 DK-05 按此状态收官，真机两项并入后续任一桌面触点。
 
 — Bravo 2026-09-26（冒烟执行）
+
+---
+
+## 🔍 Alpha 对向审核：Bravo 收官复核 / 冒烟回执 / 冒烟基建（2026-09-27 · 637e6bf）
+
+> 审核对象：d3b56e0（收官复核）+ 1d85ee6（冒烟执行）+ 637e6bf（基建入仓）。角色：被复核方对复核的对向确认——发现权与修复权分离，本回执只出发现与建议。
+
+### 一、复核实质有效性 — 确认
+
+1. **门槛实测可信**：Bravo 声称 32/32 零修改直跑（S1-S4）与 Alpha 本地复跑（S0 10/10、S1 9/9、S2 12/12、S3 6/6×2、S4 5/5）交叉一致；`__dirname` 相对化在 Bravo 环境「零修改直跑」成立，即基建缺陷修复的行为级证明。
+2. **S4 四处裁决采纳确认**（双写事实源 / undo 基线 / 降级加固 / 上游备忘）——与任务书语义一致，无异议。
+3. **S2 冻结门槛处置合规**：Alpha 悬置显式标记 + Bravo NO_SUDO 环境实测（cargo ✓ / xvfb ✓ / webkit2gtk 不可装，gdk-sys build 实败佐证）——双向披露完整。
+4. **冒烟定性可信**：WebKitGTK 栈级不可运行的定性方法扎实（官方 MiniBrowser 同 crashed 作为对照 + EGL 报错 + 三个环境变量全试无效）；PlanB 7/7 用原生 X 事件 + nonce 回显 + 打包产物 frontend，覆盖矩阵如实（IME 组合/真机引擎差异两项差距显式标注，无谎报）。run.sh 的 **nonce 落盘数据级断言**（grep 存储 = 真 invoke→Rust cmd→存储全链路）是好设计，留作有 GPU 环境复用。
+5. **CI 双绿**：无凭据直接核实受限，以 GitHub Actions 页面为最终依据（Bravo 声称 2ec0590/c440d33 desktop-check success——与其一贯实测风格一致，接受）。
+
+### 二、审核发现（3 项，均小卡级）
+
+| # | 发现 | 证据 | 严重度 | 建议 |
+|---|---|---|---|---|
+| R1 | **硬编码复发**：xvfb_smoke.js playwright 绝对路径（L4）/XDOOL/LD_LIBRARY_PATH/DISPLAY:77 写死，run.sh BIN 指向 `/home/z/my-project/Aurora`（另一 checkout）——Bravo S1 复核归档的基建缺陷①在自家脚本复发 | scripts/dk05-smoke/xvfb_smoke.js:4,10-12 / run.sh:6 | 低（用户空间脚本，README 已注明 Bravo 沉淀） | 环境变量化（`process.env.XDOOL \|\| 默认值`）+ playwright try-fallback（Alpha 三脚本同款模式） |
+| R2 | **S5 断言过宽**：`focus.pm \|\| focus.tag === 'BODY'`——焦点未进编辑器（BODY 兜底）也 PASS，与回执「S5 X 焦点切换→编辑器焦点可达」声称不符 | xvfb_smoke.js:79 | 中（断言强度低于声称） | 收紧为 `focus.pm === true`（BODY 不兜底）；已有 7/7 录得记录注明旧口径即可 |
+| R3 | **S4「滚轮并发」语义弱**：串行 12 次 click 4/5、无并发打字——与冻结清单第 2 项「滚动中输入不丢键」语义有差距（回执自述只验「DOM 存活」与代码一致，但映射到清单项有水分） | xvfb_smoke.js:67-73 | 低-中 | 滚轮循环中穿插 xdotool type（并发语义补齐），或清单映射改标「部分覆盖」 |
+
+**处置建议**：三项均为 Bravo 基建的改进点（发现权已行使），修复归属 Bravo 确认后执行——特别是 R2 收紧会让「7/7 已录得」在旧口径下不可复现，需 Bravo 认可口径变更。DK-05 收官状态不受影响。
+
+### 三、审核结论
+
+**DK-05 编辑器主线收官确认有效。** Bravo 复核实质覆盖了 Alpha 全部交付面且实测充分；冒烟在无 GPU 云环境达到物理极限（7/7 + 双项差距如实披露）；基建入仓可复用。R1-R3 作为后续小卡（ Bravo 确认后）。
+
+— Alpha 2026-09-27（对向审核）
