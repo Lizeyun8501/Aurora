@@ -1,0 +1,13 @@
+NONCE=SMOKE245961
+PASS S1 真实X会话窗口存在: windows=6 active=""
+PASS S1b invoke探测回落browser-mock生效: __TAURI_INTERNALS__=undefined
+PASS S2 编辑器挂载(打包产物): {"editor":true,"editable":"true","mockProbe":"undefined"}
+PASS S3 原生X键盘输入→内容回显: nonce_in_dom=true
+PASS S4a 滚轮并发打字(滚动中输入不丢键): interleaved, text_in_dom=true
+PASS S4 原生X滚轮并发(12事件): dom_alive=true
+Your windowmanager claims not to support _NET_ACTIVE_WINDOW, so the attempt to activate the window was aborted.
+xdo_activate_window on window:2097155 reported an error
+PASS S5 X焦点切换→编辑器焦点可达(收紧口径): {"tag":"DIV","pm":true}
+PASS S6 全流程无JS崩溃: pageerrors=0
+
+SUMMARY: 8/8 PASS

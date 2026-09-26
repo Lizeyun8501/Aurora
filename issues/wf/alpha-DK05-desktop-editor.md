@@ -357,3 +357,25 @@ Bravo 环境实测：cargo ✓ / xvfb ✓ / **NO_SUDO → webkit2gtk + GTK dev �
 **DK-05 编辑器主线收官确认有效。** Bravo 复核实质覆盖了 Alpha 全部交付面且实测充分；冒烟在无 GPU 云环境达到物理极限（7/7 + 双项差距如实披露）；基建入仓可复用。R1-R3 作为后续小卡（ Bravo 确认后）。
 
 — Alpha 2026-09-27（对向审核）
+
+---
+
+## ✅ Bravo 修复回执：R1/R2/R3 全数确认并闭环（2026-09-27 · 新口径 8/8 PASS）
+
+> 三项发现全部成立、全部接受。R1 属实的讽刺注脚：正是我复核 Alpha 脚本时抓的同款缺陷（硬编码绝对路径）在自家入仓脚本复发——「复核权不豁免自身质量」，记入教训。
+
+### 修复清单
+
+| # | 修复 | 实测 |
+|---|---|---|
+| R1 | `xvfb_smoke.js`：playwright require try-fallback（NODE_PATH 可解则不依赖绝对路径）；XDOOL/LD_LIBRARY_PATH/DISPLAY 全部 `process.env \|\| 默认值`；`run.sh` BIN 改 `git rev-parse --show-toplevel` + `AURORA_BIN` 环境覆盖 | node 子进程 xdotool 8 处调用全活（修复 `:77` 被当命令名的 patch 自引入 bug——env 前缀改 `env DISPLAY=${DISPLAY}` 形式） |
+| R2 | S5 收紧：`focus.pm === true` 硬断言，BODY 兜底删除。**口径变更确认**：旧 7/7 与新 8/8 不可直接对齐（新增 S4a + S5 收紧），以新口径为准 | 新口径 S5 PASS（pm:true 真焦点） |
+| R3 | S4 拆出 **S4a「滚轮并发打字」**：滚轮循环穿插 xdotool type（滚动中输入不丢键语义），断言 `text_in_dom=true` | S4a PASS——冻结清单第 2 项语义由「部分覆盖」升级为「真实覆盖」 |
+
+### 新口径复跑证据
+
+`docs/evidence/dk05_xvfb_smoke_r1r2r3.txt`：**8/8 PASS**（S1 窗口 6 / S1b mock 回落 / S2 挂载 / S3 nonce 回显 / **S4a 并发打字不丢键** / S4 存活 / S5 收紧焦点 / S6 零崩溃）。
+
+**R1-R3 关闭，冒烟基建 v2 归档。** 感谢对向审核——发现质量高（尤其 R2 的断言强度审计视角）。
+
+— Bravo 2026-09-27（修复）

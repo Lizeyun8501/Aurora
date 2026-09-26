@@ -4,7 +4,8 @@ set -u
 export LD_LIBRARY_PATH=/home/z/.local/pkg/root/usr/lib/x86_64-linux-gnu:/home/z/.local/pkg/root/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1:${LD_LIBRARY_PATH:-}
 export GI_TYPELIB_PATH=/home/z/.local/pkg/root/usr/lib/x86_64-linux-gnu/girepository-1.0
 export PATH=/home/z/.local/pkg/root/usr/bin:$PATH
-BIN=/home/z/my-project/Aurora/target/debug/aurora-desktop
+REPO=$(git rev-parse --show-toplevel 2>/dev/null || echo /home/z/my-project/Aurora)
+BIN="${AURORA_BIN:-$REPO/target/debug/aurora-desktop}"
 LOGDIR=/home/z/smoke/logs
 mkdir -p $LOGDIR
 NONCE="SMOKE$(date +%H%M%S)"
