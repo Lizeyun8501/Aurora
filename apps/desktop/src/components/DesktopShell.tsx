@@ -153,6 +153,26 @@ function useDataBridge(invoke: InvokeFn | null) {
         if (MOCK_CONTENT[noteId]) MOCK_CONTENT[noteId].content = content;
         (window as any).__lastSaved = { noteId, content };
       },
+      /** DK-05 S3 编辑器快照读取（notesnap kv；null = 降级 md 灌入） */
+      async getSnapshot(noteId: string): Promise<string | null> {
+        if (invoke) {
+          try {
+            return (await invoke('cmd_get_note_snapshot', { note_id: noteId })) as string | null;
+          } catch {
+            return null;
+          }
+        }
+        return MOCK_SNAPSHOTS[noteId] ?? null;
+      },
+      /** DK-05 S3 编辑器快照写入（cmd_save_note_snapshot 合并语义） */
+      async saveSnapshot(noteId: string, snapshotB64: string): Promise<void> {
+        if (invoke) {
+          await invoke('cmd_save_note_snapshot', { note_id: noteId, snapshot_b64: snapshotB64 });
+          return;
+        }
+        MOCK_SNAPSHOTS[noteId] = snapshotB64;
+        (window as any).__snapshots = MOCK_SNAPSHOTS;
+      },
       async todayStats(): Promise<{ active: number; done: number; due_today: number } | null> {
         if (invoke) {
           try {
@@ -176,6 +196,9 @@ function useDataBridge(invoke: InvokeFn | null) {
     [invoke],
   );
 }
+
+/** DK-05 S3 browser-mock 编辑器快照存储（notesnap 同构内存态） */
+const MOCK_SNAPSHOTS: Record<string, string> = {};
 
 const SIDEBAR_W = 248;
 
@@ -425,9 +448,14 @@ function EditorPane(props: {
   note: NoteContent | null;
   loading: boolean;
   invoke: InvokeFn | null;
-  persistNote: (noteId: string, content: string) => Promise<void>;
+  /** S3 持久化面（useDataBridge 三方法，主组件桥接） */
+  persist: {
+    loadSnapshot: (noteId: string) => Promise<string | null>;
+    saveSnapshot: (noteId: string, b64: string) => Promise<void>;
+    saveContent: (noteId: string, content: string) => Promise<void>;
+  };
 }) {
-  const { note, loading, invoke, persistNote } = props;
+  const { note, loading, invoke, persist } = props;
   if (loading) {
     return (
       <main style={{ flex: 1, padding: tokens.spacing.lg, color: tokens.color.textSecondary }}>
@@ -484,14 +512,14 @@ function EditorPane(props: {
           color: tokens.color.textSecondary,
         }}
       >
-        更新于 {note.updated_at} · DK-05 S2 · 编辑态（工具条块操作 / 防抖落库）
+        更新于 {note.updated_at} · DK-05 S3 · 编辑态（快照恢复 / 防抖双写落库）
       </p>
-      {/* DK-05 S2: 可编辑态挂载（S1 只读 → 编辑态 + 块操作工具条 +
-          markdown-ish 序列化落库 cmd_update_note + 防抖/flush） */}
+      {/* DK-05 S3: 可编辑态挂载（快照主链路恢复 + 块操作工具条 +
+          onSave 防抖双写：cmd_save_note_snapshot 快照 / cmd_update_note content） */}
       <EditAuroraEditor
         noteId={note.note_id}
         content={note.content}
-        onPersist={(text) => void persistNote(note.note_id, text)}
+        persist={persist}
       />
       {/* DK-09 渲染接线：attachment:// 引用解析（图片内联 / 文件卡） */}
       <AttachmentStrip invoke={invoke} content={note.content} />
@@ -514,16 +542,21 @@ function EditorPane(props: {
 function EditAuroraEditor(props: {
   noteId: string;
   content: string;
-  onPersist: (text: string) => void;
+  /** S3 持久化面：快照主链路 + content 双写（useDataBridge 桥接） */
+  persist: {
+    loadSnapshot: (noteId: string) => Promise<string | null>;
+    saveSnapshot: (noteId: string, b64: string) => Promise<void>;
+    saveContent: (noteId: string, content: string) => Promise<void>;
+  };
 }) {
-  const { noteId, content, onPersist } = props;
+  const { noteId, content, persist } = props;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [focused, setFocused] = useState(false);
   const [view, setView] = useState<import('prosemirror-view').EditorView | null>(null);
   const [tick, setTick] = useState(0);
   const [Toolbar, setToolbar] = useState<React.ComponentType<{ view: import('prosemirror-view').EditorView | null; tick: number }> | null>(null);
-  const persistRef = useRef(onPersist);
-  persistRef.current = onPersist;
+  const persistRef = useRef(persist);
+  persistRef.current = persist;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -531,23 +564,35 @@ function EditAuroraEditor(props: {
     let handle: AuroraEditorHandle | null = null;
     let cancelled = false;
     (async () => {
-      const { createAuroraEditor, docToMd, mdToNodes, EditorToolbar: ET } = await import('@aurora/ui-components');
+      const { createAuroraEditor, docToMd, mdToNodes, EditorToolbar: ET, loroDocFromBase64, bytesToBase64 } = await import('@aurora/ui-components');
       const { LoroDoc } = await import('loro-crdt');
       setToolbar(() => ET);
       if (cancelled || !hostRef.current) return;
+      // S3 快照主链路：编辑器快照恢复（loro import → LoroSync 初始同步渲染）；
+      // 无快照（首开/老笔记）降级 S2 md 灌入。快照与 content 文本双写
+      // （内核 WritePath 通路不破坏，搜索/导出仍可用）。
+      const restored = await persistRef.current.loadSnapshot(noteId);
+      const loroDoc = restored ? loroDocFromBase64(restored) : new LoroDoc();
       handle = createAuroraEditor(host, {
-        loroDoc: new LoroDoc(),
+        loroDoc,
         onSave: () => {
-          // debounce 1s 到期（或 flushSave）——编辑产物序列化落库
-          if (handle) persistRef.current(docToMd(handle.view.state.doc));
+          // debounce 1s 到期（或 flushSave）——快照主链路 + content 双写
+          if (!handle) return;
+          persistRef.current.saveSnapshot(
+            noteId,
+            bytesToBase64((handle.doc as any).export({ mode: 'snapshot' }) as Uint8Array),
+          );
+          persistRef.current.saveContent(noteId, docToMd(handle.view.state.doc));
         },
         onUpdate: () => setTick((t) => t + 1), // 工具条激活态刷新
       });
       const v = handle.view;
-      // markdown-ish → 初始 doc（LoroSync 初始同步前写入，双方收敛一致）
-      const nodes = mdToNodes(v.state.schema, content);
-      if (nodes.length) {
-        v.dispatch(v.state.tr.replaceWith(0, v.state.doc.content.size, nodes));
+      if (!restored) {
+        // 降级：markdown-ish → 初始 doc（LoroSync 初始同步前写入，双方收敛一致）
+        const nodes = mdToNodes(v.state.schema, content);
+        if (nodes.length) {
+          v.dispatch(v.state.tr.replaceWith(0, v.state.doc.content.size, nodes));
+        }
       }
       if (!cancelled) setView(v);
     })().catch((e) => console.error('EditAuroraEditor init failed', e));
@@ -879,7 +924,16 @@ export default function DesktopShell() {
             )}
           </main>
         ) : (
-          <EditorPane note={content} loading={loading} invoke={invoke} persistNote={data.saveContent} />
+          <EditorPane
+          note={content}
+          loading={loading}
+          invoke={invoke}
+          persist={{
+            loadSnapshot: data.getSnapshot,
+            saveSnapshot: data.saveSnapshot,
+            saveContent: data.saveContent,
+          }}
+        />
         )}
       </div>
       <StatusBar mode={mode} stats={stats} />

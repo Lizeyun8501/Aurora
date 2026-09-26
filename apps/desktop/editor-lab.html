@@ -145,6 +145,62 @@
         return view.state.doc.nodeAt(pos).attrs.checked;
       },
       docTypes: () => view.state.doc.content.content.map((n) => `${n.type.name}${n.type.name === 'heading' ? n.attrs.level : ''}`),
+      /** S3 快照往返：当前 doc → snapshot → 新 LoroDoc import → 生产同款装配渲染 → 文本等价 */
+      snapshotRoundTrip: async () => {
+        const snapshot = window.__loro.export({ mode: 'snapshot' });
+        const restored = new LoroDoc();
+        restored.import(snapshot);
+        const temp = document.createElement('div');
+        document.body.appendChild(temp);
+        const { createAuroraEditor } = await import('@aurora/ui-components');
+        const h2 = createAuroraEditor(temp, { loroDoc: restored, onSave: () => true });
+        await new Promise((r) => setTimeout(r, 60)); // loro-prosemirror 初始同步（view 钩子 setTimeout 0）
+        const t1 = view.state.doc.textContent;
+        const t2 = h2.view.state.doc.textContent;
+        h2.destroy();
+        temp.remove();
+        return { equal: t1 === t2 && t1.length > 0, len1: t1.length, len2: t2.length };
+      },
+      /** S3 双实例增量同步：A 编辑 → export update（增量）→ B import → B 收敛 */
+      dualInstanceSync: async () => {
+        const docB = new LoroDoc();
+        const { LoroSyncPlugin } = await import('loro-prosemirror');
+        const { EditorState } = await import('prosemirror-state');
+        const { EditorView } = await import('prosemirror-view');
+        const temp = document.createElement('div');
+        document.body.appendChild(temp);
+        const stateB = EditorState.create({
+          schema: auroraSchema,
+          plugins: [LoroSyncPlugin({ doc: docB })],
+        });
+        const viewB = new EditorView(temp, { state: stateB });
+        // A 侧追加文本（新事务）
+        view.dispatch(view.state.tr.insertText('SYNC增量'));
+        await new Promise((r) => setTimeout(r, 60));
+        // 增量 update 导出（基于版本向量）→ B import
+        const updates = window.__loro.export({ mode: 'update' });
+        const status = docB.import(updates);
+        await new Promise((r) => setTimeout(r, 80)); // loro-prosemirror 初始/同步
+        const ok = viewB.state.doc.textContent.includes('SYNC增量');
+        viewB.destroy();
+        temp.remove();
+        let loroText = '(none)';
+        try { loroText = JSON.stringify(docB.getMap('doc').toJSON()).slice(0, 80); }
+        catch (e) { loroText = 'err:' + e.message; }
+        return { ok, status: JSON.stringify(status), updatesLen: updates.length, loroText, textB: viewB.state.doc.textContent.slice(0, 40) };
+      },
+      /** S3 增量渲染探针：编辑后 ProseMirror DOM 节点引用不变（事务级更新，非重挂） */
+      incrementalProbe: async () => {
+        const pmDom = document.querySelector('.ProseMirror');
+        const before = { ref: pmDom, text: pmDom.textContent };
+        view.dispatch(view.state.tr.insertText('+'));
+        await new Promise((r) => setTimeout(r, 60));
+        const after = document.querySelector('.ProseMirror');
+        return {
+          sameDom: before.ref === after,
+          updated: after.textContent !== before.text,
+        };
+      },
     };
     // lab 不打包 prosemirror-state 顶层（经共享层间接依赖）——TextSelection 经
     // 全局透出给 setCursor：这里从 view.state 的构造器域取。

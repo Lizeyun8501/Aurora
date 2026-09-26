@@ -93,6 +93,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             cmd_create_note,
+            cmd_get_note_snapshot,
+            cmd_save_note_snapshot,
             cmd_get_note,
             cmd_update_note,
             cmd_delete_note,
@@ -246,6 +248,50 @@ async fn cmd_get_note(note_id: String) -> Result<serde_json::Value, String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("note not found: {}", note_id))?;
     unwrap_note_bytes(&core, &vault, &data)
+}
+
+/// 编辑器快照读取（DK-05 S3）：kv `notesnap:{id}` 全量快照（含前端
+/// loro-prosemirror "doc" 容器 + 内核容器）。无快照返回 null（前端降级 md 灌入）。
+#[tauri::command]
+async fn cmd_get_note_snapshot(note_id: String) -> Result<Option<String>, String> {
+    use base64::Engine;
+    let core = get_core()?;
+    let bytes = core
+        .kv_store
+        .get(&format!("notesnap:{note_id}"))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(bytes
+        .filter(|b| !b.is_empty())
+        .map(|b| base64::engine::general_purpose::STANDARD.encode(b)))
+}
+
+/// 编辑器快照写入（DK-05 S3）：CRDT 合并语义（mobile save_note_snapshot_impl
+/// 同款）—— apply_update import 合并非替换，内核容器与编辑器容器共存不互覆，
+/// P2P 对端修改不丢。空快照视为无操作。
+#[tauri::command]
+async fn cmd_save_note_snapshot(note_id: String, snapshot_b64: String) -> Result<(), String> {
+    use base64::Engine;
+    let core = get_core()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&snapshot_b64)
+        .map_err(|e| e.to_string())?;
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let merged = match core.kv_store.get(&format!("notesnap:{note_id}")).await {
+        Ok(Some(existing)) if !existing.is_empty() => {
+            let doc = aurora_core::l1_infrastructure::note_doc::NoteDoc::from_snapshot(&existing)
+                .map_err(|e| e.to_string())?;
+            doc.apply_update(&bytes).map_err(|e| e.to_string())?;
+            doc.export_snapshot().map_err(|e| e.to_string())?
+        }
+        _ => bytes,
+    };
+    core.kv_store
+        .set(&format!("notesnap:{note_id}"), &merged)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 更新笔记（解密 → 修改 → 重新加密落库 + 更新索引）。

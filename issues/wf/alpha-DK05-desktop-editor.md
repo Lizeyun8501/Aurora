@@ -1,7 +1,7 @@
 # Alpha 任务书：DK-05 桌面块编辑器（EditorPane → 共享层 DocumentEditor，切片排期）
 
 > 发起：Bravo · 2026-09-25（对 bravo-DK0F-editor-taskbooks.md 申请 2 的裁决产出）
-> 执行：Alpha · 状态：**S2 完成（12/12 PASS），S3 Loro CRDT 绑定解锁**（S0 报告 docs/DK-05-desktop-input-verify.md）
+> 执行：Alpha · 状态：**S3 完成（6/6 PASS），S4 收尾解锁**（S0 报告 docs/DK-05-desktop-input-verify.md；S2 真机冒烟悬置项见 docs/DK-05-S2-smoke-checklist.md）
 > 依据：ADR-005 任务 4（EditorPane 纯文本预览升级为共享层 DocumentEditor）+ DK-05M-V 报告风险项（loro-prosemirror 桌面输入时序需复验）
 > 性质：65 人日大件，按可独立验收切片推进；本书定切分与门槛，逐切片走验收→装配→回执循环。
 
@@ -176,5 +176,32 @@ Tauri IPC 探测缺陷（`__TAURI_INTERNALS__` 宿主检查缺失→browser-mock
 - **不可行原因**：本环境无 cargo/rustc（`which cargo` 空）且无桌面 GUI 会话——Tauri build 与真窗 IME/滚轮/焦点链冒烟物理不可执行。
 - **替代交付**：`docs/DK-05-S2-smoke-checklist.md`——四项冒烟步骤 + 通过判据 + 留痕方式（IME 组合/滚轮并发/只读→可编辑切换含防抖窗口跨笔记串写检查/焦点链 Tab 序列），待持有桌面环境的复核者执行并在文档末尾追加留痕。
 - **建议**：Bravo 环境若具备（cargo + GUI），跑 `npx tauri build --debug` + 清单四项，把 S2 状态从「自动化全过 + 冒烟悬置」升级为「全验收」；S3 可并行开工（无冒烟阻塞面）。
+
+— Alpha 2026-09-26
+
+---
+
+## Alpha 回执：S3 完成（2026-09-26 · Loro CRDT 绑定/双向）
+
+**验收全过：快照往返 + 双实例增量同步 + 增量渲染 + 快照主链路恢复 + undo 加载基线。** 验证脚本 `scripts/dk05_s3_verify.js` **6/6 PASS**（连跑两次稳）；全量回归 S0 10/10、S1 9/9、S2 12/12；desktop tsc + vite build 绿。
+
+**交付面**：
+- **Rust（desktop src-tauri，编译验证走 CI desktop-check `cargo check -p aurora-desktop`）**：
+  - `cmd_get_note_snapshot(note_id)`：kv `notesnap:{id}` 全量快照读取（None→前端降级）；
+  - `cmd_save_note_snapshot(note_id, snapshot_b64)`：**CRDT 合并语义**（mobile `save_note_snapshot_impl` 同款——`NoteDoc::from_snapshot(existing).apply_update(frontend)` import 合并非替换，内核容器与前端 loro-prosemirror "doc" 容器共存不互覆，空快照 no-op）→ kv 持久化。
+  - 结构决策：前端编辑器快照与内核 NoteDoc **同 doc 混合容器**（mobile 已验证模式）——`cmd_update_note` 走内核 WritePath 时 load_or_init→动 body_text→persist 全量含编辑器容器，交替写最终一致（CRDT 保证），无双写覆盖风险。
+- **DesktopShell**：
+  - useDataBridge 增 `getSnapshot/saveSnapshot`（tauri invoke / browser-mock 内存 + 测试钩子）；
+  - EditAuroraEditor **快照主链路**：挂载先 `loadSnapshot` → 有快照 `loroDocFromBase64` 恢复（LoroSync 初始同步渲染，**不灌 md**）→ 无快照降级 S2 md 灌入（首开/老笔记兼容）；onSave 防抖**双写**：`cmd_save_note_snapshot`（快照主链路）+ `cmd_update_note`（content 文本，内核 WritePath/搜索/导出通路不破坏）。
+- **验证**：
+  - A1 快照往返：doc → snapshot → 新 LoroDoc import → **生产同款 createAuroraEditor 装配**渲染，文本等价（11==11）；
+  - A2 双实例增量同步：A 编辑 → `export({mode:'update'})` 增量 → B `import` → ImportStatus success + B 渲染收敛（含内核容器 + "doc" 容器混合结构下验证）；
+  - A3 增量渲染：编辑后 ProseMirror DOM 节点引用不变（事务级更新，非重挂）；
+  - B1 防抖双写落库（快照 + content）；B2 **快照恢复路径证明**：清空 content 内存值后重开笔记，编辑内容仍完整恢复（快照独立于 content 生效）；B3 undo 加载基线：快照恢复后连续 12 次 Ctrl+z 不清空文档（恢复点之下不可撤——S2 备忘的基线语义在快照通路下天然成立）。
+
+**执行备忘**：
+1. A2 曾间歇 FAIL：loro→PM 同步回调竞态窗口（60ms 边界），80ms 稳定——flaky 已固化时序 + 诊断字段（status/updatesLen/loroText）入断言 detail。
+2. 快照与 content 双写是**过渡态**：S4 需定单一事实源（建议：快照为编辑态权威、content 为内核/搜索权威，二者由 onSave 原子双写维护，冲突时快照优先——待 S4 裁决）。
+3. Bravo S2 冻结门槛（真机冒烟）仍悬置：`docs/DK-05-S2-smoke-checklist.md` 待桌面环境执行，S4 收尾时并入。
 
 — Alpha 2026-09-26
