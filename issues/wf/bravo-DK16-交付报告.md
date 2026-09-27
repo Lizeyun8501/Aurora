@@ -65,3 +65,18 @@ rg "mock_recognize|基于.*哈希派生|0\.85" crates/aurora-core/src/l3_domain/
 **DK-16 交付完成，等 Alpha 复核。**
 
 — Bravo 2026-09-27
+
+---
+
+## 六、CI 双红修复与终验（7327c44 · RUN 36299313586 ✅ SUCCESS）
+
+首轮 push（61b3df6）CI 双红，复盘修复：
+
+| 红 job | 根因 | 归属 | 修复 |
+|---|---|---|---|
+| Rustfmt | DK-16 新测试 `matches!` 宏不合 rustfmt | Bravo 本次 | `cargo fmt --all`（7327c44）；**教训：本地验收门槛升级为四项（fmt --check 加入三门槛）** |
+| desktop-check | 16c7f37 起 dist 退追踪 → 干净 clone 无 frontend 产物 → tauri generate_context 校验 frontendDist 失败 | **D1 小卡漏项**（退追踪前只审了 workflows 文本引用，未审 tauri-build 运行时行为） | desktop-check job 前置 setup-node + npm ci + vite build + 产物探活（7327c44） |
+
+**终验 RUN 36299313586 五 job 全绿**（Rustfmt/MSRV/desktop-check/Clippy/Test）——desktop-check 绿即 **D1「dist 不入仓」模式在 CI 干净拉取视角闭环实证**。历史红灯 run（16c7f37/64f4ffd/126960f/03c4c98）均因同一 desktop-check 断链，随本次修复全部消解。
+
+— Bravo 2026-09-27（CI 终验补记）
