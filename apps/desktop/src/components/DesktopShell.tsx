@@ -19,6 +19,7 @@ import tokens from '../design/tokens';
 import type { AuroraEditorHandle } from '@aurora/ui-components';
 import CommandPalette, { type PaletteItem } from './CommandPalette';
 import ImportWizard from './ImportWizard';
+import CanvasView from './CanvasView';
 
 export interface InvokeFn {
   (cmd: string, args?: Record<string, unknown>): Promise<unknown>;
@@ -84,7 +85,7 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export type MainView = 'notes' | 'today';
+export type MainView = 'notes' | 'today' | 'canvas';
 
 /** browser-mock 演示数据 — 形状与内核 NoteSummary/NoteContent 对齐 */
 const MOCK_NOTES: NoteSummary[] = [
@@ -276,7 +277,7 @@ function Sidebar(props: {
         ⤓ 导入笔记
       </button>
       <nav style={{ display: 'flex', gap: tokens.spacing.xs }} aria-label="主导航">
-        {(['notes', 'today'] as const).map((v) => (
+        {(['notes', 'today', 'canvas'] as const).map((v) => (
           <button
             key={v}
             onClick={() => onView(v)}
@@ -293,7 +294,7 @@ function Sidebar(props: {
               minHeight: 36,
             }}
           >
-            {v === 'notes' ? '全部笔记' : '今日视图'}
+            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : '今日视图'}
           </button>
         ))}
       </nav>
@@ -902,6 +903,9 @@ export default function DesktopShell() {
           <main style={{ flex: 1, padding: tokens.spacing.lg, overflowY: 'auto' }}>
             <ImportWizard invoke={invoke} onClose={() => setWizardOpen(false)} />
           </main>
+        ) : view === 'canvas' ? (
+          /* DK-11 画布视图（第一切片：Canvas2D 骨架，组件自包含） */
+          <CanvasView />
         ) : view === 'today' ? (
           <main style={{ flex: 1, padding: tokens.spacing.lg }}>
             <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size }}>
