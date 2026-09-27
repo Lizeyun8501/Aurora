@@ -30,6 +30,9 @@ use aurora_core::traits::ai_provider::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// 策略检查闭包类型（装配层适配 `PolicyGate::guard` 注入）。
+pub type PolicyCheck = std::sync::Arc<dyn Fn(&str) -> Result<(), aurora_core::Error> + Send + Sync>;
+
 /// OpenAI 兼容云端 AIProvider（最小实现，专做 OllamaProvider 的 fallback）。
 pub struct OpenAiCompatProvider {
     base_url: String,
@@ -37,6 +40,10 @@ pub struct OpenAiCompatProvider {
     model: String,
     client: reqwest::Client,
     available: AtomicBool,
+    /// DK-10 第一切片：当前工作区上下文（Some(ws) 时所有出网请求前过策略 guard）。
+    workspace: std::sync::RwLock<Option<String>>,
+    /// 策略检查闭包（装配层把 `PolicyGate::guard` 适配进来；None = 不启用云端策略）。
+    policy_check: Option<PolicyCheck>,
 }
 
 // ----- OpenAI 兼容请求/响应 DTOs（不对外暴露）-----
@@ -146,6 +153,8 @@ impl OpenAiCompatProvider {
                 model,
                 client: reqwest::Client::new(),
                 available: AtomicBool::new(false),
+                workspace: std::sync::RwLock::new(None),
+                policy_check: None,
             };
         }
         let available = AtomicBool::new(!api_key.is_empty() && !base_url.trim().is_empty());
@@ -159,6 +168,35 @@ impl OpenAiCompatProvider {
             model,
             client,
             available,
+            workspace: std::sync::RwLock::new(None),
+            policy_check: None,
+        }
+    }
+
+    /// DK-10 第一切片：注入策略检查闭包（装配层适配 `PolicyGate::guard`）。
+    /// 必须在 `set_workspace` 之前调用才生效；guard 不过 → 出网请求被拒（零 HTTP）。
+    pub fn with_policy_check(mut self, check: PolicyCheck) -> Self {
+        self.policy_check = Some(check);
+        self
+    }
+
+    /// DK-10 第一切片：设置当前工作区上下文（None = 不关联工作区，跳过策略检查）。
+    pub fn set_workspace(&self, workspace_id: Option<String>) {
+        *self.workspace.write().expect("workspace ctx lock poisoned") = workspace_id;
+    }
+
+    /// 出网前策略门（fail-closed）：工作区策略为 DenyCloud 时返回
+    /// `Err(PermissionDenied)` 且**不发起任何网络请求**（DK-07 DoD 2）。
+    fn guard_workspace(&self) -> Result<(), aurora_core::Error> {
+        match (
+            &self.policy_check,
+            self.workspace
+                .read()
+                .expect("workspace ctx lock poisoned")
+                .as_deref(),
+        ) {
+            (Some(check), Some(ws)) => check(ws),
+            _ => Ok(()),
         }
     }
 
@@ -186,6 +224,8 @@ impl AIProvider for OpenAiCompatProvider {
                 "cloud provider not configured (no api_key/base_url)".into(),
             ));
         }
+        // DK-10 第一切片：策略门在请求发起前（fail-closed，零 HTTP）
+        self.guard_workspace()?;
         let req = EmbeddingsReq {
             model: &self.model,
             input: texts.to_vec(),
@@ -221,6 +261,8 @@ impl AIProvider for OpenAiCompatProvider {
                 "cloud provider not configured (no api_key/base_url)".into(),
             ));
         }
+        // DK-10 第一切片：策略门在请求发起前（fail-closed，零 HTTP）
+        self.guard_workspace()?;
         let req = ChatCompletionsReq {
             model: &self.model,
             messages: vec![ChatMsg {
@@ -311,6 +353,8 @@ impl AIProvider for OpenAiCompatProvider {
                 "cloud provider not configured (no api_key/base_url)".into(),
             ));
         }
+        // DK-10 第一切片：策略门在请求发起前（fail-closed，零 HTTP）
+        self.guard_workspace()?;
         let msgs: Vec<(String, String)> = messages
             .iter()
             .map(|m| (m.role.clone(), m.content.clone()))
@@ -435,5 +479,126 @@ impl AIProvider for OpenAiCompatProvider {
 
     fn is_available(&self) -> bool {
         self.available.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod dk10_policy_tests {
+    use super::*;
+    use crate::policy::{PolicyGate, WorkspaceConfigResolver, WorkspacePolicy};
+
+    fn provider_with_gate(
+        resolver: std::sync::Arc<WorkspaceConfigResolver>,
+    ) -> OpenAiCompatProvider {
+        let gate = PolicyGate::new_arc(resolver);
+        OpenAiCompatProvider::new("http://127.0.0.1:1", "test-key", "test-model")
+            .with_policy_check(std::sync::Arc::new(move |ws| gate.guard(ws)))
+    }
+
+    /// DK-10 DoD 核心：DenyCloud 工作区出网请求被拒且**零网络流量**（fail-closed 证据）。
+    #[tokio::test]
+    async fn denied_workspace_produces_zero_http() {
+        let resolver = std::sync::Arc::new(WorkspaceConfigResolver::new());
+        resolver.set_policy("ws-private", WorkspacePolicy::DenyCloud);
+        let provider = provider_with_gate(resolver);
+        provider.set_workspace(Some("ws-private".into()));
+
+        let err = provider
+            .chat(
+                &[Message {
+                    role: "user".into(),
+                    content: "hi".into(),
+                }],
+                &ChatOptions {
+                    max_tokens: Some(8),
+                    temperature: Some(0.1),
+                },
+            )
+            .await
+            .expect_err("DenyCloud 必须拒绝");
+        assert!(
+            matches!(err, aurora_core::Error::PermissionDenied(_)),
+            "拒绝语义必须是 PermissionDenied: {err:?}"
+        );
+
+        // embed / complete 同语义
+        let e = provider.embed(&["x"]).await.expect_err("embed 也要拒");
+        assert!(matches!(e, aurora_core::Error::PermissionDenied(_)));
+        let c = provider
+            .complete(
+                "hi",
+                &CompletionOptions {
+                    max_tokens: Some(8),
+                    temperature: Some(0.1),
+                    stop: None,
+                    top_p: None,
+                },
+            )
+            .await
+            .expect_err("complete 也要拒");
+        assert!(matches!(c, aurora_core::Error::PermissionDenied(_)));
+    }
+
+    /// AllowCloud 工作区正常出网（mockito 记录请求 = guard 不拦真请求）。
+    #[tokio::test]
+    async fn allowed_workspace_reaches_network() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(200)
+            .with_body(r#"{"choices":[{"message":{"content":"pong"}}]}"#)
+            .create_async()
+            .await;
+        let resolver = std::sync::Arc::new(WorkspaceConfigResolver::new());
+        // 未 set Deny → 缺省 AllowCloud
+        let provider = OpenAiCompatProvider::new(server.url(), "test-key", "test-model")
+            .with_policy_check(std::sync::Arc::new(move |ws| {
+                let gate = PolicyGate::new_arc(resolver.clone());
+                gate.guard(ws)
+            }));
+        provider.set_workspace(Some("ws-public".into()));
+        let out = provider
+            .chat(
+                &[Message {
+                    role: "user".into(),
+                    content: "ping".into(),
+                }],
+                &ChatOptions {
+                    max_tokens: Some(8),
+                    temperature: Some(0.1),
+                },
+            )
+            .await
+            .expect("AllowCloud 应正常出网");
+        assert_eq!(out, "pong");
+        assert!(m.matched(), "guard 不应吞真请求（AllowCloud 必须真实触网）");
+    }
+
+    /// None 工作区上下文 → 不启用策略检查（向后兼容：无装配的 provider 可用）。
+    #[tokio::test]
+    async fn no_workspace_context_skips_guard() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(200)
+            .with_body(r#"{"choices":[{"message":{"content":"ok"}}]}"#)
+            .create_async()
+            .await;
+        let provider = OpenAiCompatProvider::new(server.url(), "test-key", "test-model");
+        let out = provider
+            .chat(
+                &[Message {
+                    role: "user".into(),
+                    content: "ping".into(),
+                }],
+                &ChatOptions {
+                    max_tokens: Some(8),
+                    temperature: Some(0.1),
+                },
+            )
+            .await
+            .expect("无工作区上下文不拦");
+        assert_eq!(out, "ok");
+        assert!(m.matched(), "guard 不应吞真请求（AllowCloud 必须真实触网）");
     }
 }
