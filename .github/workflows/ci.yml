@@ -165,6 +165,18 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # DK-16 补丁（D1 小卡后续）：dist 不入仓模式 → 干净 clone 无 frontend 产物，
+      # tauri-build 的 generate_context 校验 frontendDist(../dist) 存在性 → check 前置 build。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Build frontend (tauri frontendDist prereq)
+        run: |
+          npm ci --no-audit --no-fund 2>&1 | tail -3
+          cd apps/desktop && npx vite build 2>&1 | tail -3
+          test -f dist/index.html || { echo "dist/index.html missing after build"; exit 3; }
       # 2026-09-25: loro 系 C++ 编译内存峰值 → 加 4G swap 兜底 + 削并行度。
       - name: Add swap
         run: |

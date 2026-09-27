@@ -677,7 +677,12 @@ mod tests {
         let p = PaddleOcrProvider;
         let r = p.recognize(&img(1), OcrLanguage::Chinese);
         assert!(
-            matches!(r, Err(OcrError::NotImplemented { engine: OcrEngineKind::Paddle })),
+            matches!(
+                r,
+                Err(OcrError::NotImplemented {
+                    engine: OcrEngineKind::Paddle
+                })
+            ),
             "Paddle 必须显式 NotImplemented，禁止 Ok 伪成功: {r:?}"
         );
     }
@@ -687,7 +692,12 @@ mod tests {
         let p = TesseractProvider;
         let r = p.recognize(&img(2), OcrLanguage::English);
         assert!(
-            matches!(r, Err(OcrError::NotImplemented { engine: OcrEngineKind::Tesseract })),
+            matches!(
+                r,
+                Err(OcrError::NotImplemented {
+                    engine: OcrEngineKind::Tesseract
+                })
+            ),
             "Tesseract 必须显式 NotImplemented: {r:?}"
         );
     }
@@ -749,10 +759,7 @@ mod tests {
         let engine = Arc::new(OcrEngine::new());
         let batch = BatchOcrProcessor::new(engine, 2);
         let progress = batch.process_batch(
-            &[
-                ("a".to_string(), img(7)),
-                ("b".to_string(), img(8)),
-            ],
+            &[("a".to_string(), img(7)), ("b".to_string(), img(8))],
             OcrLanguage::Mixed,
         );
         assert_eq!(progress.failed, 2, "未接入引擎的批量项应计入 failed");
