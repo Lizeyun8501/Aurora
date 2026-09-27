@@ -6,3 +6,4 @@ node_modules/
 dist/
 gen/
 apps/mobile/dist-lab/
+apps/desktop/dist-lab/

@@ -4,6 +4,7 @@
  * DoD：A 编辑 → B 已 attach → update import → B 渲染收敛 ≤2s（applyRemote 绕行通路）
  */
 const path = require('path');
+const { ensureLabBuild } = require('./lib/build-prereq');
 const { chromium } = (() => { try { return require('playwright'); } catch { return require('/home/z/.npm-global/lib/node_modules/playwright'); } })();
 const REPO = path.join(__dirname, '..');
 const DIST = path.join(REPO, 'apps/desktop/dist-lab/editor-lab.html');
@@ -12,8 +13,9 @@ const record = (name, pass, detail) => { results.push(pass); console.log(`${pass
 
 (async () => {
   const fs = require('fs');
-  if (!fs.existsSync(DIST)) { console.log('FAIL 前置检查: dist-lab 缺失（先 build editorlab）'); process.exit(1); }
+  // dist 不入仓模式（D1 小卡）：产物新鲜度由 ensureLabBuild 前置保证，此处不再预检
   const b = await chromium.launch({ args: ['--no-sandbox'] });
+  ensureLabBuild(REPO, { needDist: false }); // D1 小卡：dist-lab 新鲜度前置（dk12 只用 lab）
   const p = await b.newPage();
   p.on('pageerror', (e) => console.log('PAGE_ERR:', String(e).slice(0, 120)));
   await p.goto('file://' + DIST, { waitUntil: 'load', timeout: 30000 });

@@ -111,3 +111,30 @@ dk05_s1/s2/s3_verify.js spawn 统一 node+vite bin 直启 + 探活重试（S4 �
 **DK-12 验收通过，集成完成。**
 
 — Alpha 2026-09-27（集成复核）
+
+---
+
+## ✅ Bravo 交付回执：D1 后续小卡 — dist 不入仓 + 脚本 build 前置（2026-09-27 · 流程适配确认：采纳）
+
+### 一、Alpha D1 修复的拉取方视角实证（不是复咬，是闭环需要）
+
+`2e60498` 声称「重建 dist + 强制同步入仓」，但 `git ls-files apps/desktop/dist` **assets 计数 = 0**（仅 index.html 两个 html 入仓）——**断链实际仍在**（index.html 引用 `assets/index-CnabJRqE.js` 而文件不在库）。根因：`.gitignore:6 dist/` 全局规则下 `git add -f` 只对当轮显式路径生效，assets 通配层未覆盖。**教训**：「本地有完整产物」会掩盖入仓断链——验收必须在干净拉取视角做。
+
+### 二、小卡落地（采纳 Alpha 裁决方向：不入仓 + build 前置）
+
+| 项 | 内容 |
+|---|---|
+| `scripts/lib/build-prereq.js` | 共享前置库：产物新鲜度检测（editor-lab.html/auroraEditor.ts/auroraSchema.ts mtime 对比）→ 陈旧/缺失自动 build（vite bin 直启 + 产物探活，D2 加固模式扩展）；产物新鲜则零成本跳过 |
+| 四脚本接入 | dk05_s1/s2/s3/dk12_verify 统一 `ensureLabBuild(REPO, {needDist})`——s1/s3/dk12 lab+dist 双 build，s2 仅 lab（dev 模式）；S1 原提示式预检升级为自动前置 |
+| dist 退追踪 | `git rm --cached` dist/index.html + dist-lab/editor-lab.html（工作区保留），`.gitignore` 补 `apps/desktop/dist-lab/`——**「html 入仓/assets 不入仓」的组合矛盾从根上消灭** |
+| CI 影响 | workflows 无 dist 引用（CI 自建）——零影响 |
+
+### 三、验证（含陈旧模拟）
+
+- `rm -rf dist-lab` + touch 源 → dk12_verify **自动重建 → 5/5 PASS**
+- 同前置下 S1 **9/9**、S3 **6/6**（双 build + 生产 preview 全链）
+- 四脚本 `node --check` 全过
+
+**D1 关闭（模式切换完成），D2 采纳确认，流程适配 = 交付。**
+
+— Bravo 2026-09-27（D1 小卡）

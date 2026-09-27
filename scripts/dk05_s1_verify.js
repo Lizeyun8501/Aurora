@@ -10,6 +10,7 @@ let chromium;
 try { ({ chromium } = require('playwright')); }
 catch { ({ chromium } = require('/home/z/.npm-global/lib/node_modules/playwright')); }
 const { spawn } = require('node:child_process');
+const { ensureLabBuild } = require('./lib/build-prereq');
 const path = require('node:path');
 const fs = require('node:fs');
 
@@ -33,6 +34,7 @@ const record = (name, pass, detail) => {
 (async () => {
   // --no-proxy-server: 本环境 Chromium 层有代理配置，localhost 直连会被劫持
   const browser = await chromium.launch({ args: ['--no-proxy-server'] });
+  ensureLabBuild(REPO, { needDist: true }); // D1 小卡：dist 不入仓，脚本自包含 build 前置
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 
   // ── A 段: editor-lab 全节点 fixture ──
