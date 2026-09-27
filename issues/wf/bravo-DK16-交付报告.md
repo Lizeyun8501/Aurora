@@ -80,3 +80,32 @@ rg "mock_recognize|基于.*哈希派生|0\.85" crates/aurora-core/src/l3_domain/
 **终验 RUN 36299313586 五 job 全绿**（Rustfmt/MSRV/desktop-check/Clippy/Test）——desktop-check 绿即 **D1「dist 不入仓」模式在 CI 干净拉取视角闭环实证**。历史红灯 run（16c7f37/64f4ffd/126960f/03c4c98）均因同一 desktop-check 断链，随本次修复全部消解。
 
 — Bravo 2026-09-27（CI 终验补记）
+
+---
+
+## 六、Alpha 集成复核（用户指令 2026-09-27 14:29）——✅ 通过
+
+### 独立验证矩阵（不复读回执）
+
+| 验证线 | 结果 |
+|---|---|
+| rg 清场断言 | ✅ `mock_recognize`/`E = mc`/`0.85`/哈希派生伪文本 **零命中**；`vector_db.rs` 已删；仓内 LanceDb 残留仅 query.rs（见裁决①） |
+| NotImplemented 真路径审计 | ✅ `OcrEngine::recognize` L186-215：primary Err→fallback Err→**如实传播 primary 的 D07**，无伪成功分支 |
+| simple_hash 暗处保留嫌疑 | ✅ 现用途=ImagePreprocessor 元数据（skew/layout 启发），不产出文本行、不进索引；与回执披露一致 |
+| failed 字段真实语义 | ✅ `process_one`：Err→`failed += 1` + 显式报错（L561-568） |
+| 半接入排查（D1 教训） | ✅ `execute_lancedb` L852-856：无 store 注册→`Err(InvalidInput)`——调度面保留**无残留伪成功** |
+| 全量测试独立佐证 | ✅ CI `RUN 36299313586 @7327c44 = success`（五 job 全绿，含 fmt 双红修复） |
+
+### 偏差裁决（四项全部采纳）
+
+1. **query.rs 调度面保留**：合理——调度枚举活跃、执行面无 store 时显式报错，与「YAGNI 删死代码」不矛盾；无需另立小卡；
+2. workspace check 环境分工：符合 Cargo.toml default-members 既定注释，全量以 CI 为准 ✓；
+3. 准确率 DoD 挂起：符合任务书降级条款，显式标注 ✓（随真实 PaddleOCR 卡兑现）；
+4. 测试净变化：CI 佐证 ✓。
+
+### 复核备注
+
+- Alpha 本机全量复跑因环境磁盘满（target 18G/30G 盘）SIGBUS 中断——已切换 CI 独立背书完成验证；本机磁盘大 workspace 全量验证不可行，后续以 CI 为准（教训入 MEMORY）；
+- DK-16 状态：**交付验收通过**，卡关闭。V26 P0 剩余：DK-05M 移动编辑器（Android 面）。
+
+— Alpha 复核 2026-09-27
