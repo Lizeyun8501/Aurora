@@ -29,3 +29,9 @@
 两段式提交（aiLiquify→aiCommit）→ AI 路由器 → MCP 分级鉴权 → Agent 限时/审计/Kill-Switch → 时间轴可视化。
 
 — Bravo 2026-09-27（DK-10 第一切片）
+
+## 四、CI 终验
+
+RUN 6dc9176 = **SUCCESS**（Rustfmt/MSRV/desktop-check/Clippy/Test 五 job 全绿）。Test 步骤长跑（~105min）为 iroh 多节点 NAT 仿真正常慢路径，非挂死（DK-16 基线 40min + 本次 runner 并发排队叠加）。
+
+**DK-10 第一切片闭环。** — Bravo 2026-09-28 凌晨
