@@ -689,6 +689,8 @@ pub struct ScreenshotResult {
     pub image_data: Vec<u8>,
     pub ocr_text: String,
     pub source_bounds: BoundingBox,
+    /// DK-16 诚实化：OCR 引擎不可用时记录错误（区别于「截图成功但无文本」）
+    pub ocr_error: Option<String>,
 }
 
 /// 悬浮窗内容
@@ -778,22 +780,33 @@ impl ScreenshotCapture {
         }
     }
 
-    /// mock 截图：基于区域生成确定性图像字节，再走 OCR 引擎识别
+    /// 截图（当前为确定性图像字节模拟）+ OCR 识别。
+    /// DK-16 诚实化：OCR 引擎未接入时截图仍成功，ocr_text 为空且 ocr_error
+    /// 记录 NotImplemented（错误码 D07 语义）——绝不产生伪识别文本。
     pub fn capture(&self, region: Option<BoundingBox>) -> ScreenshotResult {
         let bounds = region.unwrap_or_default();
         let image_data = mock_capture_image(&bounds);
-        let lines = self.engine.recognize(&image_data, OcrLanguage::Mixed);
-        let ocr_text: String = lines
-            .iter()
-            .map(|l| l.text.clone())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let (ocr_text, ocr_error) = match self.engine.recognize(&image_data, OcrLanguage::Mixed) {
+            Ok(lines) => {
+                let text = lines
+                    .iter()
+                    .map(|l| l.text.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (text, None)
+            }
+            Err(e) => {
+                warn!(error = %e, "OCR unavailable, degrading to textless capture");
+                (String::new(), Some(e.to_string()))
+            }
+        };
         *self.last_capture.write() = Some(image_data.clone());
-        info!(bytes = image_data.len(), "screenshot captured + ocr (mock)");
+        info!(bytes = image_data.len(), "screenshot captured");
         ScreenshotResult {
             image_data,
             ocr_text,
             source_bounds: bounds,
+            ocr_error,
         }
     }
 
@@ -862,7 +875,11 @@ fn screenshot_to_document(result: &ScreenshotResult) -> Document {
         }),
     );
     if result.ocr_text.is_empty() {
-        doc = doc.with_block(Block::text("(no text recognized)"));
+        // DK-16 诚实化：区分「识别无文本」与「OCR 引擎未接入（错误码 D07）」
+        match &result.ocr_error {
+            Some(err) => doc = doc.with_block(Block::text(format!("(OCR 不可用: {err})"))),
+            None => doc = doc.with_block(Block::text("(no text recognized)")),
+        }
     } else {
         for line in result.ocr_text.lines() {
             doc = doc.with_block(Block::text(line));
@@ -1695,7 +1712,8 @@ mod tests {
     }
 
     #[test]
-    fn test_screenshot_capture_ocr_text() {
+    fn test_screenshot_capture_ocr_not_implemented_degrades() {
+        // DK-16 诚实化：OCR 引擎未接入（mock 已移除）→ 截图成功、无伪文本、错误显式记录
         let engine = Arc::new(OcrEngine::new());
         let cap = ScreenshotCapture::new(engine);
         let result = cap.capture(Some(BoundingBox {
@@ -1704,8 +1722,19 @@ mod tests {
             width: 200,
             height: 150,
         }));
-        // OCR 引擎 mock 返回非空文本
-        assert!(!result.ocr_text.is_empty());
+        assert!(result.ocr_text.is_empty(), "不得产生伪识别文本");
+        assert!(
+            result
+                .ocr_error
+                .as_deref()
+                .map(|e| e.contains("未接入"))
+                .unwrap_or(false),
+            "ocr_error 应显式记录 NotImplemented: {:?}",
+            result.ocr_error
+        );
+        // 降级路径不 crash：截图数据与边界仍正常
+        assert!(!result.image_data.is_empty());
+        assert_eq!(result.source_bounds.width, 200);
     }
 
     #[test]

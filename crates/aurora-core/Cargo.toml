@@ -14,9 +14,6 @@ loro = { workspace = true, optional = true }
 # Full-text search
 tantivy = { workspace = true }
 
-# Vector database
-# lancedb = { workspace = true }
-
 # SQLite (including sqlite-vec for vector search)
 rusqlite = { workspace = true }
 # 中文分词（V20: jieba 接入 Tantivy 自定义 tokenizer）
