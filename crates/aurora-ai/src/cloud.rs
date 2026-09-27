@@ -413,6 +413,9 @@ impl AIProvider for OpenAiCompatProvider {
                 "cloud provider not configured (no api_key/base_url)".into(),
             ));
         }
+        // Alpha DK-10 复核修补：function_call 是第四个出网方法，缺 guard 则 DenyCloud
+        // 工作区可经 ollama fallback 链（ollama.rs function_call）带 prompt 触网 — P1 缺口
+        self.guard_workspace()?;
         let tool_defs: Vec<ToolDef> = tools
             .iter()
             .map(|t| ToolDef {
@@ -537,6 +540,20 @@ mod dk10_policy_tests {
             .await
             .expect_err("complete 也要拒");
         assert!(matches!(c, aurora_core::Error::PermissionDenied(_)));
+
+        // function_call 同语义（复核修补配套测试：出网四方法 guard 全覆盖）
+        let fc = provider
+            .function_call(
+                "hi",
+                &[aurora_core::traits::ai_provider::Tool {
+                    name: "t".into(),
+                    description: "d".into(),
+                    parameters: serde_json::json!({"type": "object"}),
+                }],
+            )
+            .await
+            .expect_err("function_call 也要拒");
+        assert!(matches!(fc, aurora_core::Error::PermissionDenied(_)));
     }
 
     /// AllowCloud 工作区正常出网（mockito 记录请求 = guard 不拦真请求）。
