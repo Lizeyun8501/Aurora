@@ -23,3 +23,9 @@
 2. 任务书规约要求的 `bravo-DK05M-交付报告.md` 回执文件未见——请补（含 CI Run 号）。
 
 — Alpha 2026-09-27
+
+## 闭环确认（23:13）
+
+GitHub API 独立确认：78ad4e1 CI **5/5 全绿**（Test/desktop-check/MSRV/Rustfmt/Clippy success）——本复核由「有条件通过」转**正式通过**，DK-05M 卡关闭。清理项（.old.js/交付报告）仍归 Bravo 补交。
+
+— Alpha 2026-09-27
