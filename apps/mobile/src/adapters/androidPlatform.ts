@@ -88,6 +88,26 @@ interface StoredNote {
   updatedAt: string;
 }
 
+// DK-05M：无桥（file://）环境快照 mock —— 空 LoroDoc snapshot 常量（node loro-crdt export 生成）
+const EMPTY_SNAPSHOT_B64 =
+  'bG9ybwAAAAAAAAAAAAAAAFMuDPwAAy8AAABMT1JPAAAAAgB2dgAAAAEAAgDnYslsAQAAAAUAAAACAGZyAAIAdnbb2MnIFgAAAAAAAAAAAAAA';
+const snapKey = (id: string) => `aurora.snap.${id}`;
+const mockGetSnapshot = (id: string): string | null => {
+  try {
+    return localStorage.getItem(snapKey(id));
+  } catch {
+    return null;
+  }
+};
+const mockSaveSnapshot = (id: string, b64: string): boolean => {
+  try {
+    localStorage.setItem(snapKey(id), b64);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 function mockNotes(): StoredNote[] {
   try {
     return JSON.parse(localStorage.getItem('aurora.notes') ?? '[]') as StoredNote[];
@@ -153,6 +173,7 @@ export const platform = {
     };
     notes.unshift(note);
     mockSave(notes);
+    mockSaveSnapshot(note.id, EMPTY_SNAPSHOT_B64); // DK-05M：新建笔记即建空快照（rich 模式使能）
     return note.id;
   },
 
@@ -237,12 +258,16 @@ export const platform = {
 
   /** 获取笔记 Loro 快照（base64）。无桥/失败返回 null。 */
   getNoteSnapshot(noteId: string): string | null {
-    return bridge()?.getNoteSnapshot(noteId) ?? null;
+    const b = bridge()?.getNoteSnapshot(noteId);
+    if (b !== undefined && b !== null) return b;
+    return mockGetSnapshot(noteId); // DK-05M：无桥快照 mock（file:// rich 模式）
   },
 
   /** 保存 Loro 快照（base64，CRDT 合并语义）。 */
   saveNoteSnapshot(noteId: string, snapshotBase64: string): boolean {
-    return bridge()?.saveNoteSnapshot(noteId, snapshotBase64) ?? false;
+    const b = bridge();
+    if (b) return b.saveNoteSnapshot(noteId, snapshotBase64);
+    return mockSaveSnapshot(noteId, snapshotBase64); // DK-05M：无桥快照 mock
   },
 
   listSnapshots(noteId: string): string {

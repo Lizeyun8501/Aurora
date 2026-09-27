@@ -6,6 +6,8 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
 // 产物注入 Android assets/，由 MainActivity WebView 加载。
 // singlefile: 内联 JS/CSS 到单个 HTML — 规避 file:// 下 ES module CORS 限制。
 export default defineConfig({
+  // DK-05M：相对 base —— file:// 加载（dk05m_verify）与 tauri 协议双兼容
+  base: './',
   plugins: [react(), viteSingleFile()],
   resolve: {
     alias: {

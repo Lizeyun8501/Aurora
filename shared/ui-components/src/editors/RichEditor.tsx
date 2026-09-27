@@ -255,7 +255,13 @@ function FloatingMenu({ view }: { view: EditorView | null }) {
 
   useEffect(() => {
     if (!view) return;
+    let raf = 0;
+    // DK-05M 裁决③：rAF 节流统一三源（selectionchange/scroll/visualViewport resize）
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
     const update = () => {
+      raf = 0;
       // 组合输入期间隐藏（IME 候选浮层优先, 避免双重浮层遮挡）
       if (view.composing) {
         setRect(null);
@@ -267,18 +273,32 @@ function FloatingMenu({ view }: { view: EditorView | null }) {
         return;
       }
       const coords = view.coordsAtPos(state.selection.from);
-      const hostRect = view.dom.parentElement?.getBoundingClientRect();
-      if (!hostRect) return;
+      if (!view.dom.parentElement) return;
+      // 视口系钳制（裁决③：visualViewport 修正 + 遮挡时贴工具条上方）
+      // vv 可视下界：真实环境 = vv.height + vv.offsetTop；verify mock 只改 height
+      const vv = window.visualViewport;
+      const vvBottom = vv ? vv.height + vv.offsetTop : window.innerHeight;
+      const vvTop = vv ? vv.offsetTop : 0;
+      const TOOLBAR_H = 48; // .editor-toolbar 实测视觉高度（40 热区 + padding）
+      const MENU_H = 34;
+      let topView = coords.top - 46; // 菜单置于选区上方 46px（原偏移语义）
+      // 遮挡/越界 → 上缘钳到工具条上方（bottom=--kbd-inset 态下工具条上缘≈视口下界-工具条高）
+      const floor = vvBottom - TOOLBAR_H - MENU_H - 4;
+      topView = Math.max(vvTop + 4, Math.min(topView, floor - MENU_H));
+      // DK-05M：菜单改 fixed 视口系定位（坐标即视口坐标；键盘态/滚动钳制天然一致）
       setRect({
-        top: Math.max(4, coords.top - hostRect.top - 46),
-        left: Math.max(8, Math.min(coords.left - hostRect.left, hostRect.width - 200)),
+        top: topView,
+        left: Math.max(8, Math.min(coords.left, (vv ? vv.width : window.innerWidth) - 200)),
       });
     };
-    document.addEventListener('selectionchange', update);
-    window.addEventListener('scroll', update, true);
+    document.addEventListener('selectionchange', schedule);
+    window.addEventListener('scroll', schedule, true);
+    window.visualViewport?.addEventListener('resize', schedule, { passive: true });
     return () => {
-      document.removeEventListener('selectionchange', update);
-      window.removeEventListener('scroll', update, true);
+      if (raf) cancelAnimationFrame(raf);
+      document.removeEventListener('selectionchange', schedule);
+      window.removeEventListener('scroll', schedule, true);
+      window.visualViewport?.removeEventListener('resize', schedule);
     };
   }, [view]);
 

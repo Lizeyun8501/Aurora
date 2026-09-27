@@ -9,7 +9,8 @@
 .app-shell {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* DK-05M：可视视口高（visualViewport 驱动 --vvh，回退 100%）；键盘态高度由此变量驱动 */
+  height: var(--vvh, 100%);
   background: var(--bg-primary);
 }
 
@@ -451,7 +452,13 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .editor-toolbar {
   display: flex; align-items: center; gap: 2px;
   padding: 4px 8px;
-  padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  /* DK-05M：fixed 贴可视视口底（键盘态=贴键盘上方）；max() 处理收起态 safe-area */
+  position: fixed;
+  left: 0; right: 0;
+  bottom: max(var(--kbd-inset, 0px), env(safe-area-inset-bottom));
+  z-index: 80;
+  padding: 4px 8px;
+  padding-bottom: 4px; /* DK-05M：底部安全区已由 bottom max() 表达，不重复叠加 */
   flex: 0 0 auto;
   overflow-x: auto; -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -848,7 +855,8 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
    （工具条已在键盘上方, 浮动菜单仅做快捷格式, 贴选区定位）
    ============================================================ */
 .floating-menu {
-  position: absolute; z-index: 75;
+  /* DK-05M：fixed 视口系（与 FloatingMenu 视口坐标语义一致；键盘态钳制贴工具条） */
+  position: fixed; z-index: 75;
   display: flex; align-items: center; gap: 2px;
   padding: 2px 4px;
   background: var(--bg-primary);

@@ -235,7 +235,47 @@ function useToast() {
 // 应用骨架 — 底部 Tab（V19 §3.1）+ 悬浮捕获（永不隐藏）
 // ===========================================================================
 
+
+// ===========================================================================
+// DK-05M 键盘协同 — visualViewport 唯一方案（Alpha 裁决①②）
+// ===========================================================================
+
+/**
+ * 键盘视口感知：visualViewport resize/scroll → rAF 节流写 CSS 变量。
+ * - `--vvh`：可视视口高度（app-shell 高度用它，禁 100vh 键盘态用法）
+ * - `--kbd-inset`：键盘遮挡高度（工具条 fixed 贴底用；收起态回退 safe-area 由 CSS max() 处理）
+ * 半接入审计：MobileApp 此前零 resize/visualViewport 监听，无执行顺序短路风险（D1 教训排查）。
+ */
+function useKbdViewport(): void {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return; // 桌面浏览器无 vv：CSS 回退值天然生效
+    let raf = 0;
+    const apply = () => {
+      raf = 0;
+      const root = document.documentElement.style;
+      root.setProperty('--vvh', `${Math.round(vv.height)}px`);
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      root.setProperty('--kbd-inset', `${Math.round(inset)}px`);
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(apply);
+    };
+    vv.addEventListener('resize', schedule, { passive: true });
+    vv.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule, { passive: true });
+    apply();
+    return () => {
+      vv.removeEventListener('resize', schedule);
+      vv.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+}
+
 export default function App() {
+  useKbdViewport(); // DK-05M：键盘视口感知（--vvh/--kbd-inset）
   const [ready, setReady] = useState(false);
   const [fallback, setFallback] = useState(false);
   const [view, setView] = useState<ViewId>('today'); // V19: TodayView 默认启动页
