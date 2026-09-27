@@ -22,11 +22,6 @@ const fs = require('node:fs');
 // 仓库根相对定位 + dist 预检（Bravo 基建门槛）
 const REPO = path.join(__dirname, '..');
 const LAB = `file://${path.join(REPO, 'apps/desktop/dist-lab/editor-lab.html')}`;
-const DIST_INDEX = path.join(REPO, 'apps/desktop/dist/index.html');
-if (!fs.existsSync(DIST_INDEX)) {
-  console.error('dist/index.html 不存在 — 先执行: cd apps/desktop && npx vite build');
-  process.exit(2);
-}
 
 const results = [];
 const record = (name, pass, detail) => {

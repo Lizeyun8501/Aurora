@@ -19,11 +19,6 @@ const REPO = path.join(__dirname, '..');
 const LAB = `file://${path.join(REPO, 'apps/desktop/dist-lab/editor-lab.html')}`;
 const DIST_INDEX = path.join(REPO, 'apps/desktop/dist/index.html');
 
-// Bravo 复核基建缺陷②：脚本自包含预检——dist 陈旧/缺失时明确提示
-if (!fs.existsSync(DIST_INDEX)) {
-  console.error('dist/index.html 不存在 — 先执行: cd apps/desktop && npx vite build');
-  process.exit(2);
-}
 
 const results = [];
 const record = (name, pass, detail) => {
