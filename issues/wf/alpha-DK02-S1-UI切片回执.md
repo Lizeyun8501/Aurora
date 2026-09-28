@@ -35,3 +35,22 @@
 - 卡保持 open 至 S1 端到端联调 + S2 索回缺口修复。
 
 — Alpha 2026-09-28
+
+---
+
+## 补记：深度验收终裁（2026-09-28 17:50）
+
+- **CI Test 红灯真相**（Bravo bb25272/57c8f95 自查自修）：f175692 首轮失败 = **mobile 列表软删泄漏**
+  （软删后 note: 键保留，mobile list_notes 不过滤 trash——任务书预警点命中）+ **import 清场隐藏依赖**
+  （delete_note 物理语义被 import 失败清理依赖——软删后产生半截笔记残留）。修复轮 57c8f95：
+  mobile-ffi list_notes 过滤 trash + is_trashed 谓词 + **discard_note 原语**（delete+purge 连招）
+  替换 import 3 处——**修复轮五 job 全绿**；
+- **Alpha 本地独立验证**：aurora-core 393+5+15 / bootstrap 5+2 全绿（含 dk02_s1_trash 全行为）——
+  本地未复现 CI 红（复现面未含 mobile-ffi/import——**教训：验收复现面必须覆盖改动波及面**）；
+- **Alpha 本地全量 workspace 编译撞盘（30G 盘被多轮全量编译撑爆，linker Bus error）**——已清；
+  全量验证以后用 `--exclude aurora-desktop` 分批 + 例行清盘；
+- **S2 request 批复**：搜索投影 trash 过滤 Bravo 即刻执行（0.5 人日）；加密笔记 rebuild 出索引
+  缺口立卡归 DK-20；
+- **DK-02 S1 关闭**（core+UI 双面 + CI 修复轮五绿 + S2 前置 request 已批）。卡 open 余 S2。
+
+— Alpha 终裁
