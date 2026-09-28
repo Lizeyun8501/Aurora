@@ -100,6 +100,9 @@ pub fn run() {
             cmd_get_note,
             cmd_update_note,
             cmd_delete_note,
+            cmd_list_trashed,
+            cmd_restore_note,
+            cmd_purge_note,
             cmd_search_notes,
             cmd_app_status,
             cmd_today_view_stats,
@@ -484,6 +487,111 @@ async fn cmd_delete_note(note_id: String) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     info!(note_id = %note_id, "note deleted via desktop WritePath");
+    Ok(())
+}
+
+/// 列出回收站（DK-02 S1）。
+#[tauri::command]
+async fn cmd_list_trashed() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let items = aurora_core::write_path::list_trashed(&core)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(items
+        .into_iter()
+        .map(|t| {
+            serde_json::json!({
+                "note_id": t.note_id,
+                "deleted_at_ms": t.deleted_at_ms,
+                "title": t.title,
+            })
+        })
+        .collect())
+}
+
+/// 从回收站恢复笔记（DK-02 S1 — NoteCreated 重放驱动投影/索引重建）。
+#[tauri::command]
+async fn cmd_restore_note(note_id: String) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None, // 与 cmd_delete_note 同口径（TODO(DK-07)）
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    aurora_core::write_path::restore_note(&ctx, &note_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    core.catch_up_projections()
+        .await
+        .map_err(|e| e.to_string())?;
+    info!(note_id = %note_id, "note restored via desktop command");
+    Ok(())
+}
+
+/// 彻底删除回收站笔记（DK-02 S1 — 物理删 + 附件级联）。
+#[tauri::command]
+async fn cmd_purge_note(note_id: String) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    aurora_core::write_path::purge_note(&ctx, &note_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    core.catch_up_projections()
+        .await
+        .map_err(|e| e.to_string())?;
+    info!(note_id = %note_id, "note purged via desktop command");
     Ok(())
 }
 

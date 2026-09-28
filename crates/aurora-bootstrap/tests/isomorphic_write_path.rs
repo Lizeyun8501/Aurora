@@ -238,21 +238,50 @@ async fn desktop_and_mobile_write_paths_are_isomorphic() {
         );
     }
 
-    // ── 对拍 4: delete 后两端 key 集合一致（全清）──
+    // ── 对拍 4: delete 后两端 key 集合一致（DK-02 S1 软删语义）──
+    // 软删改造后 note:/notesnap: 保留（恢复数据源），trash: 标记键两端口径一致。
     write_path::delete_note(&ctx_d, &id_d).await.unwrap();
     write_path::delete_note(&ctx_m, &id_m).await.unwrap();
     assert_eq!(
         kv_keys(&desktop, "note:").await.len(),
+        1,
+        "desktop soft delete retains note: key"
+    );
+    assert_eq!(
+        kv_keys(&mobile, "note:").await.len(),
+        1,
+        "mobile soft delete retains note: key"
+    );
+    assert_eq!(kv_keys(&desktop, "notesnap:").await.len(), 1);
+    assert_eq!(kv_keys(&mobile, "notesnap:").await.len(), 1);
+    assert_eq!(
+        kv_keys(&desktop, "trash:").await.len(),
+        1,
+        "desktop trash marker"
+    );
+    assert_eq!(
+        kv_keys(&mobile, "trash:").await.len(),
+        1,
+        "mobile trash marker"
+    );
+
+    // purge 后物理键全清（两端口径一致）
+    write_path::purge_note(&ctx_d, &id_d).await.unwrap();
+    write_path::purge_note(&ctx_m, &id_m).await.unwrap();
+    assert_eq!(
+        kv_keys(&desktop, "note:").await.len(),
         0,
-        "desktop after delete"
+        "desktop after purge"
     );
     assert_eq!(
         kv_keys(&mobile, "note:").await.len(),
         0,
-        "mobile after delete"
+        "mobile after purge"
     );
     assert_eq!(kv_keys(&desktop, "notesnap:").await.len(), 0);
     assert_eq!(kv_keys(&mobile, "notesnap:").await.len(), 0);
+    assert_eq!(kv_keys(&desktop, "trash:").await.len(), 0);
+    assert_eq!(kv_keys(&mobile, "trash:").await.len(), 0);
 }
 
 /// DK-07 S3: 桌面端加密笔记闭环 — 密文落库 + 读侧解密 + 明文零残留。

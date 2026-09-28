@@ -578,28 +578,134 @@ pub async fn rename_note(
     })
 }
 
-/// 软删除笔记（快照与元数据同删 + NoteDeleted 事件驱动投影清理）。
+/// 回收站标记条目（DK-02 S1 — `trash:{note_id}` 的值结构）。
+///
+/// `title` 为删除时的元数据快照（`Alpha 裁决：入快照明文`——回收站为本地面，
+/// 列表展示零解密开销；加密笔记的 title 在 `NoteRecord` 层本就明文，仅正文密文）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TrashedNote {
+    pub note_id: String,
+    pub deleted_at_ms: i64,
+    pub title: String,
+}
+
+fn trash_key(note_id: &str) -> String {
+    format!("trash:{note_id}")
+}
+
+/// 笔记入回收站（DK-02 S1 软删除改造）。
+///
+/// 语义变更（对调用方透明，签名不变）：
+/// - 物理 `note:{id}` / `notesnap:{id}` **保留**（恢复数据源）；
+/// - 新写 `trash:{id}` 标记键（幂等覆盖：重复删除仅刷新 deleted_at）；
+/// - `NoteDeleted` 事件照发（投影/搜索清理——主视图与索引消失）；
+/// - 附件级联**移除**（回收站期间附件保留，随 [`purge_note`] 收编物理删）。
 pub async fn delete_note(ctx: &WriteContext, note_id: &str) -> Result<WriteReceipt, Error> {
     let core = ctx.core.as_ref();
     let unseal = ctx.seal.as_ref();
-    // 存在性校验（读元数据）
-    load_note_meta(core, note_id, unseal)
+    // 存在性校验（读元数据）— 同时取 title 快照（trash 列表零解密开销）
+    let record = load_note_meta(core, note_id, unseal)
         .await?
         .ok_or(Error::NoteNotFound {
             id: note_id.to_string(),
         })?;
 
+    // DK-02 S1：写标记键（物理键保留——恢复数据源）。幂等覆盖写：
+    // 重复删除仅刷新 deleted_at_ms，不报错（回收站语义下重复删除无害）。
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let marker = TrashedNote {
+        note_id: note_id.to_string(),
+        deleted_at_ms: now_ms,
+        title: record.title.clone(),
+    };
+    core.kv_store
+        .set(
+            &trash_key(note_id),
+            &serde_json::to_vec(&marker).map_err(|e| Error::Internal(e.to_string()))?,
+        )
+        .await?;
+
+    let _ = unseal; // seal 语义未变（meta 读取已消费）
+    core.event_bus
+        .publish(crate::event_bus::layered::AppEvent::NoteDeleted {
+            note_id: note_id.to_string(),
+        });
+    info!(
+        note_id,
+        "note moved to trash via WritePath (soft delete, DK-02 S1)"
+    );
+    Ok(WriteReceipt {
+        seq: core.event_bus.last_seq(),
+        aggregate_id: note_id.to_string(),
+        committed_at: now_ms,
+    })
+}
+
+/// 从回收站恢复笔记（DK-02 S1）。
+///
+/// 事件选型裁决（Bravo，理由入交付报告）：**重放 `NoteCreated`**，不新增
+/// `NoteRestored` 事件——①投影/搜索索引为禁改冻结面，`NoteRestored` 无消费者
+/// 无法恢复可见性；②`NoteCreated` 重放走完整建条目路径（搜索 `index_note` +
+/// blocks 派生重建 DK-01W 先例）；③事件字典 41 冻结面零改动。
+///
+/// # Errors
+/// - `NoteNotFound`：标记键不存在（不在回收站）或物理键已失（不一致态）
+/// - `Crypto`：加密笔记处于锁定态（无 cipher 可解密——fail-closed，恢复必须
+///   产出明文供索引重建，绝不以密文重放）
+pub async fn restore_note(ctx: &WriteContext, note_id: &str) -> Result<WriteReceipt, Error> {
+    let core = ctx.core.as_ref();
+    if core.kv_store.get(&trash_key(note_id)).await?.is_none() {
+        return Err(Error::NoteNotFound {
+            id: note_id.to_string(),
+        });
+    }
+    let record = load_note_meta(core, note_id, ctx.seal.as_ref())
+        .await?
+        .ok_or(Error::NoteNotFound {
+            id: note_id.to_string(),
+        })?;
+
+    core.kv_store.delete(&trash_key(note_id)).await?;
+
+    let content = open_note_content(ctx, note_id, &record)?;
+    core.event_bus
+        .publish(crate::event_bus::layered::AppEvent::NoteCreated {
+            note_id: note_id.to_string(),
+            title: record.title.clone(),
+            content,
+        });
+    info!(note_id, "note restored from trash via WritePath (DK-02 S1)");
+    Ok(WriteReceipt {
+        seq: core.event_bus.last_seq(),
+        aggregate_id: note_id.to_string(),
+        committed_at: chrono::Utc::now().timestamp_millis(),
+    })
+}
+
+/// 彻底删除回收站笔记（DK-02 S1 — 原物理删逻辑收编）。
+///
+/// 前置：标记键存在（只对回收站中的笔记生效——状态机明确，误 purge
+/// 未删除笔记不可能）。幂等性：purge 后标记键已清，二次调用报 `NoteNotFound`。
+pub async fn purge_note(ctx: &WriteContext, note_id: &str) -> Result<WriteReceipt, Error> {
+    let core = ctx.core.as_ref();
+    if core.kv_store.get(&trash_key(note_id)).await?.is_none() {
+        return Err(Error::NoteNotFound {
+            id: note_id.to_string(),
+        });
+    }
+
+    core.kv_store.delete(&trash_key(note_id)).await?;
     core.kv_store.delete(&format!("note:{note_id}")).await?;
     core.kv_store.delete(&format!("notesnap:{note_id}")).await?;
 
-    // 附件级联（DK-09 裁决）：清 meta + 反向索引；失败不阻塞笔记删除
+    // 附件级联（DK-09 裁决）：清 meta + 反向索引；失败不阻塞 purge
     // （blob 由 GC 兜底），日志留痕。
     if let Some(store) = ctx.attachments.as_ref() {
         match store.list_by_note(note_id).await {
             Ok(items) => {
                 for item in items {
                     if let Err(e) = store.delete(&item.attachment_id).await {
-                        tracing::warn!(note_id, attachment_id = %item.attachment_id, error = %e, "attachment cascade delete failed; GC will reclaim");
+                        tracing::warn!(note_id, attachment_id = %item.attachment_id, error = %e, "attachment cascade purge failed; GC will reclaim");
                     }
                 }
             }
@@ -609,17 +715,56 @@ pub async fn delete_note(ctx: &WriteContext, note_id: &str) -> Result<WriteRecei
         }
     }
 
+    // NoteDeleted 幂等重发：restore 重放 NoteCreated 后若再 purge，
+    // 投影/索引需再次清理（消费侧按 id 幂等）。
     let now_ms = chrono::Utc::now().timestamp_millis();
     core.event_bus
         .publish(crate::event_bus::layered::AppEvent::NoteDeleted {
             note_id: note_id.to_string(),
         });
-    info!(note_id, "note deleted via WritePath");
+    info!(note_id, "note purged from trash via WritePath (DK-02 S1)");
     Ok(WriteReceipt {
         seq: core.event_bus.last_seq(),
         aggregate_id: note_id.to_string(),
         committed_at: now_ms,
     })
+}
+
+/// 列出回收站（DK-02 S1）——按删除时间倒序（新删在前）。
+pub async fn list_trashed(core: &AppCore) -> Result<Vec<TrashedNote>, Error> {
+    let mut out = Vec::new();
+    for (_, v) in core.kv_store.scan_prefix("trash:").await? {
+        match serde_json::from_slice::<TrashedNote>(&v) {
+            Ok(t) => out.push(t),
+            Err(e) => tracing::warn!(error = %e, "trash marker parse failed; skipped"),
+        }
+    }
+    out.sort_by(|a, b| b.deleted_at_ms.cmp(&a.deleted_at_ms));
+    Ok(out)
+}
+
+/// 清空过期回收站（DK-02 S1 — 供未来调度消费；30 天自动清空的调度接线挂 S2）。
+///
+/// 返回本次 purge 的 note_id 列表（单条失败不阻塞批次，错误日志留痕）。
+pub async fn purge_expired(ctx: &WriteContext, days: i64) -> Result<Vec<String>, Error> {
+    let core = ctx.core.as_ref();
+    let cutoff = chrono::Utc::now().timestamp_millis() - days * 86_400_000;
+    let mut purged = Vec::new();
+    for (key, v) in core.kv_store.scan_prefix("trash:").await? {
+        let Ok(marker) = serde_json::from_slice::<TrashedNote>(&v) else {
+            tracing::warn!(trash_key = %key, "trash marker parse failed; skipped");
+            continue;
+        };
+        if marker.deleted_at_ms <= cutoff {
+            match purge_note(ctx, &marker.note_id).await {
+                Ok(_) => purged.push(marker.note_id),
+                Err(e) => {
+                    tracing::warn!(note_id = %marker.note_id, error = %e, "expired purge failed; skipped")
+                }
+            }
+        }
+    }
+    Ok(purged)
 }
 
 // ===== 附件写入入口（DK-09 · request 裁决落地）=====
