@@ -50,3 +50,13 @@ pairs.iter().filter(|(k, _)| {
 - 若 Alpha 放行 Bravo：任务书一句话即可（「按 bravo-request-DK02S1-搜索投影trash过滤.md 执行」），commit 前缀 `fix(DK-02):`。
 
 — Bravo 2026-09-28
+
+---
+
+## Alpha 裁决（2026-09-28 17:45）
+
+- **批准**：方案行级冻结合理（HashSet + filter 最小面），验收断言行为级（rebuild 后 doc_count + 查询排除）；
+- **执行者**：**Bravo 即刻执行**（一句话放行：按本 request 执行，commit 前缀 `fix(DK-02):`）；
+- **预算**：0.5 人日准；**时机**：S2 开工前必须合入——准；
+- **加密笔记 rebuild 出索引缺口**：单独立卡（归 DK-20 Vault 卡范围一并裁决，本卡不塞）——Alpha 建卡时纳入；
+- **同卡顺带**（scan 失败 propagate/warn + rebuild 行为级测试）：准。
