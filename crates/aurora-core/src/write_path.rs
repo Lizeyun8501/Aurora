@@ -730,6 +730,30 @@ pub async fn purge_note(ctx: &WriteContext, note_id: &str) -> Result<WriteReceip
     })
 }
 
+/// 笔记是否在回收站中（DK-02 S1 — 列表/检索面过滤 trash 项的公共谓词）。
+pub async fn is_trashed(core: &AppCore, note_id: &str) -> bool {
+    core.kv_store
+        .get(&trash_key(note_id))
+        .await
+        .map(|v| v.is_some())
+        .unwrap_or(false)
+}
+
+/// 丢弃笔记（DK-02 S1 — 导入失败清理专用：软删后立即 purge，不留任何键）。
+///
+/// 语义区别于 [`delete_note`]（进回收站可恢复）与 [`purge_note`]（仅回收站中）：
+/// 本原语是「从不存在过」的清场操作——半截笔记不留 note:/notesnap:/trash: 残留。
+/// 幂等：不存在/未删除均不报错（清场操作，尽最大努力）。
+pub async fn discard_note(ctx: &WriteContext, note_id: &str) -> Result<(), Error> {
+    let core = ctx.core.as_ref();
+    // 未在回收站则先入站（purge 前置要求）；已软删则直接 purge。
+    // NoteNotFound 任一步静默吞掉——清场语义，目标态=无残留。
+    let _ = delete_note(ctx, note_id).await;
+    let _ = purge_note(ctx, note_id).await;
+    debug_assert!(core.kv_store.get(&trash_key(note_id)).await.is_ok());
+    Ok(())
+}
+
 /// 列出回收站（DK-02 S1）——按删除时间倒序（新删在前）。
 pub async fn list_trashed(core: &AppCore) -> Result<Vec<TrashedNote>, Error> {
     let mut out = Vec::new();

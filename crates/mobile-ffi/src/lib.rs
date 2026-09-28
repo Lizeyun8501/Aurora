@@ -437,9 +437,25 @@ impl UniffiAppCore {
     fn list_notes_impl(self: &Arc<Self>) -> Vec<NoteSummary> {
         if let Some(core) = &self.core {
             let kv = core.kv_store.clone();
-            let entries = self
-                .runtime
-                .block_on(async { kv.scan_prefix("note:").await });
+            // DK-02 S1: 软删后 note: 物理键保留——列表须排除 trash 中的笔记
+            let entries: Result<Vec<(String, Vec<u8>)>, aurora_core::Error> =
+                self.runtime.block_on(async {
+                    let (notes, trashed) =
+                        tokio::join!(kv.scan_prefix("note:"), kv.scan_prefix("trash:"));
+                    let trash_ids: std::collections::HashSet<String> = trashed
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(k, _)| k.trim_start_matches("trash:").to_string())
+                        .collect();
+                    Ok(notes
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|(k, _)| {
+                            let id = k.trim_start_matches("note:");
+                            !trash_ids.contains(id)
+                        })
+                        .collect::<Vec<_>>())
+                });
 
             match entries {
                 Ok(pairs) => pairs

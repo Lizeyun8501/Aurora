@@ -149,7 +149,7 @@ pub async fn import_notion_export(
                             });
                         }
                         Err(e) => {
-                            let _ = aurora_core::write_path::delete_note(ctx, &note_id).await;
+                            let _ = aurora_core::write_path::discard_note(ctx, &note_id).await;
                             report.failed += 1;
                             report.errors.push(ImportError {
                                 path: path.clone(),

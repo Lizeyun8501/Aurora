@@ -236,7 +236,7 @@ pub async fn import_markdown_dir(
                             });
                         }
                         Err(e) => {
-                            let _ = aurora_core::write_path::delete_note(ctx, &note_id).await;
+                            let _ = aurora_core::write_path::discard_note(ctx, &note_id).await;
                             report.failed += 1;
                             report.errors.push(ImportError {
                                 path: path.clone(),
@@ -663,7 +663,7 @@ pub async fn import_enex(
                 };
             }
             if let Some(reason) = fail_reason {
-                let _ = aurora_core::write_path::delete_note(ctx, &note_id).await;
+                let _ = aurora_core::write_path::discard_note(ctx, &note_id).await;
                 report.failed += 1;
                 report.errors.push(ImportError {
                     path: PathBuf::from(&entry_source),

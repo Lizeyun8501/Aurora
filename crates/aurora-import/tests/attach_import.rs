@@ -253,7 +253,7 @@ async fn dk09_attach_readback_plaintext_and_sealed() {
     }
 }
 
-/// §5-fail-closed：attach 失败 → 笔记计 failed 且无残留（delete_note 级联）。
+/// §5-fail-closed：attach 失败 → 笔记计 failed 且无残留（discard_note 清场）。
 #[tokio::test]
 async fn dk09_attach_fail_closed_no_residual() {
     use async_trait::async_trait;
@@ -320,7 +320,7 @@ async fn dk09_attach_fail_closed_no_residual() {
         "{:?}",
         report.errors[0].reason
     );
-    // 无残留：note: 元数据键为空（delete_note 级联清理；notesnap: 不匹配前缀）
+    // 无残留：note: 元数据键为空（discard_note 清场：软删+purge 连招；notesnap: 不匹配前缀）
     let residual = app
         .ctx
         .core
