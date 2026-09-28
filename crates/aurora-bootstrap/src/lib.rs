@@ -20,7 +20,7 @@ use std::sync::Arc;
 use aurora_core::app_core::{AppCore, AppCoreBuilder};
 use aurora_core::l3_domain::system_settings::SystemSettings;
 use aurora_security::LocalDekVault;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// 启动装配结果：平台层持有 core 与 vault 供 command/FFI 复用。
 pub struct BootedApp {
@@ -232,6 +232,16 @@ pub fn bootstrap(
         Err(e) => warn!(error = %e, "boot backup failed (non-blocking)"),
     }
 
+    // DK-17 S2：每周完整性校验（水位 >7 天触发；失败不阻塞启动）
+    match app.verify_backups_if_due() {
+        Ok(Some(true)) => info!("weekly backup verify passed at boot"),
+        Ok(Some(false)) => {
+            warn!("weekly backup verify FAILED at boot — see settings:backup.last_error")
+        }
+        Ok(None) => {}
+        Err(e) => warn!(error = %e, "weekly backup verify errored (non-blocking)"),
+    }
+
     Ok(app)
 }
 
@@ -249,6 +259,13 @@ pub const BACKUP_KV_LAST_SHA: &str = "settings:backup.last_sha";
 pub const BACKUP_KV_LAST_ERROR: &str = "settings:backup.last_error";
 /// RPO ≤ 1h（DK-17 DoD）——boot 水位触发间隔。
 const BACKUP_INTERVAL_SECS: u64 = 3600;
+/// 每周完整性校验间隔（DK-17 DoD：无演练的备份等于没有备份）。
+const BACKUP_VERIFY_INTERVAL_SECS: u64 = 7 * 24 * 3600;
+/// 备份保留份数（KV settings:backup.keep 覆盖；缺省 7）。
+pub const BACKUP_KV_KEEP: &str = "settings:backup.keep";
+/// 每周校验水位键。
+pub const BACKUP_KV_LAST_VERIFY_TS: &str = "settings:backup.last_verify_ts";
+const BACKUP_DEFAULT_KEEP: usize = 7;
 
 /// 备份状态（tauri/前端展示面）。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -365,6 +382,23 @@ impl BootedApp {
                     let _ = self.core.kv_store.delete(BACKUP_KV_LAST_ERROR).await;
                 });
                 info!(path = ?rep.path, sha = %rep.sha256_hex, size = rep.size_bytes, "backup created");
+                // DK-17 S2：轮转（失败 warn 不阻塞备份主流程）
+                let keep = futures::executor::block_on(self.core.kv_store.get(BACKUP_KV_KEEP))
+                    .ok()
+                    .flatten()
+                    .and_then(|b| String::from_utf8(b).ok())
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(BACKUP_DEFAULT_KEEP);
+                match backup::rotate_backups(&out, keep) {
+                    Ok(removed) if !removed.is_empty() => {
+                        info!(
+                            count = removed.len(),
+                            "backup rotation removed old snapshots"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => warn!(error = %e, "backup rotation failed (non-blocking)"),
+                }
                 Ok(Some(rep))
             }
             Err(e) => {
@@ -396,6 +430,73 @@ impl BootedApp {
             return Ok(None);
         }
         self.run_backup_now()
+    }
+
+    /// DK-17 S2：每周完整性校验（水位 >7 天触发）——对最新备份 integrity + SHA
+    /// 对账 KV last_sha；失败 error 留痕 + last_error。校验后更新水位（无论成败——
+    /// 校验本身已发生，重试周期归下周）。
+    pub fn verify_backups_if_due(&self) -> Result<Option<bool>, BootstrapError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let last: u64 =
+            futures::executor::block_on(self.core.kv_store.get(BACKUP_KV_LAST_VERIFY_TS))
+                .ok()
+                .flatten()
+                .and_then(|b| String::from_utf8(b).ok())
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+        if now.saturating_sub(last) < BACKUP_VERIFY_INTERVAL_SECS {
+            return Ok(None);
+        }
+        let out = self.data_dir.join("backups");
+        let latest = std::fs::read_dir(&out)
+            .map_err(|e| BootstrapError::Core(format!("verify read_dir: {e}")))?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .map(|n| {
+                        let n = n.to_string_lossy();
+                        n.starts_with("aurora-backup-") && n.ends_with(".db")
+                    })
+                    .unwrap_or(false)
+            })
+            .max(); // 字典序最大 = 最新
+        let Some(latest) = latest else {
+            futures::executor::block_on(
+                self.core
+                    .kv_store
+                    .set(BACKUP_KV_LAST_VERIFY_TS, now.to_string().as_bytes()),
+            )
+            .map_err(|e| BootstrapError::Core(format!("verify watermark: {e}")))?;
+            return Ok(None); // 无备份可校验（首启），水位照写
+        };
+        use aurora_core::backup::verify_backup;
+        let expected = futures::executor::block_on(self.core.kv_store.get(BACKUP_KV_LAST_SHA))
+            .ok()
+            .flatten()
+            .and_then(|b| String::from_utf8(b).ok());
+        let vr = verify_backup(&latest, expected.as_deref())
+            .map_err(|e| BootstrapError::Core(format!("verify run: {e}")))?;
+        let ok = vr.integrity_ok && vr.sha_matched.unwrap_or(false);
+        if !ok {
+            let msg = format!("weekly backup verify FAILED: {latest:?}");
+            error!("{}", msg);
+            let _ = futures::executor::block_on(
+                self.core.kv_store.set(BACKUP_KV_LAST_ERROR, msg.as_bytes()),
+            );
+        } else {
+            info!(path = ?latest, "weekly backup verify passed");
+        }
+        futures::executor::block_on(
+            self.core
+                .kv_store
+                .set(BACKUP_KV_LAST_VERIFY_TS, now.to_string().as_bytes()),
+        )
+        .map_err(|e| BootstrapError::Core(format!("verify watermark: {e}")))?;
+        Ok(Some(ok))
     }
 
     /// DK-17 S1：备份状态查询（水位/SHA/错误）。
@@ -725,6 +826,40 @@ mod tests {
 
         // 备份目录存在产物文件
         assert!(dir.path().join("backups").read_dir().unwrap().count() >= 1);
+    }
+
+    /// DK-17 S2：每周校验水位——首次触发→立即再调不重复；轮转在 run_backup_now
+    /// 内联（造 3 份备份后 keep=2 收敛）。
+    #[test]
+    fn dk17_verify_watermark_and_rotation() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = bootstrap(
+            dir.path(),
+            std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+        )
+        .unwrap();
+        // 首次校验（无备份可验——水位照写，返回 None）
+        assert_eq!(app.verify_backups_if_due().unwrap(), None);
+        // 水位已写 → 立即再调不重复
+        assert_eq!(app.verify_backups_if_due().unwrap(), None);
+
+        // 造两份备份（boot 水位已有一份 → 共三份；keep 缺省 7 全保留）
+        app.run_backup_now().unwrap();
+        app.run_backup_now().unwrap();
+        let backups = dir.path().join("backups");
+        assert_eq!(
+            std::fs::read_dir(&backups).unwrap().count(),
+            3,
+            "boot 1 + 测试 2 = 3；keep=7 不轮转"
+        );
+        // keep=2 → 第四次备份触发轮转收敛到 2 份（真删除行为断言）
+        futures::executor::block_on(app.core.kv_store.set(BACKUP_KV_KEEP, b"2")).unwrap();
+        app.run_backup_now().unwrap();
+        assert_eq!(
+            std::fs::read_dir(&backups).unwrap().count(),
+            2,
+            "keep=2 轮转收敛——最旧两份被删"
+        );
     }
 
     /// DK-10 切片 3：AI 云策略 set → 内存即时 + 重启 KV 预载恢复（闭环）。

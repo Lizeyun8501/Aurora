@@ -66,10 +66,11 @@ fn integrity_check(p: &Path) -> Result<bool, Error> {
 /// 快照备份：online backup → `.tmp` 原子 rename → 完整性内检 → SHA-256 报告。
 pub fn snapshot_backup(src: &rusqlite::Connection, out_dir: &Path) -> Result<BackupReport, Error> {
     std::fs::create_dir_all(out_dir).map_err(|e| Error::Database(format!("backup mkdir: {e}")))?;
+    // DK-17 S2：毫秒精度——同秒连续备份不再同名覆盖（秒级会丢快照）。
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| Error::Database(format!("clock: {e}")))?
-        .as_secs();
+        .as_millis();
     let final_path = out_dir.join(format!("aurora-backup-{ts}.db"));
     let tmp_path = out_dir.join(format!("aurora-backup-{ts}.db.tmp"));
     let t0 = Instant::now();
@@ -113,6 +114,33 @@ pub fn verify_backup(p: &Path, expected_sha: Option<&str>) -> Result<VerifyRepor
         sha256_hex,
         sha_matched,
     })
+}
+
+/// DK-17 S2：备份轮转——保留最近 `keep` 份（按文件名排序，aurora-backup-<ts>.db
+/// 字典序即时间序），超额最旧先删。返回删除的文件名列表。
+///
+/// # Errors
+/// 目录读失败 / 单文件删除失败（汇总为 Database 错误——轮转失败不阻塞备份主流程，
+/// 调用方 warn 留痕即可）。
+pub fn rotate_backups(out_dir: &Path, keep: usize) -> Result<Vec<String>, Error> {
+    let mut names: Vec<String> = std::fs::read_dir(out_dir)
+        .map_err(|e| Error::Database(format!("rotate read_dir: {e}")))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with("aurora-backup-") && n.ends_with(".db"))
+        .collect();
+    names.sort(); // 字典序 = 时间序（同前缀同格式）
+    if names.len() <= keep {
+        return Ok(vec![]);
+    }
+    let mut removed = Vec::new();
+    let excess = names.len().saturating_sub(keep);
+    for name in names.into_iter().take(excess) {
+        std::fs::remove_file(out_dir.join(&name))
+            .map_err(|e| Error::Database(format!("rotate remove {name}: {e}")))?;
+        removed.push(name);
+    }
+    Ok(removed)
 }
 
 /// 恢复：备份文件 → 目标连接反向灌入（演练/灾难恢复路径）。
@@ -181,6 +209,41 @@ mod tests {
 
         let vr = verify_backup(&report.path, Some(&report.sha256_hex)).unwrap();
         assert_eq!(vr.sha_matched, Some(false), "篡改后 SHA 必须对账失败");
+    }
+
+    /// 轮转：10 份 → keep 3 → 剩 3 且最新保留。
+    #[tokio::test]
+    async fn rotate_keeps_latest() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("backups");
+        std::fs::create_dir_all(&out).unwrap();
+        for ts in [
+            1700000001u64,
+            1700000002,
+            1700000003,
+            1700000004,
+            1700000005,
+        ] {
+            let name = format!("aurora-backup-{ts}.db");
+            std::fs::write(out.join(&name), b"x").unwrap();
+        }
+        let removed = rotate_backups(&out, 3).unwrap();
+        assert_eq!(removed.len(), 2);
+        let mut left: Vec<String> = std::fs::read_dir(&out)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            vec![
+                "aurora-backup-1700000003.db",
+                "aurora-backup-1700000004.db",
+                "aurora-backup-1700000005.db"
+            ],
+            "最旧两份被轮转，最新三份保留"
+        );
     }
 
     /// 正常产物：integrity ok + SHA 对账成功。

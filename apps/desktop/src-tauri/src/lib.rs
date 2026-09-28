@@ -143,10 +143,36 @@ pub fn run() {
                 Some(booted.attachments.clone());
             // BOOTED_STATE 的 move 必须最后——booted 的其余字段先 clone 完
             // （E0382 borrow-after-move，49ae86c 引入 · 2026-09-25 修）。
+            let booted_arc = std::sync::Arc::new(booted);
             *sync_commands::BOOTED_STATE
                 .lock()
-                .expect("BOOTED_STATE mutex poisoned") = Some(std::sync::Arc::new(booted));
+                .expect("BOOTED_STATE mutex poisoned") = Some(booted_arc.clone());
             info!("AppCore startup complete");
+
+            // DK-17 S2：运行时定时器（S1 挂起项收敛）——每小时 tick 备份水位 +
+            // 每周完整性校验（check_and_backup 内含水 位/校验判断，幂等）。
+            {
+                let booted_for_tick = booted_arc.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(3600));
+                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                    ticker.tick().await; // 首跳立即返回——boot 已做过水位备份/校验，跳过
+                    loop {
+                        ticker.tick().await;
+                        match booted_for_tick.maybe_backup_on_boot() {
+                            Ok(Some(r)) => info!(path = ?r.path, "hourly tick backup created"),
+                            Ok(None) => {}
+                            Err(e) => warn!(error = %e, "hourly tick backup failed"),
+                        }
+                        match booted_for_tick.verify_backups_if_due() {
+                            Ok(Some(true)) => info!("hourly tick weekly verify passed"),
+                            Ok(Some(false)) => warn!("hourly tick weekly verify FAILED"),
+                            Ok(None) => {}
+                            Err(e) => warn!(error = %e, "hourly tick verify errored"),
+                        }
+                    }
+                });
+            }
 
             // 注册平台能力（托盘/快捷键/剪贴板/通知），供后续 command 使用
             app.manage(TauriDesktopPlatform::new(app.handle().clone()));

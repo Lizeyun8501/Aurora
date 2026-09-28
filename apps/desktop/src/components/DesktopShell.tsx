@@ -828,6 +828,34 @@ export default function DesktopShell() {
       .catch(() => {});
   }, [invoke, aiDeny]);
 
+  // DK-17 S2：备份命令两项（立即备份 / 状态查看；tauri 模式可用）
+  const [backupBusy, setBackupBusy] = useState(false);
+  const backupNow = useCallback(() => {
+    if (!invoke || backupBusy) return;
+    setBackupBusy(true);
+    invoke('cmd_backup_now')
+      .then((r) => {
+        const rep = r as { path?: string; sha256_hex?: string } | null;
+        window.alert(rep ? `备份完成：${rep.path}` : '备份跳过（详情见日志）');
+      })
+      .catch((e) => window.alert(`备份失败：${String(e)}`))
+      .finally(() => setBackupBusy(false));
+  }, [invoke, backupBusy]);
+  const showBackupStatus = useCallback(() => {
+    if (!invoke) return;
+    invoke('cmd_backup_status')
+      .then((r) => {
+        const st = r as { last_ts: number | null; last_sha: string | null; last_error: string | null };
+        const lines = [
+          `上次备份：${st.last_ts ? new Date(st.last_ts * 1000).toLocaleString() : '（从未）'}`,
+          `SHA-256：${st.last_sha ? st.last_sha.slice(0, 16) + '…' : '—'}`,
+          `错误：${st.last_error ?? '无'}`,
+        ];
+        window.alert(lines.join('\n'));
+      })
+      .catch((e) => window.alert(`查询失败：${String(e)}`));
+  }, [invoke]);
+
   const builtins: PaletteItem[] = useMemo(
     () => [
       {
@@ -856,6 +884,33 @@ export default function DesktopShell() {
             },
           ]
         : []),
+      ...(backupBusy
+        ? [
+            {
+              kind: 'command' as const,
+              id: 'backup-now',
+              title: '备份中…',
+              run: () => {},
+            },
+          ]
+        : [
+            {
+              kind: 'command' as const,
+              id: 'backup-now',
+              title: '立即备份（快照到本地 backups/ 目录）',
+              run: backupNow,
+            },
+          ]),
+      ...(invoke
+        ? [
+            {
+              kind: 'command' as const,
+              id: 'backup-status',
+              title: '查看备份状态（水位 / SHA / 错误）',
+              run: showBackupStatus,
+            },
+          ]
+        : []),
       {
         kind: 'command',
         id: 'today',
@@ -863,7 +918,7 @@ export default function DesktopShell() {
         run: () => setView('today'),
       },
     ],
-    [data, stats, aiDeny, toggleAiDeny],
+    [data, stats, aiDeny, toggleAiDeny, backupBusy, backupNow, showBackupStatus],
   );
 
   const mode = invoke ? 'tauri' : 'browser-mock';
