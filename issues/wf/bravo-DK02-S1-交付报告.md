@@ -84,3 +84,5 @@ push 后回填（Alpha API 独立确认口径）。
 **S1 挂起项清零**：30 天调度/跨端消费/UI 项归既定切片（S2 与 Alpha UI 面）；加密笔记 rebuild 出索引缺口已随 unseal 修复自然闭环（原记归 DK-20 项，本次一并解决——加密笔记 rebuild 后仍 Encrypted 标记不进索引明文面，但锁定态语义保持）。
 
 — Bravo 2026-09-28
+
+**CI 终验**：RUN f8151a0 = **SUCCESS**（五 job 全绿）。S1 挂起项补丁闭环。
