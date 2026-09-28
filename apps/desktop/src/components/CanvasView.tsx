@@ -645,7 +645,7 @@ export default function CanvasView(): React.ReactElement {
         <canvas
           ref={canvasRef}
           role="img"
-          aria-label="无限画布。拖拽平移，滚轮缩放，双击空白新建便签。"
+          aria-label="无限画布。拖拽平移，滚轮缩放，双击空白新建便签，按住 Shift 拖拽节点创建连线。"
           data-testid="canvas-surface"
           style={{ position: 'absolute', inset: 0, cursor: 'grab', touchAction: 'none' }}
           onPointerDown={onPointerDown}

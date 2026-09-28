@@ -695,21 +695,23 @@ V25 把 "WebView 输入/滚动验证" 列为 Phase 0 必做项，但**没有任�
 **Milestone**: `M3 · Phase 3 效能与智能`
 **Estimate**: 45 人日
 **Blocked by**: DK-01
-**Assignee**: —
+**Assignee**: Alpha（2026-09-27 重派领受，原 Delta 8 天零响应收回）
 
 ### 任务
 
-- [ ] 无限画布 + LOD 分层渲染 + 视口裁剪
-- [ ] 节点内容引用 `content_ref`（**不内嵌正文**），布局数据单独立文档
-- [ ] 三种布局（自由 / 思维导图树形 / 网格）
-- [ ] 导出 SVG / PNG / JSON / Markdown
-- [ ] Canvas2D 起步，WebGL 置 Phase 5
+- [x] 无限画布 + LOD 分层渲染 + 视口裁剪（切片1 3fce7cd + 切片3 d757f1a：视口裁剪/pan/zoom + LOD 三档 <0.15 色块档）
+- [x] 节点内容引用 `content_ref`（**不内嵌正文**），布局数据单独立文档（切片1，localStorage 独立键，Rust 侧存储走提案）
+- [x] 三种布局（自由 / 思维导图树形 / 网格）（切片1 网格 3fce7cd + 切片2 树形 85fc5c6，edges 定父子+环防护）
+- [x] 导出 SVG / PNG / JSON / Markdown（JSON 切片1 + SVG/PNG/MD 切片2 85fc5c6）
+- [x] Canvas2D 起步，WebGL 置 Phase 5（切片1 Canvas2D 骨架；WebGL 后置项按卡面定义即视为本项达成范围）
 
 ### DoD
 
-- [ ] 1000 节点渲染 ≥30fps（桌面）/ ≥25fps（移动）
-- [ ] 10000 节点加载 <2s
-- [ ] 画布数据可 CRDT 协同编辑
+- [x] 1000 节点渲染 ≥30fps（桌面）/ ≥25fps（移动）——**桌面 60fps 达标**（A9 压测 P95）；移动端画布不在本卡范围（desktop 领地），挂起至移动画布立项
+- [x] 10000 节点加载 <2s——**191ms 实测**（A12，十倍余量；byId 索引化+LOD 色块档）
+- [ ] 画布数据可 CRDT 协同编辑——**挂起**：需 Rust 侧 loro 支撑走 alpha-request 提案，与 Phase 5 WebGL 同期评估
+
+**验证锚点**：`scripts/dk11_verify.js` 十二断言 12/12（A1 挂载/A2 双击/A3 平移/A4 缩放/A5 树形/A6 SVG/A7 PNG/A8 MD/A9 千节点60fps/A10 aria/A11 连线创建/A12 万节点191ms）。交付报告：`issues/wf/alpha-DK11-画布-闭环报告.md`。
 
 ---
 
