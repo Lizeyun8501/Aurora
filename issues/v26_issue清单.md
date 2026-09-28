@@ -451,7 +451,7 @@ V25 排期有三处结构性问题：
   「可靠全文+中文分词」意图满足；硬迁 FTS5 重写索引管线无新增能力——保留 tantivy 主路径
 - [ ] 向量增强（**改判：S1 纯 Rust 暴力 KNN**——sqlite-vec loadable extension 跨平台分发是坑，
   DoD 规模万条×768 维 ≈10ms 纯 KNN 足够；>5 万条再评估 sqlite-vec）（S1 Bravo 执行中）
-- [ ] 混合检索 BM25 + 向量，RRF 融合（S2 预告）
+- [ ] 混合检索 BM25 + 向量，RRF 融合 —— **S2 任务书已入库（09-28 21:55）**：HybridSearcher 组合层方案（trait 零触碰）+ RRF k=60 + SearchOptions/SearchHit serde default 扩展（mode/source 徽章数据面）+ notevec 补 workspace_id（S1 缺口）
 - [ ] 可选 BGE-reranker 精排（S3 可选）
 - [ ] **语义召回徽章**：不含关键词的结果必须解释来源，否则用户不信任搜索（S3 Alpha UI 面）
 
