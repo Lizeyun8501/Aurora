@@ -892,6 +892,195 @@ V25 把 "WebView 输入/滚动验证" 列为 Phase 0 必做项，但**没有任�
 
 ---
 
+## [DK-19] 每日笔记自动创建（域一延伸）
+
+**Labels**: `P1`, `area/core`, `type/feat`
+**Milestone**: `M2 · Phase 2 任务与安全`
+**Estimate**: 3–5 人日
+**Blocked by**: —
+**Assignee**: 建议 Bravo（事件/投影 Rust 面）+ Alpha（设置开关 UI 裁决）
+
+### 背景
+
+审阅报告缺口 #1：「打开应用即有当日笔记」的 daily-note 习惯功能无承接——仓库 `rg "daily.?note|每日笔记"` 零命中（09-28 实证）。事件总线 + 投影水位线基建已交付（`crates/aurora-core/src/event_bus/`），直接复用。
+
+### 任务
+
+- [ ] 定义 DailyNoteOpened 事件与投影消费（复用 event_bus + 投影水位线先例）
+- [ ] 幂等自动创建：启动/访问当日视图时检测当日无每日笔记则按模板创建，去重键 = workspace_id + 日期，并发重复触发不产生重复笔记
+- [ ] 模板支持：用户可编辑每日笔记模板，占位符 {{date}} / {{weekday}}
+- [ ] 设置开关（默认开）与「手动才创建」模式
+
+### DoD
+
+- [ ] 同日重复触发仅存在一篇每日笔记（幂等断言，单测）
+- [ ] 模板占位符渲染正确（单测）
+- [ ] 跨重启后当日笔记仍唯一且可定位（存储断言）
+
+---
+
+## [DK-20] 单篇笔记加密 Vault（域十二延伸）
+
+**Labels**: `P1`, `area/security`, `area/core`
+**Milestone**: `M2 · Phase 2 任务与安全`
+**Estimate**: 5–8 人日
+**Blocked by**: —
+**Assignee**: 建议 Bravo
+
+### 背景
+
+审阅报告缺口 #2。DK-07 已交付三级工作区加密与 content_cipher 每笔记密钥基建（`aurora-core/src/write_path.rs::ContentCipherPair`、`aurora-security` 的 `vault::LocalDekVault` DEK 保险库），但「单篇笔记级加密、锁定时不进任何索引」任务项**零交付**（盘点口径：以实际交付为准，不采信勾选框）——`vault` 现存命中均为密钥保险库基建，非本功能。
+
+### 任务
+
+- [ ] 笔记级 encryption 字段（未加密 / 锁定）落存储与迁移
+- [ ] Vault 密钥派生：复用 content_cipher HKDF 每笔记密钥先例，独立于工作区密钥
+- [ ] 锁定语义：锁定后内容密文落库、不进 FTS/向量索引、不进图谱、导出为密文
+- [ ] 解锁交互（密码/主密钥校验）——UX 细节 Alpha 裁决
+
+### DoD
+
+- [ ] 锁定后搜索/图谱/导出均不可见明文（自动化断言：索引查询零命中 + 导出字节非明文）
+- [ ] 密文校验失败一律拒绝返回明文 fail-closed（单测，沿用 C03 口径）
+- [ ] 解锁往返内容逐字节一致（round-trip 单测）
+
+---
+
+## [DK-21] 任务依赖与环检测（域四延伸）
+
+**Labels**: `P1`, `area/core`, `area/ui`
+**Milestone**: `M2 · Phase 2 任务与安全`
+**Estimate**: 3–6 人日
+**Blocked by**: —
+**Assignee**: 建议 Bravo
+
+### 背景
+
+审阅报告缺口 #3。`l3_domain` 已有 deps 依赖图结构（task → depends_on）与 `event_bus/event.rs` 的 TaskDependsOn 事件定义，但依赖创建 API、环检测拒绝、blocked 展示链**零交付**。
+
+### 任务
+
+- [ ] 依赖创建/删除 API（复用 l3_domain deps 结构与 TaskDependsOn 事件落投影）
+- [ ] 环检测：创建前图遍历检测，拒绝并给出环路径可读提示
+- [ ] blocked 联动规则落码：前置未完成时后续任务标记 blocked（规则 Alpha 预裁决）
+- [ ] 任务详情 / TodayView 展示前置依赖与 blocked 徽章
+
+### DoD
+
+- [ ] 环形依赖创建被拒绝且提示含环路径（单测）
+- [ ] 前置完成后后续任务 blocked 解除（投影断言）
+- [ ] 依赖删除幂等（重复删除不报错，单测）
+
+---
+
+## [DK-22] 时间追踪与番茄专注（域四延伸）
+
+**Labels**: `P1`, `area/core`, `area/ui`
+**Milestone**: `M3 · Phase 3 效能与智能`
+**Estimate**: 6–10 人日
+**Blocked by**: —
+**Assignee**: 建议 Bravo
+
+### 背景
+
+审阅报告缺口 #4。migration schema 已有 `actual_minutes` 列、mobile-ffi 注释提及 `TaskProjection.record_actual_minutes` 桥接，但计时会话 / 番茄钟 / 周回顾链**零交付**。
+
+### 任务
+
+- [ ] 计时会话启动/暂停/完成 API + record_actual_minutes 投影桥接（补 actual 列写入链）
+- [ ] 后台挂起补偿：计时期间 WebView 后台化不丢数据（沿用 DK-06 卡 DoD 既有约束）
+- [ ] 番茄钟（25/5 可配置）与专注模式最小 UI
+- [ ] 周回顾：预计 vs 实际偏差率展示
+
+### DoD
+
+- [ ] 计时后台切换不丢秒数（补偿断言，单测）
+- [ ] actual_minutes 多会话累计正确（求和断言）
+- [ ] 周回顾偏差率计算正确（给定样本断言）
+
+---
+
+## [DK-23] 附件内联预览器（附件域延伸）
+
+**Labels**: `P1`, `area/ui`, `area/core`
+**Milestone**: `M3 · Phase 3 效能与智能`
+**Estimate**: 5–8 人日
+**Blocked by**: —
+**Assignee**: 建议 Bravo（前端组件为主）+ Alpha（预览白名单/安全裁决）
+
+### 背景
+
+审阅报告缺口 #5。AttachmentStore 基建就绪（`crates/aurora-core/src/attachment_store.rs`），ImportWizard 的 preview 是导入向导预览而非附件内联预览——图片/PDF/音视频「点击即看」无承接。
+
+### 任务
+
+- [ ] 图片内联预览（缩略图缓存 + 点开大图）
+- [ ] PDF 内联预览（分页渲染 + 沙箱化 viewer）
+- [ ] 音视频内联播放（范围请求复用 DK-09 blob 流）
+- [ ] 预览类型白名单与 MIME 校验（扩展名伪装拒绝，fail-closed 先例口径）
+
+### DoD
+
+- [ ] MIME 与扩展名不符即拒绝渲染（安全断言）
+- [ ] 10MB 级 PDF 首屏渲染 <2s（基准断言）
+- [ ] 缺失 blob 引用显示占位不崩溃（幂等断言）
+
+---
+
+## [DK-24] Markdown 源码模式（域二延伸）
+
+**Labels**: `P1`, `area/ui`
+**Milestone**: `M3 · Phase 3 效能与智能`
+**Estimate**: 5–8 人日
+**Blocked by**: —
+**Assignee**: 建议 Bravo
+
+### 背景
+
+审阅报告缺口 #6。块 ↔ 源码双向切换无承接（`rg "source.?mode|源码模式"` 零命中，09-28 实证）。DK-05 块编辑器已交付，序列化/反序列化有既有面可复用。
+
+### 任务
+
+- [ ] 块文档 → Markdown 序列化器（保真：块类型/嵌套/属性）
+- [ ] Markdown → 块文档反序列化器
+- [ ] 源码模式编辑 UI（切换入口 + 纯文本编辑 + 返回块视图）
+- [ ] 往返丢失检测：无法保真的块类型给可读降级提示
+
+### DoD
+
+- [ ] 标题/列表/代码块/引用/表格五类样本往返逐块一致（round-trip 自动化断言）
+- [ ] 不可保真块给出降级提示而非静默丢内容（断言）
+- [ ] 源码模式编辑回写后块视图渲染一致（端到端断言）
+
+---
+
+## [DK-25] 自定义主题（域十四延伸）
+
+**Labels**: `P2`, `area/ui`
+**Milestone**: `M5 · Phase 5 生态优化`
+**Estimate**: 4–6 人日
+**Blocked by**: —
+**Assignee**: 建议 Alpha（UI 裁决面）+ Bravo（存储面配合）
+
+### 背景
+
+审阅报告缺口 #7。`apps/desktop/src/design/tokens.ts` 已有语义令牌（暗色默认）且与 aurora-core theme 结构体字段一一对应，但「用户自定义令牌白名单」零交付。可独立先行，DK-18 设置分组 UI 交付时挂入。
+
+### 任务
+
+- [ ] 白名单令牌定义（可被用户覆盖的语义令牌子集，禁改布局类令牌）
+- [ ] 用户主题存储（KV 权威 + 覆盖合并：用户值优先、默认值兜底）
+- [ ] 主题导入/导出（JSON + 越权令牌校验拒绝）
+- [ ] 主题选择 UI（预设 + 自定义入口，挂入 DK-18 设置分组）
+
+### DoD
+
+- [ ] 越权令牌（布局类）导入被拒绝并提示（校验断言）
+- [ ] 用户覆盖跨重启恢复（KV round-trip 断言）
+- [ ] 非法值兜底回默认主题不崩（单测）
+
+---
+
 ## 4. 汇总表
 
 | 卡号 | 标题 | 里程碑 | 优先级 | 人日 | 依赖 |
@@ -924,6 +1113,13 @@ V25 把 "WebView 输入/滚动验证" 列为 Phase 0 必做项，但**没有任�
 | DK-17 | 备份与灾难恢复 | M4 | P1 | 15 | DK-01 |
 | DK-15 | 移动端 | M5 | P1 | 90 | DK-05M |
 | DK-18 | 设置与系统 | M5 | P2 | 25 | DK-00 |
+| DK-19 | 每日笔记自动创建 | M2 | P1 | 3–5 | — |
+| DK-20 | 单篇笔记加密 Vault | M2 | P1 | 5–8 | — |
+| DK-21 | 任务依赖与环检测 | M2 | P1 | 3–6 | — |
+| DK-22 | 时间追踪与番茄专注 | M3 | P1 | 6–10 | — |
+| DK-23 | 附件内联预览器 | M3 | P1 | 5–8 | — |
+| DK-24 | Markdown 源码模式 | M3 | P1 | 5–8 | — |
+| DK-25 | 自定义主题 | M5 | P2 | 4–6 | — |
 
 **合计 28 张卡**（另加 1 张本汇总说明）。人日区间合计约 840，并行后关键路径约 650，6–8 人团队约 14–16 个月（含 1.5 月缓冲）。
 
