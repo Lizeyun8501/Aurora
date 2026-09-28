@@ -455,6 +455,7 @@ dependencies = [
 name = "aurora-desktop"
 version = "0.1.0"
 dependencies = [
+ "aurora-ai",
  "aurora-bootstrap",
  "aurora-core",
  "aurora-import",

@@ -52,7 +52,7 @@ tantivy = "0.22"
 # lancedb = "0.13"
 
 # SQLite (including sqlite-vec for vector search)
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 # Note: sqlite-vec is a loadable extension, not a direct crate dependency
 
 # WASM runtime

@@ -56,6 +56,21 @@ impl SqliteStorage {
         })
     }
 
+    /// DK-17 S1：备份等 crate 内模块的只读连接访问（不对外暴露）。
+    /// （当前消费方为 backup 模块测试；生产路径经只读连接打开，保留作通用面。）
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn with_conn<T>(&self, f: impl FnOnce(&rusqlite::Connection) -> T) -> T {
+        let g = self.conn.lock().expect("kv_store lock poisoned");
+        f(&g)
+    }
+
+    /// DK-17 S1：恢复演练的可变连接访问（crate 内）。
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn with_conn_mut<T>(&self, f: impl FnOnce(&mut rusqlite::Connection) -> T) -> T {
+        let mut g = self.conn.lock().expect("kv_store lock poisoned");
+        f(&mut g)
+    }
+
     /// 在内存中创建 SQLite 存储实例（用于测试）。
     pub fn new_in_memory() -> Result<Self, crate::Error> {
         let conn = rusqlite::Connection::open_in_memory().map_err(|e| {

@@ -20,7 +20,7 @@ use std::sync::Arc;
 use aurora_core::app_core::{AppCore, AppCoreBuilder};
 use aurora_core::l3_domain::system_settings::SystemSettings;
 use aurora_security::LocalDekVault;
-use tracing::info;
+use tracing::{info, warn};
 
 /// 启动装配结果：平台层持有 core 与 vault 供 command/FFI 复用。
 pub struct BootedApp {
@@ -38,6 +38,8 @@ pub struct BootedApp {
     pub sync_gate: Arc<aurora_sync::sync_gate::SyncGate>,
     /// AI 云策略 resolver（DK-10 切片 3 — `ws-policy:{id}` 内存视图，KV 权威）。
     pub ai_policy: Arc<aurora_ai::policy::WorkspaceConfigResolver>,
+    /// 数据目录（DK-17 S1 — 备份面定位 aurora.db 与 backups/）。
+    pub data_dir: std::path::PathBuf,
     /// 离线同步队列（与 sync_gate 同源装配；内存形态，KV 持久化随引擎
     /// 生产切片——当前无流量驱动，实例先行就位）。
     pub offline_queue: Arc<aurora_sync::offline_queue::OfflineQueue>,
@@ -201,7 +203,7 @@ pub fn bootstrap(
         info!(error = %e, "ai policy preload failed — fallback to AllowCloud default");
     }
 
-    Ok(BootedApp {
+    let app = BootedApp {
         core,
         vault,
         blocks,
@@ -210,7 +212,17 @@ pub fn bootstrap(
         sync_gate,
         offline_queue,
         ai_policy,
-    })
+        data_dir: data_dir.to_path_buf(),
+    };
+
+    // DK-17 S1：boot 水位备份（失败不阻塞启动——备份是尽力而为面）
+    match app.maybe_backup_on_boot() {
+        Ok(Some(r)) => info!(path = ?r.path, "boot backup created"),
+        Ok(None) => {}
+        Err(e) => warn!(error = %e, "boot backup failed (non-blocking)"),
+    }
+
+    Ok(app)
 }
 
 /// `wifi_only` 用户设置的 KV 持久化键。
@@ -218,6 +230,23 @@ pub const WIFI_ONLY_KV_KEY: &str = "settings:sync.wifi_only";
 
 /// AI 云策略的缺省工作区（desktop 单工作区口径；多工作区立项后由前端传实际 id）。
 pub const AI_DEFAULT_WORKSPACE_ID: &str = "default";
+
+/// DK-17 S1 备份水位键（上次成功备份的 UNIX 秒）。
+pub const BACKUP_KV_LAST_TS: &str = "settings:backup.last_ts";
+/// DK-17 S1 上次成功备份 SHA-256。
+pub const BACKUP_KV_LAST_SHA: &str = "settings:backup.last_sha";
+/// DK-17 S1 上次备份错误（空窗=无错误）。
+pub const BACKUP_KV_LAST_ERROR: &str = "settings:backup.last_error";
+/// RPO ≤ 1h（DK-17 DoD）——boot 水位触发间隔。
+const BACKUP_INTERVAL_SECS: u64 = 3600;
+
+/// 备份状态（tauri/前端展示面）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BackupStatus {
+    pub last_ts: Option<u64>,
+    pub last_sha: Option<String>,
+    pub last_error: Option<String>,
+}
 
 /// 从 KV 读取 `wifi_only`（缺省 = false，request 裁决默认放行）。
 pub(crate) fn wifi_only_from_kv(core: &AppCore) -> Result<bool, BootstrapError> {
@@ -282,6 +311,105 @@ impl BootedApp {
         .map_err(|e| BootstrapError::Core(format!("ai policy save: {e}")))?;
         info!(workspace_id, deny, "ai cloud policy updated");
         Ok(())
+    }
+
+    /// DK-17 S1：立即执行一次备份（KV 水位/SHA 更新；失败记录 last_error 且
+    /// 返回 Ok(None)——备份失败不阻塞调用方）。
+    pub fn run_backup_now(
+        &self,
+    ) -> Result<Option<aurora_core::backup::BackupReport>, BootstrapError> {
+        use aurora_core::backup;
+        let db_path = self.data_dir.join("aurora.db");
+        let src = match rusqlite::Connection::open_with_flags(
+            &db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = format!("backup src open: {e}");
+                tracing::warn!("{}", msg);
+                let _ = futures::executor::block_on(
+                    self.core.kv_store.set(BACKUP_KV_LAST_ERROR, msg.as_bytes()),
+                );
+                return Ok(None);
+            }
+        };
+        let out = self.data_dir.join("backups");
+        match backup::snapshot_backup(&src, &out) {
+            Ok(rep) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                futures::executor::block_on(async {
+                    let _ = self
+                        .core
+                        .kv_store
+                        .set(BACKUP_KV_LAST_TS, now.to_string().as_bytes())
+                        .await;
+                    let _ = self
+                        .core
+                        .kv_store
+                        .set(BACKUP_KV_LAST_SHA, rep.sha256_hex.as_bytes())
+                        .await;
+                    let _ = self.core.kv_store.delete(BACKUP_KV_LAST_ERROR).await;
+                });
+                info!(path = ?rep.path, sha = %rep.sha256_hex, size = rep.size_bytes, "backup created");
+                Ok(Some(rep))
+            }
+            Err(e) => {
+                let msg = format!("{e}");
+                tracing::warn!("backup failed: {msg}");
+                let _ = futures::executor::block_on(
+                    self.core.kv_store.set(BACKUP_KV_LAST_ERROR, msg.as_bytes()),
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    /// DK-17 S1：boot 水位触发（距上次成功 >1h；RPO≤1h 桌面假设）。
+    pub fn maybe_backup_on_boot(
+        &self,
+    ) -> Result<Option<aurora_core::backup::BackupReport>, BootstrapError> {
+        let last: u64 = futures::executor::block_on(self.core.kv_store.get(BACKUP_KV_LAST_TS))
+            .ok()
+            .flatten()
+            .and_then(|b| String::from_utf8(b).ok())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now.saturating_sub(last) < BACKUP_INTERVAL_SECS {
+            return Ok(None);
+        }
+        self.run_backup_now()
+    }
+
+    /// DK-17 S1：备份状态查询（水位/SHA/错误）。
+    pub fn backup_status(&self) -> Result<BackupStatus, BootstrapError> {
+        let vals = futures::executor::block_on(self.core.kv_store.batch_get(&[
+            BACKUP_KV_LAST_TS,
+            BACKUP_KV_LAST_SHA,
+            BACKUP_KV_LAST_ERROR,
+        ]))
+        .map_err(|e| BootstrapError::Core(format!("backup status: {e}")))?;
+        let parse_ts = |b: &Option<Vec<u8>>| {
+            b.as_ref()
+                .and_then(|v| String::from_utf8(v.clone()).ok())
+                .and_then(|s| s.parse().ok())
+        };
+        Ok(BackupStatus {
+            last_ts: parse_ts(&vals[0]),
+            last_sha: vals[1]
+                .as_ref()
+                .and_then(|v| String::from_utf8(v.clone()).ok()),
+            last_error: vals[2]
+                .as_ref()
+                .and_then(|v| String::from_utf8(v.clone()).ok()),
+        })
     }
 }
 
@@ -519,6 +647,32 @@ mod tests {
         assert_eq!(app.core.crypto.algorithm_version(), 1);
         assert!(dir.path().join("aurora.db").exists());
         assert!(dir.path().join("keys").join("dek.bin").exists());
+    }
+
+    /// DK-17 S1：boot 备份链——force 备份产出+水位/SHA 更新+水位新鲜不重复触发。
+    #[test]
+    fn dk17_backup_boot_watermark() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = bootstrap(
+            dir.path(),
+            std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+        )
+        .unwrap();
+        futures::executor::block_on(app.core.kv_store.set("k", b"v")).unwrap();
+
+        let rep = app.run_backup_now().unwrap().expect("首次强制备份必有产物");
+        assert!(rep.size_bytes > 0);
+
+        let st = app.backup_status().unwrap();
+        assert_eq!(st.last_sha.as_deref(), Some(rep.sha256_hex.as_str()));
+        assert!(st.last_ts.is_some());
+        assert!(st.last_error.is_none());
+
+        // 水位刚更新 → maybe 不重复触发
+        assert!(app.maybe_backup_on_boot().unwrap().is_none());
+
+        // 备份目录存在产物文件
+        assert!(dir.path().join("backups").read_dir().unwrap().count() >= 1);
     }
 
     /// DK-10 切片 3：AI 云策略 set → 内存即时 + 重启 KV 预载恢复（闭环）。

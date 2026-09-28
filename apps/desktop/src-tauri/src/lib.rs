@@ -29,6 +29,7 @@ use tracing::{info, warn};
 
 mod ai_commands;
 mod attachment_commands;
+mod backup_commands;
 mod import_commands;
 mod sync_commands;
 
@@ -107,6 +108,8 @@ pub fn run() {
             cmd_review_card,
             attachment_commands::cmd_read_attachment,
             ai_commands::cmd_get_ai_cloud_policy,
+            backup_commands::cmd_backup_now,
+            backup_commands::cmd_backup_status,
             ai_commands::cmd_set_ai_cloud_policy,
             sync_commands::cmd_get_wifi_only,
             sync_commands::cmd_set_wifi_only,
