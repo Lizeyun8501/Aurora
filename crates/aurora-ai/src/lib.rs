@@ -21,6 +21,7 @@
 
 pub mod cloud;
 pub mod context;
+pub mod embed;
 pub mod factory;
 pub mod mcp;
 pub mod mock_provider;
@@ -90,6 +91,7 @@ pub use context::{
     AgentContext, CompressedContext, ContextMessage, ContextStore, ContextWindow, SessionId,
     CONTEXT_DDL,
 };
+pub use embed::{gated_cloud_embed, EmbedFromAiProvider, OllamaEmbedProvider};
 pub use factory::assemble_gated_provider;
 pub use mcp::{
     InitializeResult, JsonRpcError, JsonRpcId, JsonRpcRequest, JsonRpcResponse, McpClient,

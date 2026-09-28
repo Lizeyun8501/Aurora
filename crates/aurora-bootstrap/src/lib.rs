@@ -38,6 +38,8 @@ pub struct BootedApp {
     pub sync_gate: Arc<aurora_sync::sync_gate::SyncGate>,
     /// AI 云策略 resolver（DK-10 切片 3 — `ws-policy:{id}` 内存视图，KV 权威）。
     pub ai_policy: Arc<aurora_ai::policy::WorkspaceConfigResolver>,
+    /// 向量检索索引（DK-03 S1——嵌入管线/KNN 原语，boot 后由调用方按需 backfill）。
+    pub vector_index: Arc<aurora_core::l2_engines::vector_search::VectorIndex>,
     /// 数据目录（DK-17 S1 — 备份面定位 aurora.db 与 backups/）。
     pub data_dir: std::path::PathBuf,
     /// 离线同步队列（与 sync_gate 同源装配；内存形态，KV 持久化随引擎
@@ -203,6 +205,7 @@ pub fn bootstrap(
         info!(error = %e, "ai policy preload failed — fallback to AllowCloud default");
     }
 
+    let core_kv = core.kv_store.clone();
     let app = BootedApp {
         core,
         vault,
@@ -212,6 +215,13 @@ pub fn bootstrap(
         sync_gate,
         offline_queue,
         ai_policy,
+        vector_index: std::sync::Arc::new(
+            aurora_core::l2_engines::vector_search::VectorIndex::new(
+                core_kv.clone(),
+                "nomic-embed-text",
+                768,
+            ),
+        ),
         data_dir: data_dir.to_path_buf(),
     };
 

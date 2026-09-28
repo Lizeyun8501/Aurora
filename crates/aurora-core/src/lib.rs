@@ -16,6 +16,7 @@ pub mod error_codes;
 pub mod event_bus;
 pub mod l1_infrastructure;
 pub mod l2_engines;
+pub use l2_engines::vector_search::{EmbedOutcome, EmbedProvider, VecRecord, VectorIndex};
 pub mod l3_domain;
 pub mod mcp_registry; // V23-I5: MCP 数据中枢工具契约（稳定层）
 pub mod mirror; // V23-I2: Mirror 单向导出
