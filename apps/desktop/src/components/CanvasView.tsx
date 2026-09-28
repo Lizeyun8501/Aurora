@@ -348,6 +348,154 @@ export default function CanvasView(): React.ReactElement {
     URL.revokeObjectURL(a.href);
   }, []);
 
+  /* ============ DK-11 切片2：树形布局 + SVG/PNG/Markdown 导出 ============ */
+
+  const downloadBlob = useCallback((data: string | Blob, type: string, name: string) => {
+    const blob = data instanceof Blob ? data : new Blob([data], { type });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }, []);
+
+  /** 思维导图树形布局：edges 定父子，叶子按序垂直堆叠，父取子范围垂直居中；环防护（visited） */
+  const applyTreeLayout = useCallback(() => {
+    const d = docRef.current;
+    if (d.nodes.length === 0) return;
+    const W = 180, H = 96, GX = 48, GY = 72;
+    const byId = new Map(d.nodes.map((n) => [n.id, n]));
+    const children = new Map<string, string[]>();
+    const hasParent = new Set<string>();
+    for (const e of d.edges) {
+      if (!byId.has(e.from) || !byId.has(e.to) || e.from === e.to) continue;
+      if (!children.has(e.from)) children.set(e.from, []);
+      children.get(e.from)!.push(e.to);
+      hasParent.add(e.to);
+    }
+    const pos = new Map<string, { x: number; y: number }>();
+    const visited = new Set<string>();
+    let cursorY = 0;
+    const place = (id: string, depth: number): { top: number; height: number } => {
+      if (visited.has(id)) return { top: cursorY, height: 0 };
+      visited.add(id);
+      const kids = (children.get(id) ?? []).filter((k) => byId.has(k));
+      if (kids.length === 0) {
+        const top = cursorY;
+        cursorY += H + GY;
+        pos.set(id, { x: depth * (W + GX), y: top });
+        return { top, height: H };
+      }
+      const top = cursorY;
+      let height = 0;
+      for (const k of kids) {
+        const sub = place(k, depth + 1);
+        height += sub.height;
+      }
+      pos.set(id, { x: depth * (W + GX), y: top + Math.max(0, (height - H) / 2) });
+      return { top, height: Math.max(height, H) };
+    };
+    const roots = d.nodes.filter((n) => !hasParent.has(n.id)).map((n) => n.id);
+    for (const r of (roots.length > 0 ? roots : [d.nodes[0].id])) place(r, 0);
+    for (const n of d.nodes) if (!pos.has(n.id)) place(n.id, 0);
+    persist({ ...d, nodes: d.nodes.map((n) => { const q = pos.get(n.id); return q ? { ...n, x: q.x, y: q.y } : n; }) });
+  }, [persist]);
+
+  const exportSvg = useCallback(() => {
+    const d = docRef.current;
+    const maxX = Math.max(400, ...d.nodes.map((n) => n.x + n.w)) + 80;
+    const maxY = Math.max(300, ...d.nodes.map((n) => n.y + n.h)) + 80;
+    const esc = (s: string) => s.replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c] ?? c));
+    const byId = new Map(d.nodes.map((n) => [n.id, n]));
+    const edges = d.edges
+      .filter((e) => byId.has(e.from) && byId.has(e.to))
+      .map((e) => {
+        const a = byId.get(e.from)!;
+        const b = byId.get(e.to)!;
+        return `<line x1="${a.x + a.w}" y1="${a.y + a.h / 2}" x2="${b.x}" y2="${b.y + b.h / 2}" stroke="#888" stroke-width="1.5"/>`;
+      })
+      .join('\n');
+    const rects = d.nodes
+      .map((n) => `<g><rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="10" fill="${n.kind === 'note' ? '#2d4a7a' : '#3a3a4a'}" stroke="#5a8fd0"/><text x="${n.x + 12}" y="${n.y + 28}" fill="#fff" font-size="14" font-family="sans-serif">${esc(n.title)}</text></g>`)
+      .join('\n');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${maxX}" height="${maxY}" viewBox="0 0 ${maxX} ${maxY}"><rect width="100%" height="100%" fill="#1a1a24"/>\n${edges}\n${rects}\n</svg>`;
+    downloadBlob(svg, 'image/svg+xml', 'canvas.svg');
+  }, [downloadBlob]);
+
+  const exportPng = useCallback(() => {
+    const d = docRef.current;
+    if (d.nodes.length === 0) return;
+    const minX = Math.min(...d.nodes.map((n) => n.x)) - 40;
+    const minY = Math.min(...d.nodes.map((n) => n.y)) - 40;
+    const w = Math.max(...d.nodes.map((n) => n.x + n.w)) + 40 - minX;
+    const h = Math.max(...d.nodes.map((n) => n.y + n.h)) + 40 - minY;
+    if (w <= 0 || h <= 0 || w > 16384 || h > 16384) return;
+    const off = document.createElement('canvas');
+    off.width = w;
+    off.height = h;
+    const ctx = off.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#1a1a24';
+    ctx.fillRect(0, 0, w, h);
+    const byId = new Map(d.nodes.map((n) => [n.id, n]));
+    ctx.strokeStyle = '#888';
+    for (const e of d.edges) {
+      const a = byId.get(e.from);
+      const b = byId.get(e.to);
+      if (!a || !b) continue;
+      ctx.beginPath();
+      ctx.moveTo(a.x + a.w - minX, a.y + a.h / 2 - minY);
+      ctx.lineTo(b.x - minX, b.y + b.h / 2 - minY);
+      ctx.stroke();
+    }
+    for (const n of d.nodes) {
+      ctx.fillStyle = n.kind === 'note' ? '#2d4a7a' : '#3a3a4a';
+      ctx.strokeStyle = '#5a8fd0';
+      const x = n.x - minX;
+      const y = n.y - minY;
+      ctx.beginPath();
+      ctx.roundRect(x, y, n.w, n.h, 10);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = '14px sans-serif';
+      ctx.fillText(n.title, x + 12, y + 28);
+    }
+    off.toBlob((blob) => { if (blob) downloadBlob(blob, 'image/png', 'canvas.png'); }, 'image/png');
+  }, [downloadBlob]);
+
+  /** Markdown 大纲：树形缩进（环防护）+ 连线附录 */
+  const exportMarkdown = useCallback(() => {
+    const d = docRef.current;
+    const byId = new Map(d.nodes.map((n) => [n.id, n]));
+    const hasParent = new Set(d.edges.map((e) => e.to));
+    const children = new Map<string, string[]>();
+    for (const e of d.edges) {
+      if (!children.has(e.from)) children.set(e.from, []);
+      children.get(e.from)!.push(e.to);
+    }
+    const lines: string[] = ['# 画布导出', ''];
+    const seen = new Set<string>();
+    const walk = (id: string, depth: number) => {
+      if (seen.has(id) || !byId.has(id)) return;
+      seen.add(id);
+      const n = byId.get(id)!;
+      lines.push(`${'  '.repeat(depth)}- ${n.title}${n.content_ref ? `（引用：${n.content_ref}）` : ''}`);
+      for (const k of children.get(id) ?? []) walk(k, depth + 1);
+    };
+    for (const n of d.nodes) if (!hasParent.has(n.id)) walk(n.id, 0);
+    for (const n of d.nodes) walk(n.id, 0);
+    if (d.edges.length > 0) {
+      lines.push('', '## 连线', '');
+      for (const e of d.edges) {
+        const a = byId.get(e.from);
+        const b = byId.get(e.to);
+        if (a && b) lines.push(`- ${a.title} → ${b.title}${e.label ? `（${e.label}）` : ''}`);
+      }
+    }
+    downloadBlob(lines.join('\n'), 'text/markdown', 'canvas.md');
+  }, [downloadBlob]);
+
   /** 1000 节点压测注入（验证脚本用；UI 面隐藏入口 aria-hidden） */
   const stressNodes = useMemo(
     () =>
@@ -405,8 +553,20 @@ export default function CanvasView(): React.ReactElement {
         <button style={btn} onClick={() => persist({ ...docRef.current, viewport: { x: 0, y: 0, scale: 1 } })}>
           重置视图
         </button>
+        <button style={btn} onClick={applyTreeLayout}>
+          树形布局
+        </button>
         <button style={btn} onClick={applyGridLayout}>
           网格布局
+        </button>
+        <button style={btn} onClick={exportSvg}>
+          导出 SVG
+        </button>
+        <button style={btn} onClick={exportPng}>
+          导出 PNG
+        </button>
+        <button style={btn} onClick={exportMarkdown}>
+          导出 MD
         </button>
         <button style={btn} onClick={exportJson}>
           导出 JSON
