@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * DK-11 画布验证 v2 — 切片1+切片2 合并十断言。
+ * DK-11 画布验证 v3 — 切片1+2+3 合并十二断言。
  * 切片1：A1 挂载 / A2 双击新建 / A3 平移 / A4 缩放 / A9 1000节点 P95≥30fps / A10 aria
  * 切片2：A5 树形布局坐标 / A6 SVG 导出 / A7 PNG 导出 / A8 Markdown 导出
+ * 切片3：A11 Shift拖拽连线创建 / A12 10000节点加载<2s
  */
 const path = require('node:path');
 const fs = require('node:fs');
@@ -142,6 +143,51 @@ const record = (name, ok, detail) => {
   const ariaOk = await surface.getAttribute('aria-label');
   const navOk = await page.getByRole('button', { name: '画布' }).getAttribute('aria-current');
   record('A10 aria 标注 + 页签 aria-current', !!ariaOk && ariaOk.includes('无限画布') && navOk === 'page');
+
+  // A11 连线创建（Shift+节点拖拽，橡皮筋预览后落点成边）——万节点文档下交互仍可用
+  const twoNodes = await page.evaluate(() => {
+    const doc = JSON.parse(localStorage.getItem('aurora-canvas-v1') || '{"nodes":[],"viewport":{"x":0,"y":0,"scale":1}}');
+    return { n: doc.nodes.slice(0, 2).map((x) => ({ x: x.x + x.w / 2, y: x.y + x.h / 2 })), vp: doc.viewport };
+  });
+  const statsBefore = await page.locator('[data-testid="canvas-stats"]').textContent();
+  const eB = Number(/(\d+) 连线/.exec(statsBefore || '')?.[1] || 0);
+  const sbox = await surface.boundingBox();
+  const toScr = (wx, wy) => ({
+    x: sbox.x + (wx - twoNodes.vp.x) * twoNodes.vp.scale,
+    y: sbox.y + (wy - twoNodes.vp.y) * twoNodes.vp.scale,
+  });
+  const from = toScr(twoNodes.n[0].x, twoNodes.n[0].y);
+  const to = toScr(twoNodes.n[1].x, twoNodes.n[1].y);
+  await page.keyboard.down('Shift');
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 10 });
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  await page.waitForTimeout(400);
+  const statsAfter = await page.locator('[data-testid="canvas-stats"]').textContent();
+  const eA = Number(/(\d+) 连线/.exec(statsAfter || '')?.[1] || 0);
+  record('A11 Shift+拖拽连线创建', eA === eB + 1, `连线 ${eB} → ${eA}`);
+
+  // A12 10000 节点加载 <2s（DoD：localStorage 注入 → reload → 页签进画布 → stats 就绪计时）
+  const t0 = Date.now();
+  await page.evaluate(() => {
+    const doc = JSON.parse(localStorage.getItem('aurora-canvas-v1') || '{}');
+    const nodes = [];
+    for (let i = 0; i < 10000; i++) {
+      nodes.push({ id: `n-${i}`, kind: 'sticky', title: `节点${i}`, x: (i % 25) * 220, y: Math.floor(i / 25) * 140, w: 180, h: 96 });
+    }
+    localStorage.setItem('aurora-canvas-v1', JSON.stringify({ ...doc, nodes, edges: [], viewport: { x: 0, y: 0, scale: 1 } }));
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: '画布' }).click();
+  await page.locator('[data-testid="canvas-stats"]').waitFor({ state: 'visible', timeout: 15000 });
+  await page.waitForFunction(
+    () => /10000 节点/.test(document.querySelector('[data-testid="canvas-stats"]')?.textContent || ''),
+    { timeout: 15000 },
+  );
+  const loadMs = Date.now() - t0;
+  record('A12 10000 节点加载 <2s', loadMs < 2000, `${loadMs}ms`);
 
   await browser.close();
   preview.kill();

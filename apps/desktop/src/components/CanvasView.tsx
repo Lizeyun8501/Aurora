@@ -96,8 +96,10 @@ export default function CanvasView(): React.ReactElement {
   const dragRef = useRef<
     | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number }
     | { kind: 'node'; id: string; dx: number; dy: number }
+    | { kind: 'link'; id: string; dx: number; dy: number }
     | null
   >(null);
+  const linkDragRef = useRef<{ fromId: string; curSx: number; curSy: number } | null>(null);
 
   const persist = useCallback((next: CanvasDoc) => {
     setDoc(next);
@@ -143,12 +145,13 @@ export default function CanvasView(): React.ReactElement {
       ctx.stroke();
     }
 
-    // 连线
+    // 连线（DK-11 切片3：byId 索引化 — find O(E×N) 在万节点下是每帧热点）
+    const byId = new Map(docRef.current.nodes.map((n) => [n.id, n]));
     ctx.strokeStyle = tokens.color.textSecondary;
     ctx.lineWidth = 1.5;
     for (const e of docRef.current.edges) {
-      const a = docRef.current.nodes.find((n) => n.id === e.from);
-      const b = docRef.current.nodes.find((n) => n.id === e.to);
+      const a = byId.get(e.from);
+      const b = byId.get(e.to);
       if (!a || !b) continue;
       const [ax, ay] = w2s(v, a.x + a.w / 2, a.y + a.h / 2);
       const [bx, by] = w2s(v, b.x + b.w / 2, b.y + b.h / 2);
@@ -173,6 +176,12 @@ export default function CanvasView(): React.ReactElement {
       ctx.fillStyle = n.kind === 'note' ? tokens.color.bgElevated : 'rgba(255,214,102,0.16)';
       ctx.strokeStyle = selected === n.id ? tokens.color.primaryBright : 'rgba(255,255,255,0.22)';
       ctx.lineWidth = selected === n.id ? 2.5 : 1.2;
+      if (v.scale < 0.15) {
+        // LOD 低档：纯色块，跳过圆角/描边/文字（万节点远景主渲染路径）
+        ctx.fillRect(sx, sy, sw, sh);
+        if (selected === n.id) ctx.strokeRect(sx, sy, sw, sh);
+        continue;
+      }
       ctx.beginPath();
       ctx.roundRect(sx, sy, sw, sh, r);
       ctx.fill();
@@ -186,6 +195,24 @@ export default function CanvasView(): React.ReactElement {
           ctx.font = `${Math.max(9, 11 * v.scale)}px sans-serif`;
           ctx.fillText(`↗ ${n.content_ref}`, sx + 10 * v.scale, sy + sh - 10 * v.scale, sw - 16 * v.scale);
         }
+      }
+    }
+
+    // 切片3：连线橡皮筋预览
+    const ld = linkDragRef.current;
+    if (ld) {
+      const f = byId.get(ld.fromId);
+      if (f) {
+        const [fx, fy] = w2s(v, f.x + f.w / 2, f.y + f.h / 2);
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = tokens.color.primaryBright;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(fx, fy);
+        ctx.lineTo(ld.curSx, ld.curSy);
+        ctx.stroke();
+        ctx.restore();
       }
     }
   }, [selected]);
@@ -220,7 +247,12 @@ export default function CanvasView(): React.ReactElement {
       const sy = e.clientY - rect.top;
       const hit = hitNode(sx, sy);
       const v = docRef.current.viewport;
-      if (hit) {
+      if (hit && e.shiftKey) {
+        // DK-11 切片3：Shift+节点拖拽 = 连线创建（橡皮筋预览）
+        setSelected(hit.id);
+        dragRef.current = { kind: 'link', id: hit.id, dx: 0, dy: 0 };
+        linkDragRef.current = { fromId: hit.id, curSx: sx, curSy: sy };
+      } else if (hit) {
         setSelected(hit.id);
         const [wx, wy] = s2w(v, sx, sy);
         dragRef.current = { kind: 'node', id: hit.id, dx: wx - hit.x, dy: wy - hit.y };
@@ -251,6 +283,12 @@ export default function CanvasView(): React.ReactElement {
       const sy = e.clientY - rect.top;
       if (drag.kind === 'pan') {
         setDoc((d) => ({ ...d, viewport: { ...d.viewport, x: drag.vx + (sx - drag.sx), y: drag.vy + (sy - drag.sy) } }));
+      } else if (drag.kind === 'link') {
+        if (linkDragRef.current) {
+          linkDragRef.current.curSx = sx;
+          linkDragRef.current.curSy = sy;
+          draw();
+        }
       } else {
         const v = docRef.current.viewport;
         const [wx, wy] = s2w(v, sx, sy);
@@ -263,12 +301,32 @@ export default function CanvasView(): React.ReactElement {
     [],
   );
 
-  const onPointerUp = useCallback(() => {
-    if (dragRef.current) {
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const drag = dragRef.current;
+      if (!drag) return;
       dragRef.current = null;
+      if (drag.kind === 'link') {
+        const ld = linkDragRef.current;
+        linkDragRef.current = null;
+        if (ld) {
+          const rect = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+          const drop = hitNode(e.clientX - rect.left, e.clientY - rect.top);
+          if (drop && drop.id !== ld.fromId) {
+            persist({
+              ...docRef.current,
+              edges: [...docRef.current.edges, { id: `edge-${Date.now()}`, from: ld.fromId, to: drop.id }],
+            });
+            return;
+          }
+        }
+        draw();
+        return;
+      }
       saveDoc(docRef.current);
-    }
-  }, []);
+    },
+    [hitNode, persist, draw],
+  );
 
   /** wheel 缩放：以鼠标为中心 */
   useEffect(() => {
