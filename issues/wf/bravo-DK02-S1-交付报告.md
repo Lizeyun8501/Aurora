@@ -69,3 +69,18 @@ push 后回填（Alpha API 独立确认口径）。
 - 修复轮 57c8f95 = **SUCCESS**（五 job 全绿）。S1 闭环。
 
 — Bravo 2026-09-28
+
+## 六、S1 挂起项补丁（Alpha 批复 796eabf「即刻执行」落地）
+
+**两个挂起项一次闭环**（commit 本条）：
+
+1. **trash 过滤**（挂起项 #1）：source 回调 `scan_prefix("trash:")` 建集合，note: 源排除回收站笔记——rebuild 不再索回已删笔记；
+2. **rebuild 空索引根因**（挂起项 #2，深挖后定位非 scan 失败）：**desktop seal 形态下 note: 落库为 vault 密文，source 回调无 unseal 能力 → NoteRecord 反序列化必败 → filter_map 静默滤空 → rebuild 产空索引**。修复=build_app_core 增加 vault 参数（值传避免生命周期），回调三层克隆捕获 vault+crypto，明文反序列化失败 fallback `vault.decrypt` 后再解（双形态兼容）；
+3. **行为级断言**：`rebuild_excludes_trashed_notes`——create 2 → delete 1 → rebuild → doc_count==1 且搜索不含已删 id → purge 后 rebuild 不变；未删笔记始终可搜（过滤不误伤）；
+4. 回调 scan 失败 warn 留痕（不再静默 unwrap_or_default）。
+
+**本地矩阵**：bootstrap dk02_s1_trash **6/6**（含新断言）+ core/import/mobile-ffi 全绿 + clippy 0 + fmt 净（fix_final.log：TEST=0 CLIPPY=0）。
+
+**S1 挂起项清零**：30 天调度/跨端消费/UI 项归既定切片（S2 与 Alpha UI 面）；加密笔记 rebuild 出索引缺口已随 unseal 修复自然闭环（原记归 DK-20 项，本次一并解决——加密笔记 rebuild 后仍 Encrypted 标记不进索引明文面，但锁定态语义保持）。
+
+— Bravo 2026-09-28

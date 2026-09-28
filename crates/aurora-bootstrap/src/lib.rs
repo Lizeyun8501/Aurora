@@ -156,7 +156,7 @@ pub fn bootstrap(
     let vault = Arc::new(LocalDekVault::load_or_create(&data_dir.join("keys"))?);
 
     // 构造各 Trait 默认实现并注入 AppCoreBuilder
-    let core = Arc::new(build_app_core(data_dir, &db_path)?);
+    let core = Arc::new(build_app_core(data_dir, &db_path, vault.clone())?);
     core.startup()?;
     info!(data_dir = ?data_dir, "AppCore startup complete");
 
@@ -414,7 +414,11 @@ impl BootedApp {
 }
 
 /// 构造 AppCore 并注入各 Trait 默认实现（V19 §36.1 步骤 4-5）。
-fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapError> {
+fn build_app_core(
+    data_dir: &Path,
+    db_path: &Path,
+    vault: Arc<LocalDekVault>,
+) -> Result<AppCore, BootstrapError> {
     // 加载系统设置（V19 §16）：本轮先用默认值，后续 PR 可改为从 SQLite 的
     // settings_layer 表读出已持久化的 SystemSettings。
     let core_settings = SystemSettings::new();
@@ -485,6 +489,9 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
     // 此处用阻塞读 kv 的方式不可行（kv 是 async trait）→ 改为捕获 runtime
     // 句柄 + dedicated blocking thread。
     let kv_for_source = kv_store.clone();
+    // DK-02 S1 补丁：unseal 能力进回调（'static move 语义 → 闭包外克隆捕获）
+    let vault_for_source = vault.clone();
+    let crypto_for_source = crypto.clone();
     let search_projection: Arc<aurora_core::l2_engines::search_projection::SearchIndexProjection> =
         Arc::new(
             aurora_core::l2_engines::search_projection::SearchIndexProjection::new(
@@ -494,15 +501,41 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
                     // 数据源回调（同步签名）: 经独立线程 + 轻量 runtime 驱动 async kv 扫描。
                     // 重建为低频操作（verify 失败/手动），线程开销可接受。
                     let kv = kv_for_source.clone();
+                    let vault = vault_for_source.clone();
+                    let crypto = crypto_for_source.clone();
+                    // DK-02 S1 补丁：捕获 unseal 能力——desktop seal 形态下 note: 落库
+                    // 为密文，回调需 vault.decrypt 解封装后反序列化（曾致 rebuild
+                    // 产空索引且无告警——挂起项 #2 根因）。
                     std::thread::scope(|s| {
                         s.spawn(move || {
                         tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
                             .ok().map(|rt| rt.block_on(async {
-                                    let pairs = kv.scan_prefix("note:").await.unwrap_or_default();
+                                    // DK-02 S1: 软删笔记不进搜索源（trash:{id} 在册者
+                                    // 排除——rebuild 不索回回收站笔记）。scan 失败不再
+                                    // 静默吞掉（曾致 rebuild 产空索引无告警），warn 留痕。
+                                    let notes_scan = kv.scan_prefix("note:").await;
+                                    let trash_scan = kv.scan_prefix("trash:").await;
+                                    if let Err(e) = &notes_scan {
+                                        tracing::warn!(error = %e, "search source: note: scan failed; rebuild yields empty index");
+                                    }
+                                    let trashed: std::collections::HashSet<String> =
+                                        trash_scan
+                                            .unwrap_or_default()
+                                            .into_iter()
+                                            .map(|(k, _)| {
+                                                k.trim_start_matches("trash:").to_string()
+                                            })
+                                            .collect();
+                                    let pairs = notes_scan.unwrap_or_default();
                                     pairs
                                         .iter()
+                                        .filter(|(k, _)| {
+                                            k.strip_prefix("note:")
+                                                .map(|id| !trashed.contains(id))
+                                                .unwrap_or(false)
+                                        })
                                         .filter_map(|(k, bytes)| {
                                             // note:{id} → IndexEntry（NoteRecord JSON 反序列化）
                                             let id = k.strip_prefix("note:")?.to_string();
@@ -514,7 +547,16 @@ fn build_app_core(data_dir: &Path, db_path: &Path) -> Result<AppCore, BootstrapE
                                                 #[serde(default)]
                                                 encryption: String,
                                             }
-                                            let rec: Rec = serde_json::from_slice(bytes).ok()?;
+                                            let rec: Rec = match serde_json::from_slice(bytes)
+                                            {
+                                                Ok(r) => r,
+                                                Err(_) => {
+                                                    // seal 密文 → unseal 后再解
+                                                    let plain =
+                                                        vault.decrypt(crypto.as_ref(), bytes).ok()?;
+                                                    serde_json::from_slice(&plain).ok()?
+                                                }
+                                            };
                                             Some(aurora_core::traits::search_backend::IndexEntry {
                                                 note_id: id,
                                                 content: rec.content,

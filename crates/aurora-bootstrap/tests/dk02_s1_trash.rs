@@ -350,3 +350,61 @@ async fn trash_state_machine_edges() {
         "purge 未删除笔记必须拒绝（误 purge 不可能）"
     );
 }
+
+/// S1 挂起项 #1 修复验证（Alpha 批复 796eabf）：rebuild 不索回回收站笔记。
+/// create 2 → delete 1 → search_projection_rebuild → 索引仅含未删笔记；
+/// purge 后 rebuild → 不变（trash 项永不回流）。
+#[tokio::test]
+async fn rebuild_excludes_trashed_notes() {
+    let dir = tempfile::tempdir().unwrap();
+    let booted = bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .unwrap();
+    let ctx = ctx_for(&booted, &dir.path().join("aurora.db"));
+
+    let keep = write_path::create_note(&ctx, "保留笔记甲").await.unwrap();
+    let dropped = write_path::create_note(&ctx, "回收站笔记乙").await.unwrap();
+    booted.core.catch_up_projections().await.unwrap();
+
+    write_path::delete_note(&ctx, &dropped).await.unwrap();
+
+    // 行为级口径（request §二）：rebuild 后 doc_count==1 且搜索不含已删 id
+    booted.search_projection_rebuild().await.unwrap();
+    let dc = booted.core.search.doc_count().await.unwrap().unwrap_or(0);
+    assert_eq!(dc, 1, "rebuild 后索引只应含未删笔记（trash 过滤生效）");
+
+    let opts = aurora_core::traits::search_backend::SearchOptions::default();
+    let hits = booted
+        .core
+        .search
+        .search("回收站笔记乙", &opts)
+        .await
+        .unwrap();
+    assert!(
+        !hits.hits.iter().any(|h| h.note_id == dropped),
+        "已删笔记 rebuild 后不得出现在搜索结果"
+    );
+    assert!(dc > 0, "未删笔记必须在索引中（修复非空转）");
+
+    // purge 后 rebuild：结果不变（trash 项永不回流）
+    write_path::purge_note(&ctx, &dropped).await.unwrap();
+    booted.search_projection_rebuild().await.unwrap();
+    let dc2 = booted.core.search.doc_count().await.unwrap().unwrap_or(0);
+    assert_eq!(dc2, 1, "purge 后 rebuild 结果不变");
+    assert!(booted.core.search.doc_count().await.is_ok());
+
+    // keep 笔记始终可搜（过滤只排 trash，不误伤）
+    let hits_keep = booted
+        .core
+        .search
+        .search("保留笔记甲", &opts)
+        .await
+        .unwrap();
+    assert!(
+        hits_keep.hits.iter().any(|h| h.note_id == keep),
+        "未删笔记 rebuild 后必须可搜"
+    );
+    let _ = &ctx;
+}
