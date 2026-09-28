@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 /// setup 阶段与 APP_STATE 同步注入）。
 pub(crate) static BOOTED_STATE: Mutex<Option<Arc<BootedApp>>> = Mutex::new(None);
 
-fn get_booted() -> Result<Arc<BootedApp>, String> {
+pub(crate) fn get_booted() -> Result<Arc<BootedApp>, String> {
     BOOTED_STATE
         .lock()
         .expect("BOOTED_STATE mutex poisoned")

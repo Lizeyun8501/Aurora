@@ -811,6 +811,22 @@ export default function DesktopShell() {
       .catch(() => {});
   }, [invoke, wifiOnly]);
 
+  // DK-10 切片 3：AI 云策略开关（tauri 模式可用；mock 模式隐藏）
+  const [aiDeny, setAiDeny] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!invoke) return;
+    invoke('cmd_get_ai_cloud_policy')
+      .then((r) => setAiDeny(r === 'deny'))
+      .catch(() => setAiDeny(null));
+  }, [invoke]);
+  const toggleAiDeny = useCallback(() => {
+    if (!invoke || aiDeny === null) return;
+    const next = !aiDeny;
+    invoke('cmd_set_ai_cloud_policy', { deny: next })
+      .then(() => setAiDeny(next))
+      .catch(() => {});
+  }, [invoke, aiDeny]);
+
   const builtins: PaletteItem[] = useMemo(
     () => [
       {
@@ -829,6 +845,16 @@ export default function DesktopShell() {
             },
           ]
         : []),
+      ...(aiDeny !== null
+        ? [
+            {
+              kind: 'command' as const,
+              id: 'ai-cloud-policy',
+              title: `${aiDeny ? '允许' : '禁止'} AI 云端请求（当前${aiDeny ? '已禁止 — 内容不出网' : '已允许 — Ollama 不可用时降级云端'} · 点击切换）`,
+              run: toggleAiDeny,
+            },
+          ]
+        : []),
       {
         kind: 'command',
         id: 'today',
@@ -836,7 +862,7 @@ export default function DesktopShell() {
         run: () => setView('today'),
       },
     ],
-    [data, stats],
+    [data, stats, aiDeny, toggleAiDeny],
   );
 
   const mode = invoke ? 'tauri' : 'browser-mock';

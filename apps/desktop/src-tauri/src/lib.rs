@@ -29,6 +29,7 @@ use tracing::{info, warn};
 
 mod attachment_commands;
 mod import_commands;
+mod ai_commands;
 mod sync_commands;
 
 /// 桌面端默认数据目录名。
@@ -105,6 +106,8 @@ pub fn run() {
             cmd_due_review_cards,
             cmd_review_card,
             attachment_commands::cmd_read_attachment,
+            ai_commands::cmd_get_ai_cloud_policy,
+            ai_commands::cmd_set_ai_cloud_policy,
             sync_commands::cmd_get_wifi_only,
             sync_commands::cmd_set_wifi_only,
             import_commands::cmd_plan_import,

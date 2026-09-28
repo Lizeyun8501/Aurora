@@ -36,6 +36,8 @@ pub struct BootedApp {
     pub attachments: Arc<dyn aurora_core::attachment_store::AttachmentStore>,
     /// 同步门（DK-08 §7.3 — 策略评估入口；引擎经 Bravo 接线消费）。
     pub sync_gate: Arc<aurora_sync::sync_gate::SyncGate>,
+    /// AI 云策略 resolver（DK-10 切片 3 — `ws-policy:{id}` 内存视图，KV 权威）。
+    pub ai_policy: Arc<aurora_ai::policy::WorkspaceConfigResolver>,
     /// 离线同步队列（与 sync_gate 同源装配；内存形态，KV 持久化随引擎
     /// 生产切片——当前无流量驱动，实例先行就位）。
     pub offline_queue: Arc<aurora_sync::offline_queue::OfflineQueue>,
@@ -189,6 +191,16 @@ pub fn bootstrap(
     ));
     let offline_queue = Arc::new(aurora_sync::offline_queue::OfflineQueue::new());
 
+    // DK-10 切片 3：AI 云策略装配——resolver 启动预载（当前 desktop 单工作区
+    // "default"；多工作区立项后 ids 来源升级为工作区清单）。键缺失/读失败 →
+    // 缺省 AllowCloud（DK-07 冻结契约），预载失败不阻塞启动。
+    let ai_policy = Arc::new(aurora_ai::policy::WorkspaceConfigResolver::new());
+    if let Err(e) = futures::executor::block_on(
+        ai_policy.refresh_from(core.kv_store.as_ref(), &[AI_DEFAULT_WORKSPACE_ID]),
+    ) {
+        info!(error = %e, "ai policy preload failed — fallback to AllowCloud default");
+    }
+
     Ok(BootedApp {
         core,
         vault,
@@ -197,11 +209,15 @@ pub fn bootstrap(
         attachments,
         sync_gate,
         offline_queue,
+        ai_policy,
     })
 }
 
 /// `wifi_only` 用户设置的 KV 持久化键。
 pub const WIFI_ONLY_KV_KEY: &str = "settings:sync.wifi_only";
+
+/// AI 云策略的缺省工作区（desktop 单工作区口径；多工作区立项后由前端传实际 id）。
+pub const AI_DEFAULT_WORKSPACE_ID: &str = "default";
 
 /// 从 KV 读取 `wifi_only`（缺省 = false，request 裁决默认放行）。
 pub(crate) fn wifi_only_from_kv(core: &AppCore) -> Result<bool, BootstrapError> {
@@ -236,6 +252,35 @@ impl BootedApp {
         })?;
         self.sync_gate.set_wifi_only(on);
         info!(wifi_only = on, "sync gate wifi_only updated");
+        Ok(())
+    }
+
+    /// 查询工作区 AI 云策略（DK-10 切片 3 — 预载内存视图；KV 为权威）。
+    pub fn ai_cloud_policy(&self, workspace_id: &str) -> aurora_ai::policy::WorkspacePolicy {
+        use aurora_ai::policy::PolicyResolver;
+        self.ai_policy.policy_for(workspace_id)
+    }
+
+    /// 设置工作区 AI 云策略：`persist_policy`（KV 落库崩溃安全 + resolver
+    /// 内存直写即时生效——未来 provider 装配消费此视图）。
+    pub fn set_ai_cloud_policy(
+        &self,
+        workspace_id: &str,
+        deny: bool,
+    ) -> Result<(), BootstrapError> {
+        use aurora_ai::policy::WorkspacePolicy;
+        let policy = if deny {
+            WorkspacePolicy::DenyCloud
+        } else {
+            WorkspacePolicy::AllowCloud
+        };
+        futures::executor::block_on(self.ai_policy.persist_policy(
+            self.core.kv_store.as_ref(),
+            workspace_id,
+            policy,
+        ))
+        .map_err(|e| BootstrapError::Core(format!("ai policy save: {e}")))?;
+        info!(workspace_id, deny, "ai cloud policy updated");
         Ok(())
     }
 }
@@ -474,6 +519,44 @@ mod tests {
         assert_eq!(app.core.crypto.algorithm_version(), 1);
         assert!(dir.path().join("aurora.db").exists());
         assert!(dir.path().join("keys").join("dek.bin").exists());
+    }
+
+    /// DK-10 切片 3：AI 云策略 set → 内存即时 + 重启 KV 预载恢复（闭环）。
+    #[test]
+    fn ai_policy_round_trip_across_restart() {
+        use aurora_ai::policy::WorkspacePolicy;
+        let dir = tempfile::tempdir().unwrap();
+        let ws = AI_DEFAULT_WORKSPACE_ID;
+        {
+            let app = bootstrap(
+                dir.path(),
+                std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+            )
+            .unwrap();
+            assert_eq!(
+                app.ai_cloud_policy(ws),
+                WorkspacePolicy::AllowCloud,
+                "缺省 AllowCloud（DK-07 冻结契约）"
+            );
+            app.set_ai_cloud_policy(ws, true).unwrap();
+            assert_eq!(
+                app.ai_cloud_policy(ws),
+                WorkspacePolicy::DenyCloud,
+                "set 后内存即时一致"
+            );
+        } // drop = 模拟杀进程
+        let app2 = bootstrap(
+            dir.path(),
+            std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+        )
+        .unwrap();
+        assert_eq!(
+            app2.ai_cloud_policy(ws),
+            WorkspacePolicy::DenyCloud,
+            "重启后 KV 预载恢复 Deny（闭环）"
+        );
+        app2.set_ai_cloud_policy(ws, false).unwrap();
+        assert_eq!(app2.ai_cloud_policy(ws), WorkspacePolicy::AllowCloud);
     }
 
     /// V20 Phase 1 退出条件: 杀进程后索引自动补齐（投影水位线增量追赶）。
