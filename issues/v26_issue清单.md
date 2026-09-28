@@ -442,15 +442,17 @@ V25 排期有三处结构性问题：
 **Milestone**: `M1 · Phase 1 核心基石`
 **Estimate**: 25 人日
 **Blocked by**: DK-01
-**Assignee**: —
+**Assignee**: Bravo（S1 向量基建 09-28 派发）+ Alpha（S3 徽章 UI）
 
 ### 任务
 
-- [ ] FTS5 主路径 + 中文分词
-- [ ] 向量增强（`sqlite-vec` 优先；lancedb 降为 feature-gate 可选，见 DK-16）
-- [ ] 混合检索 BM25 + 向量，RRF 融合
-- [ ] 可选 BGE-reranker 精排
-- [ ] **语义召回徽章**：不含关键词的结果必须解释来源，否则用户不信任搜索
+- [x] FTS5 主路径 + 中文分词 —— **改判记录（09-28 Alpha）**：tantivy+jieba 已在生产管线多版本，
+  「可靠全文+中文分词」意图满足；硬迁 FTS5 重写索引管线无新增能力——保留 tantivy 主路径
+- [ ] 向量增强（**改判：S1 纯 Rust 暴力 KNN**——sqlite-vec loadable extension 跨平台分发是坑，
+  DoD 规模万条×768 维 ≈10ms 纯 KNN 足够；>5 万条再评估 sqlite-vec）（S1 Bravo 执行中）
+- [ ] 混合检索 BM25 + 向量，RRF 融合（S2 预告）
+- [ ] 可选 BGE-reranker 精排（S3 可选）
+- [ ] **语义召回徽章**：不含关键词的结果必须解释来源，否则用户不信任搜索（S3 Alpha UI 面）
 
 ### DoD
 
