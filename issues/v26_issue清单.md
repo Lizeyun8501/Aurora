@@ -442,7 +442,8 @@ V25 排期有三处结构性问题：
 **Milestone**: `M1 · Phase 1 核心基石`
 **Estimate**: 25 人日
 **Blocked by**: DK-01
-**Assignee**: Bravo（S1 向量基建 09-28 派发）+ Alpha（S3 徽章 UI）
+**Assignee**: Bravo（S1 向量基建 / S2 目录树 09-28 排队）+ Alpha（S3 徽章 UI + 树侧栏）
+**S 进度**: S1 回收站 ✅（f175692/57c8f95）+ UI ✅（3479da7）| S2 目录树任务书已入库排队
 
 ### 任务
 
