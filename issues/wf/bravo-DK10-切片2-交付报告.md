@@ -46,3 +46,9 @@
 push 后 RUN 号回填（Alpha GitHub API 独立确认口径）。
 
 — Bravo 2026-09-28（DK-10 切片 2）
+
+## 四、CI 终验（回填）
+
+RUN 4e3e216 = **SUCCESS**（五 job 全绿）。切片 2 闭环。
+
+— Bravo 2026-09-28
