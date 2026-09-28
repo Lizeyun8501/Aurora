@@ -105,6 +105,27 @@ impl WorkspaceConfigResolver {
         Ok(())
     }
 
+    /// DK-10 切片 2：写路径——策略落 KV `ws-policy:{id}` 并同步内存映射。
+    ///
+    /// 读写闭环：persist 后 [`Self::policy_for`] 即时一致（内存直写），
+    /// 且后续 [`Self::refresh_from`] 从 KV 读回同值（KV 落库）。
+    /// 值编码：`b"deny"` / `b"allow"`（与读路径 `eq_ignore_ascii_case(b"deny")`
+    /// 的解析语义互为逆操作）。
+    pub async fn persist_policy(
+        &self,
+        kv: &dyn aurora_core::traits::kv_store::KVStore,
+        workspace_id: &str,
+        policy: WorkspacePolicy,
+    ) -> Result<(), Error> {
+        let bytes: &[u8] = match policy {
+            WorkspacePolicy::AllowCloud => b"allow",
+            WorkspacePolicy::DenyCloud => b"deny",
+        };
+        kv.set(&format!("ws-policy:{workspace_id}"), bytes).await?;
+        self.set_policy(workspace_id, policy);
+        Ok(())
+    }
+
     /// 运行时直设（测试/无 KV 场景/管理端变更即时生效）。
     pub fn set_policy(&self, workspace_id: &str, policy: WorkspacePolicy) {
         self.policies
@@ -171,20 +192,25 @@ mod tests {
     }
 }
 
-/// 内存 KVStore mock（resolver 预载测试用）。
+/// 内存 KVStore mock（resolver 读写闭环测试用）。
 #[allow(dead_code)] // mock 全量实现 trait，部分方法测试未触达
-struct MockKv(std::collections::HashMap<String, Vec<u8>>);
+struct MockKv(std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>);
 
 #[async_trait::async_trait]
 impl aurora_core::traits::kv_store::KVStore for MockKv {
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, aurora_core::Error> {
-        Ok(self.0.get(key).cloned())
+        Ok(self.0.lock().expect("mock kv lock").get(key).cloned())
     }
-    async fn set(&self, _key: &str, _value: &[u8]) -> Result<(), aurora_core::Error> {
-        unimplemented!("resolver 只读")
+    async fn set(&self, key: &str, value: &[u8]) -> Result<(), aurora_core::Error> {
+        self.0
+            .lock()
+            .expect("mock kv lock")
+            .insert(key.to_string(), value.to_vec());
+        Ok(())
     }
-    async fn delete(&self, _key: &str) -> Result<(), aurora_core::Error> {
-        unimplemented!("resolver 只读")
+    async fn delete(&self, key: &str) -> Result<(), aurora_core::Error> {
+        self.0.lock().expect("mock kv lock").remove(key);
+        Ok(())
     }
     async fn scan_prefix(
         &self,
@@ -193,23 +219,65 @@ impl aurora_core::traits::kv_store::KVStore for MockKv {
         Ok(Vec::new())
     }
     async fn exists(&self, key: &str) -> Result<bool, aurora_core::Error> {
-        Ok(self.0.contains_key(key))
+        Ok(self.0.lock().expect("mock kv lock").contains_key(key))
     }
     async fn batch_get(&self, keys: &[&str]) -> Result<Vec<Option<Vec<u8>>>, aurora_core::Error> {
-        Ok(keys.iter().map(|k| self.0.get(*k).cloned()).collect())
+        let map = self.0.lock().expect("mock kv lock");
+        Ok(keys.iter().map(|k| map.get(*k).cloned()).collect())
     }
     async fn batch_set(&self, _kvs: &[(&str, &[u8])]) -> Result<(), aurora_core::Error> {
         unimplemented!("resolver 只读")
     }
 }
 
+/// 读写闭环：persist 落 KV + 内存即时一致；新 resolver 从 KV 读回同值。
+#[tokio::test]
+async fn persist_policy_round_trip() {
+    let kv = MockKv(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let resolver = WorkspaceConfigResolver::new();
+
+    resolver
+        .persist_policy(&kv, "ws-private", WorkspacePolicy::DenyCloud)
+        .await
+        .expect("persist deny ok");
+    assert_eq!(
+        resolver.policy_for("ws-private"),
+        WorkspacePolicy::DenyCloud,
+        "persist 后内存映射即时一致"
+    );
+
+    // 新 resolver（模拟重启后装配）：refresh_from 读回 KV 落库值
+    let fresh = WorkspaceConfigResolver::new();
+    fresh
+        .refresh_from(&kv, &["ws-private"])
+        .await
+        .expect("refresh ok");
+    assert_eq!(
+        fresh.policy_for("ws-private"),
+        WorkspacePolicy::DenyCloud,
+        "KV 读回与 persist 写入一致（闭环）"
+    );
+
+    // 反向：persist allow → 读回 Allow（值编码互逆）
+    resolver
+        .persist_policy(&kv, "ws-open", WorkspacePolicy::AllowCloud)
+        .await
+        .expect("persist allow ok");
+    let fresh2 = WorkspaceConfigResolver::new();
+    fresh2
+        .refresh_from(&kv, &["ws-open"])
+        .await
+        .expect("refresh ok");
+    assert_eq!(fresh2.policy_for("ws-open"), WorkspacePolicy::AllowCloud);
+}
+
 #[tokio::test]
 async fn workspace_config_resolver_reads_kv_policy() {
-    let kv = MockKv(std::collections::HashMap::from([
+    let kv = MockKv(std::sync::Mutex::new(std::collections::HashMap::from([
         ("ws-policy:private-ws".to_string(), b"deny".to_vec()),
         ("ws-policy:upper-ws".to_string(), b"DENY".to_vec()),
         ("ws-policy:other".to_string(), b"junk-value".to_vec()),
-    ]));
+    ])));
     let resolver = WorkspaceConfigResolver::new();
     resolver
         .refresh_from(&kv, &["private-ws", "upper-ws", "other", "missing-ws"])

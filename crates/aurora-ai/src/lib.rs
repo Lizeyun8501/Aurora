@@ -21,6 +21,7 @@
 
 pub mod cloud;
 pub mod context;
+pub mod factory;
 pub mod mcp;
 pub mod mock_provider;
 pub mod ollama;
@@ -89,6 +90,7 @@ pub use context::{
     AgentContext, CompressedContext, ContextMessage, ContextStore, ContextWindow, SessionId,
     CONTEXT_DDL,
 };
+pub use factory::assemble_gated_provider;
 pub use mcp::{
     InitializeResult, JsonRpcError, JsonRpcId, JsonRpcRequest, JsonRpcResponse, McpClient,
     McpMethod, McpResource, McpServer, McpTool, McpTransport, ResourcesListResult, ServerInfo,
