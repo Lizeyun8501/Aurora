@@ -62,3 +62,10 @@
 push 后回填（Alpha API 独立确认口径）。
 
 — Bravo 2026-09-28（DK-02 S1）
+
+## 五、CI 终验（含修复轮回填）
+
+- 首轮 f175692 Test job 失败：mobile-ffi list_notes 软删泄漏（任务书预警点）——已修（list_notes 过滤 trash + discard_note 替换 import 失败清理，行为级断言抓到）；
+- 修复轮 57c8f95 = **SUCCESS**（五 job 全绿）。S1 闭环。
+
+— Bravo 2026-09-28
