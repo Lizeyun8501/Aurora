@@ -27,9 +27,9 @@ use tracing::{info, warn};
 
 // ── 启动期常量与全局状态 ─────────────────────────────
 
+mod ai_commands;
 mod attachment_commands;
 mod import_commands;
-mod ai_commands;
 mod sync_commands;
 
 /// 桌面端默认数据目录名。
