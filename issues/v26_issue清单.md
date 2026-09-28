@@ -670,12 +670,12 @@ V25 把 "WebView 输入/滚动验证" 列为 Phase 0 必做项，但**没有任�
 **Milestone**: `M3 · Phase 3 效能与智能`
 **Estimate**: 55 人日
 **Blocked by**: DK-00
-**Assignee**: —
+**Assignee**: Alpha（云策略面三切片 09-27/28：6dc9176→4e3e216→38a63de，回执 issues/wf/alpha-DK10-切片2/3-复核回执.md）
 
 ### 任务
 
 - [ ] **两段式提交**：`aiLiquify` 出提案 → 用户勾选 → `aiCommit` 才落库（铁律：AI 不得静默写入）
-- [ ] AI 路由器：Private 强制本地；Shared 可选云端；Public 默认云端
+- [ ] AI 路由器：Private 强制本地；Shared 可选云端；Public 默认云端 —— **「Private 强制本地」子面已闭环**（云策略门禁 KV→装配→UI 全链，38a63de；Shared/Public 分级待多工作区立项）
 - [ ] MCP 网关（鉴权**分级**：stdio/回环默认信任，仅对外 HTTP 走 OAuth/HMAC）
 - [ ] Agent 会话 15 分钟限时 + 审计 + Kill-Switch
 - [ ] 工具调用时间轴可视化
