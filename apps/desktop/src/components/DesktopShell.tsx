@@ -20,6 +20,7 @@ import type { AuroraEditorHandle } from '@aurora/ui-components';
 import CommandPalette, { type PaletteItem } from './CommandPalette';
 import ImportWizard from './ImportWizard';
 import CanvasView from './CanvasView';
+import TrashView from './TrashView';
 
 export interface InvokeFn {
   (cmd: string, args?: Record<string, unknown>): Promise<unknown>;
@@ -85,7 +86,7 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export type MainView = 'notes' | 'today' | 'canvas';
+export type MainView = 'notes' | 'today' | 'canvas' | 'trash';
 
 /** browser-mock 演示数据 — 形状与内核 NoteSummary/NoteContent 对齐 */
 const MOCK_NOTES: NoteSummary[] = [
@@ -277,7 +278,7 @@ function Sidebar(props: {
         ⤓ 导入笔记
       </button>
       <nav style={{ display: 'flex', gap: tokens.spacing.xs }} aria-label="主导航">
-        {(['notes', 'today', 'canvas'] as const).map((v) => (
+        {(['notes', 'today', 'canvas', 'trash'] as const).map((v) => (
           <button
             key={v}
             onClick={() => onView(v)}
@@ -294,7 +295,7 @@ function Sidebar(props: {
               minHeight: 36,
             }}
           >
-            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : '今日视图'}
+            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : '今日视图'}
           </button>
         ))}
       </nav>
@@ -932,6 +933,9 @@ export default function DesktopShell() {
         ) : view === 'canvas' ? (
           /* DK-11 画布视图（第一切片：Canvas2D 骨架，组件自包含） */
           <CanvasView />
+        ) : view === 'trash' ? (
+          /* DK-02 S1 回收站视图（Alpha UI 切片；core 面 Bravo f175692） */
+          <TrashView invoke={invoke} />
         ) : view === 'today' ? (
           <main style={{ flex: 1, padding: tokens.spacing.lg }}>
             <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size }}>
