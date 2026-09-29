@@ -38,7 +38,6 @@ pub async fn cmd_set_ai_cloud_policy(
         .map_err(|e| e.to_string())
 }
 
-
 // ============================================================================
 // DK-10 两段式提交（aiLiquify → 用户勾选 → aiCommit）——铁律：AI 不得静默写入
 // ============================================================================
@@ -51,15 +50,15 @@ use aurora_ai::liquify::{ai_commit, parse_proposal, LiquifyProposal, ProposalSta
 
 /// aiLiquify：解析 AI 提案 JSON → Draft 提案（只写 AI 会话域 `liq:` 键）。
 #[tauri::command]
-pub async fn cmd_ai_liquify_proposal(
-    source: String,
-    raw_json: String,
-) -> Result<String, String> {
+pub async fn cmd_ai_liquify_proposal(source: String, raw_json: String) -> Result<String, String> {
     let core = crate::get_core()?;
     let proposal = parse_proposal(&source, &raw_json).map_err(|e| e.to_string())?;
     let key = format!("liq:proposal:{}", proposal.id);
     let bytes = serde_json::to_vec(&proposal).map_err(|e| e.to_string())?;
-    core.kv_store.put(&key, bytes).await.map_err(|e| e.to_string())?;
+    core.kv_store
+        .put(&key, bytes)
+        .await
+        .map_err(|e| e.to_string())?;
     serde_json::to_string(&proposal).map_err(|e| e.to_string())
 }
 
@@ -131,7 +130,11 @@ pub async fn cmd_ai_commit_liquify(
     proposal.results = committed.results.clone();
     proposal.status = committed.status.clone();
     let out = serde_json::to_string(&proposal).map_err(|e| e.to_string())?;
-    core.kv_store.put(&key, serde_json::to_vec(&proposal).map_err(|e| e.to_string())?)
+    core.kv_store
+        .put(
+            &key,
+            serde_json::to_vec(&proposal).map_err(|e| e.to_string())?,
+        )
         .await
         .map_err(|e| e.to_string())?;
     Ok(out)
@@ -152,7 +155,10 @@ pub async fn cmd_ai_reject_liquify_proposal(proposal_id: String) -> Result<(), S
         serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     proposal.status = ProposalStatus::Rejected;
     core.kv_store
-        .put(&key, serde_json::to_vec(&proposal).map_err(|e| e.to_string())?)
+        .put(
+            &key,
+            serde_json::to_vec(&proposal).map_err(|e| e.to_string())?,
+        )
         .await
         .map_err(|e| e.to_string())
 }
