@@ -207,6 +207,14 @@ impl TaskProjection {
             .map_err(|e| e.to_string())
     }
 
+    /// 读取任务的依赖边（前置列表；无边返回空）。
+    pub async fn get_dependencies(&self, task_id: &str) -> Vec<String> {
+        match self.kv.get(&format!("{DEP_KEY_PREFIX}{task_id}")).await {
+            Ok(Some(bytes)) => serde_json::from_slice::<Vec<String>>(&bytes).unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
     /// blocked 派生集合：any 前置 status 非终态（done/cancelled）→ blocked。
     pub async fn blocked_ids(&self) -> std::collections::HashSet<String> {
         let graph = Self::load_dep_graph(&self.kv).await;
@@ -476,6 +484,15 @@ mod tests {
         // 移除依赖 → 无边
         assert!(proj.remove_dependency("t-b", "t-a").await.is_ok());
         assert!(proj.blocked_ids().await.is_empty());
+
+        // S3：get_dependencies 读取往返
+        assert!(proj.get_dependencies("t-b").await.is_empty(), "移除后无边");
+        assert!(proj.set_dependency("t-b", "t-c").await.is_ok());
+        assert_eq!(proj.get_dependencies("t-b").await, vec!["t-c".to_string()]);
+        assert!(
+            proj.get_dependencies("t-nonexistent").await.is_empty(),
+            "无边任务空列表"
+        );
     }
 
     fn row(id: &str, note: &str, status: &str, due: Option<i64>) -> TaskViewRow {

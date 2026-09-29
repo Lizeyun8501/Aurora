@@ -114,6 +114,7 @@ pub fn run() {
             cmd_remove_task_dependency,
             cmd_blocked_task_ids,
             cmd_today_task_rows,
+            cmd_get_task_dependencies,
             cmd_get_backlinks,
             cmd_due_review_cards,
             cmd_review_card,
@@ -459,6 +460,13 @@ async fn cmd_blocked_task_ids() -> Result<Vec<String>, String> {
         .collect::<Vec<_>>();
     ids.sort();
     Ok(ids)
+}
+
+/// 读取任务依赖边（前置列表）。
+#[tauri::command]
+async fn cmd_get_task_dependencies(task_id: String) -> Result<Vec<String>, String> {
+    let core = get_core()?;
+    Ok(task_proj(&core)?.get_dependencies(&task_id).await)
 }
 
 /// 今日任务行 + blocked 标记（TodayView 列表渲染数据面）。

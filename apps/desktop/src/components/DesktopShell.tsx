@@ -205,12 +205,139 @@ const MOCK_SNAPSHOTS: Record<string, string> = {};
 
 const SIDEBAR_W = 248;
 
-/** DK-21 S2：今日任务列表 + blocked 徽章（派生态——前置非终态即阻塞；blocked 前置排序）。 */
+const depBtn = {
+  background: tokens.color.bgElevated,
+  color: tokens.color.textPrimary,
+  border: '1px solid rgba(255,255,255,0.12)',
+  borderRadius: tokens.radius.md,
+  padding: '2px 10px',
+  fontSize: tokens.typography.caption.size,
+  cursor: 'pointer',
+  minHeight: 28,
+} as const;
+
+/** DK-21 S3：依赖编辑区——展示/添加/移除前置（成环拒绝消息直显）。 */
+function DepEditor({
+  invoke,
+  taskId,
+  candidates,
+  onDone,
+}: {
+  invoke: InvokeFn;
+  taskId: string;
+  candidates: Array<{ task_id: string; title: string }>;
+  onDone: () => void;
+}): React.ReactElement {
+  const [deps, setDeps] = useState<string[]>([]);
+  const [pick, setPick] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setDeps((await invoke('cmd_get_task_dependencies', { taskId })) as string[]);
+    } catch {
+      setDeps([]);
+    }
+  }, [invoke, taskId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const add = async () => {
+    if (!pick) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke('cmd_set_task_dependency', { taskId, dependsOn: pick });
+      setPick('');
+      await load();
+      onDone();
+    } catch (e) {
+      setError(String(e));
+    }
+    setBusy(false);
+  };
+
+  const remove = async (dep: string) => {
+    setBusy(true);
+    try {
+      await invoke('cmd_remove_task_dependency', { taskId, dependsOn: dep });
+      await load();
+      onDone();
+    } catch (e) {
+      setError(String(e));
+    }
+    setBusy(false);
+  };
+
+  const titleOf = (id: string) => candidates.find((c) => c.task_id === id)?.title ?? id;
+  const available = candidates.filter((c) => c.task_id !== taskId && !deps.includes(c.task_id));
+
+  return (
+    <div
+      style={{
+        margin: `${tokens.spacing.xs}px 0 0 ${tokens.spacing.lg}px`,
+        padding: tokens.spacing.sm,
+        background: 'rgba(255,255,255,0.03)',
+        borderRadius: tokens.radius.md,
+        fontSize: tokens.typography.caption.size,
+      }}
+    >
+      <div style={{ color: tokens.color.textSecondary, marginBottom: tokens.spacing.xs }}>
+        前置依赖（全部完成前本任务 ⛔）
+      </div>
+      {deps.length === 0 ? (
+        <div style={{ color: tokens.color.textSecondary }}>无前置</div>
+      ) : (
+        deps.map((d) => (
+          <div key={d} style={{ display: 'flex', alignItems: 'center', gap: tokens.spacing.sm }}>
+            <span>↳ {titleOf(d)}</span>
+            <button style={depBtn} disabled={busy} onClick={() => void remove(d)}>
+              移除
+            </button>
+          </div>
+        ))
+      )}
+      {available.length > 0 && (
+        <div style={{ display: 'flex', gap: tokens.spacing.sm, marginTop: tokens.spacing.xs }}>
+          <select
+            value={pick}
+            onChange={(e) => setPick(e.target.value)}
+            style={{
+              background: tokens.color.bgElevated,
+              color: tokens.color.textPrimary,
+              border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: tokens.radius.md,
+              padding: '4px 8px',
+              fontSize: tokens.typography.caption.size,
+            }}
+          >
+            <option value="">添加前置…</option>
+            {available.map((c) => (
+              <option key={c.task_id} value={c.task_id}>
+                {c.title}
+              </option>
+            ))}
+          </select>
+          <button style={depBtn} disabled={busy || !pick} onClick={() => void add()}>
+            添加
+          </button>
+        </div>
+      )}
+      {error && <div style={{ color: tokens.color.danger, marginTop: tokens.spacing.xs }}>{error}</div>}
+    </div>
+  );
+}
+
+/** DK-21 S2/S3：今日任务列表 + blocked 徽章（派生态——前置非终态即阻塞；blocked 前置排序；行展开依赖编辑）。 */
 function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElement {
   const [rows, setRows] = useState<
     Array<{ task_id: string; title: string; status: string; blocked: boolean }>
   >([]);
   const [loaded, setLoaded] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!invoke) return;
@@ -248,34 +375,48 @@ function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElem
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
           {rows.map((r) => (
-            <div
-              key={r.task_id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: tokens.spacing.sm,
-                background: tokens.color.bgSurface,
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: tokens.radius.md,
-                padding: `${tokens.spacing.xs + 2}px ${tokens.spacing.sm}px`,
-              }}
-            >
-              <span
+            <div key={r.task_id}>
+              <div
+                onClick={() => setExpanded(expanded === r.task_id ? null : r.task_id)}
                 style={{
-                  fontSize: tokens.typography.caption.size,
-                  padding: '1px 8px',
-                  borderRadius: 999,
-                  background: r.blocked
-                    ? 'rgba(229,72,77,0.18)'
-                    : 'rgba(88,166,255,0.14)',
-                  color: r.blocked ? tokens.color.danger : tokens.color.primaryBright,
-                  whiteSpace: 'nowrap',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: tokens.spacing.sm,
+                  background: tokens.color.bgSurface,
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: tokens.radius.md,
+                  padding: `${tokens.spacing.xs + 2}px ${tokens.spacing.sm}px`,
+                  cursor: 'pointer',
                 }}
-                title={r.blocked ? '前置任务未完成——阻塞中' : r.status}
               >
-                {r.blocked ? '⛔ blocked' : r.status}
-              </span>
-              <span style={{ fontSize: tokens.typography.body.size }}>{r.title}</span>
+                <span
+                  style={{
+                    fontSize: tokens.typography.caption.size,
+                    padding: '1px 8px',
+                    borderRadius: 999,
+                    background: r.blocked
+                      ? 'rgba(229,72,77,0.18)'
+                      : 'rgba(88,166,255,0.14)',
+                    color: r.blocked ? tokens.color.danger : tokens.color.primaryBright,
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={r.blocked ? '前置任务未完成——阻塞中' : r.status}
+                >
+                  {r.blocked ? '⛔ blocked' : r.status}
+                </span>
+                <span style={{ fontSize: tokens.typography.body.size, flex: 1 }}>{r.title}</span>
+                <span style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size }}>
+                  {expanded === r.task_id ? '收起 ▲' : '依赖 ▼'}
+                </span>
+              </div>
+              {expanded === r.task_id && invoke && (
+                <DepEditor
+                  invoke={invoke}
+                  taskId={r.task_id}
+                  candidates={rows.map((x) => ({ task_id: x.task_id, title: x.title }))}
+                  onDone={() => void refresh()}
+                />
+              )}
             </div>
           ))}
         </div>
