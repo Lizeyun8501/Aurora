@@ -79,6 +79,30 @@ export default function TrashView({ invoke }: { invoke: InvokeFn | null }): Reac
       <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size }}>
         回收站
       </h1>
+      {invoke && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacing.sm, marginBottom: tokens.spacing.sm }}>
+          <button
+            style={btn}
+            disabled={busyId !== null}
+            onClick={async () => {
+              setBusyId('__purge__');
+              try {
+                const out = (await invoke('cmd_purge_expired_trash', { days: 30 })) as string[];
+                alert(`已清理 ${out.length} 条超期回收站项（30 天前）`);
+                await refresh();
+              } catch (e) {
+                setError(String(e));
+              }
+              setBusyId(null);
+            }}
+          >
+            清理 30 天前过期项
+          </button>
+          <span style={{ fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+            DK-17：超期标记全 purge（物理删，不可逆）
+          </span>
+        </div>
+      )}
       {!invoke ? (
         <p style={{ color: tokens.color.textSecondary }} role="status">
           回收站需要桌面端模式（tauri）。

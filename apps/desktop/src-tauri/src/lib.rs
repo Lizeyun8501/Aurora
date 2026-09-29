@@ -107,6 +107,7 @@ pub fn run() {
             cmd_list_tree,
             cmd_restore_note,
             cmd_purge_note,
+            cmd_purge_expired_trash,
             cmd_search_notes,
             cmd_app_status,
             cmd_today_view_stats,
@@ -882,6 +883,53 @@ async fn cmd_purge_note(note_id: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     info!(note_id = %note_id, "note purged via desktop command");
     Ok(())
+}
+
+/// DK-17 遗留补全：清理超期回收站（days 天前的标记全 purge——TrashView「清理过期」按钮）。
+#[tauri::command]
+async fn cmd_purge_expired_trash(days: i64) -> Result<Vec<String>, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    let purged = aurora_core::write_path::purge_expired(&ctx, days)
+        .await
+        .map_err(|e| e.to_string())?;
+    core.catch_up_projections()
+        .await
+        .map_err(|e| e.to_string())?;
+    info!(
+        days,
+        count = purged.len(),
+        "trash purge_expired via desktop command"
+    );
+    Ok(purged)
 }
 
 /// 搜索笔记（Tantivy 全文检索）。
