@@ -386,6 +386,7 @@ dependencies = [
  "bytes",
  "chrono",
  "futures-util",
+ "hmac",
  "mockito",
  "parking_lot 0.12.5",
  "reqwest 0.11.27",
