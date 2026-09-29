@@ -26,6 +26,7 @@ pub mod embed;
 pub mod factory;
 pub mod liquify; // DK-10 两段式提交（aiLiquify→用户勾选→aiCommit；AI 不得静默写入）
 pub mod mcp;
+pub mod mcp_auth; // DK-10 MCP 网关鉴权分级（stdio/回环信任，对外 HMAC/OAuth fail-closed）
 pub mod mock_provider;
 pub mod ollama;
 pub mod orchestration;

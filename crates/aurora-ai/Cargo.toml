@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 sha2 = { workspace = true }
+hmac = { workspace = true } # DK-10 MCP 网关 HMAC-SHA256 请求验签
 # Core traits (AgentProtocol, Error)
 aurora-core = { path = "../aurora-core" }
 
