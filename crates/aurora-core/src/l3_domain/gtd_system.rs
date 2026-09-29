@@ -34,6 +34,12 @@ pub enum TaskStatus {
 }
 
 impl TaskStatus {
+    /// DK-21 S1：终态判定（Done/Archived）——blocked 派生规则（Alpha 裁决）：
+    /// 非终态前置一律阻塞；归档视为关闭不再阻塞下游。
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, TaskStatus::Done | TaskStatus::Archived)
+    }
+
     /// 获取可流转的下一状态
     pub fn next_states(&self) -> Vec<TaskStatus> {
         match self {
@@ -85,6 +91,10 @@ pub struct Task {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub energy_level: Option<EnergyLevel>,
+    /// DK-21 S1：前置任务 id 列表（依赖方向 task → depends_on）。
+    /// `#[serde(default)]` 保证旧 JSON（无此字段）反序列化向后兼容。
+    #[serde(default)]
+    pub depends_on: Vec<String>,
 }
 
 /// 精力水平
@@ -116,6 +126,7 @@ impl Task {
             created_at: now,
             updated_at: now,
             energy_level: None,
+            depends_on: Vec::new(),
         }
     }
 
@@ -508,6 +519,95 @@ impl GtdEngine {
         self.list_tasks_by_status(TaskStatus::Inbox)
     }
 
+    // === DK-21 S1：任务依赖 ===
+    //
+    // blocked 联动规则（Alpha 预裁决 2026-09-29，落码即文档）：
+    // 1. **派生态不落存储**——`is_blocked` 实时计算（any 前置 status 非终态），
+    //    永不落盘：避免 blocked 标志与前置状态双写不一致（C03 fail-closed 同构思路）；
+    // 2. **软联动不硬拒绝**——blocked 任务仍可手动 `transition_to`（硬拒绝卡死工作流；
+    //    UI 展示 blocked 徽章提示即可。GTD 哲学：系统提示、人来决策）；
+    // 3. 完成前置 → blocked 派生自动解除（无需事件写状态）。
+
+    /// 添加依赖：`task_id` 依赖 `depends_on`（depends_on 完成前 task 阻塞）。
+    /// 自依赖 / 任务不存在 / 成环（环路径可读）一律拒绝。
+    pub fn add_dependency(&self, task_id: &str, depends_on: &str) -> Result<(), String> {
+        if task_id == depends_on {
+            return Err(format!("自依赖拒绝：{task_id} 不能依赖自身"));
+        }
+        let tasks = self.tasks.read();
+        if !tasks.contains_key(task_id) {
+            return Err(format!("任务不存在：{task_id}"));
+        }
+        if !tasks.contains_key(depends_on) {
+            return Err(format!("任务不存在：{depends_on}"));
+        }
+        drop(tasks);
+        // 已存在则幂等成功（重复添加视为成功，不重复写）
+        {
+            let t = self.tasks.read();
+            if let Some(task) = t.get(task_id) {
+                if task.depends_on.iter().any(|d| d == depends_on) {
+                    return Ok(());
+                }
+            }
+        }
+        // 环检测（DK-06 纯函数首次接线）：从 depends_on 出发能否到达 task_id
+        let graph = self.dependency_graph();
+        if let Some(cycle) = super::detect_dependency_cycle(&graph, task_id, depends_on) {
+            return Err(format!("依赖成环拒绝：{}", cycle.join(" → ")));
+        }
+        let mut tasks = self.tasks.write();
+        if let Some(task) = tasks.get_mut(task_id) {
+            task.depends_on.push(depends_on.to_string());
+            task.updated_at = chrono::Utc::now();
+        }
+        Ok(())
+    }
+
+    /// 移除依赖。不存在时幂等成功。
+    pub fn remove_dependency(&self, task_id: &str, depends_on: &str) {
+        let mut tasks = self.tasks.write();
+        if let Some(task) = tasks.get_mut(task_id) {
+            task.depends_on.retain(|d| d != depends_on);
+            task.updated_at = chrono::Utc::now();
+        }
+    }
+
+    /// 前置任务 id 列表。
+    pub fn get_dependencies(&self, task_id: &str) -> Vec<String> {
+        self.tasks
+            .read()
+            .get(task_id)
+            .map(|t| t.depends_on.clone())
+            .unwrap_or_default()
+    }
+
+    /// blocked 派生态：any 前置任务 status 非终态（Done/Cancelled）。
+    /// 实时计算不落存储（见模块裁决注释）。
+    pub fn is_blocked(&self, task_id: &str) -> bool {
+        let tasks = self.tasks.read();
+        self.get_dependencies(task_id)
+            .iter()
+            .any(|dep| tasks.get(dep).is_some_and(|t| !t.status.is_terminal()))
+    }
+
+    /// 全量 blocked 任务列表。
+    pub fn blocked_tasks(&self) -> Vec<Task> {
+        self.list_tasks()
+            .into_iter()
+            .filter(|t| self.is_blocked(&t.id))
+            .collect()
+    }
+
+    /// 依赖图快照（task_id → 前置列表），供环检测/可视化。
+    fn dependency_graph(&self) -> std::collections::HashMap<String, Vec<String>> {
+        self.tasks
+            .read()
+            .iter()
+            .map(|(id, t)| (id.clone(), t.depends_on.clone()))
+            .collect()
+    }
+
     /// 批量澄清收件箱任务
     pub fn batch_clarify(&self, task_ids: &[TaskId], new_status: TaskStatus) -> Vec<Task> {
         let mut result = Vec::new();
@@ -799,6 +899,63 @@ impl GtdEngine {
 
 #[cfg(test)]
 mod tests {
+    // === DK-21 S1：任务依赖与环检测 ===
+
+    /// 依赖 API 全链——自依赖/环拒绝+可读路径/blocked 派生解除/幂等/移除。
+    #[test]
+    fn dk21_dependency_lifecycle() {
+        let engine = GtdEngine::new();
+        let a = engine.create_task(Task::new("A"));
+        let b = engine.create_task(Task::new("B"));
+        let _c = engine.create_task(Task::new("C"));
+
+        // 自依赖拒绝
+        assert!(engine.add_dependency(&a.id, &a.id).is_err());
+        // 正常添加：B 依赖 A（B.depends_on = [A]）
+        assert!(engine.add_dependency(&b.id, &a.id).is_ok());
+        assert_eq!(engine.get_dependencies(&b.id), vec![a.id.clone()]);
+        // 重复添加幂等
+        assert!(engine.add_dependency(&b.id, &a.id).is_ok());
+        assert_eq!(engine.get_dependencies(&b.id).len(), 1);
+
+        // blocked 派生：B 被 A 阻塞（A 非终态）
+        assert!(!engine.is_blocked(&a.id));
+        assert!(engine.is_blocked(&b.id));
+        assert_eq!(engine.blocked_tasks().len(), 1);
+
+        // 前置完成 → 解除阻塞（派生态实时计算，不落存储）
+        let mut a2 = a.clone();
+        a2.status = TaskStatus::Done;
+        engine.update_task(a2);
+        assert!(!engine.is_blocked(&b.id), "前置 Done → blocked 派生解除");
+
+        // 直接环拒绝：A 拟依赖 B（B 已依赖 A）→ 成环 + 路径可读
+        let err = engine.add_dependency(&a.id, &b.id).unwrap_err();
+        assert!(err.contains('→'), "环路径可读: {err}");
+
+        // 三方环：D 依赖 E 已存在；E 拟依赖 D → 成环拒绝
+        let d = engine.create_task(Task::new("D"));
+        let e = engine.create_task(Task::new("E"));
+        assert!(engine.add_dependency(&e.id, &d.id).is_ok());
+        let err = engine.add_dependency(&d.id, &e.id).unwrap_err();
+        assert!(err.contains("成环"), "三方环拒绝: {err}");
+
+        // 移除依赖
+        engine.remove_dependency(&b.id, &a.id);
+        assert!(engine.get_dependencies(&b.id).is_empty());
+    }
+
+    /// serde 向后兼容——旧 JSON 无 depends_on 字段反序列化为空 Vec。
+    #[test]
+    fn dk21_depends_on_serde_backward_compat() {
+        let legacy = r#"{"id":"t1","title":"legacy","status":"inbox","priority":"medium","tags":[],"created_at":"2026-09-29T00:00:00Z","updated_at":"2026-09-29T00:00:00Z"}"#;
+        let t: Task = serde_json::from_str(legacy).unwrap();
+        assert!(t.depends_on.is_empty(), "旧数据反序列化 → 空 Vec");
+        let with_dep = r#"{"id":"t1","title":"x","status":"inbox","priority":"medium","tags":[],"created_at":"2026-09-29T00:00:00Z","updated_at":"2026-09-29T00:00:00Z","depends_on":["t0"]}"#;
+        let t2: Task = serde_json::from_str(with_dep).unwrap();
+        assert_eq!(t2.depends_on, vec!["t0"]);
+    }
+
     use super::*;
 
     #[test]
