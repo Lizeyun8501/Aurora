@@ -21,6 +21,7 @@ import CommandPalette, { type PaletteItem } from './CommandPalette';
 import ImportWizard from './ImportWizard';
 import CanvasView from './CanvasView';
 import TrashView from './TrashView';
+import LiquifyReview from './LiquifyReview';
 
 export interface InvokeFn {
   (cmd: string, args?: Record<string, unknown>): Promise<unknown>;
@@ -86,7 +87,7 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export type MainView = 'notes' | 'today' | 'canvas' | 'trash';
+export type MainView = 'notes' | 'today' | 'canvas' | 'trash' | 'liquify';
 
 /** browser-mock 演示数据 — 形状与内核 NoteSummary/NoteContent 对齐 */
 const MOCK_NOTES: NoteSummary[] = [
@@ -278,7 +279,7 @@ function Sidebar(props: {
         ⤓ 导入笔记
       </button>
       <nav style={{ display: 'flex', gap: tokens.spacing.xs }} aria-label="主导航">
-        {(['notes', 'today', 'canvas', 'trash'] as const).map((v) => (
+        {(['notes', 'today', 'canvas', 'trash', 'liquify'] as const).map((v) => (
           <button
             key={v}
             onClick={() => onView(v)}
@@ -295,7 +296,7 @@ function Sidebar(props: {
               minHeight: 36,
             }}
           >
-            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : '今日视图'}
+            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : v === 'liquify' ? 'AI 提案' : '今日视图'}
           </button>
         ))}
       </nav>
@@ -991,6 +992,9 @@ export default function DesktopShell() {
         ) : view === 'trash' ? (
           /* DK-02 S1 回收站视图（Alpha UI 切片；core 面 Bravo f175692） */
           <TrashView invoke={invoke} />
+        ) : view === 'liquify' ? (
+          /* DK-10 两段式提交审查视图（铁律：AI 不得静默写入——用户逐 op 勾选） */
+          <LiquifyReview invoke={invoke} />
         ) : view === 'today' ? (
           <main style={{ flex: 1, padding: tokens.spacing.lg }}>
             <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size }}>
