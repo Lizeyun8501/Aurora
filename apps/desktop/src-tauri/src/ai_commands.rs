@@ -56,7 +56,7 @@ pub async fn cmd_ai_liquify_proposal(source: String, raw_json: String) -> Result
     let key = format!("liq:proposal:{}", proposal.id);
     let bytes = serde_json::to_vec(&proposal).map_err(|e| e.to_string())?;
     core.kv_store
-        .put(&key, bytes)
+        .set(&key, bytes)
         .await
         .map_err(|e| e.to_string())?;
     serde_json::to_string(&proposal).map_err(|e| e.to_string())
@@ -131,7 +131,7 @@ pub async fn cmd_ai_commit_liquify(
     proposal.status = committed.status.clone();
     let out = serde_json::to_string(&proposal).map_err(|e| e.to_string())?;
     core.kv_store
-        .put(
+        .set(
             &key,
             serde_json::to_vec(&proposal).map_err(|e| e.to_string())?,
         )
@@ -155,7 +155,7 @@ pub async fn cmd_ai_reject_liquify_proposal(proposal_id: String) -> Result<(), S
         serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     proposal.status = ProposalStatus::Rejected;
     core.kv_store
-        .put(
+        .set(
             &key,
             serde_json::to_vec(&proposal).map_err(|e| e.to_string())?,
         )
