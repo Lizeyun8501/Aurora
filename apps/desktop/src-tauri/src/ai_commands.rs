@@ -9,6 +9,7 @@ use aurora_ai::policy::WorkspacePolicy;
 use aurora_bootstrap::AI_DEFAULT_WORKSPACE_ID;
 
 use crate::sync_commands::get_booted;
+use std::sync::Arc;
 
 fn ws_or_default(workspace_id: Option<String>) -> String {
     workspace_id.unwrap_or_else(|| AI_DEFAULT_WORKSPACE_ID.into())
@@ -174,7 +175,6 @@ pub async fn cmd_ai_reject_liquify_proposal(proposal_id: String) -> Result<(), S
 use aurora_ai::agent_session::{AgentSession, AGENT_DEFAULT_DEADLINE_SECS};
 use aurora_ai::sandbox::{AuditAction, AuditDecision, AuditEntry, AuditLog};
 use std::collections::HashMap;
-use std::time::Instant;
 
 static AGENT_AUDIT: std::sync::OnceLock<Arc<AuditLog>> = std::sync::OnceLock::new();
 static AGENT_SESSIONS: std::sync::OnceLock<Mutex<HashMap<String, Arc<AgentSession>>>> =
