@@ -174,7 +174,6 @@ pub async fn cmd_ai_reject_liquify_proposal(proposal_id: String) -> Result<(), S
 use aurora_ai::agent_session::{AgentSession, AGENT_DEFAULT_DEADLINE_SECS};
 use aurora_ai::sandbox::{AuditAction, AuditDecision, AuditEntry, AuditLog};
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 static AGENT_AUDIT: std::sync::OnceLock<Arc<AuditLog>> = std::sync::OnceLock::new();
