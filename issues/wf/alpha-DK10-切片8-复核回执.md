@@ -49,3 +49,15 @@
 - 前端轮询 5s + setInterval cleanup 纪律（useEffect 返回清理函数）。
 
 — Alpha 2026-09-29 晚
+
+
+---
+
+## 终态补记（2026-09-29 20:55）
+
+**CI e6783a2 desktop-check ❌**——`use std::sync::atomic::AtomicBool;` 未用 import
+（desktop-check 命令带 -D warnings 升级 error——注解 raw-tail 定位 ai_commands.rs:177）。
+**修复 `b26137f`**（单行删除）已推——CI 排队中（下会话首查终态）。
+
+**教训（第三例同型）**：desktop Rust 面新增 `use` 时警惕 -D warnings（本地无 GTK
+编不了——unused import 只有 CI 能抓）；**推前自检：新增 import 是否全部使用**。
