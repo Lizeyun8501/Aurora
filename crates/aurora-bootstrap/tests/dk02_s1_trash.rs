@@ -488,7 +488,7 @@ async fn tree_assembly_sorted() {
     let ctx = ctx_for(&booted, &dir.path().join("aurora.db"));
 
     let f1 = create_folder(&ctx, None, "甲").await.unwrap().aggregate_id;
-    let f2 = create_folder(&ctx, None, "乙").await.unwrap().aggregate_id;
+    let _f2 = create_folder(&ctx, None, "乙").await.unwrap().aggregate_id;
     // f1 下两个笔记 sort_order 逆序创建
     move_node(
         &ctx,
@@ -520,7 +520,7 @@ async fn tree_assembly_sorted() {
     );
     let roots: Vec<&TreeNode> = tree.iter().filter(|t| t.parent_id.is_none()).collect();
     assert!(roots.len() >= 3, "根级含 2 文件夹+根下笔记（trash 过滤后）");
-    assert!(tree.iter().all(|t| t.title != ""), "无空标题节点");
+    assert!(tree.iter().all(|t| !t.title.is_empty()), "无空标题节点");
 }
 
 /// DoD1 旧数据兼容：无新字段 NoteRecord JSON 反序列化 default。

@@ -840,6 +840,12 @@ async fn resolve_origin_parent(
             let Some(id) = k.strip_prefix("note:") else {
                 continue;
             };
+            // DK-02 S2 复核补丁（Alpha 2026-09-29）：回收站中的 Folder 不作为
+            // 还原锚点——与 restore_note 主链路「父存校验含 trash 判定」同构
+            // （软删物理键仍在，漏判会把孤儿挂回已删父，违反挂根兜底语义）。
+            if is_trashed(core, id).await {
+                continue;
+            }
             if let Some(rec) = decode_record(&bytes, unseal) {
                 if rec.kind == NoteKind::Folder && rec.title == segment && rec.parent_id == current
                 {
