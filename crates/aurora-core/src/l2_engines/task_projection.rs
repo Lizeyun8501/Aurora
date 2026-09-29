@@ -29,6 +29,36 @@ use crate::event_bus::layered::AppEvent;
 /// GTD 状态常量（与 NoteTask 保持一致; 内联解除 loro-crdt feature 依赖）。
 const STATUS_INBOX: &str = "inbox";
 const STATUS_DONE: &str = "done";
+
+/// DK-21 S2：依赖边 KV 前缀（task → 前置列表 JSON）。
+const DEP_KEY_PREFIX: &str = "gtd:dep:";
+
+/// DK-21 S2：依赖图 DFS 成环判定（与 l3_domain::detect_dependency_cycle 同构
+/// 内联——l2 不反向依赖 l3，投影链值域/存储独立）。
+fn dfs_dep(
+    graph: &std::collections::HashMap<String, Vec<String>>,
+    node: &str,
+    goal: &str,
+    path: &mut Vec<String>,
+    visited: &mut std::collections::HashSet<String>,
+) -> bool {
+    if node == goal {
+        return true;
+    }
+    if !visited.insert(node.to_string()) {
+        return false;
+    }
+    if let Some(nexts) = graph.get(node) {
+        for next in nexts {
+            path.push(next.clone());
+            if dfs_dep(graph, next, goal, path, visited) {
+                return true;
+            }
+            path.pop();
+        }
+    }
+    false
+}
 use crate::event_bus::projection::{Projection, ProjectionHealth};
 use crate::traits::kv_store::KVStore;
 
@@ -127,6 +157,82 @@ impl TaskProjection {
                 actual_minutes: 0,
             },
         );
+    }
+
+    // === DK-21 S2：任务依赖（blocked 派生）===
+    //
+    // 裁决（与 l3_domain::gtd_system 内存引擎同构、值域独立——投影链 status
+    // 为字符串值域，终态 = "done"/"cancelled"）：
+    // - 依赖边存 KV `gtd:dep:{task_id}` → JSON Vec<String>（前置列表）；
+    // - blocked 为**派生态不落存储**：any 前置 status 非终态 → blocked（实时计算）；
+    // - 成环拒绝（可读路径 `A → B → C → A`）——DFS 内联（l2 不反向依赖 l3，
+    //   与 l3_domain::detect_dependency_cycle 同构独立）。
+
+    /// 写依赖边：`task_id` 依赖 `depends_on`。自依赖/成环拒绝（可读路径）。
+    pub async fn set_dependency(&self, task_id: &str, depends_on: &str) -> Result<(), String> {
+        if task_id == depends_on {
+            return Err(format!("自依赖拒绝：{task_id} 不能依赖自身"));
+        }
+        let graph = Self::load_dep_graph(&self.kv).await;
+        // 成环判定：从 depends_on 沿依赖边能否到达 task_id
+        let mut path = vec![depends_on.to_string()];
+        let mut visited = std::collections::HashSet::new();
+        if dfs_dep(&graph, depends_on, task_id, &mut path, &mut visited) {
+            return Err(format!("依赖成环拒绝：{}", path.join(" → ")));
+        }
+        let mut deps = graph.get(task_id).cloned().unwrap_or_default();
+        if !deps.iter().any(|d| d == depends_on) {
+            deps.push(depends_on.to_string());
+        }
+        let bytes = serde_json::to_vec(&deps).map_err(|e| format!("serialize deps failed: {e}"))?;
+        self.kv
+            .set(&format!("{DEP_KEY_PREFIX}{task_id}"), &bytes)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// 移除依赖边（不存在幂等成功）。
+    pub async fn remove_dependency(&self, task_id: &str, depends_on: &str) -> Result<(), String> {
+        let graph = Self::load_dep_graph(&self.kv).await;
+        let mut deps = graph.get(task_id).cloned().unwrap_or_default();
+        deps.retain(|d| d != depends_on);
+        if deps.is_empty() {
+            let _ = self.kv.delete(&format!("{DEP_KEY_PREFIX}{task_id}")).await;
+            return Ok(());
+        }
+        let bytes = serde_json::to_vec(&deps).map_err(|e| format!("serialize deps failed: {e}"))?;
+        self.kv
+            .set(&format!("{DEP_KEY_PREFIX}{task_id}"), &bytes)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// blocked 派生集合：any 前置 status 非终态（done/cancelled）→ blocked。
+    pub async fn blocked_ids(&self) -> std::collections::HashSet<String> {
+        let graph = Self::load_dep_graph(&self.kv).await;
+        let rows = self.rows.read().unwrap();
+        let mut blocked = std::collections::HashSet::new();
+        for (id, deps) in &graph {
+            if deps.iter().any(|d| {
+                rows.get(d)
+                    .is_some_and(|r| r.status != STATUS_DONE && r.status != "cancelled")
+            }) {
+                blocked.insert(id.clone());
+            }
+        }
+        blocked
+    }
+
+    async fn load_dep_graph(
+        kv: &std::sync::Arc<dyn KVStore>,
+    ) -> std::collections::HashMap<String, Vec<String>> {
+        let mut graph = std::collections::HashMap::new();
+        for (k, bytes) in kv.scan_prefix(DEP_KEY_PREFIX).await.unwrap_or_default() {
+            if let Ok(deps) = serde_json::from_slice::<Vec<String>>(&bytes) {
+                graph.insert(k[DEP_KEY_PREFIX.len()..].to_string(), deps);
+            }
+        }
+        graph
     }
 
     /// 时间追踪 — 实际耗时累加（DK-06: 由番茄钟/计时会话驱动,
@@ -332,6 +438,44 @@ mod tests {
         let kv = Arc::new(MemoryKVStore::default());
         let src = Box::new(move || source_rows.clone());
         TaskProjection::new(kv, src)
+    }
+
+    /// DK-21 S2：依赖 API 全链——自依赖/成环拒绝可读路径/blocked 派生解除/移除幂等。
+    #[tokio::test]
+    async fn dk21_dependency_blocked_derive() {
+        let kv = Arc::new(MemoryKVStore::default());
+        let src = Box::new(Vec::<TaskViewRow>::new) as TaskSource;
+        let proj = TaskProjection::new(kv, src);
+
+        // seed 三任务：A 非终态 / B 依赖 A / C 无依赖
+        proj.seed_row("t-a", "n1", "写稿", "next", "high", None);
+        proj.seed_row("t-b", "n1", "配图", "inbox", "medium", None);
+        proj.seed_row("t-c", "n2", "无关", "next", "low", None);
+
+        // 自依赖拒绝
+        assert!(proj.set_dependency("t-a", "t-a").await.is_err());
+        // 正常：B 依赖 A
+        assert!(proj.set_dependency("t-b", "t-a").await.is_ok());
+        // 重复幂等
+        assert!(proj.set_dependency("t-b", "t-a").await.is_ok());
+        // blocked 派生：B 被 A 阻塞（A 非终态），C 不阻塞
+        let blocked = proj.blocked_ids().await;
+        assert!(blocked.contains("t-b"));
+        assert!(!blocked.contains("t-c"));
+        assert!(!blocked.contains("t-a"));
+
+        // 直接环：A 依赖 B（B 已依赖 A）→ 成环+路径可读
+        let err = proj.set_dependency("t-a", "t-b").await.unwrap_err();
+        assert!(err.contains('→'), "环路径可读: {err}");
+
+        // 前置完成 → 解除（实时计算不落存储）
+        proj.seed_row("t-a", "n1", "写稿", "done", "high", None);
+        let blocked = proj.blocked_ids().await;
+        assert!(!blocked.contains("t-b"), "前置 done → blocked 解除");
+
+        // 移除依赖 → 无边
+        assert!(proj.remove_dependency("t-b", "t-a").await.is_ok());
+        assert!(proj.blocked_ids().await.is_empty());
     }
 
     fn row(id: &str, note: &str, status: &str, due: Option<i64>) -> TaskViewRow {

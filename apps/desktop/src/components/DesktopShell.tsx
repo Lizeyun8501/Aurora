@@ -205,6 +205,85 @@ const MOCK_SNAPSHOTS: Record<string, string> = {};
 
 const SIDEBAR_W = 248;
 
+/** DK-21 S2：今日任务列表 + blocked 徽章（派生态——前置非终态即阻塞；blocked 前置排序）。 */
+function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElement {
+  const [rows, setRows] = useState<
+    Array<{ task_id: string; title: string; status: string; blocked: boolean }>
+  >([]);
+  const [loaded, setLoaded] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (!invoke) return;
+    try {
+      const out = (await invoke('cmd_today_task_rows')) as Array<{
+        task_id: string;
+        title: string;
+        status: string;
+        blocked: boolean;
+      }>;
+      setRows(out);
+    } catch {
+      /* 投影未注册等场景静默（列表为空态） */
+    }
+    setLoaded(true);
+  }, [invoke]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return (
+    <div style={{ marginTop: tokens.spacing.lg }}>
+      <h2 style={{ fontSize: tokens.typography.title.size, margin: `0 0 ${tokens.spacing.sm}px` }}>
+        任务
+      </h2>
+      {!invoke ? (
+        <p style={{ color: tokens.color.textSecondary }}>
+          browser-mock 模式——任务命令仅 tauri 模式可用
+        </p>
+      ) : rows.length === 0 ? (
+        <p style={{ color: tokens.color.textSecondary }}>
+          {loaded ? '今日无未完成任务' : '任务加载中…'}
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
+          {rows.map((r) => (
+            <div
+              key={r.task_id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: tokens.spacing.sm,
+                background: tokens.color.bgSurface,
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: tokens.radius.md,
+                padding: `${tokens.spacing.xs + 2}px ${tokens.spacing.sm}px`,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: tokens.typography.caption.size,
+                  padding: '1px 8px',
+                  borderRadius: 999,
+                  background: r.blocked
+                    ? 'rgba(229,72,77,0.18)'
+                    : 'rgba(88,166,255,0.14)',
+                  color: r.blocked ? tokens.color.danger : tokens.color.primaryBright,
+                  whiteSpace: 'nowrap',
+                }}
+                title={r.blocked ? '前置任务未完成——阻塞中' : r.status}
+              >
+                {r.blocked ? '⛔ blocked' : r.status}
+              </span>
+              <span style={{ fontSize: tokens.typography.body.size }}>{r.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Sidebar(props: {
   notes: NoteSummary[];
   selectedId: string | null;
@@ -1029,6 +1108,7 @@ export default function DesktopShell() {
             ) : (
               <p style={{ color: tokens.color.textSecondary }}>统计加载中…</p>
             )}
+            <TodayTaskRows invoke={invoke} />
           </main>
         ) : (
           <EditorPane

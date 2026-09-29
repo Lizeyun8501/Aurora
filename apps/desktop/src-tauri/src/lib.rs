@@ -110,6 +110,10 @@ pub fn run() {
             cmd_search_notes,
             cmd_app_status,
             cmd_today_view_stats,
+            cmd_set_task_dependency,
+            cmd_remove_task_dependency,
+            cmd_blocked_task_ids,
+            cmd_today_task_rows,
             cmd_get_backlinks,
             cmd_due_review_cards,
             cmd_review_card,
@@ -408,6 +412,84 @@ async fn cmd_today_view_stats() -> Result<serde_json::Value, String> {
         "done": done,
         "due_today": due_today,
     }))
+}
+
+// === DK-21 S2：任务依赖命令面（blocked 徽章数据源）===
+
+type ProjRef<'a> = &'a aurora_core::l2_engines::task_projection::TaskProjection;
+
+/// 从 AppCore 投影注册表取任务投影（借用绑定 core 局部 Arc，跨 await 安全）。
+fn task_proj<'a>(core: &'a std::sync::Arc<AppCore>) -> Result<ProjRef<'a>, String> {
+    core.projections()
+        .iter()
+        .find_map(|p| {
+            p.as_any().and_then(|a| {
+                a.downcast_ref::<aurora_core::l2_engines::task_projection::TaskProjection>()
+            })
+        })
+        .ok_or_else(|| "task projection not registered".into())
+}
+
+/// 设置依赖边（成环/自依赖拒绝——环路径可读返回 Err）。
+#[tauri::command]
+async fn cmd_set_task_dependency(task_id: String, depends_on: String) -> Result<(), String> {
+    let core = get_core()?;
+    task_proj(&core)?
+        .set_dependency(&task_id, &depends_on)
+        .await
+}
+
+/// 移除依赖边。
+#[tauri::command]
+async fn cmd_remove_task_dependency(task_id: String, depends_on: String) -> Result<(), String> {
+    let core = get_core()?;
+    task_proj(&core)?
+        .remove_dependency(&task_id, &depends_on)
+        .await
+}
+
+/// blocked 任务 id 列表（派生态实时计算——前置非终态即阻塞）。
+#[tauri::command]
+async fn cmd_blocked_task_ids() -> Result<Vec<String>, String> {
+    let core = get_core()?;
+    let mut ids = task_proj(&core)?
+        .blocked_ids()
+        .await
+        .into_iter()
+        .collect::<Vec<_>>();
+    ids.sort();
+    Ok(ids)
+}
+
+/// 今日任务行 + blocked 标记（TodayView 列表渲染数据面）。
+#[tauri::command]
+async fn cmd_today_task_rows() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let proj = task_proj(&core)?;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let blocked = proj.blocked_ids().await;
+    let mut rows = proj
+        .today(now_ms)
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "task_id": r.task_id,
+                "title": r.title,
+                "status": r.status,
+                "priority": r.priority,
+                "due_date": r.due_date,
+                "blocked": blocked.contains(&r.task_id),
+            })
+        })
+        .collect::<Vec<_>>();
+    // blocked 优先展示（阻塞任务前置——用户先处理依赖）
+    rows.sort_by(|a, b| {
+        let ba = a["blocked"].as_bool().unwrap_or(false);
+        let bb = b["blocked"].as_bool().unwrap_or(false);
+        bb.cmp(&ba)
+            .then(b["task_id"].as_str().cmp(&a["task_id"].as_str()))
+    });
+    Ok(rows)
 }
 
 /// 反向链接（移动端 get_backlinks 同源 — 双链投影 incoming + 标题解析）。
