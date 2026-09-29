@@ -60,3 +60,10 @@ Done 解除 / 移除。
 - 卡关闭条件：S2 UI 面 + CI 终态确认。
 
 — Alpha 2026-09-29 上午
+
+
+---
+
+## 终态补记（2026-09-29 12:25）
+
+**CI 5ea3054 五 job 全绿**（Rustfmt/desktop-check/Test(stable)/MSRV 1.91/Clippy——GitHub API 确认）——**DK-21 S1 core 面正式闭环**。S2（UI 面挂起项）排队。
