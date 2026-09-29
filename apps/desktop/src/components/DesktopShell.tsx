@@ -87,7 +87,7 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export type MainView = 'notes' | 'today' | 'canvas' | 'trash' | 'liquify';
+export type MainView = 'notes' | 'today' | 'canvas' | 'trash' | 'liquify' | 'agent';
 
 /** browser-mock 演示数据 — 形状与内核 NoteSummary/NoteContent 对齐 */
 const MOCK_NOTES: NoteSummary[] = [
@@ -204,6 +204,188 @@ function useDataBridge(invoke: InvokeFn | null) {
 const MOCK_SNAPSHOTS: Record<string, string> = {};
 
 const SIDEBAR_W = 248;
+
+/** DK-10 切片 8：Agent 会话面板——创建/状态/强杀（Kill-Switch）+ 审计链查看。 */
+interface AuditRow {
+  timestamp: string;
+  action: string;
+  decision: string;
+  tool_name: string;
+  session_id: string | null;
+  detail: string;
+}
+
+function AgentPanel({ invoke }: { invoke: InvokeFn | null }): React.ReactElement {
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [status, setStatus] = useState<{ killed: boolean; expired: boolean; remaining_secs: number } | null>(null);
+  const [audit, setAudit] = useState<{ entries: AuditRow[]; chain_valid: boolean; total: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadAudit = useCallback(async () => {
+    if (!invoke) return;
+    try {
+      setAudit((await invoke('cmd_agent_audit_recent', { limit: 30 })) as {
+        entries: AuditRow[];
+        chain_valid: boolean;
+        total: number;
+      });
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [invoke]);
+
+  const refreshStatus = useCallback(async () => {
+    if (!invoke || !sessionId) return;
+    try {
+      setStatus(
+        (await invoke('cmd_agent_session_status', { sessionId })) as {
+          killed: boolean;
+          expired: boolean;
+          remaining_secs: number;
+        },
+      );
+    } catch {
+      setStatus(null);
+    }
+  }, [invoke, sessionId]);
+
+  useEffect(() => {
+    void loadAudit();
+  }, [loadAudit]);
+  useEffect(() => {
+    void refreshStatus();
+    const t = setInterval(() => void refreshStatus(), 5000);
+    return () => clearInterval(t);
+  }, [refreshStatus]);
+
+  const create = async () => {
+    if (!invoke) return;
+    setError(null);
+    try {
+      const out = (await invoke('cmd_agent_session_create')) as { id: string };
+      setSessionId(out.id);
+      void refreshStatus();
+      void loadAudit();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const kill = async () => {
+    if (!invoke || !sessionId) return;
+    try {
+      await invoke('cmd_agent_session_kill', { sessionId, reason: '用户 Kill-Switch' });
+      void refreshStatus();
+      void loadAudit();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const stateLabel = !sessionId
+    ? '未创建'
+    : status?.killed
+      ? '已强杀'
+      : status?.expired
+        ? '已超时'
+        : status
+          ? `运行中 · 剩余 ${Math.floor(status.remaining_secs / 60)} 分 ${status.remaining_secs % 60} 秒`
+          : '…';
+
+  return (
+    <main style={{ flex: 1, padding: tokens.spacing.lg, overflowY: 'auto' }}>
+      <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size }}>
+        Agent 会话
+      </h1>
+      {!invoke ? (
+        <p style={{ color: tokens.color.textSecondary }}>browser-mock 模式——Agent 命令仅 tauri 模式可用</p>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacing.md, marginBottom: tokens.spacing.lg }}>
+            <span
+              style={{
+                fontSize: tokens.typography.caption.size,
+                padding: '2px 10px',
+                borderRadius: 999,
+                background:
+                  status?.killed || status?.expired
+                    ? 'rgba(229,72,77,0.18)'
+                    : sessionId
+                      ? 'rgba(88,166,255,0.14)'
+                      : 'rgba(255,255,255,0.08)',
+                color: status?.killed || status?.expired ? tokens.color.danger : tokens.color.primaryBright,
+              }}
+            >
+              {stateLabel}
+            </span>
+            {!sessionId && (
+              <button style={depBtn} onClick={() => void create()}>
+                创建会话（15 分钟限时）
+              </button>
+            )}
+            {sessionId && !status?.killed && !status?.expired && (
+              <button
+                style={{
+                  background: 'rgba(229,72,77,0.18)',
+                  color: tokens.color.danger,
+                  border: '1px solid rgba(229,72,77,0.4)',
+                  borderRadius: tokens.radius.md,
+                  padding: '2px 10px',
+                  fontSize: tokens.typography.caption.size,
+                  cursor: 'pointer',
+                  minHeight: 28,
+                }}
+                onClick={() => void kill()}
+              >
+                ⛔ Kill-Switch 强杀
+              </button>
+            )}
+          </div>
+          {error && <p style={{ color: tokens.color.danger }}>{error}</p>}
+          <h2 style={{ fontSize: tokens.typography.title.size, margin: `0 0 ${tokens.spacing.sm}px` }}>
+            审计链 {audit ? (audit.chain_valid ? '· 完整 ✓' : '· 被篡改 ✗') : ''}
+            <span style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size, marginLeft: tokens.spacing.sm }}>
+              共 {audit?.total ?? 0} 条
+            </span>
+          </h2>
+          {audit && audit.entries.length === 0 && (
+            <p style={{ color: tokens.color.textSecondary }}>暂无审计记录</p>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
+            {audit?.entries.map((e, i) => (
+              <div
+                key={`${e.timestamp}-${i}`}
+                style={{
+                  display: 'flex',
+                  gap: tokens.spacing.sm,
+                  alignItems: 'baseline',
+                  background: tokens.color.bgSurface,
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: tokens.radius.md,
+                  padding: `${tokens.spacing.xs + 2}px ${tokens.spacing.sm}px`,
+                }}
+              >
+                <span style={{ color: tokens.color.textSecondary, whiteSpace: 'nowrap' }}>
+                  {e.timestamp.slice(11, 19)}
+                </span>
+                <span
+                  style={{
+                    color: e.decision === 'deny' || e.decision === 'failure' ? tokens.color.danger : tokens.color.success,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {e.action}/{e.decision}
+                </span>
+                <span style={{ whiteSpace: 'nowrap' }}>{e.tool_name}</span>
+                <span style={{ color: tokens.color.textSecondary, flex: 1 }}>{e.detail}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </main>
+  );
+}
 
 const depBtn = {
   background: tokens.color.bgElevated,
@@ -499,7 +681,7 @@ function Sidebar(props: {
         ⤓ 导入笔记
       </button>
       <nav style={{ display: 'flex', gap: tokens.spacing.xs }} aria-label="主导航">
-        {(['notes', 'today', 'canvas', 'trash', 'liquify'] as const).map((v) => (
+        {(['notes', 'today', 'canvas', 'trash', 'liquify', 'agent'] as const).map((v) => (
           <button
             key={v}
             onClick={() => onView(v)}
@@ -516,7 +698,7 @@ function Sidebar(props: {
               minHeight: 36,
             }}
           >
-            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : v === 'liquify' ? 'AI 提案' : '今日视图'}
+            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : v === 'liquify' ? 'AI 提案' : v === 'agent' ? 'Agent' : '今日视图'}
           </button>
         ))}
       </nav>
@@ -1215,6 +1397,9 @@ export default function DesktopShell() {
         ) : view === 'liquify' ? (
           /* DK-10 两段式提交审查视图（铁律：AI 不得静默写入——用户逐 op 勾选） */
           <LiquifyReview invoke={invoke} />
+        ) : view === 'agent' ? (
+          /* DK-10 Agent 会话面板（15min 限时 + Kill-Switch + 审计链查看） */
+          <AgentPanel invoke={invoke} />
         ) : view === 'today' ? (
           <main style={{ flex: 1, padding: tokens.spacing.lg }}>
             <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size }}>

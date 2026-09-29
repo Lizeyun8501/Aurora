@@ -162,3 +162,109 @@ pub async fn cmd_ai_reject_liquify_proposal(proposal_id: String) -> Result<(), S
         .await
         .map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// DK-10 切片 8：Agent 会话面板命令面（Kill-Switch 用户可达化）
+// ============================================================================
+//
+// AgentSession 编排层（aurora-ai agent_session）的桌面装配：全局会话表 +
+// 全局审计链（哈希链防篡改）。Kill-Switch 从引擎层提升为 UI 按钮——用户
+// 可随时强杀会话（立即生效不可撤销，理由落审计链）。
+
+use aurora_ai::agent_session::{AgentSession, AGENT_DEFAULT_DEADLINE_SECS};
+use aurora_ai::sandbox::{AuditAction, AuditDecision, AuditEntry, AuditLog};
+use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
+use std::time::Instant;
+
+static AGENT_AUDIT: std::sync::OnceLock<Arc<AuditLog>> = std::sync::OnceLock::new();
+static AGENT_SESSIONS: std::sync::OnceLock<Mutex<HashMap<String, Arc<AgentSession>>>> =
+    std::sync::OnceLock::new();
+
+fn agent_audit() -> Arc<AuditLog> {
+    AGENT_AUDIT
+        .get_or_init(|| Arc::new(AuditLog::new()))
+        .clone()
+}
+
+fn agent_sessions() -> &'static Mutex<HashMap<String, Arc<AgentSession>>> {
+    AGENT_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 创建 Agent 会话（15 分钟默认限时；注册进全局表+落审计）。
+#[tauri::command]
+pub async fn cmd_agent_session_create() -> Result<serde_json::Value, String> {
+    let id = format!("agent-{}", chrono::Utc::now().timestamp_millis());
+    let session = Arc::new(
+        AgentSession::new(&id, agent_audit()).with_deadline_secs(AGENT_DEFAULT_DEADLINE_SECS),
+    );
+    agent_sessions()
+        .lock()
+        .map_err(|e| format!("sessions mutex poisoned: {e}"))?
+        .insert(id.clone(), session);
+    let _ = agent_audit().entries(); // 触发注册表初始化语义（审计在 AgentSession::new 内已落）
+    Ok(serde_json::json!({ "id": id, "deadline_secs": AGENT_DEFAULT_DEADLINE_SECS }))
+}
+
+/// Kill-Switch：强杀会话（立即生效不可撤销；理由落审计链）。
+#[tauri::command]
+pub async fn cmd_agent_session_kill(session_id: String, reason: String) -> Result<(), String> {
+    let sessions = agent_sessions()
+        .lock()
+        .map_err(|e| format!("sessions mutex poisoned: {e}"))?;
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| format!("session not found: {session_id}"))?;
+    session.kill(&reason);
+    Ok(())
+}
+
+/// 会话状态（killed/expired/remaining_secs）。
+#[tauri::command]
+pub async fn cmd_agent_session_status(session_id: String) -> Result<serde_json::Value, String> {
+    let sessions = agent_sessions()
+        .lock()
+        .map_err(|e| format!("sessions mutex poisoned: {e}"))?;
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| format!("session not found: {session_id}"))?;
+    Ok(serde_json::json!({
+        "id": session_id,
+        "killed": session.is_killed(),
+        "expired": session.is_expired(),
+        "remaining_secs": session.remaining_secs(),
+    }))
+}
+
+/// 最近审计条目（倒序 limit 条）+ 链完整性校验结果。
+#[tauri::command]
+pub async fn cmd_agent_audit_recent(limit: Option<usize>) -> Result<serde_json::Value, String> {
+    let audit = agent_audit();
+    let all = audit.entries();
+    let n = limit.unwrap_or(50).min(500);
+    let recent: Vec<&AuditEntry> = all.iter().rev().take(n).collect();
+    let items: Vec<serde_json::Value> = recent
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "timestamp": e.timestamp.to_rfc3339(),
+                "action": e.action.as_str(),
+                "decision": e.decision.as_str(),
+                "tool_name": e.tool_name,
+                "session_id": e.session_id,
+                "detail": e.detail,
+            })
+        })
+        .collect();
+    Ok(
+        serde_json::json!({ "entries": items, "chain_valid": audit.verify_chain(), "total": all.len() }),
+    )
+}
+
+/// 手写审计条目（Kill-Switch 按钮外的运维动作——如导出审计快照标记）。
+#[tauri::command]
+pub async fn cmd_agent_audit_note(detail: String) -> Result<(), String> {
+    let e = AuditEntry::new(AuditAction::Check, AuditDecision::Allow, "operator", detail);
+    agent_audit().record(e);
+    Ok(())
+}
