@@ -24,6 +24,8 @@
 //! 投影（搜索/双链/任务）由 `AppCore::catch_up_projections` 事件驱动更新，
 //! **禁止**调用方手动触发索引。
 
+use std::collections::HashSet;
+
 use crate::app_core::AppCore;
 use crate::blocks::BlockStore;
 use crate::error_codes::ErrorCode;
@@ -124,6 +126,23 @@ pub struct NoteRecord {
     /// 自定义 default 保证存量 KV JSON（无此字段）反序列化兼容。
     #[serde(default = "default_encryption")]
     pub encryption: String,
+    /// DK-02 S2 目录树：父节点（None = 根下）。存量数据 default 兼容。
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// DK-02 S2：节点类型（Note | Folder，default Note——旧数据全是笔记）。
+    #[serde(default)]
+    pub kind: NoteKind,
+    /// DK-02 S2：同父下排序键（default 0——旧数据全排根前）。
+    #[serde(default)]
+    pub sort_order: i64,
+}
+
+/// DK-02 S2：树节点类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub enum NoteKind {
+    #[default]
+    Note,
+    Folder,
 }
 
 impl NoteRecord {
@@ -136,6 +155,9 @@ impl NoteRecord {
             created_at: now.clone(),
             updated_at: now,
             encryption: ENC_NONE.to_string(),
+            parent_id: None,
+            kind: NoteKind::Note,
+            sort_order: 0,
         }
     }
 }
@@ -587,6 +609,10 @@ pub struct TrashedNote {
     pub note_id: String,
     pub deleted_at_ms: i64,
     pub title: String,
+    /// DK-02 S2：删除时路径快照（沿 parent 链上溯的 Folder title，"/" 连接）。
+    /// S1 旧标记无此字段 → None（restore 兜底挂根，serde default 兼容）。
+    #[serde(default)]
+    pub origin_path: Option<String>,
 }
 
 fn trash_key(note_id: &str) -> String {
@@ -613,10 +639,12 @@ pub async fn delete_note(ctx: &WriteContext, note_id: &str) -> Result<WriteRecei
     // DK-02 S1：写标记键（物理键保留——恢复数据源）。幂等覆盖写：
     // 重复删除仅刷新 deleted_at_ms，不报错（回收站语义下重复删除无害）。
     let now_ms = chrono::Utc::now().timestamp_millis();
+    let origin_path = origin_path_for(core, note_id, unseal).await;
     let marker = TrashedNote {
         note_id: note_id.to_string(),
         deleted_at_ms: now_ms,
         title: record.title.clone(),
+        origin_path,
     };
     core.kv_store
         .set(
@@ -665,7 +693,38 @@ pub async fn restore_note(ctx: &WriteContext, note_id: &str) -> Result<WriteRece
             id: note_id.to_string(),
         })?;
 
+    // DK-02 S2 原位还原：删除时快照的路径（S1 旧标记无此字段 → None）
+    let origin_path: Option<String> = match core.kv_store.get(&trash_key(note_id)).await? {
+        Some(bytes) => serde_json::from_slice::<TrashedNote>(&bytes)
+            .ok()
+            .and_then(|t| t.origin_path),
+        None => None,
+    };
     core.kv_store.delete(&trash_key(note_id)).await?;
+
+    // DK-02 S2 原位还原：父存（且为 Folder）→ 回原位；父失 → 按 origin_path
+    // 逐级 title 找现存最深 Folder；仍找不到 → 挂根（core 面保证 parent_id=None
+    // 并文档注明——UI 端由「最近位置」提示补足，Alpha 改判口径）。
+    let mut parent = record.parent_id.clone();
+    if let Some(pid) = &parent {
+        // 父存活判定：物理键在 + 是 Folder + **不在回收站**（S1 语义联动——
+        // 父与子同批软删时，子 restore 不应挂回已删父）
+        let parent_trashed = matches!(core.kv_store.get(&trash_key(pid)).await, Ok(Some(_)));
+        let ok = matches!(
+            load_note_meta(core, pid, ctx.seal.as_ref()).await,
+            Ok(Some(pr)) if pr.kind == NoteKind::Folder
+        ) && !parent_trashed;
+        if !ok {
+            parent = resolve_origin_parent(core, origin_path.as_deref(), ctx.seal.as_ref()).await;
+        }
+    } else {
+        // 根下笔记（或 S1 旧数据无树字段）：origin_path 可解析则升位
+        parent = resolve_origin_parent(core, origin_path.as_deref(), ctx.seal.as_ref()).await;
+    }
+    let mut updated = record.clone();
+    updated.parent_id = parent;
+    updated.updated_at = chrono::Utc::now().to_rfc3339();
+    put_note_meta(core, note_id, &updated, ctx.seal.as_ref()).await?;
 
     let content = open_note_content(ctx, note_id, &record)?;
     core.event_bus
@@ -728,6 +787,73 @@ pub async fn purge_note(ctx: &WriteContext, note_id: &str) -> Result<WriteReceip
         aggregate_id: note_id.to_string(),
         committed_at: now_ms,
     })
+}
+
+/// 删除时路径快照：沿 parent 链上溯收集 Folder title（根→叶以 "/" 连接）。
+/// visited 环防护（历史脏数据兜底）；向上遇到缺父/根即止。
+async fn origin_path_for(
+    core: &AppCore,
+    note_id: &str,
+    unseal: Option<&SealPair>,
+) -> Option<String> {
+    let mut chain: Vec<String> = Vec::new();
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut cur = note_id.to_string();
+    loop {
+        if !visited.insert(cur.clone()) {
+            break; // 环兜底
+        }
+        let Ok(Some(rec)) = load_note_meta(core, &cur, unseal).await else {
+            break;
+        };
+        match rec.parent_id.clone() {
+            Some(p) => {
+                if let Ok(Some(parent)) = load_note_meta(core, &p, unseal).await {
+                    chain.push(parent.title.clone());
+                }
+                cur = p;
+            }
+            None => break,
+        }
+    }
+    if chain.is_empty() {
+        None
+    } else {
+        chain.reverse();
+        Some(chain.join("/"))
+    }
+}
+
+/// 按 origin_path（"A/B/C"）自根逐级解析最深现存 Folder id。
+/// 任一级缺失即停在上一级（core 面只保证挂到现存最深祖先——原位语义见 restore_note）。
+async fn resolve_origin_parent(
+    core: &AppCore,
+    origin_path: Option<&str>,
+    unseal: Option<&SealPair>,
+) -> Option<String> {
+    let path = origin_path?;
+    let mut current: Option<String> = None;
+    for segment in path.split('/').filter(|s| !s.is_empty()) {
+        // 在 current（或根）下按 title 找 Folder
+        let mut found: Option<String> = None;
+        for (k, bytes) in core.kv_store.scan_prefix("note:").await.unwrap_or_default() {
+            let Some(id) = k.strip_prefix("note:") else {
+                continue;
+            };
+            if let Some(rec) = decode_record(&bytes, unseal) {
+                if rec.kind == NoteKind::Folder && rec.title == segment && rec.parent_id == current
+                {
+                    found = Some(id.to_string());
+                    break;
+                }
+            }
+        }
+        match found {
+            Some(id) => current = Some(id),
+            None => break,
+        }
+    }
+    current
 }
 
 /// 笔记是否在回收站中（DK-02 S1 — 列表/检索面过滤 trash 项的公共谓词）。
@@ -866,4 +992,282 @@ pub async fn read_attachment(
         )));
     }
     Ok((meta, plaintext))
+}
+
+// ===== DK-02 S2：目录树 CRUD 与原位还原 =====
+
+/// seal 形态统一解码：note:{id} 落库可能是 vault 密文（desktop）或明文（mobile/
+/// 测试）——所有树面 NoteRecord 消费者必须经此函数（S2 教训：裸 from_slice 在
+/// seal 形态下静默滤空，list_tree 会产出空树）。
+fn decode_record(bytes: &[u8], unseal: Option<&SealPair>) -> Option<NoteRecord> {
+    match unseal {
+        Some(seal) => {
+            let plain = (seal.unseal)(bytes).ok()?;
+            serde_json::from_slice(&plain).ok()
+        }
+        None => serde_json::from_slice(bytes).ok(),
+    }
+}
+
+/// 目录树扁平节点（UI 端组装——虚拟滚动友好，Alpha 改判口径）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TreeNode {
+    pub note_id: String,
+    pub kind: NoteKind,
+    pub title: String,
+    pub parent_id: Option<String>,
+    pub sort_order: i64,
+}
+
+/// 同父下尾部排序键：现 max(sort_order) + 1（内存全量口径——Alpha 改判）。
+async fn next_sort_order(
+    core: &AppCore,
+    parent: Option<&str>,
+    unseal: Option<&SealPair>,
+) -> Result<i64, Error> {
+    let mut max = 0i64;
+    for (_, bytes) in core.kv_store.scan_prefix("note:").await? {
+        if let Some(rec) = decode_record(&bytes, unseal) {
+            if rec.parent_id.as_deref() == parent && rec.sort_order > max {
+                max = rec.sort_order;
+            }
+        }
+    }
+    Ok(max + 1)
+}
+
+/// 创建文件夹（DK-02 S2——文件夹即 kind=Folder 的笔记记录，统一存储）。
+pub async fn create_folder(
+    ctx: &WriteContext,
+    parent_id: Option<&str>,
+    title: &str,
+) -> Result<WriteReceipt, Error> {
+    let core = ctx.core.as_ref();
+    if let Some(pid) = parent_id {
+        ensure_folder_exists(core, pid, ctx.seal.as_ref()).await?;
+    }
+    // 复用 create_note 主流程（Loro 快照/blocks 派生/NoteCreated 事件），随后补树字段
+    let note_id = create_note(ctx, title).await?;
+    let mut rec = load_note_meta(core, &note_id, ctx.seal.as_ref())
+        .await?
+        .ok_or(Error::NoteNotFound {
+            id: note_id.clone(),
+        })?;
+    rec.kind = NoteKind::Folder;
+    rec.parent_id = parent_id.map(|s| s.to_string());
+    rec.sort_order = next_sort_order(core, parent_id, ctx.seal.as_ref()).await?;
+    put_note_meta(core, &note_id, &rec, ctx.seal.as_ref()).await?;
+    info!(note_id = %note_id, parent = ?parent_id, "folder created via WritePath (DK-02 S2)");
+    Ok(WriteReceipt {
+        seq: core.event_bus.last_seq(),
+        aggregate_id: note_id,
+        committed_at: chrono::Utc::now().timestamp_millis(),
+    })
+}
+
+/// 校验节点存在且为 Folder（移动/建子目标合法性）。
+async fn ensure_folder_exists(
+    core: &AppCore,
+    folder_id: &str,
+    unseal: Option<&SealPair>,
+) -> Result<NoteRecord, Error> {
+    let bytes = core
+        .kv_store
+        .get(&format!("note:{folder_id}"))
+        .await?
+        .ok_or(Error::NoteNotFound {
+            id: folder_id.to_string(),
+        })?;
+    let rec = decode_record(&bytes, unseal).ok_or(Error::NoteNotFound {
+        id: folder_id.to_string(),
+    })?;
+    if rec.kind != NoteKind::Folder {
+        return Err(Error::InvalidInput(format!(
+            "目标 '{folder_id}' 不是文件夹（kind={:?}），不能作为父节点",
+            rec.kind
+        )));
+    }
+    Ok(rec)
+}
+
+/// 移动节点（DK-02 S2）：环检测（沿 new_parent 链上溯，depth 上限 = 节点总数）
+/// + 目标文件夹校验 + NoteMetadataChanged 事件（树移动=元数据变更，零新事件）。
+pub async fn move_node(
+    ctx: &WriteContext,
+    note_id: &str,
+    new_parent_id: Option<&str>,
+    sort_order: i64,
+) -> Result<WriteReceipt, Error> {
+    let core = ctx.core.as_ref();
+    let rec = load_note_meta(core, note_id, ctx.seal.as_ref())
+        .await?
+        .ok_or(Error::NoteNotFound {
+            id: note_id.to_string(),
+        })?;
+    if let Some(pid) = new_parent_id {
+        if pid == note_id {
+            return Err(Error::CircularMove {
+                message: format!("节点 '{note_id}' 不能挂到自己名下"),
+            });
+        }
+        ensure_folder_exists(core, pid, ctx.seal.as_ref()).await?;
+        // 环检测：沿 new_parent 链上溯——命中自身即环（节点数为深度上限）
+        let total = core.kv_store.scan_prefix("note:").await?.len() as u32;
+        let mut cur = pid.to_string();
+        let mut depth = 0u32;
+        loop {
+            depth += 1;
+            if depth > total {
+                break; // 链长超节点数：防御性终止（历史脏数据环由本检查兜底）
+            }
+            if cur == note_id {
+                return Err(Error::CircularMove {
+                    message: format!(
+                        "节点 '{note_id}' 的目标父链中包含它自身（子树不能挂到自己子级）"
+                    ),
+                });
+            }
+            let Some(parent) = load_note_meta(core, &cur, ctx.seal.as_ref()).await? else {
+                break;
+            };
+            match parent.parent_id.clone() {
+                Some(p) => cur = p,
+                None => break,
+            }
+        }
+    }
+    let mut updated = rec;
+    updated.parent_id = new_parent_id.map(|s| s.to_string());
+    updated.sort_order = sort_order;
+    updated.updated_at = chrono::Utc::now().to_rfc3339();
+    put_note_meta(core, note_id, &updated, ctx.seal.as_ref()).await?;
+    core.event_bus
+        .publish(crate::event_bus::layered::AppEvent::NoteMetadataChanged {
+            note_id: note_id.to_string(),
+            changes: crate::event_bus::layered::NoteChanges {
+                title: None,
+                tags: None,
+            },
+        });
+    info!(note_id, parent = ?new_parent_id, sort_order, "node moved via WritePath (DK-02 S2)");
+    Ok(WriteReceipt {
+        seq: core.event_bus.last_seq(),
+        aggregate_id: note_id.to_string(),
+        committed_at: chrono::Utc::now().timestamp_millis(),
+    })
+}
+
+/// 重命名文件夹（kind 校验——笔记走 rename_note 既有路径）。
+pub async fn rename_folder(
+    ctx: &WriteContext,
+    folder_id: &str,
+    new_title: &str,
+) -> Result<WriteReceipt, Error> {
+    let core = ctx.core.as_ref();
+    let rec = load_note_meta(core, folder_id, ctx.seal.as_ref())
+        .await?
+        .ok_or(Error::NoteNotFound {
+            id: folder_id.to_string(),
+        })?;
+    if rec.kind != NoteKind::Folder {
+        return Err(Error::InvalidInput(format!(
+            "节点 '{folder_id}' 不是文件夹（kind={:?}）",
+            rec.kind
+        )));
+    }
+    rename_note(ctx, folder_id, new_title).await
+}
+
+/// 目录树扁平列表（(parent_id, sort_order) 排序——UI 端组装嵌套）。
+/// trash 在册者不出现（回收站独立面——复用 S1 语义）。
+pub async fn list_tree(core: &AppCore, unseal: Option<&SealPair>) -> Result<Vec<TreeNode>, Error> {
+    let trashed: HashSet<String> = core
+        .kv_store
+        .scan_prefix("trash:")
+        .await?
+        .into_iter()
+        .map(|(k, _)| k.trim_start_matches("trash:").to_string())
+        .collect();
+    let mut nodes: Vec<TreeNode> = Vec::new();
+    for (k, bytes) in core.kv_store.scan_prefix("note:").await? {
+        let Some(id) = k.strip_prefix("note:") else {
+            continue;
+        };
+        if trashed.contains(id) {
+            continue;
+        }
+        if let Some(rec) = decode_record(&bytes, unseal) {
+            nodes.push(TreeNode {
+                note_id: id.to_string(),
+                kind: rec.kind,
+                title: rec.title,
+                parent_id: rec.parent_id,
+                sort_order: rec.sort_order,
+            });
+        }
+    }
+    nodes.sort_by(|a, b| {
+        (&a.parent_id, a.sort_order, &a.title).cmp(&(&b.parent_id, b.sort_order, &b.title))
+    });
+    Ok(nodes)
+}
+
+/// 子树递归收集（BFS，visited 环防护——历史脏数据兜底）。
+async fn collect_subtree(
+    core: &AppCore,
+    root: &str,
+    unseal: Option<&SealPair>,
+) -> Result<Vec<String>, Error> {
+    let mut out = Vec::new();
+    let mut queue = std::collections::VecDeque::from([root.to_string()]);
+    let mut visited: HashSet<String> = HashSet::new();
+    while let Some(cur) = queue.pop_front() {
+        if !visited.insert(cur.clone()) {
+            continue;
+        }
+        out.push(cur.clone());
+        for (k, bytes) in core.kv_store.scan_prefix("note:").await? {
+            let Some(id) = k.strip_prefix("note:") else {
+                continue;
+            };
+            if visited.contains(id) {
+                continue;
+            }
+            if let Some(rec) = decode_record(&bytes, unseal) {
+                if rec.parent_id.as_deref() == Some(cur.as_str()) {
+                    queue.push_back(id.to_string());
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 删除文件夹（DK-02 S2 改判口径）：递归收集子树 → 全部成员（笔记+子文件夹）
+/// 逐个走 S1 软删 delete_note（trash 标记 + NoteDeleted 每成员照发）——
+/// 不做物理级联（与「误删即永久损失」产品立场一致）。返回入站成员数。
+pub async fn delete_folder(ctx: &WriteContext, folder_id: &str) -> Result<usize, Error> {
+    let core = ctx.core.as_ref();
+    let rec = load_note_meta(core, folder_id, ctx.seal.as_ref())
+        .await?
+        .ok_or(Error::NoteNotFound {
+            id: folder_id.to_string(),
+        })?;
+    if rec.kind != NoteKind::Folder {
+        return Err(Error::InvalidInput(format!(
+            "节点 '{folder_id}' 不是文件夹（kind={:?}），走 delete_note 即可",
+            rec.kind
+        )));
+    }
+    let members = collect_subtree(core, folder_id, ctx.seal.as_ref()).await?;
+    let n = members.len();
+    for id in &members {
+        delete_note(ctx, id).await?;
+    }
+    info!(
+        folder_id,
+        members = n,
+        "folder soft-deleted with subtree (DK-02 S2)"
+    );
+    Ok(n)
 }

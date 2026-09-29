@@ -17,6 +17,9 @@ pub mod event_bus;
 pub mod l1_infrastructure;
 pub mod l2_engines;
 pub use l2_engines::vector_search::{EmbedOutcome, EmbedProvider, VecRecord, VectorIndex};
+pub use write_path::{
+    create_folder, delete_folder, list_tree, move_node, rename_folder, NoteKind, TreeNode,
+};
 pub mod l3_domain;
 pub mod mcp_registry; // V23-I5: MCP 数据中枢工具契约（稳定层）
 pub mod mirror; // V23-I2: Mirror 单向导出
@@ -55,6 +58,11 @@ pub enum Error {
     NotFound(String),
     #[error("Invalid input: {0}")]
     InvalidInput(String),
+    #[error("移动被拒绝: 会形成循环引用 ({message})")]
+    CircularMove {
+        /// 可读提示（含环路径片段）。
+        message: String,
+    },
     #[error("笔记不存在: {id}")]
     NoteNotFound {
         /// 缺失的笔记 ID。

@@ -101,6 +101,10 @@ pub fn run() {
             cmd_update_note,
             cmd_delete_note,
             cmd_list_trashed,
+            cmd_create_folder,
+            cmd_move_note,
+            cmd_rename_folder,
+            cmd_list_tree,
             cmd_restore_note,
             cmd_purge_note,
             cmd_search_notes,
@@ -530,6 +534,166 @@ async fn cmd_list_trashed() -> Result<Vec<serde_json::Value>, String> {
                 "note_id": t.note_id,
                 "deleted_at_ms": t.deleted_at_ms,
                 "title": t.title,
+            })
+        })
+        .collect())
+}
+
+/// 创建文件夹（DK-02 S2）。
+#[tauri::command]
+async fn cmd_create_folder(
+    parent_id: Option<String>,
+    title: String,
+) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    let rc = aurora_core::write_path::create_folder(&ctx, parent_id.as_deref(), &title)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "note_id": rc.aggregate_id,
+        "seq": rc.seq,
+    }))
+}
+
+/// 移动节点（DK-02 S2——环检测 fail-closed）。
+#[tauri::command]
+async fn cmd_move_note(
+    note_id: String,
+    new_parent_id: Option<String>,
+    sort_order: i64,
+) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    aurora_core::write_path::move_node(&ctx, &note_id, new_parent_id.as_deref(), sort_order)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 重命名文件夹（DK-02 S2）。
+#[tauri::command]
+async fn cmd_rename_folder(folder_id: String, new_title: String) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    aurora_core::write_path::rename_folder(&ctx, &folder_id, &new_title)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 目录树扁平列表（DK-02 S2——UI 端组装嵌套）。
+#[tauri::command]
+async fn cmd_list_tree() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let crypto = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let seal_pair = aurora_core::write_path::SealPair {
+        seal: Box::new(|b: &[u8]| Ok(b.to_vec())),
+        unseal: Box::new(unseal),
+    };
+    let nodes = aurora_core::write_path::list_tree(&core, Some(&seal_pair))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(nodes
+        .into_iter()
+        .map(|n| {
+            serde_json::json!({
+                "note_id": n.note_id,
+                "kind": format!("{:?}", n.kind),
+                "title": n.title,
+                "parent_id": n.parent_id,
+                "sort_order": n.sort_order,
             })
         })
         .collect())

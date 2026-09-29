@@ -408,3 +408,247 @@ async fn rebuild_excludes_trashed_notes() {
     );
     let _ = &ctx;
 }
+
+// ===== DK-02 S2 目录树 =====
+
+use aurora_core::write_path::{
+    create_folder, delete_folder, list_tree, move_node, NoteKind, TreeNode,
+};
+
+/// DoD1 环检测三态：自挂/子树挂/祖先链 + 可读 Error 文案。
+#[tokio::test]
+async fn circular_move_three_states_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let booted = bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .unwrap();
+    let ctx = ctx_for(&booted, &dir.path().join("aurora.db"));
+
+    // 根文件夹 root → 子文件夹 sub
+    let root = create_folder(&ctx, None, "根目录")
+        .await
+        .unwrap()
+        .aggregate_id;
+    let sub = create_folder(&ctx, Some(&root), "子目录")
+        .await
+        .unwrap()
+        .aggregate_id;
+    let note = write_path::create_note(&ctx, "普通笔记").await.unwrap();
+
+    // ① 自挂
+    let err1 = move_node(&ctx, &root, Some(&root), 1).await.unwrap_err();
+    assert!(
+        matches!(err1, aurora_core::Error::CircularMove { .. }),
+        "{err1:?}"
+    );
+    assert!(err1.to_string().contains("循环引用"), "可读文案: {err1}");
+
+    // ② 子树挂（把 root 挂到 sub 名下——sub 是 root 的孩子）
+    let err2 = move_node(&ctx, &root, Some(&sub), 1).await.unwrap_err();
+    assert!(
+        matches!(err2, aurora_core::Error::CircularMove { .. }),
+        "{err2:?}"
+    );
+    assert!(err2.to_string().contains("子树"), "环路径文案: {err2}");
+
+    // ③ 祖先链（root ← sub 链更深一层：把 root 挂到 sub 的孩子）——用移动构造深度链
+    // sub 下建孙文件夹再尝试把 root 挂到孙下
+    let grand = create_folder(&ctx, Some(&sub), "孙目录")
+        .await
+        .unwrap()
+        .aggregate_id;
+    let err3 = move_node(&ctx, &root, Some(&grand), 1).await.unwrap_err();
+    assert!(
+        matches!(err3, aurora_core::Error::CircularMove { .. }),
+        "{err3:?}"
+    );
+
+    // 合法移动（Note → Folder）不受影响
+    move_node(&ctx, &note, Some(&sub), 1).await.unwrap();
+    let tree = list_tree(&booted.core, ctx.seal.as_ref()).await.unwrap();
+    let n = tree.iter().find(|t| t.note_id == note).unwrap();
+    assert_eq!(n.parent_id.as_deref(), Some(sub.as_str()));
+
+    // 非法目标：挂到 Note 名下拒绝（InvalidInput，非 CircularMove）
+    let err4 = move_node(&ctx, &root, Some(&note), 1).await.unwrap_err();
+    assert!(matches!(err4, aurora_core::Error::InvalidInput(_)));
+}
+
+/// DoD1 树组装排序：(parent_id, sort_order) 组内有序——Alpha 改判口径。
+#[tokio::test]
+async fn tree_assembly_sorted() {
+    let dir = tempfile::tempdir().unwrap();
+    let booted = bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .unwrap();
+    let ctx = ctx_for(&booted, &dir.path().join("aurora.db"));
+
+    let f1 = create_folder(&ctx, None, "甲").await.unwrap().aggregate_id;
+    let f2 = create_folder(&ctx, None, "乙").await.unwrap().aggregate_id;
+    // f1 下两个笔记 sort_order 逆序创建
+    move_node(
+        &ctx,
+        &write_path::create_note(&ctx, "note-b").await.unwrap(),
+        Some(&f1),
+        5,
+    )
+    .await
+    .unwrap();
+    move_node(
+        &ctx,
+        &write_path::create_note(&ctx, "note-a").await.unwrap(),
+        Some(&f1),
+        2,
+    )
+    .await
+    .unwrap();
+    write_path::create_note(&ctx, "根下笔记").await.unwrap();
+
+    let tree = list_tree(&booted.core, ctx.seal.as_ref()).await.unwrap();
+    let f1_nodes: Vec<&TreeNode> = tree
+        .iter()
+        .filter(|t| t.parent_id.as_deref() == Some(f1.as_str()))
+        .collect();
+    assert_eq!(
+        f1_nodes.iter().map(|t| t.sort_order).collect::<Vec<_>>(),
+        vec![2, 5],
+        "同父按 sort_order 升序"
+    );
+    let roots: Vec<&TreeNode> = tree.iter().filter(|t| t.parent_id.is_none()).collect();
+    assert!(roots.len() >= 3, "根级含 2 文件夹+根下笔记（trash 过滤后）");
+    assert!(tree.iter().all(|t| t.title != ""), "无空标题节点");
+}
+
+/// DoD1 旧数据兼容：无新字段 NoteRecord JSON 反序列化 default。
+#[tokio::test]
+async fn legacy_note_record_compat() {
+    let legacy = serde_json::json!({
+        "id": "old-1", "title": "旧笔记", "content": "x",
+        "created_at": "2025-01-01T00:00:00+00:00",
+        "updated_at": "2025-01-01T00:00:00+00:00",
+        "encryption": "none"
+    });
+    let rec: aurora_core::write_path::NoteRecord = serde_json::from_value(legacy).unwrap();
+    assert_eq!(rec.kind, NoteKind::Note);
+    assert_eq!(rec.parent_id, None);
+    assert_eq!(rec.sort_order, 0);
+}
+
+/// DoD1 原位还原两态：父存 → 回原位（parent_id 不变）；父失 → 挂根。
+#[tokio::test]
+async fn restore_in_place_parent_alive_and_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let booted = bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .unwrap();
+    let ctx = ctx_for(&booted, &dir.path().join("aurora.db"));
+
+    // ── 态1：父存活 → 回原位 ──
+    let folder = create_folder(&ctx, None, "存活目录")
+        .await
+        .unwrap()
+        .aggregate_id;
+    let n1 = write_path::create_note(&ctx, "原位笔记").await.unwrap();
+    move_node(&ctx, &n1, Some(&folder), 3).await.unwrap();
+    write_path::delete_note(&ctx, &n1).await.unwrap();
+    write_path::restore_note(&ctx, &n1).await.unwrap();
+    let rec1 = write_path::load_note_meta(&booted.core, &n1, ctx.seal.as_ref())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        rec1.parent_id.as_deref(),
+        Some(folder.as_str()),
+        "父存活回原位"
+    );
+    assert_eq!(rec1.sort_order, 3, "sort_order 保持");
+
+    // ── 态2：父失 → 挂根 ──
+    let folder2 = create_folder(&ctx, None, "将删目录")
+        .await
+        .unwrap()
+        .aggregate_id;
+    let n2 = write_path::create_note(&ctx, "孤儿笔记").await.unwrap();
+    move_node(&ctx, &n2, Some(&folder2), 1).await.unwrap();
+    // 先删笔记（入回收站），再删父文件夹（父进回收站=父"失"）
+    write_path::delete_note(&ctx, &n2).await.unwrap();
+    delete_folder(&ctx, &folder2).await.unwrap();
+    write_path::restore_note(&ctx, &n2).await.unwrap();
+    let rec2 = write_path::load_note_meta(&booted.core, &n2, ctx.seal.as_ref())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rec2.parent_id, None, "父缺失挂根（core 面保证，文档注明）");
+}
+
+/// DoD1 文件夹级联入回收站：N 笔记 + 子文件夹嵌套全成员入站（无物理删）。
+#[tokio::test]
+async fn delete_folder_cascades_soft() {
+    let dir = tempfile::tempdir().unwrap();
+    let booted = bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .unwrap();
+    let ctx = ctx_for(&booted, &dir.path().join("aurora.db"));
+
+    let root = create_folder(&ctx, None, "项目A")
+        .await
+        .unwrap()
+        .aggregate_id;
+    let sub = create_folder(&ctx, Some(&root), "子目录")
+        .await
+        .unwrap()
+        .aggregate_id;
+    let n1 = write_path::create_note(&ctx, "笔记1").await.unwrap();
+    let n2 = write_path::create_note(&ctx, "笔记2").await.unwrap();
+    move_node(&ctx, &n1, Some(&root), 1).await.unwrap();
+    move_node(&ctx, &n2, Some(&sub), 1).await.unwrap();
+
+    let n = delete_folder(&ctx, &root).await.unwrap();
+    assert_eq!(n, 4, "子树成员=root+sub+n1+n2");
+    // 修正断言：成员=root,sub,n1,n2 = 4
+    let _ = n;
+
+    for id in [&root, &sub, &n1, &n2] {
+        assert!(
+            booted
+                .core
+                .kv_store
+                .get(&format!("trash:{id}"))
+                .await
+                .unwrap()
+                .is_some(),
+            "全成员必须入回收站: {id}"
+        );
+        assert!(
+            booted
+                .core
+                .kv_store
+                .get(&format!("note:{id}"))
+                .await
+                .unwrap()
+                .is_some(),
+            "物理键保留（无物理级联）: {id}"
+        );
+    }
+    // 树视图不再出现（trash 过滤）
+    let tree = list_tree(&booted.core, ctx.seal.as_ref()).await.unwrap();
+    assert!(tree
+        .iter()
+        .all(|t| !["项目A", "子目录", "笔记1", "笔记2"].contains(&t.title.as_str())));
+
+    // restore 顶层文件夹 → 子树成员恢复（逐个 restore——S1 语义批量面挂 UI）
+    write_path::restore_note(&ctx, &root).await.unwrap();
+    let rec = write_path::load_note_meta(&booted.core, &root, ctx.seal.as_ref())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rec.kind, NoteKind::Folder, "文件夹 restore 后 kind 保持");
+}
