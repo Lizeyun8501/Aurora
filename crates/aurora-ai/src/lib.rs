@@ -23,6 +23,7 @@ pub mod cloud;
 pub mod context;
 pub mod embed;
 pub mod factory;
+pub mod liquify; // DK-10 两段式提交（aiLiquify→用户勾选→aiCommit；AI 不得静默写入）
 pub mod mcp;
 pub mod mock_provider;
 pub mod ollama;
