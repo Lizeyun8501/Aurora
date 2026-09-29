@@ -19,6 +19,7 @@
 //!   滑动窗口压缩。
 //! - [`sandbox`]：安全沙箱（权限校验 + 审计日志 + 只读模式）。
 
+pub mod agent_session; // DK-10 Agent 会话面（15min 限时+审计+Kill-Switch）
 pub mod cloud;
 pub mod context;
 pub mod embed;
