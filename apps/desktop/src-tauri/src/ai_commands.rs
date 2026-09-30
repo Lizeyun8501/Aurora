@@ -9,7 +9,7 @@ use aurora_ai::policy::WorkspacePolicy;
 use aurora_bootstrap::AI_DEFAULT_WORKSPACE_ID;
 
 use crate::sync_commands::get_booted;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 fn ws_or_default(workspace_id: Option<String>) -> String {
     workspace_id.unwrap_or_else(|| AI_DEFAULT_WORKSPACE_ID.into())
