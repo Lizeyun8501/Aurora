@@ -28,15 +28,45 @@ use common::MockSyncBus;
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0 >> 16
     }
 }
 
 const WORDS: &[&str] = &[
-    "会议", "笔记", "项目", "计划", "评审", "检索", "性能", "基准", "架构", "设计", "存储",
-    "索引", "同步", "加密", "知识", "网络", "任务", "依赖", "画布", "编辑器", "系统", "数据",
-    "安全", "审计", "回收", "恢复", "目录", "层级", "标签", "智能",
+    "会议",
+    "笔记",
+    "项目",
+    "计划",
+    "评审",
+    "检索",
+    "性能",
+    "基准",
+    "架构",
+    "设计",
+    "存储",
+    "索引",
+    "同步",
+    "加密",
+    "知识",
+    "网络",
+    "任务",
+    "依赖",
+    "画布",
+    "编辑器",
+    "系统",
+    "数据",
+    "安全",
+    "审计",
+    "回收",
+    "恢复",
+    "目录",
+    "层级",
+    "标签",
+    "智能",
 ];
 
 /// 生成 count 篇笔记：(note_id, content, metadata)。
@@ -45,13 +75,20 @@ fn gen_dataset(count: usize) -> Vec<(String, String, NoteMetadata)> {
     let mut rng = Lcg(20260930);
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
-        let long_doc = rng.next() % 10 == 0;
-        let body_words = if long_doc { 800 + (rng.next() % 1200) as usize } else { 30 + (rng.next() % 120) as usize };
+        let long_doc = rng.next().is_multiple_of(10);
+        let body_words = if long_doc {
+            800 + (rng.next() % 1200) as usize
+        } else {
+            30 + (rng.next() % 120) as usize
+        };
         let mut content = String::with_capacity(body_words * 6);
         for _ in 0..body_words {
             content.push_str(WORDS[(rng.next() as usize) % WORDS.len()]);
         }
-        let title = format!("基准笔记{i:06}{}", WORDS[(rng.next() as usize) % WORDS.len()]);
+        let title = format!(
+            "基准笔记{i:06}{}",
+            WORDS[(rng.next() as usize) % WORDS.len()]
+        );
         let meta = NoteMetadata {
             title: title.clone(),
             tags: vec!["bench".into()],
@@ -74,7 +111,7 @@ fn search_opts() -> SearchOptions {
     }
 }
 
-fn percentile(v: &mut Vec<f64>, p: f64) -> f64 {
+fn percentile(v: &mut [f64], p: f64) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let idx = ((v.len() as f64 - 1.0) * p).round() as usize;
     v[idx.min(v.len() - 1)]
@@ -116,11 +153,15 @@ async fn bench_search_10k_p50_p99() {
         .map(|i| {
             let a = WORDS[(i * 7) % WORDS.len()];
             if i % 3 == 0 {
-                format!("{a}")
+                a.to_string()
             } else if i % 3 == 1 {
                 format!("{a} {}", WORDS[(i * 13) % WORDS.len()])
             } else {
-                format!("{a} {} {}", WORDS[(i * 13) % WORDS.len()], WORDS[(i * 29) % WORDS.len()])
+                format!(
+                    "{a} {} {}",
+                    WORDS[(i * 13) % WORDS.len()],
+                    WORDS[(i * 29) % WORDS.len()]
+                )
             }
         })
         .collect();
@@ -130,7 +171,10 @@ async fn bench_search_10k_p50_p99() {
         let t0 = Instant::now();
         let r = backend.search(q, &opts).await.expect("search");
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
-        assert!(!r.hits.is_empty(), "query {q:?} 命中为空——数据集/查询不匹配");
+        assert!(
+            !r.hits.is_empty(),
+            "query {q:?} 命中为空——数据集/查询不匹配"
+        );
         latencies.push(ms);
     }
     println!(
@@ -151,7 +195,9 @@ fn bench_sync_converge() {
         let dataset = gen_dataset(count);
         let docs: Vec<_> = dataset
             .iter()
-            .map(|(id, content, _)| common::make_document(id.as_str(), vec![common::make_text_block(content)]))
+            .map(|(id, content, _)| {
+                common::make_document(id.as_str(), vec![common::make_text_block(content)])
+            })
             .collect();
         let bus = MockSyncBus::new();
         let t0 = Instant::now();
