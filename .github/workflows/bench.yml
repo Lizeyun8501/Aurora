@@ -1,0 +1,31 @@
+# RV-01：每周 Aurora 侧性能基准留档（冷启动代理/万级检索 P50+P99/双端收敛）
+# 对照表：docs/evidence/perf-baseline.md（竞品列待实测补齐）
+name: Bench
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # 每周一 03:00 UTC（11:00 北京）
+  workflow_dispatch: {} # 手动触发（首跑/复测）
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+jobs:
+  perf:
+    name: Perf baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91
+      - name: Run perf baseline (release, ignored)
+        run: cargo test --release -p aurora-core --test perf_baseline -- --ignored --nocapture
+      - name: Archive output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-baseline-${{ github.run_id }}
+          path: |
+            **/perf_baseline*
+          retention-days: 90
