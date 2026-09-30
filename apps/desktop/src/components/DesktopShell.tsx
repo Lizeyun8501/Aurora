@@ -40,6 +40,38 @@ export interface NoteContent {
   updated_at: string;
 }
 
+/** DK-02 S2 树形侧栏：cmd_list_tree 扁平节点 DTO（与 write_path::TreeNode 对齐）。 */
+export interface TreeNodeFlat {
+  note_id: string;
+  kind: 'Note' | 'Folder';
+  title: string;
+  parent_id: string | null;
+  sort_order: number;
+}
+
+/** 嵌套树节点（UI 端组装——扁平数组按 parent_id 归位）。 */
+interface NoteTreeNode extends TreeNodeFlat {
+  children: NoteTreeNode[];
+}
+
+/** 扁平 → 嵌套树（(parent_id, sort_order) 排序，尾注 title 稳定序；孤儿兜挂根）。 */
+export function buildTree(flat: TreeNodeFlat[]): NoteTreeNode[] {
+  const byId = new Map<string, NoteTreeNode>();
+  for (const f of flat) byId.set(f.note_id, { ...f, children: [] });
+  const roots: NoteTreeNode[] = [];
+  for (const node of byId.values()) {
+    const parent = node.parent_id ? byId.get(node.parent_id) : undefined;
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+  const sort = (ns: NoteTreeNode[]): void => {
+    ns.sort((a, b) => a.sort_order - b.sort_order || a.title.localeCompare(b.title));
+    for (const n of ns) sort(n.children);
+  };
+  sort(roots);
+  return roots;
+}
+
 /** `cmd_read_attachment` 返回 DTO（与 src-tauri attachment_commands 对齐） */
 export interface ReadAttachment {
   attachment_id: string;
@@ -194,6 +226,37 @@ function useDataBridge(invoke: InvokeFn | null) {
         if (invoke) {
           invoke('cmd_create_note', { title }).catch(() => {});
         }
+      },
+      /** DK-02 S2：目录树扁平列表（browser-mock 返回空树提示态）。 */
+      async listTree(): Promise<TreeNodeFlat[]> {
+        if (invoke) {
+          return (await invoke('cmd_list_tree')) as TreeNodeFlat[];
+        }
+        return [];
+      },
+      /** DK-02 S2：新建文件夹（根级传 null）。 */
+      async createFolder(parentId: string | null, title: string): Promise<boolean> {
+        if (invoke) {
+          await invoke('cmd_create_folder', { parent_id: parentId, title });
+          return true;
+        }
+        return false;
+      },
+      /** DK-02 S2：移动节点（newParentId=null 挂根）。 */
+      async moveNote(noteId: string, newParentId: string | null): Promise<boolean> {
+        if (invoke) {
+          await invoke('cmd_move_note', { note_id: noteId, new_parent_id: newParentId, sort_order: 0 });
+          return true;
+        }
+        return false;
+      },
+      /** DK-02 S2：重命名文件夹。 */
+      async renameFolder(folderId: string, newTitle: string): Promise<boolean> {
+        if (invoke) {
+          await invoke('cmd_rename_folder', { folder_id: folderId, new_title: newTitle });
+          return true;
+        }
+        return false;
       },
     }),
     [invoke],
@@ -616,23 +679,10 @@ function Sidebar(props: {
   onCreate: () => void;
   /** DK-09：打开迁移向导（ImportWizard 挂载入口）。 */
   onImport: () => void;
+  /** DK-02 S2：数据门面（树形侧栏四命令）。 */
+  bridge: ReturnType<typeof useDataBridge>;
 }) {
-  const { notes, selectedId, view, onView, onSelect, onCreate, onImport } = props;
-  const itemStyle = (active: boolean): React.CSSProperties => ({
-    display: 'block',
-    width: '100%',
-    textAlign: 'left',
-    background: active ? tokens.color.bgElevated : 'transparent',
-    color: active ? tokens.color.primaryBright : tokens.color.textPrimary,
-    border: 'none',
-    borderRadius: tokens.radius.md,
-    padding: `${tokens.spacing.sm}px ${tokens.spacing.md}px`,
-    fontSize: tokens.typography.body.size,
-    lineHeight: tokens.typography.body.lineHeight,
-    cursor: 'pointer',
-    minHeight: tokens.a11y.minTouchTarget,
-    outline: 'none',
-  });
+  const { notes, selectedId, view, onView, onSelect, onCreate, onImport, bridge } = props;
   return (
     <aside
       style={{
@@ -711,40 +761,236 @@ function Sidebar(props: {
       >
         笔记 · {notes.length}
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {notes.map((n) => (
-          <button
-            key={n.note_id}
-            onClick={() => onSelect(n.note_id)}
-            style={itemStyle(selectedId === n.note_id)}
-            onFocus={(e) => {
-              e.currentTarget.style.outline = `${tokens.a11y.focusRingWidth}px solid ${tokens.color.focus}`;
-            }}
-            onBlur={(e) => {
-              e.currentTarget.style.outline = 'none';
-            }}
-          >
-            <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {n.title || '未命名'}
-            </span>
-            <span style={{ fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
-              {n.updated_at}
-            </span>
-          </button>
-        ))}
-        {notes.length === 0 && (
-          <p
-            style={{
-              color: tokens.color.textSecondary,
-              fontSize: tokens.typography.caption.size,
-              padding: tokens.spacing.md,
-            }}
-          >
-            还没有笔记 — 点上方「新建笔记」开始。
-          </p>
-        )}
-      </div>
+      {/* DK-02 S2：树形侧栏（folder 折叠 + 原位还原树面，替代平铺列表） */}
+      <TreeSection bridge={bridge} selectedId={selectedId} onSelect={onSelect} />
     </aside>
+  );
+}
+
+/** DK-02 S2 树形侧栏：目录树展示 + 新建文件夹 + 重命名 + 移动（prompt 交互，批量/拖拽后续迭代）。 */
+function TreeSection(props: {
+  bridge: ReturnType<typeof useDataBridge>;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const { bridge, selectedId, onSelect } = props;
+  const [flat, setFlat] = useState<TreeNodeFlat[]>([]);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setFlat(await bridge.listTree());
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, [bridge]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const tree = useMemo(() => buildTree(flat), [flat]);
+  const folders = useMemo(() => {
+    const fs: { id: string | null; label: string }[] = [{ id: null, label: '（根目录）' }];
+    const walk = (ns: NoteTreeNode[], depth: number): void => {
+      for (const n of ns) {
+        if (n.kind === 'Folder') {
+          fs.push({ id: n.note_id, label: `${'　'.repeat(depth)}${n.title || '未命名文件夹'}` });
+          walk(n.children, depth + 1);
+        }
+      }
+    };
+    walk(tree, 0);
+    return fs;
+  }, [tree]);
+
+  const rowStyle = (active: boolean, depth: number): React.CSSProperties => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    width: '100%',
+    textAlign: 'left',
+    background: active ? tokens.color.bgElevated : 'transparent',
+    color: active ? tokens.color.primaryBright : tokens.color.textPrimary,
+    border: 'none',
+    borderRadius: tokens.radius.md,
+    padding: `${tokens.spacing.xs + 1}px ${tokens.spacing.sm}px`,
+    paddingLeft: tokens.spacing.sm + depth * 14,
+    fontSize: tokens.typography.body.size,
+    cursor: 'pointer',
+    minHeight: tokens.a11y.minTouchTarget,
+  });
+
+  const toggle = (id: string): void => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const renderNode = (node: NoteTreeNode, depth: number): React.ReactElement => {
+    const isFolder = node.kind === 'Folder';
+    const isOpen = isFolder && !collapsed.has(node.note_id);
+    return (
+      <div key={node.note_id}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          {isFolder ? (
+            <>
+              <button
+                onClick={() => toggle(node.note_id)}
+                aria-expanded={isOpen}
+                aria-label={isOpen ? '折叠' : '展开'}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: tokens.color.textSecondary,
+                  cursor: 'pointer',
+                  padding: '0 2px',
+                  fontSize: tokens.typography.caption.size,
+                  minWidth: 18,
+                }}
+              >
+                {isOpen ? '▼' : '▶'}
+              </button>
+              <button
+                onClick={() => onSelect(node.note_id)}
+                style={{ ...rowStyle(selectedId === node.note_id, depth), flex: 1 }}
+                title={node.title || '未命名文件夹'}
+              >
+                <span aria-hidden>📁</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {node.title || '未命名文件夹'}
+                </span>
+              </button>
+              <button
+                onClick={() => {
+                  const t = window.prompt('重命名文件夹', node.title);
+                  if (t && t.trim()) {
+                    void bridge.renameFolder(node.note_id, t.trim()).then((ok) => ok && void refresh());
+                  }
+                }}
+                aria-label={`重命名 ${node.title || '未命名文件夹'}`}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: tokens.color.textSecondary,
+                  cursor: 'pointer',
+                  padding: '0 4px',
+                  fontSize: tokens.typography.caption.size,
+                  minHeight: tokens.a11y.minTouchTarget,
+                }}
+              >
+                ✎
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => onSelect(node.note_id)}
+              style={{ ...rowStyle(selectedId === node.note_id, depth), flex: 1 }}
+              title={node.title || '未命名'}
+            >
+              <span aria-hidden>📄</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                {node.title || '未命名'}
+              </span>
+              <select
+                value=""
+                aria-label={`移动 ${node.title || '未命名'} 到…`}
+                onChange={(e) => {
+                  const target = e.target.value;
+                  const parentId: string | null = target === '' ? null : target;
+                  if (parentId !== node.parent_id) {
+                    void bridge.moveNote(node.note_id, parentId).then((ok) => ok && void refresh());
+                  }
+                }}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  background: 'transparent',
+                  color: tokens.color.textSecondary,
+                  border: 'none',
+                  fontSize: tokens.typography.caption.size,
+                  cursor: 'pointer',
+                  maxWidth: 28,
+                }}
+              >
+                <option value="">→</option>
+                {folders.map((f) => (
+                  <option key={f.label} value={f.id ?? ''}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </button>
+          )}
+        </div>
+        {isFolder && isOpen && node.children.map((c) => renderNode(c, depth + 1))}
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: `${tokens.spacing.xs}px ${tokens.spacing.sm}px`,
+        }}
+      >
+        <span
+          style={{
+            fontSize: tokens.typography.caption.size,
+            color: tokens.color.textSecondary,
+          }}
+        >
+          目录树 · {flat.length}
+        </span>
+        <button
+          onClick={() => {
+            const t = window.prompt('新建文件夹（根目录）', '新文件夹');
+            if (t && t.trim()) {
+              void bridge.createFolder(null, t.trim()).then((ok) => ok && void refresh());
+            }
+          }}
+          aria-label="新建根级文件夹"
+          style={{
+            background: 'transparent',
+            color: tokens.color.textSecondary,
+            border: 'none',
+            borderRadius: tokens.radius.md,
+            fontSize: tokens.typography.caption.size,
+            cursor: 'pointer',
+            minHeight: 30,
+          }}
+        >
+          ＋ 文件夹
+        </button>
+      </div>
+      {err && (
+        <p style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size, padding: tokens.spacing.sm }}>
+          目录树加载失败：{err}
+        </p>
+      )}
+      {tree.length === 0 && !err && (
+        <p
+          style={{
+            color: tokens.color.textSecondary,
+            fontSize: tokens.typography.caption.size,
+            padding: tokens.spacing.md,
+          }}
+        >
+          目录树为空 — 新建笔记或文件夹开始。
+        </p>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {tree.map((n) => renderNode(n, 0))}
+      </div>
+    </div>
   );
 }
 
@@ -1382,6 +1628,7 @@ export default function DesktopShell() {
           }}
           onCreate={() => data.createNote('未命名')}
           onImport={() => setWizardOpen(true)}
+          bridge={data}
         />
         {wizardOpen ? (
           /* DK-09 迁移向导（Bravo 授权切片：仅挂载调用，组件自包含） */
