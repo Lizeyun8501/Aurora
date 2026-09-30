@@ -28,7 +28,10 @@ fn full_lifecycle_tool_flow() {
     // 审计链：有落账 + 哈希链完整
     let entries = audit.entries();
     assert!(!entries.is_empty(), "record_result must land audit entries");
-    assert!(audit.verify_chain(), "audit chain must verify after tool flow");
+    assert!(
+        audit.verify_chain(),
+        "audit chain must verify after tool flow"
+    );
 
     // kill 语义（确定性断言）
     s.kill("operator-halt");
