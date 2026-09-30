@@ -230,7 +230,7 @@ pub async fn cmd_agent_session_status(session_id: String) -> Result<serde_json::
     Ok(serde_json::json!({
         "id": session_id,
         "killed": session.is_killed(),
-        "expired": session.is_expired(),
+        "expired": session.expired(),
         "remaining_secs": session.remaining_secs(),
     }))
 }
