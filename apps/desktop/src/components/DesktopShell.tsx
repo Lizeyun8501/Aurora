@@ -832,11 +832,42 @@ function TreeSection(props: {
     });
   };
 
+  /** DK-02 S2 拖拽移动：统一移动入口（core 环检测三态拒绝文案直显 err）。 */
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const moveNodeTo = useCallback(
+    async (id: string, parentId: string | null) => {
+      try {
+        const ok = await bridge.moveNote(id, parentId);
+        if (ok) {
+          setErr(null);
+          await refresh();
+        }
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [bridge, refresh],
+  );
+
   const renderNode = (node: NoteTreeNode, depth: number): React.ReactElement => {
     const isFolder = node.kind === 'Folder';
     const isOpen = isFolder && !collapsed.has(node.note_id);
+    const isOver = dragOverId === node.note_id;
     return (
-      <div key={node.note_id}>
+      <div
+        key={node.note_id}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/aurora-node', node.note_id);
+          e.dataTransfer.effectAllowed = 'move';
+          setDragId(node.note_id);
+        }}
+        onDragEnd={() => {
+          setDragId(null);
+          setDragOverId(null);
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           {isFolder ? (
             <>
@@ -858,7 +889,25 @@ function TreeSection(props: {
               </button>
               <button
                 onClick={() => onSelect(node.note_id)}
-                style={{ ...rowStyle(selectedId === node.note_id, depth), flex: 1 }}
+                onDragOver={(e) => {
+                  if (dragId && dragId !== node.note_id) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    setDragOverId(node.note_id);
+                  }
+                }}
+                onDragLeave={() => setDragOverId((p) => (p === node.note_id ? null : p))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOverId(null);
+                  const id = e.dataTransfer.getData('text/aurora-node');
+                  if (id && id !== node.note_id) void moveNodeTo(id, node.note_id);
+                }}
+                style={{
+                  ...rowStyle(selectedId === node.note_id, depth),
+                  flex: 1,
+                  outline: isOver ? `2px dashed ${tokens.color.focus}` : undefined,
+                }}
                 title={node.title || '未命名文件夹'}
               >
                 <span aria-hidden>📁</span>
@@ -903,9 +952,7 @@ function TreeSection(props: {
                 onChange={(e) => {
                   const target = e.target.value;
                   const parentId: string | null = target === '' ? null : target;
-                  if (parentId !== node.parent_id) {
-                    void bridge.moveNote(node.note_id, parentId).then((ok) => ok && void refresh());
-                  }
+                  if (parentId !== node.parent_id) void moveNodeTo(node.note_id, parentId);
                 }}
                 onClick={(e) => e.stopPropagation()}
                 style={{
@@ -987,7 +1034,20 @@ function TreeSection(props: {
           目录树为空 — 新建笔记或文件夹开始。
         </p>
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div
+        style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+        onDragOver={(e) => {
+          if (dragId) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          const id = e.dataTransfer.getData('text/aurora-node');
+          if (id) void moveNodeTo(id, null);
+        }}
+      >
         {tree.map((n) => renderNode(n, 0))}
       </div>
     </div>
