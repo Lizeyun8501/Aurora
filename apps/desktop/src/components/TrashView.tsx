@@ -61,6 +61,32 @@ export default function TrashView({ invoke }: { invoke: InvokeFn | null }): Reac
     [invoke, busyId, refresh],
   );
 
+  /** DK-02 S2 批量恢复：allSettled 逐条 restore（文件夹整树按序恢复，父归位后子回原位）。 */
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const restoreSelected = useCallback(() => {
+    if (!invoke || busyId || selected.size === 0) return;
+    setBusyId('__batch__');
+    const ids = [...selected];
+    Promise.allSettled(ids.map((id) => invoke('cmd_restore_note', { noteId: id }))).then((results) => {
+      const ok = results.filter((r) => r.status === 'fulfilled').length;
+      const fail = results.length - ok;
+      if (fail === 0) window.alert(`已恢复 ${ok} 条。`);
+      else window.alert(`恢复完成：成功 ${ok} 条，失败 ${fail} 条。`);
+      setSelected(new Set());
+      refresh();
+      setBusyId(null);
+    });
+  }, [invoke, busyId, selected, refresh]);
+
+  const toggleSel = (id: string): void => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const purge = useCallback(
     (it: TrashItem) => {
       if (!invoke || busyId) return;
@@ -120,7 +146,29 @@ export default function TrashView({ invoke }: { invoke: InvokeFn | null }): Reac
           加载中…
         </p>
       ) : (
-        <ul role="list" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacing.sm, marginBottom: tokens.spacing.sm }}>
+            <button
+              style={btn}
+              onClick={restoreSelected}
+              disabled={busyId !== null || selected.size === 0}
+              aria-label={`恢复选中的 ${selected.size} 条笔记`}
+            >
+              恢复选中（{selected.size}）
+            </button>
+            <button
+              style={btn}
+              onClick={() => setSelected(items ? new Set(items.map((i) => i.note_id)) : new Set())}
+              disabled={items === null || items.length === 0}
+              aria-label="全选"
+            >
+              全选
+            </button>
+            <button style={btn} onClick={() => setSelected(new Set())} disabled={selected.size === 0} aria-label="清空选择">
+              清空选择
+            </button>
+          </div>
+          <ul role="list" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
           {items.map((it) => (
             <li
               key={it.note_id}
@@ -135,6 +183,13 @@ export default function TrashView({ invoke }: { invoke: InvokeFn | null }): Reac
                 border: '1px solid rgba(255,255,255,0.08)',
               }}
             >
+              <input
+                type="checkbox"
+                checked={selected.has(it.note_id)}
+                onChange={() => toggleSel(it.note_id)}
+                aria-label={`选择笔记 ${it.title}`}
+                style={{ width: 16, height: 16, cursor: 'pointer' }}
+              />
               <span style={{ flex: 1, color: tokens.color.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {it.title || '（无标题）'}
               </span>
@@ -160,6 +215,7 @@ export default function TrashView({ invoke }: { invoke: InvokeFn | null }): Reac
             </li>
           ))}
         </ul>
+        </>
       )}
     </main>
   );
