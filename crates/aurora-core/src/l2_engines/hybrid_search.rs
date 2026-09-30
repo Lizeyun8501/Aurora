@@ -86,13 +86,13 @@ impl HybridSearcher {
             e.1 = HitSource::Bm25;
         }
         let mut preview_of: HashMap<String, String> = HashMap::new();
-        for (rank, (note_id, _cos)) in vec_hits.iter().enumerate() {
-            let e = fused.entry(note_id.clone()).or_insert_with(|| {
+        for (rank, vh) in vec_hits.iter().enumerate() {
+            let e = fused.entry(vh.note_id.clone()).or_insert_with(|| {
                 (
                     0.0,
                     HitSource::Vector,
                     SearchHit {
-                        note_id: note_id.clone(),
+                        note_id: vh.note_id.clone(),
                         title: String::new(),
                         snippet: String::new(),
                         score: 0.0,
@@ -106,7 +106,9 @@ impl HybridSearcher {
             } else {
                 HitSource::Vector
             };
-            preview_of.insert(note_id.clone(), String::new()); // 占位，随后统一回填
+            // S3：preview 随命中返回（与 content_hash 同步——纯向量 snippet 新鲜快照；
+            // title 仍留空——调用方实时回填，改标题不触发重嵌故不入向量记录）
+            preview_of.insert(vh.note_id.clone(), vh.preview.clone().unwrap_or_default());
         }
 
         let mut hits: Vec<SearchHit> = fused
@@ -127,9 +129,9 @@ impl HybridSearcher {
         });
         hits.truncate(limit);
 
-        // 纯向量命中的 snippet：标题缺失/预览回填——title 从 Bm25 命中借用，
-        // 否则诚实留空（S1 旧记录 content_preview=None）；preview 由调用方
-        // （VectorIndex 缓存）在后续切片提供，本层不重复读 KV（注释即契约）。
+        // 纯向量命中：snippet = content_preview（S3 起随 VectorHit 返回，与
+        // content_hash 同步的新鲜快照；S1 旧记录 None → 空串诚实标注）。
+        // title 留空由调用方实时回填（改标题不触发重嵌，不入向量记录）。
         Ok(SearchResult {
             hits,
             total: 0, // RRF 截断后 total=hits.len()（分页语义由 BM25 路承担）
@@ -351,5 +353,34 @@ mod tests {
         let took = t0.elapsed();
         assert!(!res.hits.is_empty());
         assert!(took.as_millis() < 500, "万条混合应 <500ms, got {:?}", took);
+    }
+
+    /// T7 S3 纯向量 snippet：仅向量面索引的笔记（BM25 未索引）→ source=Vector
+    /// 且 snippet = content_preview（S2 缺口关闭断言——纯向量结果可解释可展示）。
+    #[tokio::test]
+    async fn pure_vector_hit_snippet_filled_from_preview() {
+        let (bm25, vec, embed) = fixture().await;
+        // 只向量化不进 BM25 索引——模拟「BM25 不命中、纯语义召回」场景
+        vec.embed_and_store_for_bench("x1", "苹果 生态 讨论", embed.vector_for("苹果 生态 讨论"))
+            .await;
+        let embed_dyn: Arc<dyn EmbedProvider> = embed.clone();
+        let s = searcher(bm25, vec, embed_dyn);
+        let opts = SearchOptions {
+            mode: SearchMode::Hybrid,
+            ..SearchOptions::default()
+        };
+        let res = s.search_hybrid("苹果手机 新品", &opts).await.unwrap();
+        let x1 = res
+            .hits
+            .iter()
+            .find(|h| h.note_id == "x1")
+            .expect("向量共享维应命中 x1");
+        assert_eq!(x1.source, HitSource::Vector);
+        assert!(
+            x1.snippet.contains("苹果 生态"),
+            "纯向量 snippet 应为 preview 快照, got {:?}",
+            x1.snippet
+        );
+        assert!(x1.title.is_empty(), "title 留空待调用方实时回填");
     }
 }

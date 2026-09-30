@@ -42,6 +42,18 @@ pub struct VecRecord {
     pub content_preview: Option<String>,
 }
 
+/// 单条向量检索命中（DK-03 S3：preview 随命中返回——纯向量 snippet 数据源，
+/// 与 content_hash 同步更新故快照新鲜；title 不入向量记录——改标题不触发重嵌
+/// 会过期，title 回填由调用方实时查 note store，见 desktop cmd 层）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorHit {
+    pub note_id: String,
+    /// 余弦相似度（降序排序键）。
+    pub score: f32,
+    /// 内容预览快照（index 时截取前 120 字符；S1 旧记录 None → UI 诚实留空）。
+    pub preview: Option<String>,
+}
+
 /// 嵌入供给方抽象（实现方：aurora-ai 的 OllamaEmbedProvider 本地主路径 /
 /// EmbedFromAiProvider 云 fallback 适配器 / 测试 Mock）。
 #[async_trait::async_trait]
@@ -215,12 +227,14 @@ impl VectorIndex {
     /// 暴力 KNN 检索（余弦相似度，降序取前 k；trash 过滤复用 DK-02 语义）。
     ///
     /// `query` 维度必须与索引维度一致（不匹配报错——向量口径错误应显式暴露）。
+    /// **S3 签名变更列明**：返回 `(note_id, f32)` → [`VectorHit`]（preview 随
+    /// 命中返回，S2 留缺口在此关闭）；调用点仅 hybrid_search 与测试（core 内）。
     pub async fn search_vector(
         &self,
         query: &[f32],
         k: usize,
         ws_filter: Option<&str>,
-    ) -> Result<Vec<(String, f32)>, Error> {
+    ) -> Result<Vec<VectorHit>, Error> {
         if query.len() != self.dim as usize {
             return Err(Error::InvalidInput(format!(
                 "query dim mismatch: got {}, expected {}",
@@ -233,7 +247,7 @@ impl VectorIndex {
             .cache
             .read()
             .map_err(|_| Error::Internal("vector cache lock poisoned".into()))?;
-        let mut scored: Vec<(String, f32)> = cache
+        let mut scored: Vec<VectorHit> = cache
             .iter()
             .filter(|(id, _)| !trashed.contains(id.as_str()))
             // DK-03 S2：workspace 过滤（记录 None=单工作区口径匹配全部；Some(w)≠ws 跳过）
@@ -241,9 +255,17 @@ impl VectorIndex {
                 (Some(ws), Some(w)) => w == ws,
                 _ => true,
             })
-            .map(|(id, rec)| (id.clone(), Self::cosine(query, &rec.vector)))
+            .map(|(id, rec)| VectorHit {
+                note_id: id.clone(),
+                score: Self::cosine(query, &rec.vector),
+                preview: rec.content_preview.clone(),
+            })
             .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scored.truncate(k);
         Ok(scored)
     }
@@ -423,10 +445,18 @@ mod tests {
 
         let q = e.vector_for("rust systems programming");
         let hits = idx.search_vector(&q, 2, None).await.unwrap();
-        assert_eq!(hits[0].0, "n1", "自身应 top1");
+        assert_eq!(hits[0].note_id, "n1", "自身应 top1");
+        assert!(
+            hits[0]
+                .preview
+                .as_deref()
+                .unwrap_or_default()
+                .contains("rust"),
+            "S3：preview 应随命中返回（纯向量 snippet 数据源）"
+        );
         let q2 = e.vector_for("chocolate cake recipe");
         let hits2 = idx.search_vector(&q2, 2, None).await.unwrap();
-        assert_eq!(hits2[0].0, "n2", "另一查询 top1 是 n2");
+        assert_eq!(hits2[0].note_id, "n2", "另一查询 top1 是 n2");
     }
 
     /// T2 trash 过滤：软删笔记不参与检索（DK-02 联动——复用 trash: 前缀语义）。
@@ -450,10 +480,10 @@ mod tests {
         let q = e.vector_for("alpha content");
         let hits = idx.search_vector(&q, 5, None).await.unwrap();
         assert!(
-            !hits.iter().any(|(id, _)| id == "n2"),
+            !hits.iter().any(|h| h.note_id == "n2"),
             "trash 中笔记不得返回"
         );
-        assert!(hits.iter().any(|(id, _)| id == "n1"));
+        assert!(hits.iter().any(|h| h.note_id == "n1"));
         // 向量记录仍在（restore 后可检索）
         assert!(kv.get("notevec:n2").await.unwrap().is_some());
     }
