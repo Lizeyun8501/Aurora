@@ -919,7 +919,10 @@ function TreeSection(props: {
                 onClick={() => {
                   const t = window.prompt('重命名文件夹', node.title);
                   if (t && t.trim()) {
-                    void bridge.renameFolder(node.note_id, t.trim()).then((ok) => ok && void refresh());
+                    void bridge
+                      .renameFolder(node.note_id, t.trim())
+                      .then((ok) => ok && void refresh())
+                      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
                   }
                 }}
                 aria-label={`重命名 ${node.title || '未命名文件夹'}`}
@@ -1001,7 +1004,10 @@ function TreeSection(props: {
           onClick={() => {
             const t = window.prompt('新建文件夹（根目录）', '新文件夹');
             if (t && t.trim()) {
-              void bridge.createFolder(null, t.trim()).then((ok) => ok && void refresh());
+              void bridge
+                .createFolder(null, t.trim())
+                .then((ok) => ok && void refresh())
+                .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
             }
           }}
           aria-label="新建根级文件夹"
