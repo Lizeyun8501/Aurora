@@ -28,7 +28,7 @@ use crate::l1_infrastructure::jieba_tokenizer::register_jieba_with;
 use tantivy::{doc, Index, TantivyDocument, Term};
 
 use crate::traits::search_backend::{
-    IndexEntry, NoteMetadata, SearchBackend, SearchHit, SearchOptions, SearchResult,
+    HitSource, IndexEntry, NoteMetadata, SearchBackend, SearchHit, SearchOptions, SearchResult,
 };
 use crate::Error;
 
@@ -276,6 +276,7 @@ impl SearchBackend for TantivySearchBackend {
                 title,
                 snippet: self.snippet_of(&document),
                 score,
+                source: HitSource::Bm25,
             });
         }
 

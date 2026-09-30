@@ -108,6 +108,7 @@ fn search_opts() -> SearchOptions {
         workspace_filter: None,
         tag_filter: None,
         date_range: None,
+        mode: aurora_core::traits::search_backend::SearchMode::default(),
     }
 }
 

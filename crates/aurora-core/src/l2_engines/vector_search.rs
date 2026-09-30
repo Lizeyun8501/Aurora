@@ -34,6 +34,12 @@ pub struct VecRecord {
     pub model: String,
     /// 内容指纹（sha256 hex）——去重依据：内容未变跳过重嵌入。
     pub content_hash: String,
+    /// DK-03 S2：工作区归属（None=单工作区口径，匹配全部 filter——S1 旧记录兼容）。
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    /// DK-03 S2：纯向量命中 snippet 用内容预览（index 时截取；S1 旧记录 None=空）。
+    #[serde(default)]
+    pub content_preview: Option<String>,
 }
 
 /// 嵌入供给方抽象（实现方：aurora-ai 的 OllamaEmbedProvider 本地主路径 /
@@ -169,6 +175,9 @@ impl VectorIndex {
             vector,
             model: self.model.clone(),
             content_hash: hash.to_string(),
+            // DK-03 S2：单工作区口径（None=匹配全部 filter）；preview 取内容前 120 字符
+            workspace_id: None,
+            content_preview: Some(content.chars().take(120).collect()),
         };
         self.kv
             .set(
@@ -210,6 +219,7 @@ impl VectorIndex {
         &self,
         query: &[f32],
         k: usize,
+        ws_filter: Option<&str>,
     ) -> Result<Vec<(String, f32)>, Error> {
         if query.len() != self.dim as usize {
             return Err(Error::InvalidInput(format!(
@@ -226,6 +236,11 @@ impl VectorIndex {
         let mut scored: Vec<(String, f32)> = cache
             .iter()
             .filter(|(id, _)| !trashed.contains(id.as_str()))
+            // DK-03 S2：workspace 过滤（记录 None=单工作区口径匹配全部；Some(w)≠ws 跳过）
+            .filter(|(_, rec)| match (ws_filter, rec.workspace_id.as_deref()) {
+                (Some(ws), Some(w)) => w == ws,
+                _ => true,
+            })
             .map(|(id, rec)| (id.clone(), Self::cosine(query, &rec.vector)))
             .collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -290,6 +305,8 @@ impl VectorIndex {
             vector,
             model: self.model.clone(),
             content_hash: hash,
+            workspace_id: None,
+            content_preview: Some(content.chars().take(120).collect()),
         };
         self.kv
             .set(
@@ -405,10 +422,10 @@ mod tests {
             .unwrap();
 
         let q = e.vector_for("rust systems programming");
-        let hits = idx.search_vector(&q, 2).await.unwrap();
+        let hits = idx.search_vector(&q, 2, None).await.unwrap();
         assert_eq!(hits[0].0, "n1", "自身应 top1");
         let q2 = e.vector_for("chocolate cake recipe");
-        let hits2 = idx.search_vector(&q2, 2).await.unwrap();
+        let hits2 = idx.search_vector(&q2, 2, None).await.unwrap();
         assert_eq!(hits2[0].0, "n2", "另一查询 top1 是 n2");
     }
 
@@ -431,7 +448,7 @@ mod tests {
             .unwrap();
         // notevec: 保留（恢复数据源——检索面过滤而非物理删）
         let q = e.vector_for("alpha content");
-        let hits = idx.search_vector(&q, 5).await.unwrap();
+        let hits = idx.search_vector(&q, 5, None).await.unwrap();
         assert!(
             !hits.iter().any(|(id, _)| id == "n2"),
             "trash 中笔记不得返回"
@@ -531,7 +548,7 @@ mod tests {
         }
         let q = e.vector_for("content 5000");
         let t0 = std::time::Instant::now();
-        let hits = idx.search_vector(&q, 10).await.unwrap();
+        let hits = idx.search_vector(&q, 10, None).await.unwrap();
         let took = t0.elapsed();
         assert_eq!(hits.len(), 10);
         assert!(took.as_millis() < 50, "万条 KNN 应 <50ms, got {:?}", took);

@@ -2,6 +2,7 @@ pub mod action_extractor; // V20 Phase 3: GTD 行动项提取
 pub mod bidi_link_projection; // V20 Phase 1: 双链投影
 pub mod capture;
 pub mod event_sourcing;
+pub mod hybrid_search;
 pub mod nl_query; // V20 Phase 3: 口语化查询解析
 pub mod permission;
 pub mod property;

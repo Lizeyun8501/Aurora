@@ -16,6 +16,7 @@ pub mod error_codes;
 pub mod event_bus;
 pub mod l1_infrastructure;
 pub mod l2_engines;
+pub use l2_engines::hybrid_search::{HybridSearcher, RRF_K};
 pub use l2_engines::vector_search::{EmbedOutcome, EmbedProvider, VecRecord, VectorIndex};
 pub use write_path::{
     create_folder, delete_folder, list_tree, move_node, rename_folder, NoteKind, TreeNode,

@@ -23,6 +23,9 @@ pub struct SearchOptions {
     pub tag_filter: Option<Vec<String>>,
     /// 限定时间范围（闭区间）。
     pub date_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    /// DK-03 S2：检索模式（default Bm25——旧序列化/旧调用方零破坏）。
+    #[serde(default)]
+    pub mode: SearchMode,
 }
 
 /// 单条搜索命中。
@@ -36,6 +39,31 @@ pub struct SearchHit {
     pub snippet: String,
     /// 相关性得分。
     pub score: f32,
+    /// DK-03 S2：命中来源（default Bm25——混合检索消费，S3 语义召回徽章数据源）。
+    #[serde(default)]
+    pub source: HitSource,
+}
+
+/// DK-03 S2：检索模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SearchMode {
+    #[default]
+    /// 纯 BM25 关键词路（tantivy）——旧行为。
+    Bm25,
+    /// BM25 + 向量 RRF 混合（HybridSearcher 消费）。
+    Hybrid,
+}
+
+/// DK-03 S2：命中来源标记。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum HitSource {
+    #[default]
+    /// 仅 BM25 路命中。
+    Bm25,
+    /// 仅向量路命中（语义召回——无关键词共现）。
+    Vector,
+    /// 双路命中（RRF 排序天然靠前）。
+    Both,
 }
 
 /// 搜索结果集。

@@ -214,6 +214,7 @@ mod tests {
                     title: title.clone(),
                     score: 1.0,
                     snippet: title.clone(),
+                    source: crate::traits::search_backend::HitSource::Bm25,
                 })
                 .collect();
             Ok(crate::traits::search_backend::SearchResult {
