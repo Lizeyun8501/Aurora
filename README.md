@@ -41,6 +41,21 @@ Rust Workspace（10 crate / 66K 行）+ 4 端应用（desktop/mobile/web/extensi
 - **权威源三阶段**（ADR-004）：notes 元数据为权威指针，blocks/搜索索引为派生（失败不阻断主流程，启动时自动重建），Loro 快照双写观察期后接管正文权威
 - **分层事件总线**：High（实时 UI）/ Medium（持久化重放驱动投影）/ Low（后台），投影水位线对比事件流决定增量追赶或全量重建
 
+## 设计原则
+
+> R-01 收尾补回（V22.1 有、V25 合并中丢失）。五条判据均可在代码库验证（rg 锚点随文）。
+
+1. **本地优先，端内闭环** —— 无网络全功能可用，同步是增强不是依赖。
+   判据：`offline_queue` + `sync_gate`（wifi_only 开关持久化）；写路径 `write_path` 零网络依赖。
+2. **单一写入路径** —— 所有状态变更经 `write_path` 收据语义，禁止旁路。
+   判据：`note:` 前缀直写仅存在于 write_path；事件字典 41 类冻结（`event.rs` ↔ 前端镜像）。
+3. **落库即加密** —— E2E 加密为默认态，明文只在内存瞬态。
+   判据：`seal` 字节封装 + vault unseal 注入；`decode_record` 消费者统一 unseal（树面消费者禁裸 `from_slice`）。
+4. **AI 永不静默写入** —— 两段式提交铁律（aiLiquify 提案 → aiCommit 用户勾选落库）。
+   判据：`LiquifyReview` 逐 op 勾选；`OpResult` 失败不掩盖；Kill-Switch 用户可达（强杀不可撤销、理由落审计链）。
+5. **投影可重建** —— 存储是事实源，投影可随时重放，派生态不落存储。
+   判据：`catch_up` 投影重放；任务 `blocked` 联动 / trash 过滤均为派生计算。
+
 ## 快速开始
 
 ```bash
