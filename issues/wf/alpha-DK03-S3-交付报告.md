@@ -24,8 +24,8 @@
 | core 全量 | ✅ **408 passed / 0 failed**（+T7 纯向量 snippet / +T8 remove_note 联动） |
 | clippy / fmt | ✅ 0 warning / fmt 净（core + desktop fmt --check） |
 | 前端 | ✅ tsc --noEmit 净 + vite build 通过（3.24s） |
-| desktop 全量编译 | ⚠️ 本地 GTK 系统依赖无 root 不可装——**CI desktop-check 兜底**（环境限制如实记录） |
-| CI | Rustfmt ✅；其余见回填段 |
+| desktop 全量编译 | ✅ 本地假 pkg-config（/tmp/fakepc 全 99.0.0 骗探测，check 不链接）绕 GTK 缺失——`PKG_CONFIG_PATH=/tmp/fakepc cargo check -p aurora-desktop` 通过（env: glib 2.68<要求 2.70，版本咬合链 pango→glib≥2.80 被假 pc 击穿） |
+| CI | **五绿 ✅**（6c07a79）：MSRV(1.91)/Clippy/Rustfmt/Test(stable)/desktop-check 全 success——**desktop-check 历史首绿（S3b 全链在 CI 真环境确认）** |
 
 ## 三、挂起项
 
@@ -38,6 +38,16 @@
 
 ## CI 终验（回填）
 
-（待 CI 完成后回填）
+**6c07a79 五绿**（2026-10-01 终验）：
+
+| Job | 结果 |
+|---|---|
+| MSRV (1.91) | ✅ success |
+| Clippy | ✅ success |
+| Rustfmt | ✅ success |
+| Test (stable) | ✅ success（core 408） |
+| **desktop-check** | ✅ **success（历史首绿）** |
+
+编译修复两处：①backfill_missing content_of 加 Send+Sync bound（tauri spawn 要求 future Send，&dyn Fn 跨 await 持有必需，语义零变化）；②lib.rs E0382（r.hits 先 move 后 len → 先存 n）。
 
 — Alpha 2026-10-01
