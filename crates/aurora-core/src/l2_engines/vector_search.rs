@@ -125,6 +125,18 @@ impl VectorIndex {
         Ok(n)
     }
 
+    /// 物理删除单条向量记录（DK-03 S3b purge 联动：trash 软删不删记录、靠检索面
+    /// 过滤；purge 后残留会命中已删笔记，故须物理清 + 缓存同步移除）。
+    pub async fn remove_note(&self, note_id: &str) -> Result<(), Error> {
+        self.kv.delete(&format!("notevec:{note_id}")).await?;
+        let mut cache = self
+            .cache
+            .write()
+            .map_err(|_| Error::Internal("vector cache lock poisoned".into()))?;
+        cache.remove(note_id);
+        Ok(())
+    }
+
     fn content_hash(content: &str) -> String {
         let mut h = Sha256::new();
         h.update(content.as_bytes());
@@ -486,6 +498,23 @@ mod tests {
         assert!(hits.iter().any(|h| h.note_id == "n1"));
         // 向量记录仍在（restore 后可检索）
         assert!(kv.get("notevec:n2").await.unwrap().is_some());
+    }
+
+    /// T8 purge 联动（S3b）：remove_note 物理删记录 + 缓存同步——检索不再返回。
+    #[tokio::test]
+    async fn remove_note_purges_record_and_cache() {
+        let kv = boot().await;
+        let idx = Arc::new(VectorIndex::new(kv.clone() as Arc<dyn KVStore>, "m", 2));
+        let e = MockEmbed::new(2);
+        idx.index_note("n1", "alpha content", &e).await.unwrap();
+        idx.remove_note("n1").await.unwrap();
+        assert!(
+            kv.get("notevec:n1").await.unwrap().is_none(),
+            "记录应物理删除"
+        );
+        let q = e.vector_for("alpha content");
+        let hits = idx.search_vector(&q, 5, None).await.unwrap();
+        assert!(hits.is_empty(), "缓存已同步，检索不得返回: {hits:?}");
     }
 
     /// T3 维度/模型不匹配淘汰：旧向量淘汰重建（DoD 2——配置化）。

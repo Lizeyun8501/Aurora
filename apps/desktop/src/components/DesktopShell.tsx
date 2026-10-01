@@ -1471,13 +1471,13 @@ export default function DesktopShell() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  /** 原始行形状（CommandPalette 契约: note_id/title/snippet/score） */
-  type RawHit = { note_id: string; title: string; snippet: string; score: number };
+  /** 原始行形状（CommandPalette 契约: note_id/title/snippet/score + S3 source） */
+  type RawHit = { note_id: string; title: string; snippet: string; score: number; source?: string };
   const searchNotes = useCallback(
-    async (q: string): Promise<RawHit[]> => {
+    async (q: string, mode?: string): Promise<RawHit[]> => {
       if (invoke) {
         try {
-          return (await invoke('cmd_search_notes', { query: q })) as RawHit[];
+          return (await invoke('cmd_search_notes', { query: q, mode: mode ?? null })) as RawHit[];
         } catch {
           /* fallthrough to mock */
         }
@@ -1504,6 +1504,7 @@ export default function DesktopShell() {
           id: r.note_id,
           title: r.title,
           snippet: r.snippet,
+          source: r.source as 'Bm25' | 'Vector' | 'Both' | undefined,
           run: () => setSelectedId(r.note_id),
         })),
       );

@@ -22,8 +22,12 @@ use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 use aurora_core::app_core::AppCore;
+use aurora_core::l2_engines::hybrid_search::HybridSearcher;
+use aurora_core::l2_engines::vector_search::{vector_index_for, EmbedProvider, VectorIndex};
 use aurora_security::LocalDekVault;
 use tracing::{info, warn};
+
+use aurora_ai::embed::EmbedFromAiProvider;
 
 // ── 启动期常量与全局状态 ─────────────────────────────
 
@@ -48,6 +52,42 @@ static ATTACH_STATE: Mutex<Option<Arc<dyn aurora_core::attachment_store::Attachm
 /// 同步门（DK-08 §7.3 — bootstrap 装配，setup 注入；wifi_only 运行时切换）。
 /// 注：读取侧暂无调用方（wifi_only 读写经 BootedApp 同源语义），访问器随需再补。
 static SYNC_GATE_STATE: Mutex<Option<Arc<aurora_sync::sync_gate::SyncGate>>> = Mutex::new(None);
+/// 向量索引（DK-03 S3b — 混合检索向量路 + 索引管线写入共用）。
+static VEC_STATE: Mutex<Option<Arc<VectorIndex>>> = Mutex::new(None);
+/// 嵌入供给方（S3b — 索引管线与回填共用，从 HybridSearcher 不可逆取故独立存）。
+static EMBED_STATE: Mutex<Option<Arc<dyn EmbedProvider>>> = Mutex::new(None);
+/// 混合检索器（S3b — BM25+KNN→RRF，cmd_search_notes hybrid 模式走此路）。
+static HYBRID_STATE: Mutex<Option<Arc<HybridSearcher>>> = Mutex::new(None);
+
+/// 获取向量索引引用（S3b）。
+fn get_vectors() -> Result<Arc<VectorIndex>, String> {
+    VEC_STATE
+        .lock()
+        .map_err(|e| format!("mutex poisoned: {}", e))?
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "vector index not initialized".into())
+}
+
+/// 获取嵌入供给方引用（S3b）。
+fn get_embed() -> Result<Arc<dyn EmbedProvider>, String> {
+    EMBED_STATE
+        .lock()
+        .map_err(|e| format!("mutex poisoned: {}", e))?
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "embed provider not initialized".into())
+}
+
+/// 获取混合检索器引用（S3b）。
+fn get_hybrid() -> Result<Arc<HybridSearcher>, String> {
+    HYBRID_STATE
+        .lock()
+        .map_err(|e| format!("mutex poisoned: {}", e))?
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "hybrid searcher not initialized".into())
+}
 
 /// 获取用户数据目录路径。
 ///
@@ -167,6 +207,65 @@ pub fn run() {
                 .lock()
                 .expect("BOOTED_STATE mutex poisoned") = Some(booted_arc.clone());
             info!("AppCore startup complete");
+
+            // DK-03 S3b：混合检索装配（向量路 768 = nomic-embed-text 本地口径）。
+            // 诚实标注：维度按配置口径冻结，AIProvider 实际模型维度不符时
+            // index_note 维度守卫报错 → 索引管线 log warn 静默失效，BM25 兜底——
+            // 不做 probe 惰性组装（模型/维度配置化留待配置卡）。
+            {
+                let core = booted_arc.core.clone();
+                let vec_idx = Arc::new(vector_index_for(&core, "nomic-embed-text", 768));
+                let embed: Arc<dyn EmbedProvider> = Arc::new(EmbedFromAiProvider::new(
+                    core.ai.clone(),
+                    "nomic-embed-text",
+                    768,
+                ));
+                let hybrid = Arc::new(HybridSearcher::new(
+                    core.search.clone(),
+                    vec_idx.clone(),
+                    embed.clone(),
+                ));
+                *VEC_STATE.lock().expect("VEC_STATE mutex poisoned") = Some(vec_idx);
+                *EMBED_STATE.lock().expect("EMBED_STATE mutex poisoned") = Some(embed.clone());
+                *HYBRID_STATE.lock().expect("HYBRID_STATE mutex poisoned") = Some(hybrid);
+
+                // boot 后向量回填（限速 250ms/篇防本地推理过载；content_of 为同步
+                // 闭包——预载解密内容表是唯一路径，个人库量级可控）。
+                let core_for_backfill = core.clone();
+                tauri::async_runtime::spawn(async move {
+                    let Ok(vault) = get_vault() else { return };
+                    let Ok(pairs) = core_for_backfill.kv_store.scan_prefix("note:").await else {
+                        warn!("vector backfill: note scan failed");
+                        return;
+                    };
+                    let mut contents: std::collections::HashMap<String, String> =
+                        std::collections::HashMap::new();
+                    for (k, v) in pairs {
+                        let Some(id) = k.strip_prefix("note:").map(String::from) else {
+                            continue;
+                        };
+                        match unwrap_note_bytes(&core_for_backfill, &vault, &v) {
+                            Ok(json) => {
+                                if let Some(c) = json.get("content").and_then(|x| x.as_str()) {
+                                    contents.insert(id, c.to_string());
+                                }
+                            }
+                            Err(e) => warn!(note_id = %id, error = %e, "backfill: note decrypt failed"),
+                        }
+                    }
+                    let Ok(vecs) = get_vectors() else { return };
+                    let Ok(embed_ref) = get_embed() else { return };
+                    let content_of = |id: &str| contents.get(id).cloned();
+                    match vecs
+                        .backfill_missing(&content_of, embed_ref.as_ref(), 50, std::time::Duration::from_millis(250))
+                        .await
+                    {
+                        Ok(n) if n > 0 => info!(backfilled = n, "vector backfill done"),
+                        Ok(_) => info!("vector backfill: nothing to do"),
+                        Err(e) => warn!(error = %e, "vector backfill failed (embedding unavailable? BM25 fallback active)"),
+                    }
+                });
+            }
 
             // DK-17 S2：运行时定时器（S1 挂起项收敛）——每小时 tick 备份水位 +
             // 每周完整性校验（check_and_backup 内含水 位/校验判断，幂等）。
@@ -398,6 +497,22 @@ async fn cmd_update_note(
         aurora_core::write_path::save_note_content(&ctx, &note_id, c)
             .await
             .map_err(|e| e.to_string())?;
+        // DK-03 S3b：向量索引管线（fire-and-forget——Ollama 缺席时静默失效，
+        // BM25 兜底；hash 去重由 index_note 内建，重复保存不重嵌）。
+        if !c.is_empty() {
+            if let (Ok(vecs), Ok(embed)) = (get_vectors(), get_embed()) {
+                let note_id2 = note_id.clone();
+                let content2 = c.to_string();
+                tauri::async_runtime::spawn(async move {
+                    match vecs.index_note(&note_id2, &content2, embed.as_ref()).await {
+                        Ok(outcome) => {
+                            info!(note_id = %note_id2, outcome = ?outcome, "vector indexed")
+                        }
+                        Err(e) => warn!(note_id = %note_id2, error = %e, "vector index failed"),
+                    }
+                });
+            }
+        }
     }
     core.catch_up_projections()
         .await
@@ -878,6 +993,12 @@ async fn cmd_purge_note(note_id: String) -> Result<(), String> {
     aurora_core::write_path::purge_note(&ctx, &note_id)
         .await
         .map_err(|e| e.to_string())?;
+    // DK-03 S3b：purge 联动——向量记录物理清（残留会命中已删笔记）
+    if let Ok(vecs) = get_vectors() {
+        if let Err(e) = vecs.remove_note(&note_id).await {
+            warn!(note_id = %note_id, error = %e, "vector remove_note failed (purge)");
+        }
+    }
     core.catch_up_projections()
         .await
         .map_err(|e| e.to_string())?;
@@ -921,6 +1042,14 @@ async fn cmd_purge_expired_trash(days: i64) -> Result<Vec<String>, String> {
     let purged = aurora_core::write_path::purge_expired(&ctx, days)
         .await
         .map_err(|e| e.to_string())?;
+    // DK-03 S3b：purge 联动——向量记录物理清（trash 面过滤随物理删失效，须清）
+    if let Ok(vecs) = get_vectors() {
+        for id in &purged {
+            if let Err(e) = vecs.remove_note(id).await {
+                warn!(note_id = %id, error = %e, "vector remove_note failed (purge)");
+            }
+        }
+    }
     core.catch_up_projections()
         .await
         .map_err(|e| e.to_string())?;
@@ -932,28 +1061,65 @@ async fn cmd_purge_expired_trash(days: i64) -> Result<Vec<String>, String> {
     Ok(purged)
 }
 
-/// 搜索笔记（Tantivy 全文检索）。
+/// 搜索笔记（Tantivy 全文检索；mode=hybrid 走 BM25+KNN→RRF 混合路）。
 #[tauri::command]
-async fn cmd_search_notes(query: String) -> Result<Vec<serde_json::Value>, String> {
+async fn cmd_search_notes(
+    query: String,
+    mode: Option<String>,
+) -> Result<Vec<serde_json::Value>, String> {
+    use aurora_core::traits::search_backend::SearchOptions;
     let core = get_core()?;
-    info!(query, "search notes via desktop command");
-    let opts = aurora_core::traits::search_backend::SearchOptions::default();
-    let result = core
-        .search
-        .search(&query, &opts)
-        .await
-        .map_err(|e| e.to_string())?;
-    let results: Vec<serde_json::Value> = result
-        .hits
-        .into_iter()
-        .map(|hit| {
-            serde_json::json!({
-                "doc_id": hit.note_id,
-                "score": hit.score,
-                "snippet": hit.snippet,
-            })
-        })
-        .collect();
+    info!(
+        query,
+        mode = mode.as_deref().unwrap_or("bm25"),
+        "search notes via desktop command"
+    );
+    let opts = SearchOptions {
+        limit: 20,
+        ..SearchOptions::default()
+    };
+    let (hits, total) = if mode.as_deref() == Some("hybrid") {
+        let hybrid = get_hybrid()?;
+        let r = hybrid
+            .search_hybrid(&query, &opts)
+            .await
+            .map_err(|e| e.to_string())?;
+        (r.hits, r.hits.len())
+    } else {
+        let r = core
+            .search
+            .search(&query, &opts)
+            .await
+            .map_err(|e| e.to_string())?;
+        (r.hits, r.total)
+    };
+    let vault = get_vault()?;
+    let mut results = Vec::with_capacity(hits.len());
+    for hit in hits {
+        // title 实时回填：BM25 命中自带；纯向量命中 title 留空——此处解密读
+        // note 元数据补全（改标题不触发重嵌，title 不入向量记录——见 S3a 注释）。
+        let title = if hit.title.is_empty() {
+            core.kv_store
+                .get(&format!("note:{}", hit.note_id))
+                .await
+                .ok()
+                .flatten()
+                .and_then(|bytes| unwrap_note_bytes(&core, &vault, &bytes).ok())
+                .and_then(|v| v.get("title").and_then(|t| t.as_str().map(String::from)))
+                .unwrap_or_default()
+        } else {
+            hit.title.clone()
+        };
+        results.push(serde_json::json!({
+            "note_id": hit.note_id,
+            "doc_id": hit.note_id, // 前端 CommandPalette 契约为 note_id——doc_id 为历史键，双写兼容
+            "title": title,
+            "score": hit.score,
+            "snippet": hit.snippet,
+            "source": format!("{:?}", hit.source), // Bm25 / Vector / Both（徽章数据面）
+        }));
+    }
+    let _ = total; // RRF 截断后 total 无分页语义（hybrid）；BM25 分页留后续卡
     Ok(results)
 }
 

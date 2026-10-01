@@ -18,6 +18,8 @@ export interface PaletteItem {
   id: string;
   title: string;
   snippet?: string;
+  /** DK-03 S3：命中来源（Bm25 不标注=常规全文；Vector=语义召回；Both=混合） */
+  source?: 'Bm25' | 'Vector' | 'Both';
   /** note → 打开笔记; command → 直接执行 */
   run: () => void;
 }
@@ -25,9 +27,12 @@ export interface PaletteItem {
 interface Props {
   open: boolean;
   onClose: () => void;
-  /** Tauri cmd_search_notes 桥（AppShell 注入） */
-  searchNotes: (query: string) => Promise<
-    Array<{ note_id: string; title: string; snippet: string; score: number }>
+  /** Tauri cmd_search_notes 桥（AppShell 注入；mode=hybrid 走混合检索） */
+  searchNotes: (
+    query: string,
+    mode?: string,
+  ) => Promise<
+    Array<{ note_id: string; title: string; snippet: string; score: number; source?: string }>
   >;
   /** 输入变化回调（AppShell 合并内置命令与搜索结果） */
   onQuery: (query: string) => void;
@@ -39,6 +44,7 @@ interface Props {
 export function CommandPalette({ open, onClose, searchNotes, onQuery, items, openNote }: Props) {
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
+  const [semantic, setSemantic] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // 唤起时聚焦 + 重置游标
@@ -49,14 +55,14 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
     }
   }, [open]);
 
-  // 防抖 150ms 搜索（击键 → cmd_search_notes）
+  // 防抖 150ms 搜索（击键 → cmd_search_notes；语义开→mode=hybrid）
   useEffect(() => {
     if (!open || !query.trim()) return;
     const t = setTimeout(() => {
-      void searchNotes(query).then(() => onQuery(query));
+      void searchNotes(query, semantic ? 'hybrid' : undefined).then(() => onQuery(query));
     }, 150);
     return () => clearTimeout(t);
-  }, [query, open, searchNotes, onQuery]);
+  }, [query, open, searchNotes, onQuery, semantic]);
 
   if (!open) return null;
 
@@ -127,6 +133,31 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
             outline: 'none',
           }}
         />
+        {/* DK-03 S3：语义检索开关（开→mode=hybrid，BM25+本地向量 RRF 融合） */}
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: `0 ${tokens.spacing.md}px`,
+            paddingTop: tokens.spacing.xs,
+            fontSize: tokens.typography.caption.size,
+            color: tokens.color.textSecondary,
+            cursor: 'pointer',
+            userSelect: 'none',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={semantic}
+            onChange={(e) => {
+              setSemantic(e.target.checked);
+              setCursor(0);
+            }}
+            aria-label="语义检索（本地向量混合）"
+          />
+          语义检索（本地向量 · Ollama 未运行时自动退回全文）
+        </label>
         <div style={{ maxHeight: 380, overflowY: 'auto' }}>
           {items.length === 0 && (
             <div style={{ padding: tokens.spacing.lg, color: tokens.color.textDisabled, textAlign: 'center' }}>
@@ -151,6 +182,38 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
               <div style={{ fontWeight: r.kind === 'command' ? 600 : 400, fontSize: tokens.typography.body.size }}>
                 {r.kind === 'command' ? '⌘ ' : '📄 '}
                 {r.title}
+                {r.source === 'Vector' && (
+                  <span
+                    title="语义召回：不含查询关键词，按含义匹配（本地向量）"
+                    style={{
+                      marginLeft: 6,
+                      padding: '1px 6px',
+                      borderRadius: 999,
+                      fontSize: 11,
+                      background: 'rgba(167, 139, 250, 0.18)',
+                      color: i === cursor ? '#FFFFFF' : '#A78BFA',
+                      border: '1px solid rgba(167, 139, 250, 0.45)',
+                    }}
+                  >
+                    语义
+                  </span>
+                )}
+                {r.source === 'Both' && (
+                  <span
+                    title="混合命中：关键词与语义两路均召回（RRF 融合）"
+                    style={{
+                      marginLeft: 6,
+                      padding: '1px 6px',
+                      borderRadius: 999,
+                      fontSize: 11,
+                      background: 'rgba(56, 189, 248, 0.16)',
+                      color: i === cursor ? '#FFFFFF' : '#38BDF8',
+                      border: '1px solid rgba(56, 189, 248, 0.45)',
+                    }}
+                  >
+                    混合
+                  </span>
+                )}
               </div>
               {r.snippet && (
                 <div
