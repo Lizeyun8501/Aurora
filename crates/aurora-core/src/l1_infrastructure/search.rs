@@ -7,9 +7,11 @@
 //! - 实现 V19 §28.7 `SearchBackend` Trait（async 签名），供平台适配层注入 AppCore。
 //! - Schema 字段：`id`（STRING，可删除定位）、`title`/`content`/`tags`（TEXT，
 //!   参与全文检索）、`workspace_id`（STRING）、`updated_at`（STRING，RFC3339）。
-//! - 写入采用「每次操作新建 IndexWriter」策略：`IndexWriter` 借用 `Index`，
-//!   无法作为 `Self` 成员存储；Tantivy 推荐复用 writer，但每次创建的开销在
-//!   笔记级写入频率下可忽略，且天然规避生命周期自引用问题。
+//! - 写入采用「持久化单例 writer」策略（writer churn 优化，2026-10-01）：旧
+//!   「每次操作新建 IndexWriter」下 writer 创建 ~18ms/次主导 1k 重建 20.4s
+//!   （RV-01 实证），复用单实例为 tantivy 官方推荐用法；`Mutex<IndexWriter>`
+//!   存入 Self 规避生命周期自引用，锁内全同步操作、可见性语义不变（每操作
+//!   尾部仍 commit 一次）。内存代价：heap 50MB 常驻（RAM 换 CPU，可接受）。
 //! - 分词：将索引的 `default` tokenizer 替换为 SimpleTokenizer + LowerCaser
 //!   （不区分大小写），索引与查询两侧同用该 analyzer，保证检索一致；
 //!   V19 规划的中文 jieba 分词在后续 PR 注册自定义 tokenizer 后接入。
@@ -90,6 +92,13 @@ pub struct TantivySearchBackend {
     tags: Field,
     workspace_id: Field,
     updated_at: Field,
+    /// 持久化单例写入器（writer churn 优化——原「每次操作新建」策略下
+    /// writer 创建 ~18ms/次主导 1k 重建 20.4s，见 RV-01 实证；tantivy 官方
+    /// 推荐单实例复用：内部多线程、commit 串行化）。锁内均为同步操作
+    /// （add/delete/commit 无 await），std Mutex 足够。
+    /// **内存诚实标注**：heap 50MB 从「创建-销毁」变「常驻」（RAM 换 CPU，
+    /// 桌面端可接受）。可见性语义不变：每次操作尾部仍 commit 一次。
+    writer: std::sync::Mutex<tantivy::IndexWriter<TantivyDocument>>,
 }
 
 impl TantivySearchBackend {
@@ -126,6 +135,9 @@ impl TantivySearchBackend {
         let updated_at = schema
             .get_field("updated_at")
             .map_err(|e| Error::Internal(format!("schema field updated_at: {}", e)))?;
+        let writer = index
+            .writer::<TantivyDocument>(50_000_000)
+            .map_err(map_err)?;
         Ok(Self {
             index,
             jieba,
@@ -135,6 +147,7 @@ impl TantivySearchBackend {
             tags,
             workspace_id,
             updated_at,
+            writer: std::sync::Mutex::new(writer),
         })
     }
 
@@ -153,6 +166,9 @@ impl TantivySearchBackend {
             .get_field("workspace_id")
             .expect("workspace_id field");
         let updated_at = schema.get_field("updated_at").expect("updated_at field");
+        let writer = index
+            .writer::<TantivyDocument>(50_000_000)
+            .expect("in-memory writer");
         Ok(Self {
             index,
             jieba,
@@ -162,6 +178,7 @@ impl TantivySearchBackend {
             tags,
             workspace_id,
             updated_at,
+            writer: std::sync::Mutex::new(writer),
         })
     }
 
@@ -295,7 +312,10 @@ impl SearchBackend for TantivySearchBackend {
         metadata: &NoteMetadata,
     ) -> Result<(), Error> {
         let document = self.build_doc(note_id, content, metadata);
-        let mut writer = self.index.writer(50_000_000).map_err(map_err)?;
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| Error::Internal("search writer lock poisoned".into()))?;
         // 同一 id 先删后写，保证幂等更新
         writer.delete_term(Term::from_field_text(self.id, note_id));
         writer.add_document(document).map_err(map_err)?;
@@ -304,7 +324,10 @@ impl SearchBackend for TantivySearchBackend {
     }
 
     async fn batch_index(&self, notes: &[IndexEntry]) -> Result<(), Error> {
-        let mut writer = self.index.writer(50_000_000).map_err(map_err)?;
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| Error::Internal("search writer lock poisoned".into()))?;
         for entry in notes {
             let document = self.build_doc(&entry.note_id, &entry.content, &entry.metadata);
             writer.delete_term(Term::from_field_text(self.id, &entry.note_id));
@@ -321,16 +344,19 @@ impl SearchBackend for TantivySearchBackend {
 
     async fn remove_index(&self, note_id: &str) -> Result<(), Error> {
         let mut writer = self
-            .index
-            .writer::<TantivyDocument>(50_000_000)
-            .map_err(map_err)?;
+            .writer
+            .lock()
+            .map_err(|_| Error::Internal("search writer lock poisoned".into()))?;
         writer.delete_term(Term::from_field_text(self.id, note_id));
         writer.commit().map_err(map_err)?;
         Ok(())
     }
 
     async fn rebuild_index(&self, all_notes: &[IndexEntry]) -> Result<(), Error> {
-        let mut writer = self.index.writer(50_000_000).map_err(map_err)?;
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| Error::Internal("search writer lock poisoned".into()))?;
         writer.delete_all_documents().map_err(map_err)?;
         for entry in all_notes {
             let document = self.build_doc(&entry.note_id, &entry.content, &entry.metadata);
