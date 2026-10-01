@@ -145,6 +145,9 @@ pub fn run() {
             cmd_move_note,
             cmd_rename_folder,
             cmd_list_tree,
+            cmd_smartfolder_create,
+            cmd_smartfolder_set_rule,
+            cmd_smartfolder_list_items,
             cmd_restore_note,
             cmd_purge_note,
             cmd_purge_expired_trash,
@@ -1059,6 +1062,132 @@ async fn cmd_purge_expired_trash(days: i64) -> Result<Vec<String>, String> {
         "trash purge_expired via desktop command"
     );
     Ok(purged)
+}
+
+/// 创建智能文件夹（DK-02 S3）。
+#[tauri::command]
+async fn cmd_smartfolder_create(
+    parent_id: Option<String>,
+    title: String,
+    title_contains: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    let rc = aurora_core::write_path::create_smartfolder(
+        &ctx,
+        parent_id.as_deref(),
+        &title,
+        aurora_core::write_path::FilterRule { title_contains },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "note_id": rc.aggregate_id, "seq": rc.seq }))
+}
+
+/// 更新智能文件夹规则（DK-02 S3）。
+#[tauri::command]
+async fn cmd_smartfolder_set_rule(
+    folder_id: String,
+    title_contains: Option<String>,
+) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    aurora_core::write_path::update_rule(
+        &ctx,
+        &folder_id,
+        aurora_core::write_path::FilterRule { title_contains },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 求值智能文件夹（DK-02 S3——动态视图实时列表）。
+#[tauri::command]
+async fn cmd_smartfolder_list_items(folder_id: String) -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let crypto = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let seal_pair = aurora_core::write_path::SealPair {
+        seal: Box::new(|b: &[u8]| Ok(b.to_vec())),
+        unseal: Box::new(unseal),
+    };
+    let items =
+        aurora_core::write_path::evaluate_smart_folder_for(&core, Some(&seal_pair), &folder_id)
+            .await
+            .map_err(|e| e.to_string())?;
+    Ok(items
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "note_id": r.id,
+                "title": r.title,
+                "updated_at": r.updated_at,
+            })
+        })
+        .collect())
 }
 
 /// 搜索笔记（Tantivy 全文检索；mode=hybrid 走 BM25+KNN→RRF 混合路）。

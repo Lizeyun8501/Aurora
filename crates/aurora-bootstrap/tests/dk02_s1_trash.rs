@@ -652,3 +652,207 @@ async fn delete_folder_cascades_soft() {
         .unwrap();
     assert_eq!(rec.kind, NoteKind::Folder, "文件夹 restore 后 kind 保持");
 }
+
+// ===== DK-02 S3 智能文件夹 =====
+
+use aurora_core::write_path::{
+    create_smartfolder, evaluate_smart_folder_for, update_rule, FilterRule,
+};
+
+/// T1 规则求值：title_contains（大小写不敏感）+ trash 排除 + 非 Note 排除。
+#[tokio::test]
+async fn smartfolder_rule_evaluates() {
+    let dir = tempfile::tempdir().unwrap();
+    let booted = bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .unwrap();
+    let ctx = ctx_for(&booted, &dir.path().join("aurora.db"));
+
+    let sf = create_smartfolder(
+        &ctx,
+        None,
+        "Rust 智能视图",
+        FilterRule {
+            title_contains: Some("rust".into()),
+        },
+    )
+    .await
+    .unwrap()
+    .aggregate_id;
+
+    let m1 = write_path::create_note(&ctx, "Rust 入门").await.unwrap();
+    let m2 = write_path::create_note(&ctx, "rust 进阶").await.unwrap();
+    let _m3 = write_path::create_note(&ctx, "烹饪指南").await.unwrap();
+    // Folder 不列示（非 Note）
+    let _f = create_folder(&ctx, None, "rust 文件夹")
+        .await
+        .unwrap()
+        .aggregate_id;
+
+    let items = evaluate_smart_folder_for(&booted.core, ctx.seal.as_ref(), &sf)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = items.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        ids.contains(&m1.as_str()) && ids.contains(&m2.as_str()),
+        "大小写不敏感命中: {ids:?}"
+    );
+    assert_eq!(items.len(), 2, "Folder 与不匹配笔记不列示");
+    assert!(items.iter().all(|r| r.kind == NoteKind::Note));
+}
+
+/// T2 trash 排除 + 软删笔记动态消失（动态视图语义——无成员制）。
+#[tokio::test]
+async fn smartfolder_excludes_trashed() {
+    let dir = tempfile::tempdir().unwrap();
+    let booted = bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .unwrap();
+    let ctx = ctx_for(&booted, &dir.path().join("aurora.db"));
+
+    let sf = create_smartfolder(&ctx, None, "全部视图", FilterRule::default())
+        .await
+        .unwrap()
+        .aggregate_id;
+    let n1 = write_path::create_note(&ctx, "待删笔记").await.unwrap();
+    let n2 = write_path::create_note(&ctx, "保留笔记").await.unwrap();
+
+    assert_eq!(
+        evaluate_smart_folder_for(&booted.core, ctx.seal.as_ref(), &sf)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    write_path::delete_note(&ctx, &n1).await.unwrap();
+    let after = evaluate_smart_folder_for(&booted.core, ctx.seal.as_ref(), &sf)
+        .await
+        .unwrap();
+    assert_eq!(after.len(), 1, "软删笔记动态消失");
+    assert_eq!(after[0].id, n2);
+    // restore 后动态回归（无成员制——求值即真相）
+    write_path::restore_note(&ctx, &n1).await.unwrap();
+    assert_eq!(
+        evaluate_smart_folder_for(&booted.core, ctx.seal.as_ref(), &sf)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    let _ = n2;
+}
+
+/// T3 update_rule 生效 + 非 SmartFolder 拒绝。
+#[tokio::test]
+async fn smartfolder_update_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let booted = bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .unwrap();
+    let ctx = ctx_for(&booted, &dir.path().join("aurora.db"));
+
+    let sf = create_smartfolder(&ctx, None, "空规则视图", FilterRule::default())
+        .await
+        .unwrap()
+        .aggregate_id;
+    let n1 = write_path::create_note(&ctx, "旅行日记").await.unwrap();
+    write_path::create_note(&ctx, "工作周报").await.unwrap();
+    // 空规则 = 匹配全部
+    assert_eq!(
+        evaluate_smart_folder_for(&booted.core, ctx.seal.as_ref(), &sf)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    update_rule(
+        &ctx,
+        &sf,
+        FilterRule {
+            title_contains: Some("旅行".into()),
+        },
+    )
+    .await
+    .unwrap();
+    let after = evaluate_smart_folder_for(&booted.core, ctx.seal.as_ref(), &sf)
+        .await
+        .unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].id, n1);
+
+    // 非 SmartFolder 拒绝 update_rule
+    let plain = create_folder(&ctx, None, "普通文件夹")
+        .await
+        .unwrap()
+        .aggregate_id;
+    let err = update_rule(&ctx, &plain, FilterRule::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, aurora_core::Error::InvalidInput(_)));
+}
+
+/// T4 级联语义：删除智能文件夹（软删）不影响成员笔记（动态视图无成员）+ kind 兼容。
+#[tokio::test]
+async fn smartfolder_delete_no_cascade() {
+    let dir = tempfile::tempdir().unwrap();
+    let booted = bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .unwrap();
+    let ctx = ctx_for(&booted, &dir.path().join("aurora.db"));
+
+    let sf = create_smartfolder(&ctx, None, "临时视图", FilterRule::default())
+        .await
+        .unwrap()
+        .aggregate_id;
+    let n1 = write_path::create_note(&ctx, "独立笔记").await.unwrap();
+
+    write_path::delete_note(&ctx, &sf).await.unwrap();
+    assert!(
+        booted
+            .core
+            .kv_store
+            .get(&format!("trash:{sf}"))
+            .await
+            .unwrap()
+            .is_some(),
+        "智能文件夹软删入回收站"
+    );
+    // 成员笔记不受影响（动态视图无成员——level 与 Folder 级联语义分界）
+    assert!(booted
+        .core
+        .kv_store
+        .get(&format!("note:{n1}"))
+        .await
+        .unwrap()
+        .is_some());
+    assert!(
+        booted
+            .core
+            .kv_store
+            .get(&format!("trash:{n1}"))
+            .await
+            .unwrap()
+            .is_none(),
+        "删除智能文件夹不得级联软删笔记"
+    );
+
+    // kind serde 兼容：SmartFolder JSON 反序列化（批复补点 1——serde default 惯例）
+    let legacy = serde_json::json!({
+        "id": "sf-old", "title": "旧智能视图", "content": "",
+        "created_at": "2025-01-01T00:00:00+00:00",
+        "updated_at": "2025-01-01T00:00:00+00:00",
+        "encryption": "none", "kind": "SmartFolder"
+    });
+    let rec: aurora_core::write_path::NoteRecord = serde_json::from_value(legacy).unwrap();
+    assert_eq!(rec.kind, NoteKind::SmartFolder);
+    assert_eq!(rec.rule, None, "旧数据无 rule 字段 default None（补点 1）");
+}

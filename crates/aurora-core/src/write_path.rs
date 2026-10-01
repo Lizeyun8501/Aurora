@@ -135,6 +135,34 @@ pub struct NoteRecord {
     /// DK-02 S2：同父下排序键（default 0——旧数据全排根前）。
     #[serde(default)]
     pub sort_order: i64,
+    /// DK-02 S3：智能文件夹求值规则（kind=SmartFolder 时有效；None=非智能文件夹）。
+    /// serde default 兼容存量数据（批复补点 1）。
+    #[serde(default)]
+    pub rule: Option<FilterRule>,
+}
+
+/// DK-02 S3：智能文件夹过滤规则（各条件 AND；缺省条件忽略）。
+///
+/// v1 条件面：title_contains（子串）。tags 条件待 tags 投影/索引就绪后扩展
+/// （tags 存于 Loro doc meta，evaluate 路径无轻量读取源——诚实化挂起）。
+/// 结构化过滤不掺向量路（批复补点 2——检索面复用 SearchOptions 既有 filter）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
+pub struct FilterRule {
+    /// 标题子串（大小写不敏感）。
+    #[serde(default)]
+    pub title_contains: Option<String>,
+}
+
+impl FilterRule {
+    /// 是否匹配（AND 语义；全部条件缺省 = 匹配全部）。
+    pub fn matches(&self, title: &str) -> bool {
+        if let Some(needle) = &self.title_contains {
+            if !title.to_lowercase().contains(&needle.to_lowercase()) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// DK-02 S2：树节点类型。
@@ -143,6 +171,8 @@ pub enum NoteKind {
     #[default]
     Note,
     Folder,
+    /// DK-02 S3：智能文件夹（动态视图——rule 求值，非成员制）。
+    SmartFolder,
 }
 
 impl NoteRecord {
@@ -158,6 +188,7 @@ impl NoteRecord {
             parent_id: None,
             kind: NoteKind::Note,
             sort_order: 0,
+            rule: None,
         }
     }
 }
@@ -1175,9 +1206,9 @@ pub async fn rename_folder(
         .ok_or(Error::NoteNotFound {
             id: folder_id.to_string(),
         })?;
-    if rec.kind != NoteKind::Folder {
+    if rec.kind != NoteKind::Folder && rec.kind != NoteKind::SmartFolder {
         return Err(Error::InvalidInput(format!(
-            "节点 '{folder_id}' 不是文件夹（kind={:?}）",
+            "节点 '{folder_id}' 不是文件夹/智能文件夹（kind={:?}）",
             rec.kind
         )));
     }
@@ -1276,4 +1307,132 @@ pub async fn delete_folder(ctx: &WriteContext, folder_id: &str) -> Result<usize,
         "folder soft-deleted with subtree (DK-02 S2)"
     );
     Ok(n)
+}
+
+// ===== DK-02 S3：智能文件夹（动态视图——结构化规则过滤，不掺向量路）=====
+
+/// 创建智能文件夹（DK-02 S3）：kind=SmartFolder + rule 落 NoteRecord——
+/// 统一存储复用 S2 树挂载/restore/回收站全链。动态视图无成员（rule 求值）。
+pub async fn create_smartfolder(
+    ctx: &WriteContext,
+    parent_id: Option<&str>,
+    title: &str,
+    rule: FilterRule,
+) -> Result<WriteReceipt, Error> {
+    let core = ctx.core.as_ref();
+    if let Some(pid) = parent_id {
+        ensure_folder_exists(core, pid, ctx.seal.as_ref()).await?;
+    }
+    let note_id = create_note(ctx, title).await?;
+    let mut rec = load_note_meta(core, &note_id, ctx.seal.as_ref())
+        .await?
+        .ok_or(Error::NoteNotFound {
+            id: note_id.clone(),
+        })?;
+    rec.kind = NoteKind::SmartFolder;
+    rec.parent_id = parent_id.map(|s| s.to_string());
+    rec.sort_order = next_sort_order(core, parent_id, ctx.seal.as_ref()).await?;
+    rec.rule = Some(rule);
+    put_note_meta(core, &note_id, &rec, ctx.seal.as_ref()).await?;
+    info!(note_id = %note_id, "smartfolder created via WritePath (DK-02 S3)");
+    Ok(WriteReceipt {
+        seq: core.event_bus.last_seq(),
+        aggregate_id: note_id,
+        committed_at: chrono::Utc::now().timestamp_millis(),
+    })
+}
+
+/// 更新智能文件夹规则（rule 变更发 NoteMetadataChanged——树移动同款零新事件）。
+pub async fn update_rule(
+    ctx: &WriteContext,
+    folder_id: &str,
+    rule: FilterRule,
+) -> Result<WriteReceipt, Error> {
+    let core = ctx.core.as_ref();
+    let rec = load_note_meta(core, folder_id, ctx.seal.as_ref())
+        .await?
+        .ok_or(Error::NoteNotFound {
+            id: folder_id.to_string(),
+        })?;
+    if rec.kind != NoteKind::SmartFolder {
+        return Err(Error::InvalidInput(format!(
+            "节点 '{folder_id}' 不是智能文件夹（kind={:?}）",
+            rec.kind
+        )));
+    }
+    let mut updated = rec;
+    updated.rule = Some(rule);
+    updated.updated_at = chrono::Utc::now().to_rfc3339();
+    put_note_meta(core, folder_id, &updated, ctx.seal.as_ref()).await?;
+    core.event_bus
+        .publish(crate::event_bus::layered::AppEvent::NoteMetadataChanged {
+            note_id: folder_id.to_string(),
+            changes: crate::event_bus::layered::NoteChanges {
+                title: None,
+                tags: None,
+            },
+        });
+    info!(
+        folder_id,
+        "smartfolder rule updated via WritePath (DK-02 S3)"
+    );
+    Ok(WriteReceipt {
+        seq: core.event_bus.last_seq(),
+        aggregate_id: folder_id.to_string(),
+        committed_at: chrono::Utc::now().timestamp_millis(),
+    })
+}
+
+/// 求值智能文件夹（DK-02 S3）：scan note: → 按 rule 过滤（AND 语义）。
+/// 排除：自身、trash 在册、非 Note 记录（Folder/SmartFolder 不嵌套列示）。
+/// 返回 NoteRecord 全量（调用方取 title/时间——tags 条件 v2 扩展时同样走此结构）。
+pub async fn evaluate_smart_folder(
+    core: &AppCore,
+    unseal: Option<&SealPair>,
+    folder_id: &str,
+) -> Result<Vec<NoteRecord>, Error> {
+    let sf = load_note_meta(core, folder_id, unseal)
+        .await?
+        .ok_or(Error::NoteNotFound {
+            id: folder_id.to_string(),
+        })?;
+    if sf.kind != NoteKind::SmartFolder {
+        return Err(Error::InvalidInput(format!(
+            "节点 '{folder_id}' 不是智能文件夹（kind={:?}）",
+            sf.kind
+        )));
+    }
+    let rule = sf.rule.clone().unwrap_or_default();
+    let trashed: HashSet<String> = core
+        .kv_store
+        .scan_prefix("trash:")
+        .await?
+        .into_iter()
+        .map(|(k, _)| k.trim_start_matches("trash:").to_string())
+        .collect();
+    let mut out = Vec::new();
+    for (k, bytes) in core.kv_store.scan_prefix("note:").await? {
+        let Some(id) = k.strip_prefix("note:") else {
+            continue;
+        };
+        if id == folder_id || trashed.contains(id) {
+            continue;
+        }
+        if let Some(rec) = decode_record(&bytes, unseal) {
+            if rec.kind == NoteKind::Note && rule.matches(&rec.title) {
+                out.push(rec);
+            }
+        }
+    }
+    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(out)
+}
+
+/// 求值便捷入口（AppCore 直连——半接入三查：生产可见口径与 vector_index_for 对齐）。
+pub async fn evaluate_smart_folder_for(
+    core: &AppCore,
+    unseal: Option<&SealPair>,
+    folder_id: &str,
+) -> Result<Vec<NoteRecord>, Error> {
+    evaluate_smart_folder(core, unseal, folder_id).await
 }
