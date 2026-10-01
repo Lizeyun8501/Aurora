@@ -288,7 +288,9 @@ impl VectorIndex {
     /// 逐篇重嵌；每篇间隔 `min_interval`。返回回填篇数。
     pub async fn backfill_missing(
         &self,
-        content_of: &dyn Fn(&str) -> Option<String>,
+        // S3b 签名变更列明：+ Send + Sync——desktop 侧 tauri::async_runtime::spawn
+        // 要求 future Send，&dyn Fn 跨 .await 持有必须 Send+Sync（语义零变化）
+        content_of: &(dyn Fn(&str) -> Option<String> + Send + Sync),
         embed: &dyn EmbedProvider,
         limit: usize,
         min_interval: Duration,

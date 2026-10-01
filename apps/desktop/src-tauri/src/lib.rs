@@ -1084,7 +1084,8 @@ async fn cmd_search_notes(
             .search_hybrid(&query, &opts)
             .await
             .map_err(|e| e.to_string())?;
-        (r.hits, r.hits.len())
+        let n = r.hits.len();
+        (r.hits, n)
     } else {
         let r = core
             .search
