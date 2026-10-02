@@ -59,15 +59,25 @@ jobs:
   test:
     name: Test (stable)
     runs-on: ubuntu-latest
+    env:
+      # writerchurn 复核（2026-10-02）：workspace 膨胀（DK-02 S3+DK-03 S3 全链）
+      # 后 V26 I2 清理余量不再够全量 debug 编译 → ld SIGBUS exit 101 复现；
+      # incremental 产物实测占 3-4G，关闭以留足链接空间。
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v4
       # V26 I2: runner 14G 盘被预装 SDK(Android/.NET/Go ≈10G) + rust-cache +
       # 全量链接临时文件塞满 → ld SIGBUS (exit 101)。标准清理释放 ~10G。
+      # 2026-10-02 扩容：+CodeQL/boost/JVM/rdkafka（再释 ~15G，workspace
+      # 48cdc98→3467230 期间测试编译产物增长越过余量线）。
       - name: Free disk space
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
             /usr/local/.ghcup || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            /usr/lib/jvm /usr/share/swift /opt/hostedtoolcache/Python || true
           sudo docker image prune -af || true
+          sudo apt-get clean || true
           df -h /
       - uses: dtolnay/rust-toolchain@stable
       - name: Install system dependencies
