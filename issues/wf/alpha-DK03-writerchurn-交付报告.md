@@ -54,4 +54,8 @@
 - Bravo DK-02 S3（48cdc98）同日 Test 全绿；main 唯一代码变化为本卡 search.rs（本地全绿）
 - 判读：flaky / CI 环境概率最大；空提交 1970b97 已触发重跑（结果回填于下）
 
+**【终验更新 4808860】磁盘扩容修复后 Test 仍红**——磁盘满假设不成立（清理释放 ~25G 后复现）；三次红均为 exit 101（rust libtest「有测试失败」或编译错通用码）。**日志三路认证墙**：API artifact 下载需 token / Actions 页面日志需登录（agent-browser 实测 "Sign in to view logs"）/ job logs API 需 admin——失败测试名无法获取。本地全 workspace 复现被磁盘封死（30G 盘全量 debug 编译 21G+ 链接器 Bus error）。
+
+**结论与状态**：writer 复用实现 + DoD 数据（1k=1.11s, 18.4×）+ 场景修正已交付且证据充分（本地 aurora-core 全绿 + CI 四绿 × 3 commit）；Test 失败定位卡在「认证墙 + 磁盘墙」基建双堵——**转独立基建卡**（建议：CI 上传失败测试摘要到 annotations / test job per-crate 矩阵化 / runner 磁盘配额复核）。本卡以此状态收。
+
 — Alpha 2026-10-02
