@@ -986,13 +986,17 @@ mod tests {
             std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
         )
         .unwrap();
+        // writerchurn（b657e77）后 IndexWriter 常驻持锁——先释放 first 再 boot
+        //（幂等断言语义不变：DEK 重用验证的是持久化恢复，非双实例并存）。
+        let dek1 = first.vault.dek().to_vec();
+        drop(first);
         let second = bootstrap(
             dir.path(),
             std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
         )
         .unwrap();
         assert_eq!(
-            first.vault.dek(),
+            dek1.as_slice(),
             second.vault.dek(),
             "restart must reuse DEK"
         );

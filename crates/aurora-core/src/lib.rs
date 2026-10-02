@@ -19,7 +19,10 @@ pub mod l2_engines;
 pub use l2_engines::hybrid_search::{HybridSearcher, RRF_K};
 pub use l2_engines::vector_search::{EmbedOutcome, EmbedProvider, VecRecord, VectorIndex};
 pub use write_path::{
-    create_folder, delete_folder, list_tree, move_node, rename_folder, NoteKind, TreeNode,
+    create_folder, create_smartfolder, delete_folder, ensure_daily_note, evaluate_smart_folder_for,
+    get_daily_mode, get_daily_template, list_tree, move_node, rename_folder, render_daily_template,
+    set_daily_mode, set_daily_template, update_rule, DailyNoteMode, DailyNoteRef, FilterRule,
+    NoteKind, TreeNode, DAILY_TEMPLATE_KEY, DEFAULT_DAILY_TEMPLATE,
 };
 pub mod l3_domain;
 pub mod mcp_registry; // V23-I5: MCP 数据中枢工具契约（稳定层）

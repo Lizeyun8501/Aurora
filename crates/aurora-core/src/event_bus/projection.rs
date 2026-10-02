@@ -118,6 +118,77 @@ impl LayeredEventBus {
     }
 }
 
+// ===== DK-19：每日笔记投影（DailyNoteOpened 消费——daily 索引自愈）=====
+
+/// 每日笔记投影：消费 DailyNoteOpened 事件，校验 `daily:{date}` 索引指向
+/// 与事件 note_id 一致；不一致（索引损坏/丢键）时以事件为准自愈。
+/// 幂等：set 为覆盖写；水位线照常推进。
+pub struct DailyNoteProjection {
+    core: std::sync::Arc<crate::app_core::AppCore>,
+}
+
+impl DailyNoteProjection {
+    pub fn new(core: std::sync::Arc<crate::app_core::AppCore>) -> Self {
+        Self { core }
+    }
+}
+
+const DAILY_PROJECTION_WM: &str = "projection_watermark:daily_note";
+
+#[async_trait::async_trait]
+impl Projection for DailyNoteProjection {
+    fn name(&self) -> &'static str {
+        "daily_note_projection"
+    }
+
+    async fn watermark(&self) -> Result<u64, crate::Error> {
+        Ok(self
+            .core
+            .kv_store
+            .get(DAILY_PROJECTION_WM)
+            .await?
+            .and_then(|b| String::from_utf8_lossy(&b).parse().ok())
+            .unwrap_or(0))
+    }
+
+    async fn apply(&self, event: &crate::event_bus::layered::AppEvent) -> Result<(), crate::Error> {
+        if let crate::event_bus::layered::AppEvent::DailyNoteOpened { date, note_id } = event {
+            let key = format!("daily:{date}");
+            let current = self.core.kv_store.get(&key).await?;
+            if current.as_deref() != Some(note_id.as_bytes()) {
+                self.core.kv_store.set(&key, note_id.as_bytes()).await?;
+                tracing::info!(date, note_id, "daily index healed by projection (DK-19)");
+            }
+        }
+        Ok(())
+    }
+
+    async fn set_watermark(&self, seq: u64) -> Result<(), crate::Error> {
+        self.core
+            .kv_store
+            .set(DAILY_PROJECTION_WM, seq.to_string().as_bytes())
+            .await
+    }
+
+    async fn rebuild(&self) -> Result<(), crate::Error> {
+        // 全量重建：扫描全部 DailyNote（daily_date 非空）重灌 daily:{date} 索引
+        for (k, bytes) in self.core.kv_store.scan_prefix("note:").await? {
+            let _ = k;
+            if let Some(rec) = crate::write_path::decode_record(&bytes, None) {
+                if rec.kind == crate::write_path::NoteKind::DailyNote {
+                    if let Some(date) = &rec.daily_date {
+                        self.core
+                            .kv_store
+                            .set(&format!("daily:{date}"), rec.id.as_bytes())
+                            .await?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -47,6 +47,8 @@ pub struct AppCore {
     projections: Vec<Arc<dyn crate::event_bus::projection::Projection>>,
     /// FSRS 复习队列（V20 Phase 3 Distill — 今日页「复习」分区）。
     pub review_queue: Arc<crate::l3_domain::fsrs::ReviewQueue>,
+    /// DK-19：每日笔记创建互斥（进程内串行化 check-create-put，防并发双建）。
+    pub daily_note_lock: tokio::sync::Mutex<()>,
 }
 
 /// AppCore 构建器（依赖注入容器）。
@@ -138,6 +140,7 @@ impl AppCoreBuilder {
         let review_queue = Arc::new(crate::l3_domain::fsrs::ReviewQueue::new());
 
         AppCore {
+            daily_note_lock: tokio::sync::Mutex::new(()),
             sync_target: self.sync_target.expect("SyncTarget must be provided"),
             crypto: self.crypto.expect("CryptoProvider must be provided"),
             ai: self.ai.expect("AIProvider must be provided"),

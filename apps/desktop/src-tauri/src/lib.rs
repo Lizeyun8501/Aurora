@@ -146,6 +146,11 @@ pub fn run() {
             cmd_rename_folder,
             cmd_list_tree,
             cmd_smartfolder_create,
+            cmd_daily_note_open,
+            cmd_daily_note_set_mode,
+            cmd_daily_note_get_mode,
+            cmd_daily_note_set_template,
+            cmd_daily_note_get_template,
             cmd_smartfolder_set_rule,
             cmd_smartfolder_list_items,
             cmd_restore_note,
@@ -1062,6 +1067,94 @@ async fn cmd_purge_expired_trash(days: i64) -> Result<Vec<String>, String> {
         "trash purge_expired via desktop command"
     );
     Ok(purged)
+}
+
+/// 打开当日每日笔记（DK-19——启动/访问当日视图调用；Auto 自动创建，Manual 仅定位）。
+#[tauri::command]
+async fn cmd_daily_note_open(date: String) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    match aurora_core::write_path::ensure_daily_note(&ctx, &date).await {
+        Ok(Some(r)) => Ok(serde_json::json!({ "note_id": r.note_id, "created": r.created })),
+        Ok(None) => Ok(serde_json::json!({ "note_id": serde_json::Value::Null, "created": false })),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// 设置每日笔记模式（DK-19：auto/manual/off）。
+#[tauri::command]
+async fn cmd_daily_note_set_mode(mode: String) -> Result<(), String> {
+    let core = get_core()?;
+    let m = match mode.as_str() {
+        "auto" => aurora_core::write_path::DailyNoteMode::Auto,
+        "manual" => aurora_core::write_path::DailyNoteMode::Manual,
+        "off" => aurora_core::write_path::DailyNoteMode::Off,
+        _ => return Err(format!("非法模式: '{mode}'（需 auto/manual/off）")),
+    };
+    aurora_core::write_path::set_daily_mode(&core, m)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 读取每日笔记模式（DK-19）。
+#[tauri::command]
+async fn cmd_daily_note_get_mode() -> Result<String, String> {
+    let core = get_core()?;
+    let m = aurora_core::write_path::get_daily_mode(&core)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(match m {
+        aurora_core::write_path::DailyNoteMode::Auto => "auto",
+        aurora_core::write_path::DailyNoteMode::Manual => "manual",
+        aurora_core::write_path::DailyNoteMode::Off => "off",
+    }
+    .to_string())
+}
+
+/// 设置每日笔记模板（DK-19，占位符 {{date}}/{{weekday}}）。
+#[tauri::command]
+async fn cmd_daily_note_set_template(template: String) -> Result<(), String> {
+    let core = get_core()?;
+    aurora_core::write_path::set_daily_template(&core, &template)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 读取每日笔记模板（DK-19，未设置返回默认模板）。
+#[tauri::command]
+async fn cmd_daily_note_get_template() -> Result<String, String> {
+    let core = get_core()?;
+    aurora_core::write_path::get_daily_template(&core)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 创建智能文件夹（DK-02 S3）。

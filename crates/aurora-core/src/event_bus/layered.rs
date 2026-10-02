@@ -104,6 +104,13 @@ pub enum AppEvent {
         /// 光标位置。
         pos: usize,
     },
+    /// DK-19：每日笔记被打开/确保创建（投影消费做 daily 索引自愈）。
+    DailyNoteOpened {
+        /// 日期（`YYYY-MM-DD`）。
+        date: String,
+        /// 每日笔记 ID。
+        note_id: String,
+    },
     /// TodayView 数据更新。
     TodayViewRefresh {
         /// 日期（`YYYY-MM-DD`）。
@@ -174,6 +181,7 @@ impl AppEvent {
         match self {
             AppEvent::NoteContentChanged { .. }
             | AppEvent::CursorMoved { .. }
+            | AppEvent::DailyNoteOpened { .. }
             | AppEvent::TodayViewRefresh { .. } => EventChannel::High,
             AppEvent::BidiLinkChanged { .. }
             | AppEvent::NoteMetadataChanged { .. }
@@ -190,6 +198,7 @@ impl AppEvent {
         match self {
             AppEvent::NoteContentChanged { .. } => "NoteContentChanged",
             AppEvent::CursorMoved { .. } => "CursorMoved",
+            AppEvent::DailyNoteOpened { .. } => "DailyNoteOpened",
             AppEvent::TodayViewRefresh { .. } => "TodayViewRefresh",
             AppEvent::BidiLinkChanged { .. } => "BidiLinkChanged",
             AppEvent::NoteMetadataChanged { .. } => "NoteMetadataChanged",
