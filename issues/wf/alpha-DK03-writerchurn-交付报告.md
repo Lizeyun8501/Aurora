@@ -47,6 +47,11 @@
 
 ## CI 终验（回填）
 
-（待 CI 完成后回填）
+**3467230（writer 优化 + bench 场景修正）**：desktop-check ✅ / Clippy ✅ / Rustfmt ✅ / MSRV ✅ / **Test (stable) ❌ exit 101**。
+
+**复核判据（诚实记录）**：
+- 本地 aurora-core 侧全绿：lib 408 + atomic_crash_recovery 5 + property_tests 15 + perf_baseline 编译过——**writer 改动无嫌疑**（Test job 跑全 workspace `--exclude aurora-desktop`，失败 crate 未定位——CI 日志 API 无 admin 权限 403）
+- Bravo DK-02 S3（48cdc98）同日 Test 全绿；main 唯一代码变化为本卡 search.rs（本地全绿）
+- 判读：flaky / CI 环境概率最大；空提交 1970b97 已触发重跑（结果回填于下）
 
 — Alpha 2026-10-02
