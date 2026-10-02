@@ -18,8 +18,11 @@
 方案方向：`writer: Mutex<Option<IndexWriter>>` 惰性创建（首次写操作时建，Drop 释放锁），读路径零影响。
 执行建议：Bravo 顺手卡（对 writer 语义最熟）或 Alpha 下一轮——视排期。
 
-## 三、DK-19 验收（同步进行，结论见下）
+## 三、DK-19 验收裁定：**通过** ✅（三件套全过）
 
-三件套：①代码存在性（事件/投影/幂等锁/模板/三模式/tauri 五命令——37b792f diff 抽查）；②本地复跑 dk19_daily 5/5；③时间线（37b792f 17:47 → 250a019 18:27 CI 回执）。
+- ①实锤：DailyNoteProjection（水位线+索引自愈）/ daily_note_lock（tokio Mutex 进程内互斥）/ 模板渲染 / DailyNoteMode 三态 / dk19_daily.rs 226 行测试
+- ②本地独立复现：`cargo test -p aurora-bootstrap --test dk19_daily` → **5/5 passed**（12.24s，含 5 路并发幂等断言）
+- ③时间线闭合：37b792f（17:47）→ 250a019（18:27 CI 回执）→ RUN 37b792f 五绿
+- 附加价值：**对向审核抓出 writerchurn 判读失误**——交叉验证纪律的实战证明
 
 — Alpha 2026-10-03
