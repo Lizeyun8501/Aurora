@@ -17,7 +17,7 @@ use std::time::Instant;
 mod common;
 
 use aurora_core::l1_infrastructure::search::TantivySearchBackend;
-use aurora_core::traits::search_backend::{NoteMetadata, SearchBackend, SearchOptions};
+use aurora_core::traits::search_backend::{IndexEntry, NoteMetadata, SearchBackend, SearchOptions};
 use chrono::Utc;
 
 use common::MockSyncBus;
@@ -126,10 +126,20 @@ async fn bench_index_rebuild_10k() {
     for count in [1_000usize, 5_000, 10_000] {
         let dataset = gen_dataset(count);
         let backend = TantivySearchBackend::new_in_memory().expect("in-memory index");
+        // 场景修正（writer churn 卡复核实测）：冷启动全量重建的真实路径是
+        // rebuild_index（delete_all + 批量 add + 单次 commit），而非逐条
+        // index_note（每条尾 commit ~21ms 主导——RV-01 首跑 20.4s 与 writer
+        // 复用后 21.0s 持平证明瓶颈在 commit 不在 writer 创建）。
+        let entries: Vec<IndexEntry> = dataset
+            .iter()
+            .map(|(id, content, meta)| IndexEntry {
+                note_id: id.clone(),
+                content: content.clone(),
+                metadata: meta.clone(),
+            })
+            .collect();
         let t0 = Instant::now();
-        for (id, content, meta) in &dataset {
-            backend.index_note(id, content, meta).await.expect("index");
-        }
+        backend.rebuild_index(&entries).await.expect("rebuild");
         let total = t0.elapsed().as_millis();
         println!(
             "[index-rebuild] notes={count} total={total}ms avg_per_note={:.3}ms",
