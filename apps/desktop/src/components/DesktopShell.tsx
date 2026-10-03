@@ -21,6 +21,7 @@ import CommandPalette, { type PaletteItem } from './CommandPalette';
 import ImportWizard from './ImportWizard';
 import CanvasView from './CanvasView';
 import TrashView from './TrashView';
+import SmartFolderView from './SmartFolderView';
 import LiquifyReview from './LiquifyReview';
 
 export interface InvokeFn {
@@ -43,7 +44,7 @@ export interface NoteContent {
 /** DK-02 S2 树形侧栏：cmd_list_tree 扁平节点 DTO（与 write_path::TreeNode 对齐）。 */
 export interface TreeNodeFlat {
   note_id: string;
-  kind: 'Note' | 'Folder';
+  kind: 'Note' | 'Folder' | 'SmartFolder';
   title: string;
   parent_id: string | null;
   sort_order: number;
@@ -119,7 +120,7 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export type MainView = 'notes' | 'today' | 'canvas' | 'trash' | 'liquify' | 'agent';
+export type MainView = 'notes' | 'today' | 'canvas' | 'trash' | 'liquify' | 'agent' | 'smartfolder';
 
 /** browser-mock 演示数据 — 形状与内核 NoteSummary/NoteContent 对齐 */
 const MOCK_NOTES: NoteSummary[] = [
@@ -675,7 +676,7 @@ function Sidebar(props: {
   selectedId: string | null;
   view: MainView;
   onView: (v: MainView) => void;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, kind: 'Note' | 'Folder' | 'SmartFolder') => void;
   onCreate: () => void;
   /** DK-09：打开迁移向导（ImportWizard 挂载入口）。 */
   onImport: () => void;
@@ -771,7 +772,7 @@ function Sidebar(props: {
 function TreeSection(props: {
   bridge: ReturnType<typeof useDataBridge>;
   selectedId: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, kind: 'Note' | 'Folder' | 'SmartFolder') => void;
 }) {
   const { bridge, selectedId, onSelect } = props;
   const [flat, setFlat] = useState<TreeNodeFlat[]>([]);
@@ -796,8 +797,8 @@ function TreeSection(props: {
     const fs: { id: string | null; label: string }[] = [{ id: null, label: '（根目录）' }];
     const walk = (ns: NoteTreeNode[], depth: number): void => {
       for (const n of ns) {
-        if (n.kind === 'Folder') {
-          fs.push({ id: n.note_id, label: `${'　'.repeat(depth)}${n.title || '未命名文件夹'}` });
+        if (n.kind === 'Folder' || n.kind === 'SmartFolder') {
+          fs.push({ id: n.note_id, label: `${'　'.repeat(depth)}${n.kind === 'SmartFolder' ? '🔮 ' : ''}${n.title || '未命名文件夹'}` });
           walk(n.children, depth + 1);
         }
       }
@@ -851,7 +852,7 @@ function TreeSection(props: {
   );
 
   const renderNode = (node: NoteTreeNode, depth: number): React.ReactElement => {
-    const isFolder = node.kind === 'Folder';
+    const isFolder = node.kind === 'Folder' || node.kind === 'SmartFolder';
     const isOpen = isFolder && !collapsed.has(node.note_id);
     const isOver = dragOverId === node.note_id;
     return (
@@ -888,7 +889,7 @@ function TreeSection(props: {
                 {isOpen ? '▼' : '▶'}
               </button>
               <button
-                onClick={() => onSelect(node.note_id)}
+                onClick={() => onSelect(node.note_id, node.kind)}
                 onDragOver={(e) => {
                   if (dragId && dragId !== node.note_id) {
                     e.preventDefault();
@@ -941,7 +942,7 @@ function TreeSection(props: {
             </>
           ) : (
             <button
-              onClick={() => onSelect(node.note_id)}
+              onClick={() => onSelect(node.note_id, node.kind)}
               style={{ ...rowStyle(selectedId === node.note_id, depth), flex: 1 }}
               title={node.title || '未命名'}
             >
@@ -1689,9 +1690,9 @@ export default function DesktopShell() {
           selectedId={selectedId}
           view={view}
           onView={setView}
-          onSelect={(id) => {
+          onSelect={(id, kind) => {
             setSelectedId(id);
-            setView('notes');
+            setView(kind === 'SmartFolder' ? 'smartfolder' : 'notes');
           }}
           onCreate={() => data.createNote('未命名')}
           onImport={() => setWizardOpen(true)}
@@ -1705,6 +1706,17 @@ export default function DesktopShell() {
         ) : view === 'canvas' ? (
           /* DK-11 画布视图（第一切片：Canvas2D 骨架，组件自包含） */
           <CanvasView />
+        ) : view === 'smartfolder' && selectedId ? (
+          /* DK-02 S3 UI 面：智能文件夹求值展示 + 规则编辑（拉模式，打开即求值） */
+          <SmartFolderView
+            invoke={invoke}
+            folderId={selectedId}
+            folderTitle={notes.find((n) => n.note_id === selectedId)?.title || '智能文件夹'}
+            onOpenNote={(nid) => {
+              setSelectedId(nid);
+              setView('notes');
+            }}
+          />
         ) : view === 'trash' ? (
           /* DK-02 S1 回收站视图（Alpha UI 切片；core 面 Bravo f175692） */
           <TrashView invoke={invoke} />

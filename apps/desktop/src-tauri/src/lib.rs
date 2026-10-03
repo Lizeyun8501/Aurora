@@ -152,6 +152,7 @@ pub fn run() {
             cmd_daily_note_set_template,
             cmd_daily_note_get_template,
             cmd_smartfolder_set_rule,
+            cmd_smartfolder_get_rule,
             cmd_smartfolder_list_items,
             cmd_restore_note,
             cmd_purge_note,
@@ -1248,6 +1249,28 @@ async fn cmd_smartfolder_set_rule(
     .await
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 读取智能文件夹规则（DK-02 S3 UI 面——Alpha 跨领地补丁：仅 tauri 读端薄层，
+/// 复用 unwrap_note_bytes 既有解密模式，write_path/core 零触碰——领地声明见回执）。
+#[tauri::command]
+async fn cmd_smartfolder_get_rule(folder_id: String) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let data = core
+        .kv_store
+        .get(&format!("note:{folder_id}"))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("smartfolder not found: {folder_id}"))?;
+    let json = unwrap_note_bytes(&core, &vault, &data)?;
+    let rule = json
+        .get("rule")
+        .cloned()
+        .unwrap_or(serde_json::json!({ "title_contains": null }));
+    Ok(serde_json::json!({
+        "title_contains": rule.get("title_contains").and_then(|v| v.as_str()),
+    }))
 }
 
 /// 求值智能文件夹（DK-02 S3——动态视图实时列表）。
