@@ -41,3 +41,10 @@
 push 后回填。
 
 — Bravo 2026-10-04（DK-20）
+
+## 五、CI 终验（回填）
+
+RUN 04da8aa = **SUCCESS**（五 job 全绿）。DK-20 单篇笔记加密 Vault 闭环。
+⚠️ notesnap 密级传播挂账待 Alpha 裁决（独立切片）。
+
+— Bravo 2026-10-04
