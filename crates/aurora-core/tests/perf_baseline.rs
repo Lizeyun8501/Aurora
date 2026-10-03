@@ -112,6 +112,20 @@ fn search_opts() -> SearchOptions {
     }
 }
 
+/// DK-23：println 同步落档 perf_baseline_report.txt（bench.yml artifact 收集载体——
+/// 纯 println 时 artifact 步骤找不到文件会产出空包）。cwd = crate root（cargo test 约定）。
+fn record(line: &str) {
+    println!("{line}");
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("perf_baseline_report.txt")
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 fn percentile(v: &mut [f64], p: f64) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let idx = ((v.len() as f64 - 1.0) * p).round() as usize;
@@ -141,10 +155,10 @@ async fn bench_index_rebuild_10k() {
         let t0 = Instant::now();
         backend.rebuild_index(&entries).await.expect("rebuild");
         let total = t0.elapsed().as_millis();
-        println!(
+        record(&format!(
             "[index-rebuild] notes={count} total={total}ms avg_per_note={:.3}ms",
             total as f64 / count as f64
-        );
+        ));
     }
 }
 
@@ -188,13 +202,13 @@ async fn bench_search_10k_p50_p99() {
         );
         latencies.push(ms);
     }
-    println!(
+    record(&format!(
         "[search-10k] n={} p50={:.2}ms p99={:.2}ms max={:.2}ms (V26 指标 <200ms)",
         queries.len(),
         percentile(&mut latencies, 0.50),
         percentile(&mut latencies, 0.99),
         latencies.iter().cloned().fold(0.0, f64::max),
-    );
+    ));
 }
 
 // ==================== 基准 3：双端收敛（MockSyncBus） ====================
@@ -224,9 +238,9 @@ fn bench_sync_converge() {
         }
         let total = t0.elapsed().as_millis();
         assert_eq!(restored, count, "收敛后条数必须一致");
-        println!(
+        record(&format!(
             "[sync-converge] docs={count} total={total}ms avg_per_doc={:.3}ms",
             total as f64 / count as f64
-        );
+        ));
     }
 }
