@@ -280,9 +280,30 @@ pub async fn set_note_encryption(
         .ok_or(Error::NoteNotFound {
             id: note_id.to_string(),
         })?;
+    // 同级别幂等短路（重复锁定/解锁无副作用）。
+    if record.encryption == level {
+        return Ok(());
+    }
+    // DK-20：密级切换必须同步重写 content（洞修复——旧实现只改字段，
+    // 明文笔记"锁定"后 content 仍明文落库）。fail-closed：无 cipher / 解密
+    // 校验失败一律拒绝，record 不落任何变更。
+    let plain = open_note_content(ctx, note_id, &record)?;
+    let ws = None::<String>; // workspace 归属由 blocks 内部口径承担（单工作区）
+    record.content = seal_content(ctx, note_id, &plain, level)?;
     record.encryption = level.to_string();
     record.updated_at = chrono::Utc::now().to_rfc3339();
     put_note_meta(core, note_id, &record, ctx.seal.as_ref()).await?;
+    // 向量残留清理（锁定即从向量缓存剔除，防 enc1 密文被回填嵌入）。
+    core.kv_store.delete(&format!("notevec:{note_id}")).await?;
+    // blocks（图谱/关系源）：锁定态不派生（写入侧跳过——开工令教训 5），
+    // 已有块清空（sync 空 content = 全软删）；解锁后由事件驱动重派生。
+    if let Some(blocks) = ctx.blocks.as_ref() {
+        if let Err(e) = blocks.sync_note_blocks(note_id, ws.as_deref(), "") {
+            tracing::warn!(note_id = %note_id, error = %e, "blocks clear on lock failed; non-blocking");
+        }
+    }
+    // 锁定后 blocks 保持为空：投影/图谱消费无明文块。解锁时重派生由
+    // 下方"解锁恢复"分支的显式 sync 承担（见 level == ENC_NONE）。
     // 元数据变更事件 → 搜索投影 reindex（加密后从索引移除, 解密后恢复）
     core.event_bus
         .publish(crate::event_bus::layered::AppEvent::NoteMetadataChanged {
@@ -292,7 +313,15 @@ pub async fn set_note_encryption(
                 ..Default::default()
             },
         });
-    tracing::info!(note_id = %note_id, level = %level, "note encryption level set");
+    // 解锁恢复：blocks 重派生（明文块重新可被图谱/关系消费）。
+    if level == ENC_NONE {
+        if let Some(blocks) = ctx.blocks.as_ref() {
+            if let Err(e) = blocks.sync_note_blocks(note_id, ws.as_deref(), &plain) {
+                tracing::warn!(note_id = %note_id, error = %e, "blocks derive on unlock failed; non-blocking");
+            }
+        }
+    }
+    tracing::info!(note_id = %note_id, level = %level, "note encryption level set (content rewritten)");
     Ok(())
 }
 
@@ -415,10 +444,14 @@ pub async fn save_note_content(
     put_note_meta(core, note_id, &record, ctx.seal.as_ref()).await?;
 
     // 3) blocks 派生 — 派生失败不阻断主流程（DK-01 DoD: notes/快照为
-    //    权威已落盘, blocks 索引滞后可由启动重建补齐）
-    if let Some(blocks) = ctx.blocks.as_ref() {
-        if let Err(e) = blocks.sync_note_blocks(note_id, Some(&ws), content) {
-            tracing::warn!(note_id = %note_id, error = %e, "blocks derive failed; non-blocking");
+    //    权威已落盘, blocks 索引滞后可由启动重建补齐）。
+    //    DK-20：锁定态（encryption=aes256gcm）写入侧跳过——图谱/关系面
+    //    不消费锁定篇（开工令教训 5），解锁后 set_note_encryption 重派生。
+    if record.encryption != ENC_AES256GCM {
+        if let Some(blocks) = ctx.blocks.as_ref() {
+            if let Err(e) = blocks.sync_note_blocks(note_id, Some(&ws), content) {
+                tracing::warn!(note_id = %note_id, error = %e, "blocks derive failed; non-blocking");
+            }
         }
     }
 

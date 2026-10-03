@@ -22,6 +22,7 @@ use sha2::{Digest, Sha256};
 
 use crate::app_core::AppCore;
 use crate::traits::kv_store::KVStore;
+use crate::write_path::ENC_AES256GCM;
 use crate::Error;
 
 /// 单篇笔记的向量记录（`notevec:{note_id}` 的值）。
@@ -37,6 +38,10 @@ pub struct VecRecord {
     /// DK-03 S2：工作区归属（None=单工作区口径，匹配全部 filter——S1 旧记录兼容）。
     #[serde(default)]
     pub workspace_id: Option<String>,
+    /// DK-20：笔记密级（"none" | "aes256gcm"）——锁定篇不入缓存（写入侧跳过）
+    /// 且检索侧防御过滤（双保险）；S1 旧记录 default "none" 兼容。
+    #[serde(default)]
+    pub encryption: String,
     /// DK-03 S2：纯向量命中 snippet 用内容预览（index 时截取；S1 旧记录 None=空）。
     #[serde(default)]
     pub content_preview: Option<String>,
@@ -201,6 +206,8 @@ impl VectorIndex {
             content_hash: hash.to_string(),
             // DK-03 S2：单工作区口径（None=匹配全部 filter）；preview 取内容前 120 字符
             workspace_id: None,
+            // DK-20：嵌入路径仅接受明文（enc1 密文已在 backfill 防御跳过）
+            encryption: "none".to_string(),
             content_preview: Some(content.chars().take(120).collect()),
         };
         self.kv
@@ -262,6 +269,8 @@ impl VectorIndex {
         let mut scored: Vec<VectorHit> = cache
             .iter()
             .filter(|(id, _)| !trashed.contains(id.as_str()))
+            // DK-20：锁定篇防御过滤（写入侧已跳过，此处兜底防存量残留）
+            .filter(|(_, rec)| rec.encryption != ENC_AES256GCM)
             // DK-03 S2：workspace 过滤（记录 None=单工作区口径匹配全部；Some(w)≠ws 跳过）
             .filter(|(_, rec)| match (ws_filter, rec.workspace_id.as_deref()) {
                 (Some(ws), Some(w)) => w == ws,
@@ -310,6 +319,10 @@ impl VectorIndex {
             let Some(content) = content_of(&note_id) else {
                 continue;
             };
+            // DK-20：enc1 密文（锁定篇）不回填嵌入——向量面无密文亦无明文语义
+            if content.starts_with("enc1:") {
+                continue;
+            }
             let hash = Self::content_hash(&content);
             let cached = self
                 .cache
@@ -342,6 +355,7 @@ impl VectorIndex {
             model: self.model.clone(),
             content_hash: hash,
             workspace_id: None,
+            encryption: "none".to_string(),
             content_preview: Some(content.chars().take(120).collect()),
         };
         self.kv

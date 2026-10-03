@@ -114,6 +114,23 @@ fn get_core() -> Result<Arc<AppCore>, String> {
         .ok_or_else(|| "AppCore not initialized".into())
 }
 
+/// DK-20：笔记内容加密对（NoteContentCipher HKDF 每笔记密钥——复用 DK-07 S2
+/// aurora-security 实现，装配进 WriteContext.content_cipher）。桌面端 TODO(DK-07) 关闭。
+fn content_cipher_pair(
+) -> Result<std::sync::Arc<aurora_core::write_path::ContentCipherPair>, String> {
+    let vault = get_vault()?;
+    let dek =
+        aurora_security::key_hierarchy::WorkspaceDek::from_bytes("vault-master", *vault.dek());
+    let enc = aurora_security::note_cipher::NoteContentCipher::new(dek.clone());
+    let dec = aurora_security::note_cipher::NoteContentCipher::new(dek);
+    Ok(std::sync::Arc::new(
+        aurora_core::write_path::ContentCipherPair {
+            encrypt: Box::new(move |note_id: &str, plain: &str| enc.encrypt(note_id, plain)),
+            decrypt: Box::new(move |note_id: &str, sealed: &str| dec.decrypt(note_id, sealed)),
+        },
+    ))
+}
+
 /// 获取本地 DEK 保险库引用。
 fn get_vault() -> Result<Arc<LocalDekVault>, String> {
     let guard = VAULT_STATE
@@ -379,7 +396,7 @@ async fn cmd_create_note(title: String) -> Result<String, String> {
             seal: Box::new(seal),
             unseal: Box::new(unseal),
         }),
-        content_cipher: None, // TODO(DK-07): 桌面 UI 接 vault cipher
+        content_cipher: Some(content_cipher_pair()?),
         attachments: ATTACH_STATE
             .lock()
             .expect("ATTACH_STATE mutex poisoned")
@@ -488,7 +505,7 @@ async fn cmd_update_note(
             seal: Box::new(seal),
             unseal: Box::new(unseal),
         }),
-        content_cipher: None, // TODO(DK-07): 桌面 UI 接 vault cipher
+        content_cipher: Some(content_cipher_pair()?),
         attachments: ATTACH_STATE
             .lock()
             .expect("ATTACH_STATE mutex poisoned")
@@ -727,7 +744,7 @@ async fn cmd_delete_note(note_id: String) -> Result<(), String> {
             seal: Box::new(seal),
             unseal: Box::new(unseal),
         }),
-        content_cipher: None, // TODO(DK-07): 桌面 UI 接 vault cipher
+        content_cipher: Some(content_cipher_pair()?),
         attachments: ATTACH_STATE
             .lock()
             .expect("ATTACH_STATE mutex poisoned")
@@ -792,7 +809,7 @@ async fn cmd_create_folder(
             seal: Box::new(seal),
             unseal: Box::new(unseal),
         }),
-        content_cipher: None,
+        content_cipher: Some(content_cipher_pair()?),
         attachments: ATTACH_STATE
             .lock()
             .expect("ATTACH_STATE mutex poisoned")
