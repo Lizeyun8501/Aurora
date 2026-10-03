@@ -92,13 +92,16 @@ pub struct TantivySearchBackend {
     tags: Field,
     workspace_id: Field,
     updated_at: Field,
-    /// 持久化单例写入器（writer churn 优化——原「每次操作新建」策略下
-    /// writer 创建 ~18ms/次主导 1k 重建 20.4s，见 RV-01 实证；tantivy 官方
-    /// 推荐单实例复用：内部多线程、commit 串行化）。锁内均为同步操作
-    /// （add/delete/commit 无 await），std Mutex 足够。
-    /// **内存诚实标注**：heap 50MB 从「创建-销毁」变「常驻」（RAM 换 CPU，
-    /// 桌面端可接受）。可见性语义不变：每次操作尾部仍 commit 一次。
-    writer: std::sync::Mutex<tantivy::IndexWriter<TantivyDocument>>,
+    /// 惰性单例写入器（writerchurn 优化 v2——2026-10-03 批复立项）：首次写操作
+    /// 时才创建（`Mutex<Option<IndexWriter>>`），instance drop 即释放索引文件锁
+    /// ——根治「writer 常驻持锁」对双实例场景的排斥（bootstrap 双 boot / 桌面
+    /// dev reload / 同 dir 多实例测试，Bravo DK-19 对向审核实证 LockBusy 稳定
+    /// 回归）。复用语义不变：单实例内 4 写方法仍共享同一 writer（官方推荐）。
+    /// 锁内全同步操作（add/delete/commit/创建无 await），std Mutex 足够。
+    /// **内存诚实标注**：单实例存续期 heap 50MB 常驻（RAM 换 CPU，可接受）；
+    /// 双实例并存时各持一份（惰性创建不改变单实例量级）。可见性语义不变：
+    /// 每次操作尾部仍 commit 一次。
+    writer: std::sync::Mutex<Option<tantivy::IndexWriter<TantivyDocument>>>,
 }
 
 impl TantivySearchBackend {
@@ -135,9 +138,6 @@ impl TantivySearchBackend {
         let updated_at = schema
             .get_field("updated_at")
             .map_err(|e| Error::Internal(format!("schema field updated_at: {}", e)))?;
-        let writer = index
-            .writer::<TantivyDocument>(50_000_000)
-            .map_err(map_err)?;
         Ok(Self {
             index,
             jieba,
@@ -147,7 +147,7 @@ impl TantivySearchBackend {
             tags,
             workspace_id,
             updated_at,
-            writer: std::sync::Mutex::new(writer),
+            writer: std::sync::Mutex::new(None),
         })
     }
 
@@ -166,9 +166,6 @@ impl TantivySearchBackend {
             .get_field("workspace_id")
             .expect("workspace_id field");
         let updated_at = schema.get_field("updated_at").expect("updated_at field");
-        let writer = index
-            .writer::<TantivyDocument>(50_000_000)
-            .expect("in-memory writer");
         Ok(Self {
             index,
             jieba,
@@ -178,7 +175,7 @@ impl TantivySearchBackend {
             tags,
             workspace_id,
             updated_at,
-            writer: std::sync::Mutex::new(writer),
+            writer: std::sync::Mutex::new(None),
         })
     }
 
@@ -252,6 +249,27 @@ impl TantivySearchBackend {
             s
         }
     }
+
+    /// 惰性获取 writer：None 时创建并缓存（首写开销一次，此后复用）。
+    /// 锁内创建无 await；双实例场景由「实例 drop → writer drop → 锁释放」根治
+    /// （Bravo DK-19 对向审核：writer 常驻致 bootstrap 双 boot LockBusy 稳定回归）。
+    fn acquire_writer(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, Option<tantivy::IndexWriter<TantivyDocument>>>, Error>
+    {
+        let mut guard = self
+            .writer
+            .lock()
+            .map_err(|_| Error::Internal("search writer lock poisoned".into()))?;
+        if guard.is_none() {
+            let w = self
+                .index
+                .writer::<TantivyDocument>(50_000_000)
+                .map_err(map_err)?;
+            *guard = Some(w);
+        }
+        Ok(guard)
+    }
 }
 
 #[async_trait]
@@ -312,10 +330,8 @@ impl SearchBackend for TantivySearchBackend {
         metadata: &NoteMetadata,
     ) -> Result<(), Error> {
         let document = self.build_doc(note_id, content, metadata);
-        let mut writer = self
-            .writer
-            .lock()
-            .map_err(|_| Error::Internal("search writer lock poisoned".into()))?;
+        let mut guard = self.acquire_writer()?;
+        let writer = guard.as_mut().expect("acquire_writer guarantees Some");
         // 同一 id 先删后写，保证幂等更新
         writer.delete_term(Term::from_field_text(self.id, note_id));
         writer.add_document(document).map_err(map_err)?;
@@ -324,10 +340,8 @@ impl SearchBackend for TantivySearchBackend {
     }
 
     async fn batch_index(&self, notes: &[IndexEntry]) -> Result<(), Error> {
-        let mut writer = self
-            .writer
-            .lock()
-            .map_err(|_| Error::Internal("search writer lock poisoned".into()))?;
+        let mut guard = self.acquire_writer()?;
+        let writer = guard.as_mut().expect("acquire_writer guarantees Some");
         for entry in notes {
             let document = self.build_doc(&entry.note_id, &entry.content, &entry.metadata);
             writer.delete_term(Term::from_field_text(self.id, &entry.note_id));
@@ -343,20 +357,16 @@ impl SearchBackend for TantivySearchBackend {
     }
 
     async fn remove_index(&self, note_id: &str) -> Result<(), Error> {
-        let mut writer = self
-            .writer
-            .lock()
-            .map_err(|_| Error::Internal("search writer lock poisoned".into()))?;
+        let mut guard = self.acquire_writer()?;
+        let writer = guard.as_mut().expect("acquire_writer guarantees Some");
         writer.delete_term(Term::from_field_text(self.id, note_id));
         writer.commit().map_err(map_err)?;
         Ok(())
     }
 
     async fn rebuild_index(&self, all_notes: &[IndexEntry]) -> Result<(), Error> {
-        let mut writer = self
-            .writer
-            .lock()
-            .map_err(|_| Error::Internal("search writer lock poisoned".into()))?;
+        let mut guard = self.acquire_writer()?;
+        let writer = guard.as_mut().expect("acquire_writer guarantees Some");
         writer.delete_all_documents().map_err(map_err)?;
         for entry in all_notes {
             let document = self.build_doc(&entry.note_id, &entry.content, &entry.metadata);

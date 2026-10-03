@@ -331,7 +331,6 @@ fn unwrap_note_bytes(
     }
 }
 
-/// 将笔记明文加密为落库字节。
 // ── V26 I2/DK-01W: WritePath 唯一写入入口 ─────────────────────
 
 /// blocks 双轨存储（进程级单例；复用 migration 建的 aurora.db；打开失败 = 内存降级）。

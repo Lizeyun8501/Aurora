@@ -55,7 +55,7 @@ pub async fn cmd_ai_liquify_proposal(source: String, raw_json: String) -> Result
     let core = crate::get_core()?;
     let proposal = parse_proposal(&source, &raw_json).map_err(|e| e.to_string())?;
     let key = format!("liq:proposal:{}", proposal.id);
-    let bytes = &serde_json::to_vec(&proposal).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec(&proposal).map_err(|e| e.to_string())?;
     core.kv_store
         .set(&key, &bytes)
         .await
@@ -129,7 +129,7 @@ pub async fn cmd_ai_commit_liquify(
         .map_err(|e| e.to_string())?;
     let _ = &committed.status;
     proposal.results = committed.results.clone();
-    proposal.status = committed.status.clone();
+    proposal.status = committed.status;
     let out = serde_json::to_string(&proposal).map_err(|e| e.to_string())?;
     core.kv_store
         .set(

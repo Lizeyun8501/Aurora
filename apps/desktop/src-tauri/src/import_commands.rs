@@ -155,7 +155,6 @@ pub async fn cmd_import_enex(
         only: only.unwrap_or_default(),
         attachments_dir: attachments_dir.map(PathBuf::from),
         progress: Some(progress),
-        ..Default::default()
     };
     let report = import_enex(&ctx, &PathBuf::from(&file), &options)
         .await
@@ -178,7 +177,6 @@ pub async fn cmd_import_opml(
         manifest_dir: manifest(manifest_dir),
         only: only.unwrap_or_default(),
         progress: Some(progress),
-        ..Default::default()
     };
     let report = import_opml_file(&ctx, &PathBuf::from(&file), &options)
         .await
