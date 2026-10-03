@@ -22,6 +22,7 @@ import ImportWizard from './ImportWizard';
 import CanvasView from './CanvasView';
 import TrashView from './TrashView';
 import SmartFolderView from './SmartFolderView';
+import TodayDailyNote from './TodayDailyNote';
 import LiquifyReview from './LiquifyReview';
 
 export interface InvokeFn {
@@ -1731,6 +1732,13 @@ export default function DesktopShell() {
             <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size }}>
               今日视图
             </h1>
+            <TodayDailyNote
+              invoke={invoke}
+              onOpenNote={(nid) => {
+                setSelectedId(nid);
+                setView('notes');
+              }}
+            />
             {stats ? (
               <div style={{ display: 'flex', gap: tokens.spacing.md }}>
                 {(
