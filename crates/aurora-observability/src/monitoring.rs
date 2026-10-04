@@ -998,12 +998,15 @@ impl NoiseReducer {
         let periods = self.silence_periods.read();
         let now_str = now.format("%H:%M").to_string();
         for period in periods.iter() {
-            // 简单 HH:MM 字符串比较
+            // 简单 HH:MM 字符串比较。
+            // DK-26（Alpha 裁决）: [start, end] **闭区间**——end 分钟全含
+            // （用户直觉："静默到 23:59" 含 23:59 这一整分钟）。
+            // 修复前的严格小于语义使 end 分钟窗口假红（DK-24 实锤）。
             let in_range = if period.start_hhmm <= period.end_hhmm {
-                now_str >= period.start_hhmm && now_str < period.end_hhmm
+                now_str >= period.start_hhmm && now_str <= period.end_hhmm
             } else {
                 // 跨天（如 22:00 ~ 06:00）
-                now_str >= period.start_hhmm || now_str < period.end_hhmm
+                now_str >= period.start_hhmm || now_str <= period.end_hhmm
             };
             if in_range {
                 let rule_match =
@@ -1694,10 +1697,23 @@ mod tests {
         });
 
         // DK-24: 注入固定时刻（原 Utc::now() 落在 UTC 23:59 整分钟时，
-        // is_in_silence_period 的严格小于边界 now_str < "23:59" 判 false
+        // is_in_silence_period 的边界 now_str < "23:59" 判 false
         // → 放行 → 假红；时段敏感测试必须注入时钟）。
-        let now = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
-        assert!(!reducer.should_alert("any", AlertSeverity::Critical, now));
+        // DK-26: 闭区间语义落地——end 边界（23:59）现应被静默包含。
+        let at_end = Utc.with_ymd_and_hms(2026, 1, 15, 23, 59, 0).unwrap();
+        assert!(
+            !reducer.should_alert("any", AlertSeverity::Critical, at_end),
+            "end 边界分钟（23:59）必须含在静默窗口内（闭区间）"
+        );
+        let at_mid = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
+        assert!(!reducer.should_alert("any", AlertSeverity::Critical, at_mid));
+        // end 之外（次日 00:00 语义上不在 [00:00, 23:59] 内的只有跨午夜时刻——
+        // 此处用 00:00 start 含断言 + 23:58 与 23:59 之间无空洞说明）
+        let at_start = Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
+        assert!(
+            !reducer.should_alert("any", AlertSeverity::Critical, at_start),
+            "start 边界分钟（00:00）必须含在静默窗口内（闭区间）"
+        );
     }
 
     #[test]
