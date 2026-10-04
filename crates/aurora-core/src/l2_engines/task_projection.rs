@@ -117,11 +117,17 @@ pub struct WeeklySummary {
     pub per_task: Vec<WeeklyTaskRow>,
 }
 
+/// DK-28: 状态历史提供器——返回 (task_id, new_status) 有序序列（seq 升序）。
+pub type StatusHistory = Box<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
+
 /// 任务投影。
 pub struct TaskProjection {
     rows: RwLock<BTreeMap<String, TaskViewRow>>,
     kv: std::sync::Arc<dyn KVStore>,
     source: TaskSource,
+    /// DK-28: 重建路径的 TaskStatusChanged 历史重放源（bootstrap 从事件
+    /// store 装配；None = 无历史可回填，行为与旧版一致）。
+    status_history: RwLock<Option<StatusHistory>>,
 }
 
 const WATERMARK_KEY: &str = "projection.watermark.task";
@@ -132,6 +138,7 @@ impl TaskProjection {
             rows: RwLock::new(BTreeMap::new()),
             kv,
             source,
+            status_history: RwLock::new(None),
         }
     }
 
@@ -268,6 +275,11 @@ impl TaskProjection {
             }
         }
         graph
+    }
+
+    /// DK-28: 注入状态历史源（bootstrap 装配期调用一次；builder 式 &self）。
+    pub fn with_status_history(&self, history: StatusHistory) {
+        *self.status_history.write().unwrap() = Some(history);
     }
 
     /// 时间追踪 — 实际耗时累加（DK-06: 由番茄钟/计时会话驱动,
@@ -524,6 +536,28 @@ impl Projection for TaskProjection {
         for row in all {
             self.rows.write().unwrap().insert(row.task_id.clone(), row);
         }
+        // DK-28: 事件流回填——重放 TaskStatusChanged 历史，存量任务
+        // completed_at 激活（与在线 apply 同口径：终态 stamp / 回退清 None）。
+        // 口径注记：历史事件无时间戳，重建路径 stamp = 重建时刻（近似）；
+        // 在线路径 = 真实完成时刻。终态图谱（Some/None）两者一致（parity 测试）。
+        let history = self.status_history.read().unwrap().as_ref().map(|h| h());
+        if let Some(events) = &history {
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            let mut rows = self.rows.write().unwrap();
+            for (task_id, new_status) in events {
+                if let Some(row) = rows.get_mut(task_id) {
+                    row.completed_at = if matches!(new_status.as_str(), "done" | "cancelled") {
+                        Some(now_ms)
+                    } else {
+                        None
+                    };
+                }
+            }
+            info!(
+                count = events.len(),
+                "task projection: status history replayed"
+            );
+        }
         Ok(())
     }
 }
@@ -540,6 +574,89 @@ mod tests {
         let kv = Arc::new(MemoryKVStore::default());
         let src = Box::new(move || source_rows.clone());
         TaskProjection::new(kv, src)
+    }
+
+    /// DK-28 DoD: 回填 parity——重建路径（source 行 None + 历史重放）与
+    /// 在线路径（apply 逐事件 stamp/清）终态一致，含回退非终态清 None 链。
+    #[tokio::test]
+    async fn dk28_rebuild_backfill_parity() {
+        // 在线路径：seed → done → next（回退清 None）→ done
+        let p_online = make(vec![]);
+        p_online.seed_row("t-a", "n1", "写稿", "next", "high", None);
+        for st in ["done", "next", "done"] {
+            p_online
+                .apply(&AppEvent::TaskStatusChanged {
+                    task_id: "t-a".into(),
+                    old_status: String::new(),
+                    new_status: st.into(),
+                })
+                .await
+                .unwrap();
+        }
+        // 在线回退中间态: t-b done → next（终态 None）
+        p_online.seed_row("t-b", "n1", "杂务", "done", "low", None);
+        p_online
+            .apply(&AppEvent::TaskStatusChanged {
+                task_id: "t-b".into(),
+                old_status: "done".into(),
+                new_status: "next".into(),
+            })
+            .await
+            .unwrap();
+
+        // 重建路径：source 行全 None completed_at + 历史重放（同事件序列）
+        let history: Vec<(String, String)> = vec![
+            ("t-a".into(), "done".into()),
+            ("t-a".into(), "next".into()),
+            ("t-a".into(), "done".into()),
+            ("t-b".into(), "done".into()),
+            ("t-b".into(), "next".into()),
+        ];
+        let p_rebuild = make(vec![
+            row("t-a", "n1", "done", None),
+            row("t-b", "n1", "next", None),
+        ]);
+        p_rebuild.with_status_history(Box::new(move || history.clone()));
+        p_rebuild.rebuild().await.unwrap();
+
+        // parity：终态图谱一致（completed_at Some/None；绝对值口径不同——注记）
+        let online_a = p_online
+            .rows
+            .read()
+            .unwrap()
+            .get("t-a")
+            .unwrap()
+            .completed_at
+            .is_some();
+        let rebuild_a = p_rebuild
+            .rows
+            .read()
+            .unwrap()
+            .get("t-a")
+            .unwrap()
+            .completed_at
+            .is_some();
+        assert!(online_a && rebuild_a, "t-a 终态 done → 双路径均 Some");
+        let online_b = p_online
+            .rows
+            .read()
+            .unwrap()
+            .get("t-b")
+            .unwrap()
+            .completed_at
+            .is_none();
+        let rebuild_b = p_rebuild
+            .rows
+            .read()
+            .unwrap()
+            .get("t-b")
+            .unwrap()
+            .completed_at
+            .is_none();
+        assert!(
+            online_b && rebuild_b,
+            "t-b 回退非终态 → 双路径均 None（清 None 链）"
+        );
     }
 
     /// DK-22：周回顾聚合偏差率与 per_task 明细（DoD: 周回顾偏差率计算正确；

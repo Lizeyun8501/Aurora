@@ -771,6 +771,32 @@ fn build_app_core(
         ),
     );
 
+    // DK-28: 任务投影注入状态历史源——rebuild 时重放 TaskStatusChanged
+    // 历史（seq 升序），存量任务 completed_at 激活（在线路径同口径：
+    // 终态 stamp / 回退清 None；stamp=重建时刻口径注记见投影 doc）。
+    {
+        let store_for_hist = event_bus_store.clone();
+        task_projection.with_status_history(Box::new(move || {
+            store_for_hist
+                .events_after(0)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|ev| {
+                    let ev: aurora_core::event_bus::layered::AppEvent =
+                        serde_json::from_str(&ev.payload).ok()?;
+                    match ev {
+                        aurora_core::event_bus::layered::AppEvent::TaskStatusChanged {
+                            task_id,
+                            new_status,
+                            ..
+                        } => Some((task_id, new_status)),
+                        _ => None,
+                    }
+                })
+                .collect()
+        }));
+    }
+
     // DK-27: 标签投影（tag↔note 轻量映射 — 智能文件夹 tags 条件数据源）。
     // 数据源: KV note: 前缀 NoteRecord.tags（serde default 兼容存量——
     // 存量笔记首次标签变更前投影态为空集，诚实化口径）。
