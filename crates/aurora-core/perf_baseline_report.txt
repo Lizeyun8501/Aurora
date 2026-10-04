@@ -1,0 +1,7 @@
+[index-rebuild] notes=1000 total=179ms avg_per_note=0.179ms
+[index-rebuild] notes=5000 total=835ms avg_per_note=0.167ms
+[index-rebuild] notes=10000 total=2086ms avg_per_note=0.209ms
+[sync-converge] docs=1000 total=11ms avg_per_doc=0.011ms
+[sync-converge] docs=5000 total=71ms avg_per_doc=0.014ms
+[sync-converge] docs=10000 total=138ms avg_per_doc=0.014ms
+[search-10k] n=100 p50=1.12ms p99=5.62ms max=7.42ms (V26 指标 <200ms)

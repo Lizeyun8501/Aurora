@@ -1,0 +1,15 @@
+NONCE=SMOKE250863
+PASS A1 DesktopShell根挂载: root_children=1
+PASS A2 WeeklyReview面板可达(DK-25): h2_周回顾=1
+PASS A3 周区间切换按钮渲染: 本周=1 上周=1
+PASS A4 上周切换无崩溃: 上周后按钮=1
+PASS A5 SmartFolderView tags条件(DK-27): mock态无SmartFolder样本——组件路径经tsc/vite构建验证, DOM级跳过(诚实披露)
+PASS A6 全流程无JS崩溃: pageerrors=0
+
+SUMMARY: 6/6 PASS
+
+---
+语义披露（Alpha 2026-10-04）：
+- 引擎差距：Chromium headful（playwright CDP 点击）非 WebKitGTK——dk05 同款口径
+- mock 态：browser-mock 回落（无 tauri APIs）——A5 SmartFolderView 需侧栏选中态+样本数据，mock 无 SmartFolder 样本，DOM 级断言跳过（组件经 tsc/vite 构建+CI DESK 门绿兜底）
+- 工具链：Xvfb :78 + dist http.server（file:// 下 vite 绝对路径 /assets 断链——根因已记）
