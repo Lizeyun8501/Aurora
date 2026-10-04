@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use std::sync::RwLock;
 
 use async_trait::async_trait;
+use serde::Serialize;
 use tracing::info;
 
 use crate::event_bus::layered::AppEvent;
@@ -90,6 +91,27 @@ pub struct TaskViewRow {
 
 /// 全量数据源回调（全库任务行）。
 pub type TaskSource = Box<dyn Fn() -> Vec<TaskViewRow> + Send + Sync>;
+
+/// DK-22: 周回顾单任务行（预计 vs 实际 + 偏差率）。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct WeeklyTaskRow {
+    pub task_id: String,
+    pub title: String,
+    pub estimate_minutes: u32,
+    pub actual_minutes: u32,
+    /// (actual - estimate) / estimate；estimate == 0 → None
+    pub deviation: Option<f64>,
+}
+
+/// DK-22: 周回顾聚合（TodayView 周报面板渲染所需字段全集）。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct WeeklySummary {
+    pub total_estimate_minutes: u32,
+    pub total_actual_minutes: u32,
+    /// 汇总偏差率；全任务均未预估（total_estimate == 0）→ None
+    pub deviation_rate: Option<f64>,
+    pub per_task: Vec<WeeklyTaskRow>,
+}
 
 /// 任务投影。
 pub struct TaskProjection {
@@ -272,6 +294,50 @@ impl TaskProjection {
         )
     }
 
+    /// DK-22 周回顾聚合：对给定任务集汇总预计 vs 实际。
+    ///
+    /// 数据源 = TaskViewRow.estimate_minutes / actual_minutes（actual 只能经
+    /// `record_actual_minutes` 累加——聚合是纯读派生，禁止手改语义）。
+    /// 汇总偏差率：total_estimate == 0 → None（除零防护）；正分 = 超时。
+    pub fn weekly_summary(&self, task_ids: &[String]) -> WeeklySummary {
+        let rows = self.rows.read().unwrap();
+        let mut per_task = Vec::new();
+        let (mut total_est, mut total_act) = (0u32, 0u32);
+        for id in task_ids {
+            let Some(row) = rows.get(id) else {
+                continue; // 幽灵 id 跳过（会话期间任务被删等竞态）
+            };
+            let deviation = if row.estimate_minutes == 0 {
+                None
+            } else {
+                Some(
+                    (row.actual_minutes as f64 - row.estimate_minutes as f64)
+                        / row.estimate_minutes as f64,
+                )
+            };
+            total_est = total_est.saturating_add(row.estimate_minutes);
+            total_act = total_act.saturating_add(row.actual_minutes);
+            per_task.push(WeeklyTaskRow {
+                task_id: row.task_id.clone(),
+                title: row.title.clone(),
+                estimate_minutes: row.estimate_minutes,
+                actual_minutes: row.actual_minutes,
+                deviation,
+            });
+        }
+        let deviation_rate = if total_est == 0 {
+            None
+        } else {
+            Some((total_act as f64 - total_est as f64) / total_est as f64)
+        };
+        WeeklySummary {
+            total_estimate_minutes: total_est,
+            total_actual_minutes: total_act,
+            deviation_rate,
+            per_task,
+        }
+    }
+
     /// 子任务进度推导（DK-06: progress 由子任务完成比例推导, 禁止手改）。
     ///
     /// 对每行重算 progress: 有子任务的父 = done 子任务数 / 子任务总数;
@@ -446,6 +512,55 @@ mod tests {
         let kv = Arc::new(MemoryKVStore::default());
         let src = Box::new(move || source_rows.clone());
         TaskProjection::new(kv, src)
+    }
+
+    /// DK-22：周回顾聚合偏差率与 per_task 明细（DoD: 周回顾偏差率计算正确；
+    /// 幽灵 id 跳过；无预估任务 deviation None；多会话累计 50+40 求和）。
+    #[tokio::test]
+    async fn dk22_weekly_summary_deviation() {
+        let p = make(vec![]);
+        p.seed_row("t-a", "n1", "写稿", "done", "high", None);
+        p.seed_row("t-b", "n1", "杂务", "done", "low", None);
+        p.seed_row("t-c", "n2", "审稿", "done", "medium", None);
+        p.set_estimate_minutes("t-a", 60);
+        p.set_estimate_minutes("t-c", 45);
+        // A 多会话累计（50 + 40 = 90）
+        p.record_actual_minutes("t-a", 50);
+        p.record_actual_minutes("t-a", 40);
+        p.record_actual_minutes("t-b", 30);
+        p.record_actual_minutes("t-c", 30);
+
+        let ids = vec![
+            "t-a".to_string(),
+            "t-b".to_string(),
+            "t-c".to_string(),
+            "ghost".to_string(),
+        ];
+        let s = p.weekly_summary(&ids);
+        assert_eq!(s.total_estimate_minutes, 105);
+        assert_eq!(s.total_actual_minutes, 150);
+        let rate = s.deviation_rate.expect("有预估 → Some");
+        assert!((rate - (150.0 - 105.0) / 105.0).abs() < 1e-9);
+        assert_eq!(s.per_task.len(), 3, "幽灵 id 跳过");
+        let a = s.per_task.iter().find(|r| r.task_id == "t-a").unwrap();
+        assert!((a.deviation.expect("A 有预估") - 0.5).abs() < 1e-9);
+        let b = s.per_task.iter().find(|r| r.task_id == "t-b").unwrap();
+        assert!(b.deviation.is_none(), "B 未预估 → None");
+        let c = s.per_task.iter().find(|r| r.task_id == "t-c").unwrap();
+        assert!((c.deviation.expect("C 有预估") - (-1.0 / 3.0)).abs() < 1e-9);
+    }
+
+    /// DK-22：全任务未预估 → deviation_rate None（除零防护）。
+    #[tokio::test]
+    async fn dk22_weekly_summary_no_estimate_is_none() {
+        let p = make(vec![]);
+        p.seed_row("t-b", "n1", "杂务", "next", "low", None);
+        p.record_actual_minutes("t-b", 30);
+        let s = p.weekly_summary(&["t-b".to_string()]);
+        assert!(s.deviation_rate.is_none());
+        assert_eq!(s.total_estimate_minutes, 0);
+        assert_eq!(s.total_actual_minutes, 30);
+        assert_eq!(s.per_task.len(), 1);
     }
 
     /// DK-21 S2：依赖 API 全链——自依赖/成环拒绝可读路径/blocked 派生解除/移除幂等。

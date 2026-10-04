@@ -579,6 +579,204 @@ function DepEditor({
 }
 
 /** DK-21 S2/S3：今日任务列表 + blocked 徽章（派生态——前置非终态即阻塞；blocked 前置排序；行展开依赖编辑）。 */
+/** DK-22 S2：番茄钟专注组件（25/5 可配置；visibilitychange 触发挂钟补偿——后台不丢秒）。 */
+function FocusPomodoro({ invoke }: { invoke: InvokeFn | null }): React.ReactElement {
+  const [st, setSt] = useState<{
+    phase: string;
+    remaining_seconds: number;
+    completed_work_cycles: number;
+    running: boolean;
+  } | null>(null);
+  const [workMin, setWorkMin] = useState(25);
+  const [breakMin, setBreakMin] = useState(5);
+
+  const pull = useCallback(async () => {
+    if (!invoke) return;
+    try {
+      setSt((await invoke('cmd_pomodoro_state')) as {
+        phase: string;
+        remaining_seconds: number;
+        completed_work_cycles: number;
+        running: boolean;
+      });
+    } catch {
+      /* mock 态静默 */
+    }
+  }, [invoke]);
+
+  useEffect(() => {
+    void pull();
+    if (!st?.running) return;
+    const id = setInterval(() => void pull(), 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pull, st?.running]);
+
+  useEffect(() => {
+    if (!invoke) return;
+    const onVis = (): void => {
+      if (document.visibilityState === 'visible') void pull();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [invoke, pull]);
+
+  const mm = st ? String(Math.floor(st.remaining_seconds / 60)).padStart(2, '0') : '--';
+  const ss = st ? String(st.remaining_seconds % 60).padStart(2, '0') : '--';
+  const isWork = st?.phase !== 'break';
+
+  return (
+    <div
+      style={{
+        marginTop: tokens.spacing.lg,
+        padding: tokens.spacing.md,
+        border: `1px solid ${tokens.color.bgElevated}`,
+        borderRadius: 8,
+      }}
+    >
+      <h2 style={{ fontSize: tokens.typography.title.size, margin: `0 0 ${tokens.spacing.sm}px` }}>
+        专注（番茄钟 25/5 可配置）
+      </h2>
+      {!invoke ? (
+        <p style={{ color: tokens.color.textSecondary }}>番茄钟仅 tauri 模式可用</p>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: tokens.spacing.sm }}>
+            <span style={{ fontSize: 40, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+              {mm}:{ss}
+            </span>
+            <span
+              style={{
+                color: isWork ? tokens.color.primaryBright : tokens.color.success,
+                fontSize: tokens.typography.caption.size,
+              }}
+            >
+              {isWork ? '工作中' : '休息中'} · 已完成 {st?.completed_work_cycles ?? 0} 轮
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: tokens.spacing.sm, marginTop: tokens.spacing.sm }}>
+            <button
+              onClick={() => void invoke(st?.running ? 'cmd_pomodoro_pause' : 'cmd_pomodoro_start').then(pull)}
+              style={{ padding: '4px 12px' }}
+            >
+              {st?.running ? '暂停' : '开始'}
+            </button>
+            <button onClick={() => void invoke('cmd_pomodoro_reset').then(pull)} style={{ padding: '4px 12px' }}>
+              重置
+            </button>
+            <span style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size }}>
+              工作
+              <input
+                type="number"
+                min={1}
+                max={180}
+                value={workMin}
+                onChange={(e) => setWorkMin(Number(e.target.value) || 1)}
+                style={{ width: 48, margin: '0 4px' }}
+              />
+              分 / 休息
+              <input
+                type="number"
+                min={1}
+                max={120}
+                value={breakMin}
+                onChange={(e) => setBreakMin(Number(e.target.value) || 1)}
+                style={{ width: 48, margin: '0 4px' }}
+              />
+              分
+              <button
+                onClick={() =>
+                  void invoke('cmd_pomodoro_config', { workMinutes: workMin, breakMinutes: breakMin }).then(pull)
+                }
+                style={{ padding: '2px 8px', marginLeft: 4 }}
+              >
+                应用
+              </button>
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** DK-22 S2：周回顾面板（预计 vs 实际偏差率 + 每任务明细；口径 = 今日任务样本）。 */
+function WeeklyReview({ invoke }: { invoke: InvokeFn | null }): React.ReactElement {
+  const [sum, setSum] = useState<{
+    total_estimate_minutes: number;
+    total_actual_minutes: number;
+    deviation_rate: number | null;
+    per_task: Array<{ task_id: string; title: string; estimate_minutes: number; actual_minutes: number; deviation: number | null }>;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!invoke) return;
+    (async () => {
+      try {
+        const rows = (await invoke('cmd_today_task_rows')) as Array<{ task_id: string }>;
+        const out = await invoke('cmd_weekly_review', { taskIds: rows.map((r) => r.task_id) });
+        setSum(out as never);
+      } catch {
+        /* mock 态静默 */
+      }
+    })();
+  }, [invoke]);
+
+  const pct = sum?.deviation_rate != null ? `${(sum.deviation_rate * 100).toFixed(0)}%` : '—';
+  const over = (sum?.deviation_rate ?? 0) > 0;
+
+  return (
+    <div
+      style={{
+        marginTop: tokens.spacing.lg,
+        padding: tokens.spacing.md,
+        border: `1px solid ${tokens.color.bgElevated}`,
+        borderRadius: 8,
+      }}
+    >
+      <h2 style={{ fontSize: tokens.typography.title.size, margin: `0 0 ${tokens.spacing.sm}px` }}>
+        周回顾（今日任务样本）
+      </h2>
+      {!invoke || !sum ? (
+        <p style={{ color: tokens.color.textSecondary }}>统计加载中…</p>
+      ) : (
+        <>
+          <p style={{ margin: `0 0 ${tokens.spacing.sm}px` }}>
+            预计 {sum.total_estimate_minutes} 分 · 实际 {sum.total_actual_minutes} 分 ·{' '}
+            <span style={{ color: over ? tokens.color.danger : tokens.color.success, fontWeight: 600 }}>
+              偏差 {pct}
+            </span>
+            {sum.deviation_rate == null && '（无预估样本）'}
+          </p>
+          {sum.per_task.length > 0 && (
+            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+              <tbody>
+                {sum.per_task.map((r) => (
+                  <tr key={r.task_id}>
+                    <td style={{ padding: 2, color: tokens.color.textSecondary }}>{r.title}</td>
+                    <td style={{ padding: 2, fontVariantNumeric: 'tabular-nums' }}>
+                      {r.estimate_minutes || '—'} / {r.actual_minutes} 分
+                    </td>
+                    <td
+                      style={{
+                        padding: 2,
+                        fontVariantNumeric: 'tabular-nums',
+                        color: (r.deviation ?? 0) > 0 ? tokens.color.danger : tokens.color.textSecondary,
+                      }}
+                    >
+                      {r.deviation != null ? `${(r.deviation * 100).toFixed(0)}%` : '未估'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElement {
   const [rows, setRows] = useState<
     Array<{ task_id: string; title: string; status: string; blocked: boolean }>
@@ -1769,6 +1967,8 @@ export default function DesktopShell() {
               <p style={{ color: tokens.color.textSecondary }}>统计加载中…</p>
             )}
             <TodayTaskRows invoke={invoke} />
+            <FocusPomodoro invoke={invoke} />
+            <WeeklyReview invoke={invoke} />
           </main>
         ) : (
           <EditorPane

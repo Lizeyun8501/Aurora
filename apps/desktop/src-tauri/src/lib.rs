@@ -182,6 +182,13 @@ pub fn run() {
             cmd_blocked_task_ids,
             cmd_today_task_rows,
             cmd_get_task_dependencies,
+            cmd_pomodoro_state,
+            cmd_pomodoro_start,
+            cmd_pomodoro_pause,
+            cmd_pomodoro_reset,
+            cmd_pomodoro_config,
+            cmd_pomodoro_sync,
+            cmd_weekly_review,
             cmd_get_backlinks,
             cmd_due_review_cards,
             cmd_review_card,
@@ -644,6 +651,90 @@ async fn cmd_today_task_rows() -> Result<Vec<serde_json::Value>, String> {
             .then(b["task_id"].as_str().cmp(&a["task_id"].as_str()))
     });
     Ok(rows)
+}
+
+// === DK-22 S2：番茄钟 / 周回顾命令面 ===
+
+/// 全局番茄钟实例（desktop 层持有 — core `PomodoroTimer` 线程安全，
+/// 无持久化需求：计时态生命周期 = 应用会话）。
+static POMODORO: std::sync::OnceLock<aurora_core::l3_domain::today_view::PomodoroTimer> =
+    std::sync::OnceLock::new();
+
+fn pomodoro() -> &'static aurora_core::l3_domain::today_view::PomodoroTimer {
+    POMODORO.get_or_init(aurora_core::l3_domain::today_view::PomodoroTimer::default)
+}
+
+fn pomo_state_json() -> serde_json::Value {
+    let s = pomodoro().state();
+    serde_json::json!({
+        "phase": s.phase,
+        "remaining_seconds": s.remaining_seconds,
+        "completed_work_cycles": s.completed_work_cycles,
+        "running": s.running,
+    })
+}
+
+/// 番茄钟当前状态（前端 1s 轮询渲染）。
+#[tauri::command]
+async fn cmd_pomodoro_state() -> Result<serde_json::Value, String> {
+    Ok(pomo_state_json())
+}
+
+/// 启动 / 暂停后恢复（重锚挂钟）。
+#[tauri::command]
+async fn cmd_pomodoro_start() -> Result<serde_json::Value, String> {
+    pomodoro().start();
+    Ok(pomo_state_json())
+}
+
+/// 暂停（计时冻结）。
+#[tauri::command]
+async fn cmd_pomodoro_pause() -> Result<serde_json::Value, String> {
+    pomodoro().pause();
+    Ok(pomo_state_json())
+}
+
+/// 重置回工作相位满格。
+#[tauri::command]
+async fn cmd_pomodoro_reset() -> Result<serde_json::Value, String> {
+    pomodoro().reset();
+    Ok(pomo_state_json())
+}
+
+/// 配置工作/休息时长（分钟）。会重置当前计时（配置变更语义）。
+#[tauri::command]
+async fn cmd_pomodoro_config(
+    work_minutes: u32,
+    break_minutes: u32,
+) -> Result<serde_json::Value, String> {
+    if work_minutes == 0 || break_minutes == 0 || work_minutes > 180 || break_minutes > 120 {
+        return Err("时长需在 1-180 / 1-120 分钟内".into());
+    }
+    let _ = POMODORO.set(aurora_core::l3_domain::today_view::PomodoroTimer::new(
+        work_minutes,
+        break_minutes,
+    ));
+    Ok(pomo_state_json())
+}
+
+/// DK-22 DoD：WebView 后台化回归补偿——按挂钟锚差值一次性补秒。
+#[tauri::command]
+async fn cmd_pomodoro_sync() -> Result<serde_json::Value, String> {
+    pomodoro().sync_wall_clock();
+    Ok(pomo_state_json())
+}
+
+/// DK-22 周回顾：给定任务集（前端传该周任务 id）汇总预计 vs 实际偏差率。
+#[tauri::command]
+async fn cmd_weekly_review(task_ids: Vec<String>) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let s = task_proj(&core)?.weekly_summary(&task_ids);
+    Ok(serde_json::json!({
+        "total_estimate_minutes": s.total_estimate_minutes,
+        "total_actual_minutes": s.total_actual_minutes,
+        "deviation_rate": s.deviation_rate,
+        "per_task": s.per_task,
+    }))
 }
 
 /// 反向链接（移动端 get_backlinks 同源 — 双链投影 incoming + 标题解析）。

@@ -314,6 +314,11 @@ pub struct PomodoroState {
     pub remaining_seconds: u32,
     pub completed_work_cycles: u32,
     pub running: bool,
+    /// DK-22: 运行态挂钟锚（Unix 秒）。start 时写入，`sync_wall_clock`
+    /// 依此一次性补回 WebView 后台化期间流逝的秒数（DoD: 后台切换不丢秒）。
+    /// 旧数据无此字段 → None（serde default 向后兼容）。
+    #[serde(default)]
+    pub wall_anchor: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -339,6 +344,7 @@ impl PomodoroTimer {
                 remaining_seconds: work_minutes * 60,
                 completed_work_cycles: 0,
                 running: false,
+                wall_anchor: None,
             })),
         }
     }
@@ -348,12 +354,63 @@ impl PomodoroTimer {
     }
 
     pub fn start(&self) {
-        self.state.write().running = true;
+        let mut s = self.state.write();
+        s.running = true;
+        // DK-22: 重新锚定挂钟——start 既是冷启动也是 pause 后恢复。
+        s.wall_anchor = Some(Utc::now().timestamp());
         debug!("pomodoro started");
     }
 
     pub fn pause(&self) {
         self.state.write().running = false;
+    }
+
+    /// DK-22: WebView 后台化回归时一次性补秒。
+    ///
+    /// 语义：运行态下，按 `now - wall_anchor` 的挂钟差值推进计时
+    /// （跨 phase 自动切换，与逐秒 tick 完全一致），随后重锚为当前时刻。
+    /// 非运行态 / 无锚（旧数据）为 no-op。DoD：后台切换不丢秒数。
+    pub fn sync_wall_clock(&self) {
+        let (running, anchor) = {
+            let s = self.state.read();
+            (s.running, s.wall_anchor)
+        };
+        if !running {
+            return;
+        }
+        let now = Utc::now().timestamp();
+        let elapsed = anchor.map_or(0, |a| (now - a).max(0) as u32);
+        if elapsed > 0 {
+            self.advance_seconds(elapsed);
+        }
+        self.state.write().wall_anchor = Some(now);
+    }
+
+    /// DK-22: 批量推进 n 秒（等价于连调 n 次 `tick`，单次持锁防抖）。
+    /// 测试注秒与挂钟补偿共用此路径。
+    pub fn advance_seconds(&self, seconds: u32) {
+        let mut s = self.state.write();
+        for _ in 0..seconds {
+            if !s.running {
+                break;
+            }
+            if s.remaining_seconds > 0 {
+                s.remaining_seconds -= 1;
+            }
+            if s.remaining_seconds == 0 {
+                match s.phase {
+                    PomodoroPhase::Work => {
+                        s.completed_work_cycles += 1;
+                        s.phase = PomodoroPhase::Break;
+                        s.remaining_seconds = self.break_minutes * 60;
+                    }
+                    PomodoroPhase::Break => {
+                        s.phase = PomodoroPhase::Work;
+                        s.remaining_seconds = self.work_minutes * 60;
+                    }
+                }
+            }
+        }
     }
 
     pub fn reset(&self) {
@@ -799,6 +856,62 @@ mod tests {
         // 未 start：tick 不应该推进
         timer.tick();
         assert_eq!(timer.state().remaining_seconds, 60);
+    }
+
+    /// DK-22 DoD：后台切换不丢秒数——挂钟补偿按 anchor 差值一次补齐。
+    #[test]
+    fn dk22_wall_clock_compensation_keeps_seconds() {
+        let timer = PomodoroTimer::new(25, 5);
+        timer.start();
+        // 模拟 WebView 后台 90 秒：把锚点拨回 90s 前，再 sync 补偿。
+        timer.state.write().wall_anchor = Some(Utc::now().timestamp() - 90);
+        timer.sync_wall_clock();
+        let s = timer.state();
+        assert_eq!(s.remaining_seconds, 25 * 60 - 90);
+        assert_eq!(s.phase, PomodoroPhase::Work);
+        // 重锚后二次 sync 不重复扣秒。
+        timer.sync_wall_clock();
+        assert_eq!(timer.state().remaining_seconds, 25 * 60 - 90);
+    }
+
+    /// DK-22：补偿跨 phase 切换与逐秒 tick 语义一致（60s 工作 + 30s 休息）。
+    #[test]
+    fn dk22_compensation_spans_phase_change() {
+        let timer = PomodoroTimer::new(1, 1);
+        timer.start();
+        timer.state.write().wall_anchor = Some(Utc::now().timestamp() - 90);
+        timer.sync_wall_clock();
+        let s = timer.state();
+        assert_eq!(s.phase, PomodoroPhase::Break);
+        assert_eq!(s.remaining_seconds, 60 - 30);
+        assert_eq!(s.completed_work_cycles, 1);
+    }
+
+    /// DK-22：暂停冻结计时；恢复（start）重锚——暂停期间不补秒。
+    #[test]
+    fn dk22_pause_freezes_and_start_reanchors() {
+        let timer = PomodoroTimer::new(25, 5);
+        timer.start();
+        timer.advance_seconds(10);
+        timer.pause();
+        // 暂停态：锚点拨回 9999s 前 + sync → no-op（不丢不补）。
+        timer.state.write().wall_anchor = Some(Utc::now().timestamp() - 9999);
+        timer.sync_wall_clock();
+        assert_eq!(timer.state().remaining_seconds, 25 * 60 - 10);
+        // 恢复：重锚为当前时刻，锚点被拨回也不影响（start 覆盖 anchor）。
+        timer.start();
+        timer.state.write().wall_anchor = Some(Utc::now().timestamp() - 500);
+        timer.sync_wall_clock();
+        assert_eq!(timer.state().remaining_seconds, 25 * 60 - 10 - 500);
+    }
+
+    /// DK-22：旧数据（无 wall_anchor 字段）反序列化 → None，sync 安全 no-op。
+    #[test]
+    fn dk22_serde_backward_compat_wall_anchor() {
+        let json =
+            r#"{"phase":"work","remaining_seconds":1500,"completed_work_cycles":0,"running":true}"#;
+        let s: PomodoroState = serde_json::from_str(json).expect("旧 JSON 可反序列化");
+        assert!(s.wall_anchor.is_none());
     }
 
     #[test]
