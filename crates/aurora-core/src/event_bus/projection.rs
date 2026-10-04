@@ -25,7 +25,7 @@
 
 use async_trait::async_trait;
 
-use crate::event_bus::layered::{LayeredEventBus, QueuedEvent};
+use crate::event_bus::layered::{AppEvent, LayeredEventBus, QueuedEvent};
 
 /// 投影健康状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +66,24 @@ pub trait Projection: Send + Sync {
         None
     }
 
+    /// 批量应用（DK-22：writer 批量 commit 优化 — 开工令数据决策 commit 占比
+    /// 98.2%，逐事件 commit 是增量路径的主要成本）。
+    ///
+    /// 默认实现 = 逐事件循环 `apply`（行为与旧 catch_up 完全一致，其他投影
+    /// 零改动向后兼容）；攒批型投影（SearchIndexProjection）覆写本方法，
+    /// 将连续创建事件攒批为单次 commit。
+    ///
+    /// **可见性约束**：批中途不 commit——读端可见延迟 = 批间隔。明确排除
+    /// 后台线程自动 flush（复杂度不成比例，开工令裁决）。批内任一事件失败
+    /// 即整批返回 Err，水位线不推进，下次 catch_up 整批重放（投影幂等保证
+    /// 重放安全）。
+    async fn apply_batch(&self, events: &[AppEvent]) -> Result<(), crate::Error> {
+        for event in events {
+            self.apply(event).await?;
+        }
+        Ok(())
+    }
+
     /// 全量重建（从空状态追赶至最新）。
     async fn rebuild(&self) -> Result<(), crate::Error>;
 }
@@ -81,6 +99,11 @@ impl LayeredEventBus {
         let from = projection.watermark().await?;
         let records = self.events_after(from).await?;
 
+        // DK-22：解码整批后走 apply_batch（默认逐事件循环 = 旧行为；
+        // 攒批型投影覆写后单 commit 摊薄 98.2% 的 commit 成本）。
+        // 水位线整批推进到末位 seq：批内失败 → 不推进 → 整批重放（投影幂等）。
+        let mut batch: Vec<AppEvent> = Vec::with_capacity(records.len());
+        let mut last_seq = from;
         let mut applied = 0usize;
         for rec in &records {
             // 反序列化 payload；损坏记录跳过（投影幂等可由后续全量校验补偿）
@@ -91,11 +114,13 @@ impl LayeredEventBus {
                     continue;
                 }
             };
-            // 投影接收全部通道事件（含 Medium）— 由投影 apply 自行
-            // 过滤无关事件。搜索索引投影只关心 NoteCreated/Deleted/Metadata。
-            projection.apply(&event).await?;
-            projection.set_watermark(rec.seq).await?;
+            batch.push(event);
+            last_seq = rec.seq;
             applied += 1;
+        }
+        if !batch.is_empty() {
+            projection.apply_batch(&batch).await?;
+            projection.set_watermark(last_seq).await?;
         }
         if applied > 0 {
             tracing::debug!(projection = name, applied, "catch_up done");

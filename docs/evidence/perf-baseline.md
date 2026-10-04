@@ -27,6 +27,16 @@
 > 注②：search bench setup 段（10k 逐条 index_note）耗时 ~70s——P50/P99「挂起」现象真身 = setup 慢非测试卡死；DK-22 批量优化后可缩短。
 > CI 侧数字等 10-05 周一 cron 首跑回填（runner 口径差注明）。
 
+### 增量路径 commit 占比定位（DK-22 开工令首跑 2026-10-04，本地 debug，`dk22_writer_batch --ignored`）
+
+| 路径 | 均摊耗时（1k 口径） | 说明 |
+|---|---|---|
+| 单条 `index_note`（每条尾 commit） | **34.36ms/条** | 1.11s bootstrap rebuild 基线中 commit 占 **98.2%**（>>30% 改判阈值 → bulk 路线成立） |
+| `batch_index`（N 条单 commit） | **0.620ms/条** | **55× 加速**；行为级 parity+幂等护栏 `dk22_batch_index_visibility_parity` |
+| 投影批量（catch_up → apply_batch 攒批） | 同 batch 路径 | `dk22_projection_catch_up_bulk_and_order`：33 事件保序 + 水位线幂等 |
+
+> **落地**：`Projection::apply_batch`（默认逐事件循环向后兼容）+ SearchIndexProjection 攒批覆写（连续 NoteCreated 单 commit，删/改 flush 保序）。**可见性约束**：批中途不 commit（读端延迟 = 批间隔），明确排除后台自动 flush（开工令裁决）。
+
 ## 竞品对照（待实测）
 
 | 指标 | Aurora | Obsidian | 思源 | 口径备注 |

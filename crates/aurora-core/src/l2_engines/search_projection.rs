@@ -146,6 +146,53 @@ impl Projection for SearchIndexProjection {
         Ok(())
     }
 
+    /// DK-22 覆写：连续 NoteCreated 段攒批为单次 `batch_index` commit
+    /// （bench 实测 commit 占比 98.2%——单发 34.36ms/条 vs 批量均摊 0.62ms/条）。
+    ///
+    /// 保序策略：扫描事件流，遇非创建事件（MetadataChanged/Deleted）先 flush
+    /// 攒批段再单发处理——同批内 created→deleted 交错序不乱（A 先建后删仍消失）。
+    /// 批中途失败 → 整批 Err → 水位线不推进 → 下次 catch_up 重放（幂等：
+    /// index_note 先删后写）。可见性约束：批中途不 commit（读端延迟=批间隔）。
+    async fn apply_batch(&self, events: &[AppEvent]) -> Result<(), crate::Error> {
+        let mut pending: Vec<IndexEntry> = Vec::new();
+        for event in events {
+            if let AppEvent::NoteCreated {
+                note_id,
+                title,
+                content,
+            } = event
+            {
+                pending.push(IndexEntry {
+                    note_id: note_id.clone(),
+                    content: content.clone(),
+                    metadata: NoteMetadata {
+                        title: title.clone(),
+                        ..Default::default()
+                    },
+                });
+                continue;
+            }
+            if !pending.is_empty() {
+                self.search.batch_index(&pending).await?;
+                pending.clear();
+            }
+            match event {
+                AppEvent::NoteMetadataChanged { note_id, .. } => {
+                    self.reindex(note_id).await?;
+                }
+                AppEvent::NoteDeleted { note_id } => {
+                    self.search.remove_index(note_id).await?;
+                    debug!(note_id, "search projection: removed");
+                }
+                _ => {} // 幂等忽略无关事件
+            }
+        }
+        if !pending.is_empty() {
+            self.search.batch_index(&pending).await?;
+        }
+        Ok(())
+    }
+
     /// 轻量健康校验：水位线键可读即视为结构完好；
     /// 深度校验（索引 vs 数据源 diff）由每日全量补偿任务执行。
     async fn verify(&self) -> Result<ProjectionHealth, crate::Error> {
