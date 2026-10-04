@@ -7,3 +7,4 @@ dist/
 gen/
 apps/mobile/dist-lab/
 apps/desktop/dist-lab/
+perf_baseline_report.txt
