@@ -757,6 +757,7 @@ fn build_app_core(
                     actual_minutes: 0,
                     parent_task_id: String::new(),
                     progress: 0.0,
+                    completed_at: None,
                                             })
                                         })
                                         .collect::<Vec<_>>()

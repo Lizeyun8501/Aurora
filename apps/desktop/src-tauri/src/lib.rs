@@ -724,12 +724,51 @@ async fn cmd_pomodoro_sync() -> Result<serde_json::Value, String> {
     Ok(pomo_state_json())
 }
 
-/// DK-22 周回顾：给定任务集（前端传该周任务 id）汇总预计 vs 实际偏差率。
+/// DK-25 周回顾：全周口径——`week_start`（YYYY-MM-DD，须为周一；缺省=本周一）
+/// 起算 [周一 00:00, 下周一 00:00) 闭区间内完成任务集，聚合预计 vs 实际偏差率。
 #[tauri::command]
-async fn cmd_weekly_review(task_ids: Vec<String>) -> Result<serde_json::Value, String> {
+async fn cmd_weekly_review(week_start: Option<String>) -> Result<serde_json::Value, String> {
+    use chrono::{Datelike, Duration, NaiveDate, Weekday};
     let core = get_core()?;
-    let s = task_proj(&core)?.weekly_summary(&task_ids);
+    let proj = task_proj(&core)?;
+
+    // 解析周一锚点（缺省 = 本周周一；非周一输入回退到所在周的周一）
+    let (monday, label) = match week_start.as_deref() {
+        Some(s) => {
+            let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map_err(|e| format!("week_start 需为 YYYY-MM-DD: {e}"))?;
+            let back = d.weekday().num_days_from_monday() as i64;
+            (d - Duration::days(back), s.to_string())
+        }
+        None => {
+            let today = chrono::Utc::now().date_naive();
+            let back = today.weekday().num_days_from_monday() as i64;
+            (today - Duration::days(back), String::new())
+        }
+    };
+    let from_ms = monday
+        .and_hms_opt(0, 0, 0)
+        .ok_or("monday time")?
+        .and_utc()
+        .timestamp_millis();
+    let to_ms = (monday + Duration::days(7))
+        .and_hms_opt(0, 0, 0)
+        .ok_or("next monday time")?
+        .and_utc()
+        .timestamp_millis()
+        - 1; // 周日 23:59:59.999 含（闭区间）
+    let next_monday = (monday + Duration::days(7)).format("%Y-%m-%d").to_string();
+    let range_label = if label.is_empty() {
+        format!("{} ~ {}", monday, next_monday)
+    } else {
+        format!("{label} ~ {next_monday}")
+    };
+
+    let ids = proj.completed_task_ids_between(from_ms, to_ms);
+    let s = proj.weekly_summary(&ids);
     Ok(serde_json::json!({
+        "range_label": range_label,
+        "completed_count": ids.len(),
         "total_estimate_minutes": s.total_estimate_minutes,
         "total_actual_minutes": s.total_actual_minutes,
         "deviation_rate": s.deviation_rate,

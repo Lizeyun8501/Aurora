@@ -87,6 +87,10 @@ pub struct TaskViewRow {
     /// 子任务进度（0.0-1.0, 由子任务完成比例**推导** — DK-06: 禁止手改;
     /// 无子任务的父任务返回自身完成状态: done=1.0 其余 0.0）
     pub progress: f32,
+    /// DK-25: 完成时刻（Unix 毫秒）——状态转入终态（done/cancelled）时由投影
+    /// stamp，转回非终态清 None；周回顾全周口径的时间维度。（Row 非序列化
+    /// 载体，无 serde 属性需求）
+    pub completed_at: Option<i64>,
 }
 
 /// 全量数据源回调（全库任务行）。
@@ -171,6 +175,7 @@ impl TaskProjection {
                 block_id: String::new(),
                 parent_task_id: String::new(),
                 progress: 0.0,
+                completed_at: None,
                 title: title.to_string(),
                 status: status.to_string(),
                 priority: priority.to_string(),
@@ -338,6 +343,21 @@ impl TaskProjection {
         }
     }
 
+    /// DK-25: 周区间完成任务集查询——`completed_at ∈ [from_ms, to_ms]` 闭区间。
+    ///
+    /// 周边界语义（DoD）：周一 00:00 与周日 23:59:59.999 均含（调用方传闭区间
+    /// 毫秒端点）；跨月/跨年由毫秒区间天然覆盖。空周返回空 Vec。
+    pub fn completed_task_ids_between(&self, from_ms: i64, to_ms: i64) -> Vec<String> {
+        let rows = self.rows.read().unwrap();
+        let mut ids: Vec<String> = rows
+            .values()
+            .filter(|r| matches!(r.completed_at, Some(t) if t >= from_ms && t <= to_ms))
+            .map(|r| r.task_id.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
     /// 子任务进度推导（DK-06: progress 由子任务完成比例推导, 禁止手改）。
     ///
     /// 对每行重算 progress: 有子任务的父 = done 子任务数 / 子任务总数;
@@ -414,6 +434,7 @@ impl TaskProjection {
             block_id: String::new(),
             parent_task_id: String::new(),
             progress: 0.0,
+            completed_at: None,
             title: title.to_string(),
             status: STATUS_INBOX.to_string(),
             priority: "medium".into(),
@@ -463,7 +484,14 @@ impl Projection for TaskProjection {
             } => {
                 // 幂等应用最终值（无该行时跳过 — 数据源行会在 rebuild 补）
                 if let Some(row) = self.rows.write().unwrap().get_mut(task_id) {
+                    // DK-25: 终态 stamp 完成时刻；转回非终态清 None。
+                    // 终态口径与 blocked 派生一致（done/cancelled）。
                     row.status = new_status.clone();
+                    row.completed_at = if matches!(new_status.as_str(), "done" | "cancelled") {
+                        Some(chrono::Utc::now().timestamp_millis())
+                    } else {
+                        None
+                    };
                 }
             }
             _ => {}
@@ -617,6 +645,7 @@ mod tests {
             block_id: String::new(),
             parent_task_id: String::new(),
             progress: 0.0,
+            completed_at: None,
             title: format!("task-{id}"),
             status: status.into(),
             priority: "medium".into(),

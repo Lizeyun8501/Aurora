@@ -700,27 +700,35 @@ function FocusPomodoro({ invoke }: { invoke: InvokeFn | null }): React.ReactElem
   );
 }
 
-/** DK-22 S2：周回顾面板（预计 vs 实际偏差率 + 每任务明细；口径 = 今日任务样本）。 */
+/** DK-25 S2：周回顾面板（全周口径——本周/上周切换；周一 00:00 ~ 周日 23:59:59.999 闭区间）。 */
 function WeeklyReview({ invoke }: { invoke: InvokeFn | null }): React.ReactElement {
   const [sum, setSum] = useState<{
+    range_label: string;
+    completed_count: number;
     total_estimate_minutes: number;
     total_actual_minutes: number;
     deviation_rate: number | null;
     per_task: Array<{ task_id: string; title: string; estimate_minutes: number; actual_minutes: number; deviation: number | null }>;
   } | null>(null);
+  const [weekOffset, setWeekOffset] = useState(0); // 0=本周，-1=上周
 
   useEffect(() => {
     if (!invoke) return;
     (async () => {
       try {
-        const rows = (await invoke('cmd_today_task_rows')) as Array<{ task_id: string }>;
-        const out = await invoke('cmd_weekly_review', { taskIds: rows.map((r) => r.task_id) });
+        // 本周/上周周一锚点（本地口径由后端解析，前端只传偏移）
+        const d = new Date();
+        const back = (d.getUTCDay() + 6) % 7; // 周一=0
+        const monday = new Date(d);
+        monday.setUTCDate(d.getUTCDate() - back + weekOffset * 7);
+        const ymd = monday.toISOString().slice(0, 10);
+        const out = await invoke('cmd_weekly_review', { weekStart: ymd });
         setSum(out as never);
       } catch {
         /* mock 态静默 */
       }
     })();
-  }, [invoke]);
+  }, [invoke, weekOffset]);
 
   const pct = sum?.deviation_rate != null ? `${(sum.deviation_rate * 100).toFixed(0)}%` : '—';
   const over = (sum?.deviation_rate ?? 0) > 0;
@@ -735,18 +743,44 @@ function WeeklyReview({ invoke }: { invoke: InvokeFn | null }): React.ReactEleme
       }}
     >
       <h2 style={{ fontSize: tokens.typography.title.size, margin: `0 0 ${tokens.spacing.sm}px` }}>
-        周回顾（今日任务样本）
+        周回顾
+        <span style={{ marginLeft: 8, color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size }}>
+          {sum?.range_label ?? ''}
+        </span>
       </h2>
+      <div style={{ display: 'flex', gap: 8, marginBottom: tokens.spacing.sm }}>
+        <button
+          onClick={() => setWeekOffset(0)}
+          style={{
+            padding: '2px 10px',
+            fontWeight: weekOffset === 0 ? 700 : 400,
+            color: weekOffset === 0 ? tokens.color.primaryBright : tokens.color.textSecondary,
+          }}
+        >
+          本周
+        </button>
+        <button
+          onClick={() => setWeekOffset(-1)}
+          style={{
+            padding: '2px 10px',
+            fontWeight: weekOffset === -1 ? 700 : 400,
+            color: weekOffset === -1 ? tokens.color.primaryBright : tokens.color.textSecondary,
+          }}
+        >
+          上周
+        </button>
+      </div>
       {!invoke || !sum ? (
         <p style={{ color: tokens.color.textSecondary }}>统计加载中…</p>
       ) : (
         <>
           <p style={{ margin: `0 0 ${tokens.spacing.sm}px` }}>
-            预计 {sum.total_estimate_minutes} 分 · 实际 {sum.total_actual_minutes} 分 ·{' '}
+            完成任务 {sum.completed_count} 项 · 预计 {sum.total_estimate_minutes} 分 · 实际{' '}
+            {sum.total_actual_minutes} 分 ·{' '}
             <span style={{ color: over ? tokens.color.danger : tokens.color.success, fontWeight: 600 }}>
               偏差 {pct}
             </span>
-            {sum.deviation_rate == null && '（无预估样本）'}
+            {sum.deviation_rate == null && (sum.completed_count === 0 ? '（空周）' : '（无预估样本）')}
           </p>
           {sum.per_task.length > 0 && (
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
