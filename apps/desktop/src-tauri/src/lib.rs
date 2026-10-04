@@ -728,7 +728,7 @@ async fn cmd_pomodoro_sync() -> Result<serde_json::Value, String> {
 /// 起算 [周一 00:00, 下周一 00:00) 闭区间内完成任务集，聚合预计 vs 实际偏差率。
 #[tauri::command]
 async fn cmd_weekly_review(week_start: Option<String>) -> Result<serde_json::Value, String> {
-    use chrono::{Datelike, Duration, NaiveDate, Weekday};
+    use chrono::{Datelike, Duration, NaiveDate};
     let core = get_core()?;
     let proj = task_proj(&core)?;
 
