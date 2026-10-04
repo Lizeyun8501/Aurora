@@ -9,6 +9,7 @@ pub mod property;
 pub mod query;
 pub mod search_projection;
 pub mod sql_sandbox; // V20 Phase 3: NL→SQL 沙箱（AST 级）
+pub mod tags_projection; // DK-27: 标签投影（tag↔note 轻量映射）
 pub mod task_projection;
 pub mod vector_search; // V20 Phase 1: 任务投影（TodayView 数据源） // V20 Phase 1: 搜索索引投影
 pub mod workflow;

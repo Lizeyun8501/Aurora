@@ -676,6 +676,8 @@ async fn smartfolder_rule_evaluates() {
         "Rust 智能视图",
         FilterRule {
             title_contains: Some("rust".into()),
+            tags_include: Vec::new(),
+            tags_exclude: Vec::new(),
         },
     )
     .await
@@ -777,6 +779,8 @@ async fn smartfolder_update_rule() {
         &sf,
         FilterRule {
             title_contains: Some("旅行".into()),
+            tags_include: Vec::new(),
+            tags_exclude: Vec::new(),
         },
     )
     .await

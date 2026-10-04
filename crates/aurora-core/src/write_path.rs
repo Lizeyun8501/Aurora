@@ -142,6 +142,10 @@ pub struct NoteRecord {
     /// DK-19：每日笔记归属日期（kind=DailyNote 时有效；YYYY-MM-DD）。
     #[serde(default)]
     pub daily_date: Option<String>,
+    /// DK-27：标签集（轻量读取源——与 Loro doc meta.tags 同步双写；
+    /// serde default 兼容存量数据，存量笔记首次标签变更前投影态为空集——诚实化注记）。
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// DK-02 S3：智能文件夹过滤规则（各条件 AND；缺省条件忽略）。
@@ -154,15 +158,39 @@ pub struct FilterRule {
     /// 标题子串（大小写不敏感）。
     #[serde(default)]
     pub title_contains: Option<String>,
+    /// DK-27 v2：tags 包含条件——note 必须含有全部列出的标签（AND 语义；空 = 忽略）。
+    #[serde(default)]
+    pub tags_include: Vec<String>,
+    /// DK-27 v2：tags 排除条件——note 含有任一列出标签即不匹配（空 = 忽略）。
+    #[serde(default)]
+    pub tags_exclude: Vec<String>,
 }
 
 impl FilterRule {
     /// 是否匹配（AND 语义；全部条件缺省 = 匹配全部）。
+    /// v1 兼容入口：无 tags 条件语义（等价空标签集）。
     pub fn matches(&self, title: &str) -> bool {
+        self.matches_full(title, &[])
+    }
+
+    /// v2 全量求值：标题 + tags（include 全含 AND / exclude 任一含即否决）。
+    pub fn matches_full(&self, title: &str, tags: &[String]) -> bool {
         if let Some(needle) = &self.title_contains {
             if !title.to_lowercase().contains(&needle.to_lowercase()) {
                 return false;
             }
+        }
+        for want in &self.tags_include {
+            if !tags.iter().any(|t| t == want) {
+                return false;
+            }
+        }
+        if self
+            .tags_exclude
+            .iter()
+            .any(|bad| tags.iter().any(|t| t == bad))
+        {
+            return false;
         }
         true
     }
@@ -195,6 +223,7 @@ impl NoteRecord {
             sort_order: 0,
             rule: None,
             daily_date: None,
+            tags: Vec::new(),
         }
     }
 }
@@ -230,6 +259,40 @@ pub async fn load_note_meta(
         None => bytes,
     };
     Ok(Some(serde_json::from_slice(&plain)?))
+}
+
+/// DK-27: 设置笔记标签集（全量覆盖语义——UI 多选编辑直传终态）。
+///
+/// 轻量读取源：KV `NoteRecord.tags`（TagsProjection/智能文件夹 tags 条件）。
+/// 并发布 `NoteMetadataChanged { tags: Some(..) }`（Medium 通道，投影联动）。
+/// **诚实化注记**：Loro doc meta.tags 的双写同步暂缓（无现成 NoteDoc::open
+/// 加载路径）——tags 权威源 = KV NoteRecord；doc meta 侧同步待标签编辑 UI
+/// 接线卡处理（doc.add_tag/remove_tag 现无调用者，暂无分叉风险）。
+pub async fn set_note_tags(
+    core: &AppCore,
+    note_id: &str,
+    tags: Vec<String>,
+    seal: Option<&SealPair>,
+) -> Result<(), Error> {
+    // 1) KV NoteRecord.tags 轻量读取源（seal 对称写回）
+    let mut rec = load_note_meta(core, note_id, seal)
+        .await?
+        .ok_or(Error::NoteNotFound {
+            id: note_id.to_string(),
+        })?;
+    rec.tags = tags.clone();
+    put_note_meta(core, note_id, &rec, seal).await?;
+
+    // 2) 事件发布（投影联动）
+    core.event_bus
+        .publish(crate::event_bus::layered::AppEvent::NoteMetadataChanged {
+            note_id: note_id.to_string(),
+            changes: crate::event_bus::layered::NoteChanges {
+                title: None,
+                tags: Some(tags),
+            },
+        });
+    Ok(())
 }
 
 /// 打开笔记正文（DK-07 S3 读侧）：明文直通，密文经 cipher 解密。
@@ -1458,7 +1521,9 @@ pub async fn evaluate_smart_folder(
             continue;
         }
         if let Some(rec) = decode_record(&bytes, unseal) {
-            if rec.kind == NoteKind::Note && rule.matches(&rec.title) {
+            // DK-27: tags 条件 v2——直接用 NoteRecord.tags（与 TagsProjection
+            // 同源 KV，一致性由 parity 测试锚定；避免扫描内二次投影查询开销）。
+            if rec.kind == NoteKind::Note && rule.matches_full(&rec.title, &rec.tags) {
                 out.push(rec);
             }
         }

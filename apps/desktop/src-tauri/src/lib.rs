@@ -170,6 +170,7 @@ pub fn run() {
             cmd_daily_note_get_template,
             cmd_smartfolder_set_rule,
             cmd_smartfolder_get_rule,
+            cmd_set_note_tags,
             cmd_smartfolder_list_items,
             cmd_restore_note,
             cmd_purge_note,
@@ -1345,7 +1346,11 @@ async fn cmd_smartfolder_create(
         &ctx,
         parent_id.as_deref(),
         &title,
-        aurora_core::write_path::FilterRule { title_contains },
+        aurora_core::write_path::FilterRule {
+            title_contains,
+            tags_include: Vec::new(),
+            tags_exclude: Vec::new(),
+        },
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -1357,6 +1362,8 @@ async fn cmd_smartfolder_create(
 async fn cmd_smartfolder_set_rule(
     folder_id: String,
     title_contains: Option<String>,
+    tags_include: Option<Vec<String>>,
+    tags_exclude: Option<Vec<String>>,
 ) -> Result<(), String> {
     let core = get_core()?;
     let vault = get_vault()?;
@@ -1391,11 +1398,43 @@ async fn cmd_smartfolder_set_rule(
     aurora_core::write_path::update_rule(
         &ctx,
         &folder_id,
-        aurora_core::write_path::FilterRule { title_contains },
+        aurora_core::write_path::FilterRule {
+            title_contains,
+            tags_include: tags_include.unwrap_or_default(),
+            tags_exclude: tags_exclude.unwrap_or_default(),
+        },
     )
     .await
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// DK-27: 设置笔记标签集（全量覆盖——轻量读取源 + NoteMetadataChanged 联动）。
+#[tauri::command]
+async fn cmd_set_note_tags(note_id: String, tags: Vec<String>) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let seal_pair = aurora_core::write_path::SealPair {
+        seal: Box::new(seal),
+        unseal: Box::new(unseal),
+    };
+    aurora_core::write_path::set_note_tags(&core, &note_id, tags, Some(&seal_pair))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 读取智能文件夹规则（DK-02 S3 UI 面——Alpha 跨领地补丁：仅 tauri 读端薄层，
@@ -1417,6 +1456,8 @@ async fn cmd_smartfolder_get_rule(folder_id: String) -> Result<serde_json::Value
         .unwrap_or(serde_json::json!({ "title_contains": null }));
     Ok(serde_json::json!({
         "title_contains": rule.get("title_contains").and_then(|v| v.as_str()),
+        "tags_include": rule.get("tags_include").cloned().unwrap_or(serde_json::json!([])),
+        "tags_exclude": rule.get("tags_exclude").cloned().unwrap_or(serde_json::json!([])),
     }))
 }
 

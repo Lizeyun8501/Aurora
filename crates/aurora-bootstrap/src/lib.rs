@@ -771,6 +771,44 @@ fn build_app_core(
         ),
     );
 
+    // DK-27: 标签投影（tag↔note 轻量映射 — 智能文件夹 tags 条件数据源）。
+    // 数据源: KV note: 前缀 NoteRecord.tags（serde default 兼容存量——
+    // 存量笔记首次标签变更前投影态为空集，诚实化口径）。
+    let kv_for_tags = kv_store.clone();
+    let tags_projection: Arc<aurora_core::l2_engines::tags_projection::TagsProjection> = Arc::new(
+        aurora_core::l2_engines::tags_projection::TagsProjection::new(
+            kv_store.clone(),
+            Box::new(move || {
+                let kv = kv_for_tags.clone();
+                std::thread::scope(|s| {
+                    s.spawn(move || {
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .ok()
+                            .map(|rt| {
+                                rt.block_on(async {
+                                    let pairs = kv.scan_prefix("note:").await.unwrap_or_default();
+                                    pairs
+                                        .iter()
+                                        .filter_map(|(k, bytes)| {
+                                            let note_id = k.strip_prefix("note:")?.to_string();
+                                            let rec: aurora_core::write_path::NoteRecord =
+                                                serde_json::from_slice(bytes).ok()?;
+                                            Some((note_id, rec.tags))
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                            })
+                            .unwrap_or_default()
+                    })
+                    .join()
+                    .unwrap_or_default()
+                })
+            }),
+        ),
+    );
+
     Ok(AppCoreBuilder::new()
         .kv_store(kv_store)
         .search(search)
@@ -783,6 +821,7 @@ fn build_app_core(
         .projection(search_projection)
         .projection(bidi_link_projection)
         .projection(task_projection)
+        .projection(tags_projection)
         .build())
 }
 
