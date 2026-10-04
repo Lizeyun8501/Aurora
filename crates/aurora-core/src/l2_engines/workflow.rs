@@ -871,7 +871,7 @@ mod tests {
         assert_eq!(executor.dead_letter_count(), 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_task_executor_retry_and_dlq() {
         let executor = TaskExecutor::new();
         let task = TaskRequest::new(
@@ -886,6 +886,9 @@ mod tests {
         executor.submit(task);
 
         // 等待重试耗尽
+        // DK-24: start_paused 假时钟——worker 内重试 backoff（200/400ms）与
+        // 本等待在 paused 时间轴上自动快进，630ms 链路对 800ms 等待的
+        // 170ms 余量不再受全量并行抢 CPU 影响（负载敏感假红根治）。
         tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
         let result = executor.get_result(&tid);
         assert!(result.is_none() || matches!(result, Some(TaskResult::Retryable(_))));

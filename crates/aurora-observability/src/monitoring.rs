@@ -1433,6 +1433,8 @@ impl MonitorService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // DK-24: with_ymd_and_hms 属 TimeZone trait——固定时刻注入所需。
+    use chrono::TimeZone;
 
     // ---- Health Check ----
 
@@ -1691,7 +1693,10 @@ mod tests {
             severities: vec![],
         });
 
-        let now = Utc::now();
+        // DK-24: 注入固定时刻（原 Utc::now() 落在 UTC 23:59 整分钟时，
+        // is_in_silence_period 的严格小于边界 now_str < "23:59" 判 false
+        // → 放行 → 假红；时段敏感测试必须注入时钟）。
+        let now = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
         assert!(!reducer.should_alert("any", AlertSeverity::Critical, now));
     }
 
@@ -1708,7 +1713,8 @@ mod tests {
             severities: vec![],
         });
 
-        let now = Utc::now();
+        // DK-24: 同 silence_period——注入固定时刻消除挂钟依赖。
+        let now = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
         assert!(!reducer.should_alert("quiet_rule", AlertSeverity::Warning, now));
         assert!(reducer.should_alert("loud_rule", AlertSeverity::Warning, now));
     }
