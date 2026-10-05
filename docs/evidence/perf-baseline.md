@@ -41,7 +41,7 @@
 
 | 指标 | Aurora | Obsidian | 思源 | 口径备注 |
 |---|---|---|---|---|
-| 冷启动（窗口就绪口径） | 待补测 | 254 ms（v1.11.5，10k vault） | 256 ms（v3.8.6，空工作区） | DK-34 Xvfb headless 3轮中位；竞品=窗口mapped弱口径，Aurora全链153ms为强口径——见 alpha-DK34 报告口径注记 |
+| 冷启动（窗口就绪口径） | 223 ms（dist 挂载近似） | 254 ms（v1.11.5，10k vault） | 256 ms（v3.8.6，空工作区） | DK-34 Xvfb headless 3轮中位；Aurora 223=dist mock 态 Chromium 挂载（无 Tauri 壳——口径偏松诚实注记）；Aurora 全链 153ms 为强口径（DK-32）——强口径已领先，见 alpha-DK34 报告 |
 | 万级检索 P50/P99 | （基线） | TODO | TODO | 竞品侧用其全局搜索 API/快捷键计时 |
 | 双端同步收敛 | （基线） | TODO | TODO | 竞品侧依赖其同步方案（Obsidian Sync/思源云） |
 
