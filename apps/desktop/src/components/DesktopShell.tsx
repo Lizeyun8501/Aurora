@@ -56,6 +56,27 @@ interface NoteTreeNode extends TreeNodeFlat {
   children: NoteTreeNode[];
 }
 
+/**
+ * DK-35：SmartFolder mock invoke（browser-mock 态专供 SmartFolderView 数据面——
+ * 生产 Tauri invoke 不受影响）。契约对齐 SmartFolderView 三个 cmd 的 DTO。
+ */
+const MOCK_SMART_FOLDER_ITEMS = [
+  { note_id: 'mock-n-sf-1', title: '待办：周一站会纪要', updated_at: '2026-10-05T09:00:00Z' },
+  { note_id: 'mock-n-sf-2', title: '待办：DK-33 依赖盘点', updated_at: '2026-10-05T20:00:00Z' },
+];
+function mockSmartFolderInvoke(cmd: string): Promise<unknown> {
+  switch (cmd) {
+    case 'cmd_smartfolder_list_items':
+      return Promise.resolve(MOCK_SMART_FOLDER_ITEMS);
+    case 'cmd_smartfolder_get_rule':
+      return Promise.resolve({ title_contains: '待办', tags_include: ['wip'], tags_exclude: [] });
+    case 'cmd_smartfolder_set_rule':
+      return Promise.resolve(null);
+    default:
+      return Promise.reject(new Error(`mock invoke: unsupported cmd ${cmd}`));
+  }
+}
+
 /** 扁平 → 嵌套树（(parent_id, sort_order) 排序，尾注 title 稳定序；孤儿兜挂根）。 */
 export function buildTree(flat: TreeNodeFlat[]): NoteTreeNode[] {
   const byId = new Map<string, NoteTreeNode>();
@@ -229,12 +250,16 @@ function useDataBridge(invoke: InvokeFn | null) {
           invoke('cmd_create_note', { title }).catch(() => {});
         }
       },
-      /** DK-02 S2：目录树扁平列表（browser-mock 返回空树提示态）。 */
+      /** DK-02 S2：目录树扁平列表（browser-mock 返回样本树——DK-35：含 SmartFolder 节点供 DOM 冒烟）。 */
       async listTree(): Promise<TreeNodeFlat[]> {
         if (invoke) {
           return (await invoke('cmd_list_tree')) as TreeNodeFlat[];
         }
-        return [];
+        return [
+          { note_id: 'mock-sf-01', kind: 'SmartFolder', title: '全部待办', parent_id: null, sort_order: 0 },
+          { note_id: 'mock-f-01', kind: 'Folder', title: '项目', parent_id: null, sort_order: 1 },
+          { note_id: 'mock-n-01', kind: 'Note', title: '示例笔记', parent_id: 'mock-f-01', sort_order: 0 },
+        ];
       },
       /** DK-02 S2：新建文件夹（根级传 null）。 */
       async createFolder(parentId: string | null, title: string): Promise<boolean> {
@@ -1942,7 +1967,7 @@ export default function DesktopShell() {
         ) : view === 'smartfolder' && selectedId ? (
           /* DK-02 S3 UI 面：智能文件夹求值展示 + 规则编辑（拉模式，打开即求值） */
           <SmartFolderView
-            invoke={invoke}
+            invoke={invoke ?? mockSmartFolderInvoke}
             folderId={selectedId}
             folderTitle={notes.find((n) => n.note_id === selectedId)?.title || '智能文件夹'}
             onOpenNote={(nid) => {
