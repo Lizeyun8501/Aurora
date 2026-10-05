@@ -785,14 +785,8 @@ impl AISettings {
                 serde_json::Value::String(v.clone()),
             );
         }
-        if let Some(ref v) = self.cloud_api_key {
-            store.set(
-                layer,
-                workspace_id,
-                "ai.cloud_api_key",
-                serde_json::Value::String(v.clone()),
-            );
-        }
+        // DK-37：cloud_api_key 不再经 save_to 写明文——走 save_secret_to（sealed）。
+        // 历史明文键仅只读兼容（load_from），写入通道已全部收敛到 sealed 语义。
         if let Some(ref v) = self.cloud_model {
             store.set(
                 layer,
@@ -816,6 +810,186 @@ fn load_opt_string(store: &SettingsStore, workspace_id: Option<&str>, key: &str)
         // 其它类型（数字、对象、空串）：保留默认 None，不 panic。
         _ => None,
     }
+}
+
+// ----- DK-37：API key secret store 语义（sealed 落库，明文通道退役）----------------
+//
+// 历史背景：`ai.cloud_api_key` 曾以明文扁平存 SettingsStore（过渡态 TODO）。
+// DK-37 起规约：
+//   `ai.cloud_api_key.sealed`    : String — sealer 加密后的 base64（当前实现 =
+//                                vault DEK AES-GCM 密文的 base64，见 aurora-security
+//                                的 `VaultSecretSealer`）
+//   `ai.cloud_api_key.seal_alg`  : String — 算法标记（"dek-v1"），为未来换算法留位
+// 明文键 `ai.cloud_api_key` 仅作**只读兼容**（历史数据自迁移由 `save_secret_to`
+// 完成：写 sealed + 明文键覆盖为空串），新写入一律 sealed。
+
+/// secret 密封器 seam（core 不依赖具体密码学实现——bootstrap 注入 vault 实现）。
+pub trait SecretSealer: Send + Sync {
+    /// 加密明文（输出可直接 base64 落库）。
+    fn seal(&self, plaintext: &[u8]) -> Result<Vec<u8>, String>;
+    /// 解密封文（认证失败/格式错误 → Err，调用方降级 warn）。
+    fn unseal(&self, sealed: &[u8]) -> Result<Vec<u8>, String>;
+}
+
+/// sealed 键名与算法标记常量（单测与 security 侧实现对齐用）。
+pub const CLOUD_API_KEY_SEALED: &str = "ai.cloud_api_key.sealed";
+pub const CLOUD_API_KEY_SEAL_ALG: &str = "ai.cloud_api_key.seal_alg";
+pub const SEAL_ALG_DEK_V1: &str = "dek-v1";
+/// 历史明文键（只读兼容，不再新写）。
+pub const CLOUD_API_KEY_PLAIN_LEGACY: &str = "ai.cloud_api_key";
+
+impl AISettings {
+    /// DK-37：从 store 读取（sealed 优先，历史明文键只读兼容）并返回设置。
+    ///
+    /// 与 [`AISettings::load_from`] 的差异仅在 cloud_api_key 的来源：
+    /// 1. sealed 键存在 → unseal 填充（损坏 → `warn!` 降级 None，不 panic）；
+    /// 2. sealed 缺失但历史明文键存在 → 直接读明文（迁移窗口期兼容），
+    ///    调用方应尽快走 [`AISettings::save_secret_to`] 完成自迁移。
+    pub fn load_secret_from(
+        store: &SettingsStore,
+        workspace_id: Option<&str>,
+        sealer: &dyn SecretSealer,
+    ) -> Self {
+        let mut out = Self::load_from(store, workspace_id);
+        match store.get_effective(workspace_id, CLOUD_API_KEY_SEALED) {
+            Some(serde_json::Value::String(s)) if !s.is_empty() => {
+                match (
+                    base64_decode(s.as_str()).as_deref(),
+                    store.get_effective(workspace_id, CLOUD_API_KEY_SEAL_ALG),
+                ) {
+                    (Some(ct), Some(serde_json::Value::String(alg))) if alg == SEAL_ALG_DEK_V1 => {
+                        match sealer.unseal(ct) {
+                            Ok(pt) => match String::from_utf8(pt) {
+                                Ok(k) if !k.is_empty() => out.cloud_api_key = Some(k),
+                                _ => warn!(
+                                    field = CLOUD_API_KEY_SEALED,
+                                    "sealed key decrypted to empty; treating as unset"
+                                ),
+                            },
+                            Err(e) => {
+                                warn!(field = CLOUD_API_KEY_SEALED, error = %e, "unseal failed; cloud_api_key degraded to None")
+                            }
+                        }
+                    }
+                    _ => warn!(
+                        field = CLOUD_API_KEY_SEALED,
+                        "unknown seal alg or malformed payload; cloud_api_key degraded to None"
+                    ),
+                }
+            }
+            _ => {
+                // sealed 缺失：load_from 已兼容读历史明文键（迁移窗口）。
+            }
+        }
+        out
+    }
+
+    /// DK-37：secret 键的 sealed 写入 + **历史明文键自迁移**（覆盖为空串 = 语义清除）。
+    ///
+    /// 只负责 cloud_api_key 一个字段；其余字段照常走 [`AISettings::save_to`]。
+    pub fn save_secret_to(
+        &self,
+        store: &SettingsStore,
+        layer: SettingsLayer,
+        workspace_id: Option<&str>,
+        sealer: &dyn SecretSealer,
+    ) -> Result<(), String> {
+        match self.cloud_api_key.as_deref() {
+            Some(key) if !key.is_empty() => {
+                let ct = sealer
+                    .seal(key.as_bytes())
+                    .map_err(|e| format!("seal cloud_api_key failed: {e}"))?;
+                store.set(
+                    layer,
+                    workspace_id,
+                    CLOUD_API_KEY_SEALED,
+                    serde_json::Value::String(base64_encode(&ct)),
+                );
+                store.set(
+                    layer,
+                    workspace_id,
+                    CLOUD_API_KEY_SEAL_ALG,
+                    serde_json::Value::String(SEAL_ALG_DEK_V1.into()),
+                );
+            }
+            _ => {
+                // 显式清空：sealed 键写空串（load 语义 = 未设置）。
+                store.set(
+                    layer,
+                    workspace_id,
+                    CLOUD_API_KEY_SEALED,
+                    serde_json::Value::String(String::new()),
+                );
+            }
+        }
+        // 历史明文键自迁移：无论何种分支，明文槽位一律清空（防残留）。
+        store.set(
+            layer,
+            workspace_id,
+            CLOUD_API_KEY_PLAIN_LEGACY,
+            serde_json::Value::String(String::new()),
+        );
+        Ok(())
+    }
+}
+
+/// base64 标准编码（无新增依赖——serde 工作区内已有 base64 传递依赖，此处
+/// 手写避免 version 漂移；输入输出均为短密文，性能不敏感）。
+fn base64_encode(data: &[u8]) -> String {
+    const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(TBL[(n >> 18) as usize & 63] as char);
+        out.push(TBL[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TBL[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TBL[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// base64 标准解码（与 [`base64_encode`] 对偶；非法输入 → None）。
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    const INV: fn(u8) -> Option<u32> = |c: u8| match c {
+        b'A'..=b'Z' => Some((c - b'A') as u32),
+        b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+        b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let bytes: Vec<u8> = s.bytes().filter(|&c| c != b'=').collect();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    for chunk in bytes.chunks(4) {
+        if chunk.len() == 1 {
+            return None;
+        }
+        let mut n: u32 = 0;
+        for (i, &c) in chunk.iter().enumerate() {
+            n |= INV(c)? << (18 - 6 * i);
+        }
+        out.push((n >> 16) as u8);
+        if chunk.len() > 2 {
+            out.push((n >> 8) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push(n as u8);
+        }
+    }
+    Some(out)
 }
 
 /// 系统设置顶层聚合
@@ -871,6 +1045,19 @@ pub struct SettingsSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// DK-37 测试用确定性密封器（XOR 演示级——真实实现见 aurora-security
+    /// 的 `VaultSecretSealer`，DEK AES-GCM）。仅验证 seam 语义，不冒充安全。
+    #[derive(Default)]
+    struct MockSealer;
+    impl SecretSealer for MockSealer {
+        fn seal(&self, plaintext: &[u8]) -> Result<Vec<u8>, String> {
+            Ok(plaintext.iter().map(|b| b ^ 0x5A).collect())
+        }
+        fn unseal(&self, sealed: &[u8]) -> Result<Vec<u8>, String> {
+            Ok(sealed.iter().map(|b| b ^ 0x5A).collect())
+        }
+    }
 
     // --- Layered storage ---
 
@@ -1314,9 +1501,14 @@ mod tests {
             cloud_model: Some("deepseek-chat".into()),
             strategy: crate::l3_domain::ai_system::InferenceStrategy::CloudOnly,
         };
+        // DK-37：key 走 sealed 通道，其余字段走 save_to。
+        let s = MockSealer;
         original.save_to(&store, SettingsLayer::User, None);
+        original
+            .save_secret_to(&store, SettingsLayer::User, None, &s)
+            .unwrap();
 
-        let loaded = AISettings::load_from(&store, None);
+        let loaded = AISettings::load_secret_from(&store, None, &s);
         assert_eq!(loaded.ollama_base_url, original.ollama_base_url);
         assert_eq!(loaded.ollama_model, original.ollama_model);
         assert_eq!(loaded.cloud_base_url, original.cloud_base_url);

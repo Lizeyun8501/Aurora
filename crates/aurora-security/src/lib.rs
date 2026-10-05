@@ -16,6 +16,7 @@ pub mod key_hierarchy;
 pub mod note_cipher; // DK-07 S2: 笔记级内容加密（HKDF 每笔记密钥 + enc1 格式）
 pub mod post_quantum;
 pub mod recovery;
+pub mod secret_sealer; // DK-37: SecretSealer 的 vault 实现（API key sealed 落库）
 pub mod vault;
 
 // V20 Phase 2 GAP-14: §21.1 加密审计自动化（测试模块）
@@ -76,6 +77,7 @@ pub use post_quantum::{
     MockKem, PostQuantumKem,
 };
 pub use recovery::{DeviceAuthorizationQr, Mnemonic, ShamirSecretSharing, ShamirShare};
+pub use secret_sealer::VaultSecretSealer;
 pub use vault::LocalDekVault;
 
 #[cfg(test)]
