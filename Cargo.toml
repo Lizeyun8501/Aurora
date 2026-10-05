@@ -40,6 +40,8 @@ repository = "https://github.com/aurora-note/aurora-note"
 [workspace.dependencies]
 # CRDT engine — loro 1.x 需 Rust 1.87+，workspace 中保留定义供 optional 引用
 loro = "1"
+# DK-33: wasm 文本内联编译（e2e 测试样本——纯库非工具链）
+wat = "1"
 
 # P2P sync — iroh 1.0 需 Rust 1.91+，workspace 中保留定义供 optional 引用
 iroh = "1.0"
