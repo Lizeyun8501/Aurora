@@ -56,7 +56,7 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 # Note: sqlite-vec is a loadable extension, not a direct crate dependency
 
 # WASM runtime
-wasmtime = "27"
+wasmtime = "36"
 
 # Cryptography
 ring = "0.17"

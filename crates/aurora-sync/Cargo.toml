@@ -48,8 +48,8 @@ parking_lot = { workspace = true }
 ring = { workspace = true }
 
 # WebDAV 真实 HTTP 传输（DK-08 第一切片）— 与 aurora-ai 同规格
-# （0.11 + rustls-tls），复用锁文件既有 reqwest 0.11 节点，不引入新版本
-reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
+# （0.12 + rustls-tls，DK-31: TLS 链补洞——rustls 0.23/h2 0.4 链）
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [dev-dependencies]
 # WebDAV stub server（DK-08 测试 — 与 aurora-ai 测试同款）
