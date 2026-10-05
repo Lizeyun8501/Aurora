@@ -210,15 +210,14 @@ impl IncrementalSync {
         out
     }
 
-    /// 压缩数据 (mock：identity；真实实现使用 zstd)。
+    /// 压缩数据（DK-36：zstd 默认级别——增量块数据面上线即压缩，identity mock 退役）。
     pub fn compress(data: &[u8]) -> Vec<u8> {
-        // TODO: 替换为 zstd::encode_all
-        data.to_vec()
+        zstd::encode_all(std::io::Cursor::new(data), 3).unwrap_or_else(|_| data.to_vec())
     }
 
-    /// 解压数据 (mock：identity)。
+    /// 解压数据（与 [`IncrementalSync::compress`] 严格往返；损坏输入报错返回空）。
     pub fn decompress(data: &[u8]) -> Vec<u8> {
-        data.to_vec()
+        zstd::decode_all(std::io::Cursor::new(data)).unwrap_or_default()
     }
 }
 
@@ -320,6 +319,26 @@ mod tests {
         let compressed = IncrementalSync::compress(&data);
         let decompressed = IncrementalSync::decompress(&compressed);
         assert_eq!(decompressed, data);
+    }
+
+    /// DK-36：zstd 真实压缩率断言（高冗余数据必须小于原长——identity mock 无法通过此测试）。
+    #[test]
+    fn test_compress_actual_compression_ratio() {
+        let data = vec![7u8; 64_000]; // 高冗余块数据（同步增量典型形态）
+        let compressed = IncrementalSync::compress(&data);
+        assert!(
+            compressed.len() < data.len() / 10,
+            "zstd 应将 64KB 冗余数据压到 1/10 以内，实际 {} bytes",
+            compressed.len()
+        );
+        assert_eq!(IncrementalSync::decompress(&compressed), data);
+    }
+
+    /// DK-36：损坏输入不 panic（decode 报错返回空——传输面健壮性）。
+    #[test]
+    fn test_decompress_corrupted_input_safe() {
+        let out = IncrementalSync::decompress(&[0xFF, 0x00, 0x21, 0x33]);
+        assert!(out.is_empty());
     }
 
     #[test]

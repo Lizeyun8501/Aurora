@@ -58,6 +58,9 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 # WASM runtime
 wasmtime = "36"
 
+# DK-36：增量同步块数据压缩（incremental compress/decompress）
+zstd = "0.13"
+
 # Cryptography
 ring = "0.17"
 argon2 = "0.5"
