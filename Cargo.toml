@@ -38,6 +38,8 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/aurora-note/aurora-note"
 
 [workspace.dependencies]
+# DK-39: wasmtime ResourceLimiter 签名错误类型（传递依赖显式声明，零编译增量）
+anyhow = "1"
 # CRDT engine — loro 1.x 需 Rust 1.87+，workspace 中保留定义供 optional 引用
 loro = "1"
 # DK-33: wasm 文本内联编译（e2e 测试样本——纯库非工具链）

@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# DK-39: wasmtime ResourceLimiter trait 签名需要
+anyhow = { workspace = true }
 # CRDT engine — loro 1.x 需 Rust 1.87+，可选依赖
 loro = { workspace = true, optional = true }
 
