@@ -1,7 +1,7 @@
 # DK-40a 开工令 V2：NoteDoc 混合存储与并发无损断言（loro 路线）
 
 > 派发：Alpha 2026-10-06 10:05 · **V1（yrs 路线）作废**——栈内资产盘点实锤：loro 已承载全部 CRDT 面，yrs 属引入第二 CRDT 栈，纯负面。
-> 派发对象：Bravo（DK-39 交付后接力）
+> 派发对象：Bravo（**接力调整 2026-10-06 23:59：DK-39 已由 Alpha 完成交付（914d7a8），Bravo 到货直入本卡，无需接力等待**）
 > 依据：DK-38 评估 §2.2R + 10:05 栈内盘点（note_doc.rs 1073 行 / crdt_engine.rs / iroh_transport.rs 693 行）
 
 ## V1 作废理由（存档）
