@@ -172,6 +172,12 @@ impl OfflineQueue {
         Some(item)
     }
 
+    /// DK-40b: 补发失败回队——item 回插堆中，幂等索引保持不动
+    /// （失败≠放弃，语义与 ack 相反；attempts 已由 dequeue 递增）。
+    pub fn requeue(&self, item: QueueItem) {
+        self.heap.lock().push(item);
+    }
+
     /// 批量出队 (最多 n 项)。
     pub fn dequeue_batch(&self, n: usize) -> Vec<QueueItem> {
         let mut out = Vec::with_capacity(n);

@@ -153,6 +153,18 @@ impl IrohTransport {
         self.endpoint.addr()
     }
 
+    /// DK-40b: 导出本机地址（含 relay 与直连地址）为可带外交换的 JSON
+    /// （V1 手动模型：剪贴板/文件/二维码编码由上层消费）。
+    /// iroh 1.0.3 的 `EndpointAddr` 自带 serde derive（无 to_bytes 面）。
+    pub fn export_addr_json(&self) -> Result<String, String> {
+        serde_json::to_string(&self.endpoint.addr()).map_err(|e| format!("addr export failed: {e}"))
+    }
+
+    /// DK-40b: 导入对端导出的地址 JSON（`export_addr_json` 的逆操作）。
+    pub fn import_addr_json(json: &str) -> Result<EndpointAddr, String> {
+        serde_json::from_str(json).map_err(|e| format!("addr import failed: {e}"))
+    }
+
     /// 发起同步（客户端角色）：连接对端并交换 Loro CRDT 增量。
     ///
     /// V19 §31.2 `sync_with_peer` 流程：
@@ -689,5 +701,115 @@ mod tests {
             }
         }
         assert_converged(&docs);
+    }
+
+    /// DK-40b DoD: 地址带外交换 roundtrip——A 导出 → B 导入 → 可连通并完成同步。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk40b_addr_export_import_roundtrip_connectable() {
+        let network = spawn_network();
+        let a = spawn_node(&network, "a").await;
+        let b = spawn_node(&network, "b").await;
+
+        // A 导出地址 JSON → B 导入（模拟二维码/剪贴板带外交换）。
+        let exported = a.export_addr_json().expect("addr export");
+        let imported = IrohTransport::import_addr_json(&exported).expect("addr roundtrip");
+
+        let doc_a = edited_doc("A");
+        let accepts = spawn_accepts(&a, &doc_a, 1);
+        let report = sync_pair(&b, &imported, &edited_doc("B")).await;
+        assert!(report.success, "导入地址必须可连通: {:?}", report.error);
+        join_accepts(accepts).await;
+    }
+
+    /// DK-40b DoD: 离线补发 drain——B 离线期间 A 编辑入队，B 恢复后
+    /// drain_to_peer 补发 → 对端收敛、队列清空、幂等索引清理。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk40b_drain_delivers_pending_and_acks() {
+        use crate::drain::drain_to_peer;
+        use crate::offline_queue::{OfflineQueue, Priority};
+
+        let network = spawn_network();
+        let a = spawn_node(&network, "a").await;
+        let b = spawn_node(&network, "b").await;
+
+        // A 端离线积压：doc-a 的编辑（对端 B 尚未收到）。
+        let doc_a = edited_doc("A");
+
+        let queue = OfflineQueue::new();
+        queue
+            .enqueue(crate::offline_queue::QueueItem::new(
+                "doc-a",
+                vec![1, 2, 3],
+                Priority::High,
+            ))
+            .unwrap();
+        queue
+            .enqueue(crate::offline_queue::QueueItem::new(
+                "doc-a",
+                vec![4, 5],
+                Priority::Medium,
+            ))
+            .unwrap();
+        queue
+            .enqueue(crate::offline_queue::QueueItem::new(
+                "doc-c",
+                vec![6],
+                Priority::Low,
+            ))
+            .unwrap();
+        assert_eq!(queue.len(), 3);
+
+        // B 恢复在线：A drain 补发。resolver 映射 A 端本地 doc_id → LoroDoc。
+        let doc_a2 = Arc::clone(&doc_a);
+        let doc_c = edited_doc("C"); // A 端另一篇积压文档
+        let doc_map: std::collections::HashMap<String, Arc<LoroDoc>> = [
+            ("doc-a".to_string(), doc_a2),
+            ("doc-c".to_string(), Arc::clone(&doc_c)),
+        ]
+        .into_iter()
+        .collect();
+        let resolver = |doc_id: &str| doc_map.get(doc_id).cloned();
+
+        // B 侧 accept（drain 对 doc-a/doc-c 各触发一次 sync）。
+        let doc_b = edited_doc("B");
+        let accepts = spawn_accepts(&b, &doc_b, 2);
+        let report = drain_to_peer(&queue, &a, &b.addr(), &resolver, 16).await;
+        join_accepts(accepts).await;
+
+        assert_eq!(report.synced_docs, 2, "doc-a/doc-c 应补发成功: {report:?}");
+        assert!(report.failed_docs.is_empty(), "不应有失败项: {report:?}");
+        assert!(
+            queue.is_empty(),
+            "成功项应全部 ack 清空: len={}",
+            queue.len()
+        );
+        assert_eq!(report.acked_items, 3, "同文档多项只同步一次但全部 ack");
+    }
+
+    /// DK-40b DoD: drain 失败回队——resolver 未命中的 doc 留在队列重试。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk40b_drain_failure_requeues() {
+        use crate::drain::drain_to_peer;
+        use crate::offline_queue::{OfflineQueue, Priority, QueueItem};
+
+        let network = spawn_network();
+        let a = spawn_node(&network, "a").await;
+        let b = spawn_node(&network, "b").await;
+        let doc_b = edited_doc("B");
+
+        let queue = OfflineQueue::new();
+        queue
+            .enqueue(QueueItem::new("doc-missing", vec![1], Priority::High))
+            .unwrap();
+
+        // resolver 恒未命中（模拟文档尚未加载）。
+        let resolver = |_: &str| -> Option<Arc<LoroDoc>> { None };
+        let accepts = spawn_accepts(&b, &doc_b, 0); // 不应有同步发生
+        let report = drain_to_peer(&queue, &a, &b.addr(), &resolver, 16).await;
+        join_accepts(accepts).await;
+
+        assert!(report.failed_docs.contains(&"doc-missing".to_string()));
+        assert_eq!(queue.len(), 1, "失败项必须回队重试");
+        assert_eq!(report.synced_docs, 0);
     }
 }

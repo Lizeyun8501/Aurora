@@ -24,6 +24,9 @@ pub mod incremental;
 // iroh 真实传输层 — 需要 iroh 1.0+ (Rust 1.91+)，2026-08-24 工具链就绪后启用
 #[cfg(feature = "iroh-transport")]
 pub mod iroh_transport;
+// DK-40b: 离线队列 → iroh 补发衔接（网络恢复后 drain）
+#[cfg(feature = "iroh-transport")]
+pub mod drain;
 pub mod lan;
 pub mod offline_queue;
 pub mod p2p;
