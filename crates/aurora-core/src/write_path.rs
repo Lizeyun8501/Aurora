@@ -29,6 +29,7 @@ use std::collections::HashSet;
 use crate::app_core::AppCore;
 use crate::blocks::BlockStore;
 use crate::error_codes::ErrorCode;
+use crate::traits::kv_store::KVStore;
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -388,24 +389,104 @@ pub async fn set_note_encryption(
     Ok(())
 }
 
-/// 加载（或创建）笔记的 Loro 文档：优先从 `notesnap:{id}` 快照恢复。
+/// DK-40a: 混合存储 compaction 阈值——update log 达此条数后快照回写+清空。
 #[cfg(feature = "loro-crdt")]
-async fn load_or_init_doc(core: &AppCore, note_id: &str) -> Result<NoteDoc, Error> {
-    match core.kv_store.get(&format!("notesnap:{note_id}")).await? {
-        Some(bytes) if !bytes.is_empty() => NoteDoc::from_snapshot(&bytes),
+const UPDATE_LOG_COMPACT_THRESHOLD: usize = 500;
+
+fn update_log_key(note_id: &str, seq: usize) -> String {
+    format!("updatelog:{note_id}:{seq:020}")
+}
+
+/// DK-40a: 追加一条增量 update（v1 编码，38b 传输的增量单元）。
+#[cfg(feature = "loro-crdt")]
+async fn append_update_log(kv: &dyn KVStore, note_id: &str, update: &[u8]) -> Result<(), Error> {
+    let seq = count_update_log(kv, note_id).await;
+    kv.set(&update_log_key(note_id, seq), update).await
+}
+
+/// DK-40a: 读全部增量（seq 升序）——打开链重放用。
+#[cfg(feature = "loro-crdt")]
+async fn read_update_log(kv: &dyn KVStore, note_id: &str) -> Result<Vec<Vec<u8>>, Error> {
+    let pairs = kv.scan_prefix(&format!("updatelog:{note_id}:")).await?;
+    let mut out: Vec<(usize, Vec<u8>)> = pairs
+        .into_iter()
+        .filter_map(|(k, v)| {
+            let seq: usize = k.rsplit(':').next()?.parse().ok()?;
+            Some((seq, v))
+        })
+        .collect();
+    out.sort_by_key(|(seq, _)| *seq);
+    Ok(out.into_iter().map(|(_, v)| v).collect())
+}
+
+/// DK-40a: log 条数（compaction 判定）。
+#[cfg(feature = "loro-crdt")]
+async fn count_update_log(kv: &dyn KVStore, note_id: &str) -> usize {
+    kv.scan_prefix(&format!("updatelog:{note_id}:"))
+        .await
+        .map(|p| p.len())
+        .unwrap_or(0)
+}
+
+/// DK-40a: compaction —— 快照回写（调用方已持最新 doc）+ log 清空。
+#[cfg(feature = "loro-crdt")]
+async fn compact_update_log(kv: &dyn KVStore, note_id: &str, doc: &NoteDoc) -> Result<(), Error> {
+    let snap = doc.export_snapshot()?;
+    kv.set(&format!("notesnap:{note_id}"), &snap).await?;
+    let pairs = kv.scan_prefix(&format!("updatelog:{note_id}:")).await?;
+    for (k, _) in pairs {
+        kv.delete(&k).await?;
+    }
+    Ok(())
+}
+
+/// 加载（或创建）笔记的 Loro 文档：`notesnap:{id}` 快照 + update log 重放
+/// （DK-40a 混合存储打开链——快照低频 + 增量高频，重放后即为最新态）。
+#[cfg(feature = "loro-crdt")]
+async fn load_or_init_doc(kv: &dyn KVStore, note_id: &str) -> Result<NoteDoc, Error> {
+    match kv.get(&format!("notesnap:{note_id}")).await? {
+        Some(bytes) if !bytes.is_empty() => {
+            let doc = NoteDoc::from_snapshot(&bytes)?;
+            for u in read_update_log(kv, note_id).await? {
+                doc.apply_update(&u)?;
+            }
+            Ok(doc)
+        }
         _ => {
-            // 无快照（新建或迁移中）：由调用方 init 后再 touch —— 这里给出空文档由调用方补 meta。
-            NoteDoc::new("", "")
+            // 无快照（新建或迁移中）：空文档 + 重放 log（首 persist 的
+            // 初始化增量已在 log——DK-40a 修复：原实现漏重放致首开丢数据）
+            let doc = NoteDoc::new("", "")?;
+            for u in read_update_log(kv, note_id).await? {
+                doc.apply_update(&u)?;
+            }
+            Ok(doc)
         }
     }
 }
 
+/// DK-40a 混合存储写路径：增量追加 update log（自旧快照 vv 起）；
+/// log 达 `UPDATE_LOG_COMPACT_THRESHOLD` 后全量快照回写+log 清空
+/// （写放大消除——快照低频 + 增量高频，38b 传输单元即 log 内 update）。
 #[cfg(feature = "loro-crdt")]
-async fn persist_doc(core: &AppCore, note_id: &str, doc: &NoteDoc) -> Result<(), Error> {
-    let snapshot = doc.export_snapshot()?;
-    core.kv_store
-        .set(&format!("notesnap:{note_id}"), &snapshot)
-        .await
+async fn persist_doc(kv: &dyn KVStore, note_id: &str, doc: &NoteDoc) -> Result<(), Error> {
+    let old_snap = kv.get(&format!("notesnap:{note_id}")).await?;
+    // 无旧快照（首次持久化）→ 直接全量快照初始化（与旧版语义一致——
+    // notesnap 从首写即存在，软删/恢复数据源语义不变）；log 自第二轮记增量
+    if old_snap.as_ref().map(|b| b.is_empty()).unwrap_or(true) {
+        let snapshot = doc.export_snapshot()?;
+        kv.set(&format!("notesnap:{note_id}"), &snapshot).await?;
+        return Ok(());
+    }
+    // 基准 vv = 旧快照文档态
+    let base_vv = NoteDoc::from_snapshot(old_snap.as_ref().unwrap())?.version_vector();
+    let update = doc.export_update_since(&base_vv)?;
+    append_update_log(kv, note_id, &update).await?;
+
+    // compaction：log 达阈值 → 全量快照回写 + log 清空（行为不变性由测试锚定）
+    if count_update_log(kv, note_id).await >= UPDATE_LOG_COMPACT_THRESHOLD {
+        compact_update_log(kv, note_id, doc).await?;
+    }
+    Ok(())
 }
 
 // ===== 写入操作（唯一入口）=====
@@ -432,7 +513,7 @@ pub async fn create_note(ctx: &WriteContext, title: &str) -> Result<String, Erro
 
     // 2) 原子保存（WAL：快照先落，元数据后落为权威指针）
     let record = NoteRecord::new(id.clone(), title.to_string());
-    persist_doc(core, &id, &doc).await?;
+    persist_doc(core.kv_store.as_ref(), &id, &doc).await?;
     put_note_meta(core, &id, &record, ctx.seal.as_ref()).await?;
 
     // 3) blocks 派生（内容 → 块树）— 派生失败不阻断主流程（DK-01 DoD:
@@ -495,7 +576,7 @@ pub async fn save_note_content(
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     // 1) Loro 文档：快照恢复或新建后补时间戳
-    let doc = load_or_init_doc(core, note_id).await?;
+    let doc = load_or_init_doc(core.kv_store.as_ref(), note_id).await?;
     doc.set_body(content, now_ms)?;
     let ws = doc.meta().workspace_id.clone();
 
@@ -503,7 +584,7 @@ pub async fn save_note_content(
     //    Loro 快照/blocks 属本机信任边界明文（锁定态排除由 S3 全链路过滤承担）
     record.content = seal_content(ctx, note_id, content, &record.encryption)?;
     record.updated_at = chrono::Utc::now().to_rfc3339();
-    persist_doc(core, note_id, &doc).await?;
+    persist_doc(core.kv_store.as_ref(), note_id, &doc).await?;
     put_note_meta(core, note_id, &record, ctx.seal.as_ref()).await?;
 
     // 3) blocks 派生 — 派生失败不阻断主流程（DK-01 DoD: notes/快照为
@@ -612,13 +693,15 @@ pub async fn verify_dual_write_consistency(ctx: &WriteContext) -> Result<Vec<Str
             mismatches.push(note_id.to_string());
             continue;
         };
-        // Loro 快照恢复对比（无快照 = 观察期前历史数据, 放行不判不一致）
+        // Loro 恢复对比（DK-40a 混合存储：恢复态 = 快照 + update log 重放；
+        // 无快照且无 log = 观察期前历史数据, 放行不判不一致）
         let snap = core
             .kv_store
             .get(&format!("notesnap:{note_id}"))
             .await?
             .unwrap_or_default();
-        if snap.is_empty() {
+        let has_log = count_update_log(core.kv_store.as_ref(), note_id).await > 0;
+        if snap.is_empty() && !has_log {
             continue;
         }
         // DK-07 S4: 加密笔记 record.content 是密文 — 解密后对比；
@@ -637,7 +720,7 @@ pub async fn verify_dual_write_consistency(ctx: &WriteContext) -> Result<Vec<Str
         } else {
             record.content.clone()
         };
-        match crate::l1_infrastructure::note_doc::NoteDoc::from_snapshot(&snap) {
+        match load_or_init_doc(core.kv_store.as_ref(), note_id).await {
             Ok(doc) => {
                 if doc.body() != expected_content {
                     mismatches.push(note_id.to_string());
@@ -708,9 +791,9 @@ pub async fn rename_note(
 
     #[cfg(feature = "loro-crdt")]
     {
-        let doc = load_or_init_doc(core, note_id).await?;
+        let doc = load_or_init_doc(core.kv_store.as_ref(), note_id).await?;
         doc.set_title(new_title, now_ms)?;
-        persist_doc(core, note_id, &doc).await?;
+        persist_doc(core.kv_store.as_ref(), note_id, &doc).await?;
     }
 
     record.title = new_title.to_string();
@@ -1758,4 +1841,141 @@ pub async fn ensure_daily_note(
         note_id,
         created: true,
     }))
+}
+
+// ============================================================================
+// DK-40a 测试 — 混合存储（快照低频 + update log 高频）与零丢失断言
+// ============================================================================
+#[cfg(all(test, feature = "loro-crdt"))]
+mod dk40a_tests {
+    use super::*;
+    use crate::l1_infrastructure::note_doc::{BlockNode, NoteDoc};
+    use crate::l1_infrastructure::storage_engine::MemoryKVStore;
+    use std::sync::Arc;
+
+    fn kv() -> Arc<dyn KVStore> {
+        Arc::new(MemoryKVStore::default())
+    }
+
+    /// DoD 1 核心断言（用户裁决）：双端并发编辑——A 插块+改文本、
+    /// B 删块+改同块文本 → 交换增量合并后两侧增量全保留、零丢失。
+    #[test]
+    fn dk40a_concurrent_edits_zero_loss() {
+        // 基线：含块 blk-base（双端共享起点）
+        let base = NoteDoc::new("基线", "ws-test").unwrap();
+        base.add_block(
+            None,
+            &BlockNode {
+                block_id: "blk-base".into(),
+                block_type: "paragraph".into(),
+                attrs: Default::default(),
+                content_ref: String::new(),
+            },
+            900,
+        )
+        .unwrap();
+        base.insert_body(0, "base", 901).unwrap();
+
+        let a = base.fork();
+        let b = base.fork();
+
+        // A：新增块 blk-a + 正文追加 "A-contrib"
+        a.add_block(
+            None,
+            &BlockNode {
+                block_id: "blk-a".into(),
+                block_type: "paragraph".into(),
+                attrs: Default::default(),
+                content_ref: String::new(),
+            },
+            1_000,
+        )
+        .unwrap();
+        a.insert_body(a.body_len(), "A-contrib", 1_001).unwrap();
+
+        // B：删除基线块 blk-base（定位 TreeID）+ 正文头部插入 "B-contrib"
+        let (tid, _) = b
+            .blocks()
+            .into_iter()
+            .find(|(_, _, n)| n.block_id == "blk-base")
+            .map(|(_, t, n)| (t, n.block_id))
+            .expect("基线应有 blk-base");
+        b.remove_block(tid, 2_000).unwrap();
+        b.insert_body(0, "B-contrib", 2_001).unwrap();
+
+        // 交换增量（CRDT 合并）
+        let ua = a
+            .export_update_since(&loro::VersionVector::default())
+            .unwrap();
+        let ub = b
+            .export_update_since(&loro::VersionVector::default())
+            .unwrap();
+        a.apply_update(&ub).unwrap();
+        b.apply_update(&ua).unwrap();
+
+        // 块级：A 新增块在（双端）；字符级：双方插入均保留
+        for d in [&a, &b] {
+            let ids: Vec<String> = d
+                .blocks()
+                .iter()
+                .map(|(_, _, n)| n.block_id.clone())
+                .collect();
+            assert!(ids.contains(&"blk-a".to_string()), "A 新增块零丢失");
+            let body = d.body();
+            assert!(body.contains("A-contrib"), "A 字符插入零丢失");
+            assert!(body.contains("B-contrib"), "B 字符插入零丢失");
+        }
+    }
+
+    /// DoD 2/3: 快照+log 重放等价 + compaction（阈值回写清 log）后行为不变。
+    #[tokio::test]
+    async fn dk40a_log_replay_and_compaction() {
+        let kv = kv();
+        let note_id = "dk40a-note";
+        let doc = NoteDoc::new("标题", "ws-test").unwrap();
+        doc.insert_body(0, "v0", 1_000).unwrap();
+        persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+
+        // 连续 3 轮编辑（每轮 persist：增量 append log；无 compaction——<阈值）
+        for i in 1..=3 {
+            doc.insert_body(doc.body_len(), &format!("v{i}"), 1_000 + i)
+                .unwrap();
+            persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+        }
+        assert_eq!(
+            count_update_log(kv.as_ref(), note_id).await,
+            3,
+            "3 轮编辑增量（首轮走全量快照初始化不入 log）"
+        );
+
+        // 重放等价：全新打开（快照+log 重放）== 连续编辑态
+        let reopened = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        assert_eq!(reopened.body(), doc.body(), "快照+log 重放 == 连续编辑态");
+
+        // compaction：模拟达阈值（阈值常量）——直接 compact 后行为不变 + log 清空
+        compact_update_log(kv.as_ref(), note_id, &doc)
+            .await
+            .unwrap();
+        assert_eq!(count_update_log(kv.as_ref(), note_id).await, 0);
+        let after_compact = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        assert_eq!(
+            after_compact.body(),
+            doc.body(),
+            "compaction 前后文档态一致"
+        );
+    }
+
+    /// DoD 4: 存量 note 首次打开自动初始化（无快照 → 空文档灌入后 persist 落快照）。
+    #[tokio::test]
+    async fn dk40a_legacy_first_open_initializes() {
+        let kv = kv();
+        let note_id = "legacy-note";
+        // 无 notesnap：首开 → 空文档
+        let doc = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        doc.insert_body(0, "seed", 1_000).unwrap();
+        persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+        // 二次打开：快照已落（自动初始化闭环）
+        let reopened = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        assert_eq!(reopened.body(), "seed");
+    }
 }
