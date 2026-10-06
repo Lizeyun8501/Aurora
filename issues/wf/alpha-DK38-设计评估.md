@@ -69,3 +69,15 @@
 ## 6. 边界外更正
 
 原 §3 "块级 CRDT 边界外"表述随裁决作废——CRDT 已是主路径。现行边界外仅剩：端到端加密（V1 通道 TLS 足够）、离线优先全量重建、中继服务端实现（客户端协议面+echo 测试桩）。
+
+## 7. 追加盘点注记（2026-10-06 10:05 Alpha 栈内核实——评估前提重大修正）
+
+**原评估漏盘了栈内既有资产**（教训：评估先 rg 代码，不能只读 issues 文档）：
+
+1. **CRDT 面无需新建**：NoteDoc（LoroTree 块树+LoroText，1073 行）+CrdtEngine trait 已承载全部并发面——40a V2 缩为混合存储补全+零丢失断言（规模 大→中）
+2. **传输面已有 iroh P2P**：IrohTransport 693 行（sync_with_peer/accept_sync，QUIC+版本向量交换+增量导入），移动端 p2p_sync 已接；offline_queue 已落地——**"多设备同步"的 P2P 路径已大部分存在**
+3. **WebSocket 必要性降级待裁决**：iroh relay 可承担中继（一端离线补发场景），自建 relay server vs WebSocket 中控服务器是**产品形态裁决**而非技术必需。38a/b/c（WebSocket 三卡）**缓派**，待用户裁决：
+   - **选项 A**：V1 同步=iroh P2P（已有资产+40a 补全，最小成本全链打通）；WebSocket 降为"后续企业/中控部署形态"另立远期卡
+   - **选项 B**：坚持 WebSocket C/S（多端经服务器中转的确定性语义，iroh P2P 作为补充通道）——按原 38a/b/c 排期
+   
+   Alpha 建议：**选项 A 先行**——40a 落地后实测 iroh 双端 e2e（含离线补发）再定，避免为未验证的缺口先建 WebSocket 栈。
