@@ -66,4 +66,4 @@ default = []
 loro-crdt = ["dep:loro"]
 # 启用 iroh 真实传输层（需要 Rust 1.91+）— V19 §31 DEV-005
 # 依赖 loro: iroh_transport.rs 直接操作 LoroDoc（版本向量交换 + 增量导入）
-iroh-transport = ["dep:iroh", "loro-crdt"]
+iroh-transport = ["dep:iroh", "loro-crdt", "aurora-core/loro-crdt"]

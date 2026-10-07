@@ -812,4 +812,138 @@ mod tests {
         assert_eq!(queue.len(), 1, "失败项必须回队重试");
         assert_eq!(report.synced_docs, 0);
     }
+
+    /// DK-40c（iroh e2e 实测 · Alpha 建议 A 验证步骤）：双端离线编辑 → 回线单轮
+    /// sync → 版本向量交换一次补发全部离线期增量，双向收敛（互含对方编辑）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk40c_p2p_offline_catchup_converge() {
+        let network = spawn_network();
+        let a = spawn_node(&network, "oa").await;
+        let b = spawn_node(&network, "ob").await;
+        let doc_a = edited_doc("A-offline");
+        let doc_b = edited_doc("B-offline");
+
+        // 离线期：双端各自多轮编辑（互不连——补发语义的核心场景）
+        doc_a
+            .get_text("content")
+            .insert(doc_text(&doc_a).len(), "[A-more]")
+            .unwrap();
+        doc_a.commit();
+        doc_b
+            .get_text("content")
+            .insert(doc_text(&doc_b).len(), "[B-more]")
+            .unwrap();
+        doc_b.commit();
+
+        // 回线：单轮 sync，B 承接 A 的离线增量
+        let accepts = spawn_accepts(&b, &doc_b, 1);
+        let report = sync_pair(&a, &b.addr(), &doc_a).await;
+        assert!(report.success, "catchup sync failed: {:?}", report.error);
+        join_accepts(accepts).await;
+
+        // 双向收敛：互含对方离线期全部编辑（补发完整）
+        let ta = doc_text(&doc_a);
+        let tb = doc_text(&doc_b);
+        assert_eq!(ta, tb, "离线补发后必须收敛一致");
+        assert!(
+            ta.contains("[A-offline]") && ta.contains("[A-more]"),
+            "A 端离线编辑须全量到达 B: {ta:?}"
+        );
+        assert!(
+            ta.contains("[B-offline]") && ta.contains("[B-more]"),
+            "B 端离线编辑须全量到达 A: {ta:?}"
+        );
+    }
+
+    /// DK-40c：NoteDoc（40a 混合存储数据面）过 iroh P2P —— 块级+正文断言。
+    /// 验证 NoteDoc 底层 LoroDoc 可直接经既有 sync_with_peer 通道传输，
+    /// 对端 from_doc 恢复后块结构/正文一致（38b 传输单元的可行性输入）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk40c_notedoc_over_p2p() {
+        use aurora_core::l1_infrastructure::note_doc::{BlockNode, NoteDoc};
+
+        let network = spawn_network();
+        let a = spawn_node(&network, "na").await;
+        let b = spawn_node(&network, "nb").await;
+
+        // A 端 NoteDoc：正文 + 两个块
+        let note_a = NoteDoc::new("实测笔记", "ws-dk40c").unwrap();
+        note_a.insert_body(0, "P2P 正文第一段", 1_000).unwrap();
+        note_a
+            .insert_body(note_a.body_len(), "第二段", 1_001)
+            .unwrap();
+        note_a
+            .add_block(
+                None,
+                &BlockNode {
+                    block_id: "blk-1".into(),
+                    block_type: "paragraph".into(),
+                    content_ref: "blk-1-ref".into(),
+                    attrs: Default::default(),
+                },
+                1_002,
+            )
+            .unwrap();
+        note_a
+            .add_block(
+                None,
+                &BlockNode {
+                    block_id: "blk-2".into(),
+                    block_type: "todo".into(),
+                    content_ref: "blk-2-ref".into(),
+                    attrs: Default::default(),
+                },
+                1_003,
+            )
+            .unwrap();
+
+        // B 端空 NoteDoc（仅容器骨架）
+        let note_b = NoteDoc::new("空", "ws-dk40c").unwrap();
+
+        // A → B 单轮同步（底层 LoroDoc 直传）
+        let accepts = spawn_accepts(&b, &Arc::new(note_b.inner().clone()), 1);
+        let report = sync_pair(&a, &b.addr(), note_a.inner()).await;
+        assert!(report.success, "notedoc sync failed: {:?}", report.error);
+        join_accepts(accepts).await;
+
+        // 对端恢复 NoteDoc 语义：正文一致 + 块树一致
+        assert_eq!(note_b.body(), note_a.body(), "正文必须一致");
+        assert_eq!(
+            note_b.body(),
+            "P2P 正文第一段第二段",
+            "got: {:?}",
+            note_b.body()
+        );
+        let blocks_a: Vec<String> = note_a
+            .blocks()
+            .into_iter()
+            .map(|(_, _, blk)| blk.block_id)
+            .collect();
+        let blocks_b: Vec<String> = note_b
+            .blocks()
+            .into_iter()
+            .map(|(_, _, blk)| blk.block_id)
+            .collect();
+        assert_eq!(blocks_a, blocks_b, "块树必须一致");
+        assert_eq!(blocks_a.len(), 2, "两块全保留");
+
+        // 反向：B 端编辑（块级）→ sync 回 A → A 拿到 B 的增量
+        note_b
+            .add_block(
+                None,
+                &BlockNode {
+                    block_id: "blk-3-b".into(),
+                    block_type: "heading".into(),
+                    content_ref: "blk-3-ref".into(),
+                    attrs: Default::default(),
+                },
+                2_000,
+            )
+            .unwrap();
+        let accepts2 = spawn_accepts(&a, &Arc::new(note_a.inner().clone()), 1);
+        let report2 = sync_pair(&b, &a.addr(), note_b.inner()).await;
+        assert!(report2.success, "reverse sync failed: {:?}", report2.error);
+        join_accepts(accepts2).await;
+        assert_eq!(note_a.blocks().len(), 3, "B 的块级增量须到达 A");
+    }
 }
