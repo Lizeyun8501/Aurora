@@ -83,11 +83,17 @@ fn decode_frame(buf: &[u8]) -> Option<(&[u8], &[u8])> {
 ///
 /// 对应 V19 §31.2 `IrohSyncTarget`，使用 iroh 1.0 API。
 /// `Clone`: Endpoint 内部为 Arc 句柄，克隆廉价，供多笔记并发同步。
+/// DK-41: 远端 update 持久化钩子类型（接收侧 updatelog 桥接）。
+type UpdateSink = Arc<dyn Fn(&[u8]) + Send + Sync>;
+
 pub struct IrohTransport {
     /// iroh Endpoint（QUIC 监听器 + NAT 穿透）。
     endpoint: Endpoint,
     /// 本节点的 PeerId（映射到 iroh NodeId）。
     peer_id: Mutex<PeerId>,
+    /// DK-41: 远端 update 持久化钩子——sync import 成功后调用；
+    /// None = 纯内存 sync（既有行为不变）。
+    update_sink: Mutex<Option<UpdateSink>>,
 }
 
 impl Clone for IrohTransport {
@@ -95,6 +101,7 @@ impl Clone for IrohTransport {
         Self {
             endpoint: self.endpoint.clone(),
             peer_id: Mutex::new(self.peer_id()),
+            update_sink: Mutex::new(self.update_sink.lock().clone()),
         }
     }
 }
@@ -135,7 +142,17 @@ impl IrohTransport {
         Ok(Self {
             endpoint,
             peer_id: Mutex::new(peer_id),
+            update_sink: Mutex::new(None),
         })
+    }
+
+    /// DK-41: 注入远端 update 持久化钩子（接收侧 updatelog 桥接）。
+    ///
+    /// sync/accept import 成功后以收到的 update 字节调用；
+    /// 调用方（桌面/移动宿主）借此把远端增量追加进本地 KV updatelog，
+    /// 保证重启后打开链重放（快照+log）含对端编辑。
+    pub fn set_update_sink(&self, sink: UpdateSink) {
+        *self.update_sink.lock() = Some(sink);
     }
 
     /// 返回本节点的 iroh EndpointId。
@@ -217,6 +234,13 @@ impl IrohTransport {
             local_doc
                 .import(&remote_update)
                 .map_err(|e| format!("loro import failed: {}", e))?;
+            // DK-41: 远端增量持久化钩子（updatelog 桥接——重启重放保对端编辑）
+            {
+                let guard = self.update_sink.lock();
+                if let Some(sink) = guard.as_ref() {
+                    sink(&remote_update);
+                }
+            }
             debug!("imported {} bytes from peer", received_bytes);
         }
 
@@ -358,6 +382,13 @@ impl IrohTransport {
             local_doc
                 .import(&remote_update)
                 .map_err(|e| format!("loro import reverse failed: {}", e))?;
+            // DK-41: 远端增量持久化钩子（updatelog 桥接——重启重放保对端编辑）
+            {
+                let guard = self.update_sink.lock();
+                if let Some(sink) = guard.as_ref() {
+                    sink(&remote_update);
+                }
+            }
         }
 
         // 完成信号：import 落地后才 FIN stream2 发送侧，客户端读到 EOF
@@ -524,6 +555,7 @@ mod tests {
         Arc::new(IrohTransport {
             endpoint,
             peer_id: Mutex::new(PeerId::from_str(&format!("node-{tag}"))),
+            update_sink: Mutex::new(None),
         })
     }
 
@@ -945,5 +977,72 @@ mod tests {
         assert!(report2.success, "reverse sync failed: {:?}", report2.error);
         join_accepts(accepts2).await;
         assert_eq!(note_a.blocks().len(), 3, "B 的块级增量须到达 A");
+    }
+
+    /// DK-41（选项 A 拆卡首张）：updatelog↔传输桥接——远端增量持久化。
+    /// 双端各持 KV updatelog + sink 钩子：sync 收到的远端 update 追加本地
+    /// updatelog → 断网重启后打开链重放（快照+log）仍含对端编辑（KV 态一致）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk41_updatelog_bridge_persistence() {
+        use aurora_core::l1_infrastructure::storage_engine::MemoryKVStore;
+        use aurora_core::write_path::{append_update_log, count_update_log};
+        use std::sync::Arc as StdArc;
+
+        let network = spawn_network();
+        let a = spawn_node(&network, "ba").await;
+        let b = spawn_node(&network, "bb").await;
+        let doc_a = edited_doc("A-bridge");
+        let doc_b = edited_doc("B-bridge");
+
+        // 双端各持 KV（模拟 40a 混合存储持久化面），sink = 收到的远端增量追加 updatelog
+        let kv_a: StdArc<MemoryKVStore> = StdArc::new(MemoryKVStore::default());
+        let kv_b: StdArc<MemoryKVStore> = StdArc::new(MemoryKVStore::default());
+        let note = "bridge-note";
+
+        let kv_a_sink = kv_a.clone();
+        a.set_update_sink(StdArc::new(move |update: &[u8]| {
+            let kv = kv_a_sink.clone();
+            futures::executor::block_on(async {
+                let seq = count_update_log(kv.as_ref(), note).await;
+                let _ = append_update_log(kv.as_ref(), note, update).await;
+                let _ = seq;
+            });
+        }));
+        let kv_b_sink = kv_b.clone();
+        b.set_update_sink(StdArc::new(move |update: &[u8]| {
+            let kv = kv_b_sink.clone();
+            futures::executor::block_on(async {
+                let seq = count_update_log(kv.as_ref(), note).await;
+                let _ = append_update_log(kv.as_ref(), note, update).await;
+                let _ = seq;
+            });
+        }));
+
+        // 单轮双向 sync：A↔B 交换增量，双端 sink 落盘对端编辑
+        let accepts = spawn_accepts(&b, &doc_b, 1);
+        let report = sync_pair(&a, &b.addr(), &doc_a).await;
+        assert!(report.success, "bridge sync failed: {:?}", report.error);
+        join_accepts(accepts).await;
+
+        // 断言 1：双端 updatelog 非空（对端增量已持久化）
+        let count_a = count_update_log(kv_a.as_ref(), note).await;
+        let count_b = count_update_log(kv_b.as_ref(), note).await;
+        assert!(count_a >= 1, "A 端 updatelog 须含 B 端增量, got {count_a}");
+        assert!(count_b >= 1, "B 端 updatelog 须含 A 端增量, got {count_b}");
+
+        // 断言 2（核心）：模拟 B 重启——全新空 doc 只灌 B 的 updatelog 重放，
+        // 必须恢复出 A 的编辑（KV 态一致 → 打开链重放语义闭环）
+        let replayed = LoroDoc::new();
+        for upd in aurora_core::write_path::read_update_log(kv_b.as_ref(), note)
+            .await
+            .unwrap()
+        {
+            replayed.import(&upd).expect("replay import");
+        }
+        let rt = replayed.get_text("content").to_string();
+        assert!(
+            rt.contains("A-bridge"),
+            "重启重放须恢复 A 端编辑, got {rt:?}"
+        );
     }
 }

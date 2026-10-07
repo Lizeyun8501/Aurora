@@ -404,8 +404,13 @@ fn update_log_key(note_id: &str, seq: usize) -> String {
 }
 
 /// DK-40a: 追加一条增量 update（v1 编码，38b 传输的增量单元）。
+/// DK-41: pub 化——iroh sync 接收侧 sink 直写 KV updatelog（38b 桥接原语）。
 #[cfg(feature = "loro-crdt")]
-async fn append_update_log(kv: &dyn KVStore, note_id: &str, update: &[u8]) -> Result<(), Error> {
+pub async fn append_update_log(
+    kv: &dyn KVStore,
+    note_id: &str,
+    update: &[u8],
+) -> Result<(), Error> {
     let seq = count_update_log(kv, note_id).await;
     kv.set(&update_log_key(note_id, seq), update).await
 }
@@ -418,8 +423,9 @@ fn update_vv_key(note_id: &str) -> String {
 }
 
 /// DK-40a: 读全部增量（seq 升序）——打开链重放用。
+/// DK-41: pub 化（打开链重放/桥接测试用）。
 #[cfg(feature = "loro-crdt")]
-async fn read_update_log(kv: &dyn KVStore, note_id: &str) -> Result<Vec<Vec<u8>>, Error> {
+pub async fn read_update_log(kv: &dyn KVStore, note_id: &str) -> Result<Vec<Vec<u8>>, Error> {
     let pairs = kv.scan_prefix(&format!("updatelog:{note_id}:")).await?;
     let mut out: Vec<(usize, Vec<u8>)> = pairs
         .into_iter()
@@ -433,8 +439,9 @@ async fn read_update_log(kv: &dyn KVStore, note_id: &str) -> Result<Vec<Vec<u8>>
 }
 
 /// DK-40a: log 条数（compaction 判定）。
+/// DK-41: pub 化（compaction 判定/桥接测试用）。
 #[cfg(feature = "loro-crdt")]
-async fn count_update_log(kv: &dyn KVStore, note_id: &str) -> usize {
+pub async fn count_update_log(kv: &dyn KVStore, note_id: &str) -> usize {
     kv.scan_prefix(&format!("updatelog:{note_id}:"))
         .await
         .map(|p| p.len())
