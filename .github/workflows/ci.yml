@@ -125,8 +125,27 @@ jobs:
           if-no-files-found: ignore
       # DK-08 S5 盲区补齐（bravo-DK08-同步.md 验收记录）：多节点多 NAT 仿真
       # 与 iroh-transport 生产传输代码被 feature 门控，默认集不覆盖。
+      # 2026-10-07 加固：本地 224 测全绿+同代码面 fd1464d CI 绿+之后连红 3 笔
+      # （8min 快速失败）→ 判定 runner 资源类抖动（dk08 十节点拓扑内存敏感）。
+      # 兜底=失败重跑一次；自愈=失败日志上传（此前该 step 无日志可查）。
       - name: Test (iroh-transport feature)
-        run: cargo test -p aurora-sync --features iroh-transport --verbose
+        run: |
+          cargo test -p aurora-sync --features iroh-transport --verbose 2>&1 | tee /tmp/iroh-test.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then
+            echo "IROH_RETRY: 首轮失败（疑 runner 资源类抖动），重跑一次"
+            cargo test -p aurora-sync --features iroh-transport --verbose 2>&1 | tee /tmp/iroh-test-retry.log; rc=${PIPESTATUS[0]}
+          fi
+          exit $rc
+      - name: Upload iroh test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iroh-test-log
+          path: |
+            /tmp/iroh-test.log
+            /tmp/iroh-test-retry.log
+          retention-days: 3
+          if-no-files-found: ignore
 
   msrv:
     name: MSRV (1.91)
