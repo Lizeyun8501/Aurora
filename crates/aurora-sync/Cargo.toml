@@ -55,6 +55,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 [dev-dependencies]
 # WebDAV stub server（DK-08 测试 — 与 aurora-ai 测试同款）
 mockito = "1"
+# DK-41 DoD2：SqliteStorage 双实例持久化面测试的临时 db 文件
+tempfile = "3"
 # 传输层调试 + iroh 内存测试网络（多节点仿真测试，§7.4；TestTransport
 # 属 unstable-custom-transports 门控，仅测试构建启用）
 tracing-subscriber = "0.3"

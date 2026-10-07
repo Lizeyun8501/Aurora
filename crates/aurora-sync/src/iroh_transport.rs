@@ -84,7 +84,7 @@ fn decode_frame(buf: &[u8]) -> Option<(&[u8], &[u8])> {
 /// 对应 V19 §31.2 `IrohSyncTarget`，使用 iroh 1.0 API。
 /// `Clone`: Endpoint 内部为 Arc 句柄，克隆廉价，供多笔记并发同步。
 /// DK-41: 远端 update 持久化钩子类型（接收侧 updatelog 桥接）。
-type UpdateSink = Arc<dyn Fn(&[u8]) + Send + Sync>;
+type UpdateSink = Arc<dyn Fn(&[u8], &[u8]) + Send + Sync>; // (update, post-import vv encode)——DK-41 修正 1：接收侧须同步推进水位（alpha-DK38-裁决复核.md）
 
 pub struct IrohTransport {
     /// iroh Endpoint（QUIC 监听器 + NAT 穿透）。
@@ -238,7 +238,9 @@ impl IrohTransport {
             {
                 let guard = self.update_sink.lock();
                 if let Some(sink) = guard.as_ref() {
-                    sink(&remote_update);
+                    // 修正 1：import 后的 oplog_vv 即「已见全部内容」水位，随 update 一并交宿主
+                    let vv_bytes = local_doc.oplog_vv().encode();
+                    sink(&remote_update, &vv_bytes);
                 }
             }
             debug!("imported {} bytes from peer", received_bytes);
@@ -386,7 +388,9 @@ impl IrohTransport {
             {
                 let guard = self.update_sink.lock();
                 if let Some(sink) = guard.as_ref() {
-                    sink(&remote_update);
+                    // 修正 1：import 后的 oplog_vv 即「已见全部内容」水位，随 update 一并交宿主
+                    let vv_bytes = local_doc.oplog_vv().encode();
+                    sink(&remote_update, &vv_bytes);
                 }
             }
         }
@@ -985,7 +989,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn dk41_updatelog_bridge_persistence() {
         use aurora_core::l1_infrastructure::storage_engine::MemoryKVStore;
-        use aurora_core::write_path::{append_update_log, count_update_log};
+        use aurora_core::traits::kv_store::KVStore;
+        use aurora_core::write_path::count_update_log;
         use std::sync::Arc as StdArc;
 
         let network = spawn_network();
@@ -1000,21 +1005,22 @@ mod tests {
         let note = "bridge-note";
 
         let kv_a_sink = kv_a.clone();
-        a.set_update_sink(StdArc::new(move |update: &[u8]| {
+        a.set_update_sink(StdArc::new(move |update: &[u8], vv: &[u8]| {
             let kv = kv_a_sink.clone();
             futures::executor::block_on(async {
-                let seq = count_update_log(kv.as_ref(), note).await;
-                let _ = append_update_log(kv.as_ref(), note, update).await;
-                let _ = seq;
+                // 修正 1：接收侧原语——append+水位推进一体（不推水位=膨胀复发）
+                aurora_core::write_path::receive_update_log(kv.as_ref(), note, update, vv)
+                    .await
+                    .expect("sink receive_update_log");
             });
         }));
         let kv_b_sink = kv_b.clone();
-        b.set_update_sink(StdArc::new(move |update: &[u8]| {
+        b.set_update_sink(StdArc::new(move |update: &[u8], vv: &[u8]| {
             let kv = kv_b_sink.clone();
             futures::executor::block_on(async {
-                let seq = count_update_log(kv.as_ref(), note).await;
-                let _ = append_update_log(kv.as_ref(), note, update).await;
-                let _ = seq;
+                aurora_core::write_path::receive_update_log(kv.as_ref(), note, update, vv)
+                    .await
+                    .expect("sink receive_update_log");
             });
         }));
 
@@ -1043,6 +1049,105 @@ mod tests {
         assert!(
             rt.contains("A-bridge"),
             "重启重放须恢复 A 端编辑, got {rt:?}"
+        );
+
+        // DoD 3（修正 1）：sink 落 log 后水位键已推进（updatelogvv 非空——
+        // 缺失即接收侧膨胀复发路径开放，receive_update_log 原语锚定）
+        let wm_a = kv_a
+            .as_ref()
+            .get(&format!("updatelogvv:{note}"))
+            .await
+            .unwrap();
+        let wm_b = kv_b
+            .as_ref()
+            .get(&format!("updatelogvv:{note}"))
+            .await
+            .unwrap();
+        assert!(
+            wm_a.map(|b| !b.is_empty()).unwrap_or(false),
+            "A 端水位须落地"
+        );
+        assert!(
+            wm_b.map(|b| !b.is_empty()).unwrap_or(false),
+            "B 端水位须落地"
+        );
+    }
+
+    /// DoD 2（修正 2）：SqliteStorage 双实例持久化面——文件级真实存储 +
+    /// 「重启」（重开连接）后打开链重放恢复对端编辑 + 水位键推进。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk41_bridge_sqlite_persistence() {
+        use aurora_core::l1_infrastructure::storage::SqliteStorage;
+        use aurora_core::traits::kv_store::KVStore;
+        use aurora_core::write_path::receive_update_log;
+        use std::sync::Arc as StdArc;
+
+        let network = spawn_network();
+        let a = spawn_node(&network, "sa").await;
+        let b = spawn_node(&network, "sb").await;
+        let doc_a = edited_doc("A-sqlite");
+        let doc_b = edited_doc("B-sqlite");
+
+        // 双端独立 SQLite 文件（tempfile 隔离），模拟真实持久化 KV
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kv_a = StdArc::new(SqliteStorage::new(dir.path().join("a.db")).expect("sqlite a"));
+        let kv_b = StdArc::new(SqliteStorage::new(dir.path().join("b.db")).expect("sqlite b"));
+        let note = "sqlite-note";
+
+        let kv_a_sink = kv_a.clone();
+        a.set_update_sink(StdArc::new(move |update: &[u8], vv: &[u8]| {
+            let kv = kv_a_sink.clone();
+            futures::executor::block_on(async {
+                receive_update_log(kv.as_ref(), note, update, vv)
+                    .await
+                    .expect("sqlite sink receive");
+            });
+        }));
+        let kv_b_sink = kv_b.clone();
+        b.set_update_sink(StdArc::new(move |update: &[u8], vv: &[u8]| {
+            let kv = kv_b_sink.clone();
+            futures::executor::block_on(async {
+                receive_update_log(kv.as_ref(), note, update, vv)
+                    .await
+                    .expect("sqlite sink receive");
+            });
+        }));
+
+        let accepts = spawn_accepts(&b, &doc_b, 1);
+        let report = sync_pair(&a, &b.addr(), &doc_a).await;
+        assert!(
+            report.success,
+            "sqlite bridge sync failed: {:?}",
+            report.error
+        );
+        join_accepts(accepts).await;
+
+        // DoD 2 核心：模拟 A 端进程重启——drop 后重开同一 db 文件（新连接），
+        // 打开链（快照/log 重放）须恢复出 B 的编辑（KV 态跨重启一致）
+        drop(kv_a);
+        let kv_a_reopened =
+            StdArc::new(SqliteStorage::new(dir.path().join("a.db")).expect("sqlite reopen"));
+        let replayed = LoroDoc::new();
+        for upd in aurora_core::write_path::read_update_log(kv_a_reopened.as_ref(), note)
+            .await
+            .unwrap()
+        {
+            replayed.import(&upd).expect("replay import");
+        }
+        let rt = replayed.get_text("content").to_string();
+        assert!(
+            rt.contains("B-sqlite"),
+            "SQLite 重启重放须恢复 B 端编辑, got {rt:?}"
+        );
+
+        // DoD 3：重启后水位键仍在（持久化面）
+        let wm = kv_a_reopened
+            .get(&format!("updatelogvv:{note}"))
+            .await
+            .unwrap();
+        assert!(
+            wm.map(|b| !b.is_empty()).unwrap_or(false),
+            "水位须跨重启持久"
         );
     }
 }

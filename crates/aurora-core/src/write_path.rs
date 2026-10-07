@@ -422,6 +422,22 @@ fn update_vv_key(note_id: &str) -> String {
     format!("updatelogvv:{note_id}")
 }
 
+/// DK-41（修正 1，alpha-DK38-裁决复核.md）：接收侧原语——落对端增量并
+/// **同步推进水位**。sink/宿主落 log 后若不推水位，本地下次 persist 将回落
+/// 旧快照 vv 重导出对端增量 → 膨胀复发；此原语把「append+水位」绑定为单步，
+/// 接收侧免知水位细节。`vv_bytes` = 应用该 update 后的 doc `oplog_vv` encode
+/// （含对端 op 计数，iroh_transport 两 import 点现成可得）。
+#[cfg(feature = "loro-crdt")]
+pub async fn receive_update_log(
+    kv: &dyn KVStore,
+    note_id: &str,
+    update: &[u8],
+    vv_bytes: &[u8],
+) -> Result<(), Error> {
+    append_update_log(kv, note_id, update).await?;
+    kv.set(&update_vv_key(note_id), vv_bytes).await
+}
+
 /// DK-40a: 读全部增量（seq 升序）——打开链重放用。
 /// DK-41: pub 化（打开链重放/桥接测试用）。
 #[cfg(feature = "loro-crdt")]
