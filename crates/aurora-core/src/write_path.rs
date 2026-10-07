@@ -410,6 +410,13 @@ async fn append_update_log(kv: &dyn KVStore, note_id: &str, update: &[u8]) -> Re
     kv.set(&update_log_key(note_id, seq), update).await
 }
 
+/// P2 修复：已 append 水位 vv 键。独立前缀 `updatelogvv:` ——不可挂
+/// `updatelog:{id}:` 下（scan_prefix/count_update_log 按条目计数，混入即错位）。
+#[cfg(feature = "loro-crdt")]
+fn update_vv_key(note_id: &str) -> String {
+    format!("updatelogvv:{note_id}")
+}
+
 /// DK-40a: 读全部增量（seq 升序）——打开链重放用。
 #[cfg(feature = "loro-crdt")]
 async fn read_update_log(kv: &dyn KVStore, note_id: &str) -> Result<Vec<Vec<u8>>, Error> {
@@ -434,7 +441,7 @@ async fn count_update_log(kv: &dyn KVStore, note_id: &str) -> usize {
         .unwrap_or(0)
 }
 
-/// DK-40a: compaction —— 快照回写（调用方已持最新 doc）+ log 清空。
+/// DK-40a: compaction —— 快照回写（调用方已持最新 doc）+ log 清空 + 水位对齐。
 #[cfg(feature = "loro-crdt")]
 async fn compact_update_log(kv: &dyn KVStore, note_id: &str, doc: &NoteDoc) -> Result<(), Error> {
     let snap = doc.export_snapshot()?;
@@ -443,6 +450,10 @@ async fn compact_update_log(kv: &dyn KVStore, note_id: &str, doc: &NoteDoc) -> R
     for (k, _) in pairs {
         kv.delete(&k).await?;
     }
+    // P2 修复：水位对齐快照态（快照=当前 doc，下轮 base 自此起算；函数
+    // 自洽——被 persist 阈值路径调用时水位已是同值，幂等；被测试直调时补齐）
+    kv.set(&update_vv_key(note_id), &doc.version_vector().encode())
+        .await?;
     Ok(())
 }
 
@@ -470,23 +481,39 @@ async fn load_or_init_doc(kv: &dyn KVStore, note_id: &str) -> Result<NoteDoc, Er
     }
 }
 
-/// DK-40a 混合存储写路径：增量追加 update log（自旧快照 vv 起）；
+/// DK-40a 混合存储写路径：增量追加 update log；
 /// log 达 `UPDATE_LOG_COMPACT_THRESHOLD` 后全量快照回写+log 清空
 /// （写放大消除——快照低频 + 增量高频，38b 传输单元即 log 内 update）。
+///
+/// P2 修复（alpha-P2修复设计卡.md 方案 A 水位键）：base_vv 改取**已 append
+/// 水位**（`updatelogvv:{id}`）而非旧快照态——旧实现快照仅 compaction 回写，
+/// 每轮 `export_update_since(快照 vv)` 重导出全部历史 delta → 条目 bytes O(n²)
+/// 膨胀。存量 note 无水位键 → 回落旧快照 vv（首次 append 后水位落地，旧 log
+/// 重复内容随下次 compaction 渐进清空）。append 后写水位前崩溃 → 下轮重导出
+/// 上一轮 delta，loro apply 幂等自愈（较旧实现每轮全量重复的本质改善）。
 #[cfg(feature = "loro-crdt")]
 async fn persist_doc(kv: &dyn KVStore, note_id: &str, doc: &NoteDoc) -> Result<(), Error> {
     let old_snap = kv.get(&format!("notesnap:{note_id}")).await?;
     // 无旧快照（首次持久化）→ 直接全量快照初始化（与旧版语义一致——
-    // notesnap 从首写即存在，软删/恢复数据源语义不变）；log 自第二轮记增量
+    // notesnap 从首写即存在，软删/恢复数据源语义不变）；水位=当前态 vv
     if old_snap.as_ref().map(|b| b.is_empty()).unwrap_or(true) {
         let snapshot = doc.export_snapshot()?;
         kv.set(&format!("notesnap:{note_id}"), &snapshot).await?;
+        kv.set(&update_vv_key(note_id), &doc.version_vector().encode())
+            .await?;
         return Ok(());
     }
-    // 基准 vv = 旧快照文档态
-    let base_vv = NoteDoc::from_snapshot(old_snap.as_ref().unwrap())?.version_vector();
+    // P2 修复：base_vv = 已 append 水位（精确单轮增量）；无水位回落旧快照 vv
+    let base_vv = match kv.get(&update_vv_key(note_id)).await? {
+        Some(bytes) if !bytes.is_empty() => loro::VersionVector::decode(&bytes)
+            .map_err(|e| Error::Internal(format!("update vv decode failed: {e}")))?,
+        _ => NoteDoc::from_snapshot(old_snap.as_ref().unwrap())?.version_vector(),
+    };
     let update = doc.export_update_since(&base_vv)?;
     append_update_log(kv, note_id, &update).await?;
+    // 水位推进（本轮末态）
+    kv.set(&update_vv_key(note_id), &doc.version_vector().encode())
+        .await?;
 
     // compaction：log 达阈值 → 全量快照回写 + log 清空（行为不变性由测试锚定）
     if count_update_log(kv, note_id).await >= UPDATE_LOG_COMPACT_THRESHOLD {
@@ -1983,5 +2010,74 @@ mod dk40a_tests {
         // 二次打开：快照已落（自动初始化闭环）
         let reopened = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
         assert_eq!(reopened.body(), "seed");
+    }
+
+    /// P2 修复回归（alpha-P2修复设计卡.md 方案 A）：每轮 log 条目==该轮精确
+    /// 增量（与 persist 前单独 export 的单轮 delta 逐字节相等）——旧实现以旧
+    /// 快照 vv 为 base，重导出全部历史 delta，在此断言下逐轮失败。
+    #[tokio::test]
+    async fn dk40a_log_exact_delta_per_round() {
+        let kv = kv();
+        let note_id = "exact-delta";
+        let doc = NoteDoc::new("t", "ws").unwrap();
+        doc.insert_body(0, "v0", 1).unwrap();
+        persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+        let mut prev_vv = doc.version_vector();
+
+        for i in 1..=20usize {
+            doc.insert_body(doc.body_len(), &format!("edit-{i:02}"), (i * 100) as i64)
+                .unwrap();
+            let expect = doc.export_update_since(&prev_vv).unwrap();
+            persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+            let last = read_update_log(kv.as_ref(), note_id)
+                .await
+                .unwrap()
+                .pop()
+                .unwrap();
+            assert_eq!(
+                last, expect,
+                "第{i}轮 log 条目须为单轮精确增量（旧实现重导出历史在此失败）"
+            );
+            prev_vv = doc.version_vector();
+        }
+        // 条目数=编辑轮数（首 persist 为全量快照不入 log）+ 水位键落地且=末态 vv
+        assert_eq!(count_update_log(kv.as_ref(), note_id).await, 20);
+        let stored = kv.get(&update_vv_key(note_id)).await.unwrap().unwrap();
+        assert_eq!(
+            loro::VersionVector::decode(&stored).unwrap(),
+            doc.version_vector(),
+            "水位=末态 vv"
+        );
+        // 重放等价回归：打开链 == 连续编辑态（P2 改动不得破坏 DoD2）
+        let reopened = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        assert_eq!(reopened.body(), doc.body());
+    }
+
+    /// P2 修复：存量 note（快照+log、无水位键）首次 persist 回落旧快照 vv——
+    /// append 正常 + 水位键落地（旧 log 重复内容随下次 compaction 渐进清空）。
+    #[tokio::test]
+    async fn dk40a_legacy_no_watermark_fallback() {
+        let kv = kv();
+        let note_id = "legacy-no-wm";
+        let doc = NoteDoc::new("t", "ws").unwrap();
+        doc.insert_body(0, "v0", 1).unwrap();
+        persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+        // 模拟存量旧态：删水位键（旧版本无此键）
+        kv.delete(&update_vv_key(note_id)).await.unwrap();
+        assert!(kv.get(&update_vv_key(note_id)).await.unwrap().is_none());
+
+        doc.insert_body(doc.body_len(), "legacy-edit", 2_000)
+            .unwrap();
+        persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+        // 回落路径：append 正常 + 水位键重新落地
+        assert_eq!(count_update_log(kv.as_ref(), note_id).await, 1);
+        let stored = kv.get(&update_vv_key(note_id)).await.unwrap().unwrap();
+        assert_eq!(
+            loro::VersionVector::decode(&stored).unwrap(),
+            doc.version_vector()
+        );
+        // 重放等价：回落路径不破坏打开链
+        let reopened = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        assert!(reopened.body().contains("legacy-edit"));
     }
 }
