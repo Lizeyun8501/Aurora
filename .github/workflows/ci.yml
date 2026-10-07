@@ -93,6 +93,18 @@ jobs:
             libxdo-dev \
             patchelf
       - uses: Swatinem/rust-cache@v2
+      # 2026-10-07: Test job 同款 desktop 先例加 4G swap——runner 16G 上
+      # workspace 全量测试（436 core+219 sync+…）内存峰值历史敏感（run151
+      # loro OOM 先例），354 常规 Test 首红（代码同面 353 绿）归因资源类。
+      - name: Add swap
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 4G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
       # 2026-09-25 根因收敛：run151 dcheck-log 仅 9.76KB（~200 crate 处挂，exit 101）
       # → cargo check 无链接也挂 → 非链接期盘满，是 loro 系 C++ 并行编译 OOM
       # （本地 4G 串行全绿佐证）。三管齐下：Build 排除 desktop（职责分离，
@@ -110,19 +122,39 @@ jobs:
           path: /tmp/build.log
           retention-days: 3
           if-no-files-found: ignore
+      # 2026-10-07: 失败重跑一次——常规 Test 亦确认 flake 面（354 首红，
+      # 代码同面 353 绿）；两轮都挂=真失败证据链更强，单轮挂=环境瞬时抖动。
       - name: Test
         run: |
           cargo test --workspace --exclude aurora-desktop --verbose 2>&1 | tee /tmp/test.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then
+            echo "TEST_RETRY: 首轮失败（疑 runner 环境 flake），重跑一次"
+            cargo test --workspace --exclude aurora-desktop --verbose 2>&1 | tee /tmp/test-retry.log; rc=${PIPESTATUS[0]}
+          fi
           echo "TEST_RC=$rc"
           exit $rc
       - name: Upload test log
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-log
-          path: /tmp/test.log
+          path: |
+            /tmp/test.log
+            /tmp/test-retry.log
           retention-days: 3
           if-no-files-found: ignore
+      # 2026-10-07: ::error:: annotation 通道复制到 Test job（desktop-check
+      # 2026-09-25 同款）——日志/artifact 全部登录墙后的唯一免认证诊断通道，
+      # 失败测试名单直接进 annotation（匿名 check-run API 可读）。
+      - name: Report test failure tail
+        if: failure()
+        run: |
+          echo "::error::test-failed-list>> $(rg -o '^\s*test .* \.\.\. FAILED' /tmp/test-retry.log /tmp/test.log 2>/dev/null | sort -u | head -30 | tr '\n' '§' || echo none-captured)"
+          echo "::error::test-log-bytes>> $(wc -c < /tmp/test.log 2>/dev/null || echo missing)"
+          echo "::error::df>> $(df -h / | tail -1 | tr -s ' ')"
+          echo "::error::free>> $(free -h | sed -n 2p | tr -s ' ')"
+          echo "::error::oom>> $(sudo dmesg 2>/dev/null | rg -i 'oom|killed process' | tail -4 | tr '\n' '§' || echo none)"
+          echo "::error::raw-tail>> $(tail -c 1500 /tmp/test-retry.log /tmp/test.log 2>/dev/null | tr '\n' '§' | tr '\r' ' ')"
       # DK-08 S5 盲区补齐（bravo-DK08-同步.md 验收记录）：多节点多 NAT 仿真
       # 与 iroh-transport 生产传输代码被 feature 门控，默认集不覆盖。
       # 2026-10-07 加固：本地 224 测全绿+同代码面 fd1464d CI 绿+之后连红 3 笔
@@ -146,6 +178,13 @@ jobs:
             /tmp/iroh-test-retry.log
           retention-days: 3
           if-no-files-found: ignore
+      # 2026-10-07: iroh 失败名单进 annotation（Test job 同款匿名诊断通道）
+      - name: Report iroh failure tail
+        if: failure()
+        run: |
+          echo "::error::iroh-failed-list>> $(rg -o '^\s*test .* \.\.\. FAILED' /tmp/iroh-test-retry.log /tmp/iroh-test.log 2>/dev/null | sort -u | head -20 | tr '\n' '§' || echo none-captured)"
+          echo "::error::iroh-oom>> $(sudo dmesg 2>/dev/null | rg -i 'oom|killed process' | tail -4 | tr '\n' '§' || echo none)"
+          echo "::error::iroh-raw-tail>> $(tail -c 1500 /tmp/iroh-test-retry.log /tmp/iroh-test.log 2>/dev/null | tr '\n' '§' | tr '\r' ' ')"
 
   msrv:
     name: MSRV (1.91)
