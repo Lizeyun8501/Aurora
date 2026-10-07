@@ -29,6 +29,9 @@ use std::collections::HashSet;
 use crate::app_core::AppCore;
 use crate::blocks::BlockStore;
 use crate::error_codes::ErrorCode;
+// DK-40a 修复：KVStore 仅 loro-crdt 面（update log 系）消费；
+// iroh-transport 单独解析面下未激活 → unused import + -D warnings 编译失败（run 37564438794）。
+#[cfg(feature = "loro-crdt")]
 use crate::traits::kv_store::KVStore;
 use crate::Error;
 use serde::{Deserialize, Serialize};
@@ -393,6 +396,9 @@ pub async fn set_note_encryption(
 #[cfg(feature = "loro-crdt")]
 const UPDATE_LOG_COMPACT_THRESHOLD: usize = 500;
 
+/// DK-40a 修复：补齐同组 cfg——update_log_key 仅 update log 系（loro-crdt）调用；
+/// 漏挂导致 iroh-transport 面下 dead_code（-D warnings → error，run 37564438794）。
+#[cfg(feature = "loro-crdt")]
 fn update_log_key(note_id: &str, seq: usize) -> String {
     format!("updatelog:{note_id}:{seq:020}")
 }
