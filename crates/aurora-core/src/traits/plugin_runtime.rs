@@ -6,6 +6,25 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+/// DK-42: 沙箱资源限制参数（manifest 级可配——插件市场差异化限额刚需）。
+/// serde default 向后兼容：旧清单（无 sandbox 字段）反序列化即缺省安全值。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SandboxLimits {
+    /// epoch deadline ticks（tick=10ms；缺省 200 = 2s；0 = 回退 runtime 缺省）。
+    pub epoch_deadline_ticks: u32,
+    /// 单插件线性内存上限字节（缺省 64 MiB；0 = 回退 runtime 缺省）。
+    pub max_memory_bytes: usize,
+}
+
+impl Default for SandboxLimits {
+    fn default() -> Self {
+        Self {
+            epoch_deadline_ticks: 200,
+            max_memory_bytes: 64 * 1024 * 1024,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
     pub id: String,
@@ -19,6 +38,9 @@ pub struct PluginManifest {
     pub hooks: Vec<String>,
     pub block_types: Vec<String>,
     pub config_schema: Option<serde_json::Value>,
+    /// DK-42: 沙箱资源限制（manifest 级覆盖 runtime 缺省；serde default 平滑兼容）。
+    #[serde(default)]
+    pub sandbox: SandboxLimits,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

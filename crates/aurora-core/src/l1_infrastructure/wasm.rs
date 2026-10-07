@@ -20,6 +20,9 @@ pub const DEFAULT_MAX_MEMORY_BYTES: usize = 64 * 1024 * 1024;
 /// DK-39: Store state 携带内存限额——`Store<MemoryLimiter>` + `store.limiter(|s| s)`。
 struct MemoryLimiter {
     max_bytes: usize,
+    /// DK-42: 本 call 曾触顶旗标（软拒绝下 grow 返 -1 无 trap——宿主经
+    /// last_call_hit_limit 程序化查询触顶，可观测性补齐）。
+    hit_limit: bool,
 }
 
 impl wasmtime::ResourceLimiter for MemoryLimiter {
@@ -30,7 +33,12 @@ impl wasmtime::ResourceLimiter for MemoryLimiter {
         _maximum: Option<usize>,
     ) -> Result<bool, anyhow::Error> {
         // Ok(false) = 拒绝增长 → guest 侧 memory.grow 返回 -1（软失败语义）。
-        Ok(desired <= self.max_bytes)
+        // DK-42: 拒绝同时置触顶旗标（TA 折中裁决：软语义兼容 + 可观测补齐）。
+        let allow = desired <= self.max_bytes;
+        if !allow {
+            self.hit_limit = true;
+        }
+        Ok(allow)
     }
 
     fn table_growing(
@@ -56,6 +64,8 @@ pub struct WasmtimeRuntime {
     max_memory_bytes: usize,
     /// DK-39: epoch ticker 停机旗标（Drop 置位）。
     ticker_stop: Arc<AtomicBool>,
+    /// DK-42: 最近一次 invoke 是否内存触顶（per-plugin 触顶观测）。
+    hit_limits: Mutex<HashMap<String, bool>>,
 }
 
 impl WasmtimeRuntime {
@@ -94,7 +104,18 @@ impl WasmtimeRuntime {
             deadline_ticks,
             max_memory_bytes,
             ticker_stop: stop,
+            hit_limits: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// DK-42: 查询插件最近一次 invoke 是否发生内存触顶（软拒绝下 grow 返 -1，
+    /// 宿主据此程序化感知"插件可能静默行为异常"）。
+    pub fn last_call_hit_limit(&self, plugin_id: &str) -> bool {
+        self.hit_limits
+            .lock()
+            .ok()
+            .and_then(|m| m.get(plugin_id).copied())
+            .unwrap_or(false)
     }
 }
 
@@ -107,6 +128,30 @@ impl Drop for WasmtimeRuntime {
 impl Default for WasmtimeRuntime {
     fn default() -> Self {
         Self::new().expect("wasmtime engine creation should not fail")
+    }
+}
+
+/// DK-42: invoke 错误分类——epoch 超期与通用失败程序化区分（可观测性）。
+fn classify_call_err(e: wasmtime::Error) -> crate::Error {
+    if e.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::Interrupt) {
+        crate::Error::Internal("plugin deadline exceeded".to_string())
+    } else {
+        crate::Error::Internal(format!("wasm call: {e}"))
+    }
+}
+
+/// DK-42: 记录触顶观测（软拒绝无错误——宿主经 last_call_hit_limit 查询）。
+fn record_hit_limit(
+    hit_limits: &Mutex<HashMap<String, bool>>,
+    plugin_id: &str,
+    store: &wasmtime::Store<MemoryLimiter>,
+) {
+    let hit = store.data().hit_limit;
+    if hit {
+        tracing::warn!("wasm plugin hit memory limit: plugin={plugin_id}（软拒绝：grow 返 -1）");
+    }
+    if let Ok(mut m) = hit_limits.lock() {
+        m.insert(plugin_id.to_string(), hit);
     }
 }
 
@@ -176,14 +221,28 @@ impl PluginRuntime for WasmtimeRuntime {
         // 有状态插件（Store 持久缓存）后续卡扩展。
         // DK-39: Store state 携带内存限额 + epoch deadline（超时 trap，
         // 恶意/缺陷插件不再阻塞调用线程）。
+        // DK-42: manifest.sandbox per-plugin 覆盖（0 = 回退 runtime 缺省；
+        // serde default 旧清单自动填缺省安全值 2s/64MiB）。
+        let limits = handle.manifest.sandbox;
+        let deadline = if limits.epoch_deadline_ticks == 0 {
+            self.deadline_ticks
+        } else {
+            limits.epoch_deadline_ticks
+        };
+        let max_bytes = if limits.max_memory_bytes == 0 {
+            self.max_memory_bytes
+        } else {
+            limits.max_memory_bytes
+        };
         let mut store = wasmtime::Store::new(
             &self.engine,
             MemoryLimiter {
-                max_bytes: self.max_memory_bytes,
+                max_bytes,
+                hit_limit: false,
             },
         );
         store.limiter(|state: &mut MemoryLimiter| state);
-        store.set_epoch_deadline(u64::from(self.deadline_ticks));
+        store.set_epoch_deadline(u64::from(deadline));
         let linker = wasmtime::Linker::<MemoryLimiter>::new(&self.engine);
         let instance = linker
             .instantiate(&mut store, &module)
@@ -193,18 +252,18 @@ impl PluginRuntime for WasmtimeRuntime {
                 let f = instance
                     .get_typed_func::<i32, i32>(&mut store, method)
                     .map_err(|e| crate::Error::Internal(format!("wasm export (i32)->i32: {e}")))?;
-                let r = f
-                    .call(&mut store, v.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
-                    .map_err(|e| crate::Error::Internal(format!("wasm call: {e}")))?;
+                let r = f.call(&mut store, v.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+                record_hit_limit(&self.hit_limits, &handle.id, &store);
+                let r = r.map_err(classify_call_err)?;
                 serde_json::Value::from(r)
             }
             None => {
                 let f = instance
                     .get_typed_func::<(), i32>(&mut store, method)
                     .map_err(|e| crate::Error::Internal(format!("wasm export ()->i32: {e}")))?;
-                let r = f
-                    .call(&mut store, ())
-                    .map_err(|e| crate::Error::Internal(format!("wasm call: {e}")))?;
+                let r = f.call(&mut store, ());
+                record_hit_limit(&self.hit_limits, &handle.id, &store);
+                let r = r.map_err(classify_call_err)?;
                 serde_json::Value::from(r)
             }
         };
@@ -312,7 +371,7 @@ impl PluginRuntime for IframeRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::plugin_runtime::{PluginManifest, RuntimeType};
+    use crate::traits::plugin_runtime::{PluginManifest, RuntimeType, SandboxLimits};
 
     /// e2e 样本（wat 内联编译——DK-33 DoD：真实 wasm 字节码，不引入工具链）：
     /// 导出 `answer() -> i32`（常量 42）与 `bump(i32) -> i32`（+1）。
@@ -371,6 +430,7 @@ mod tests {
             hooks: vec![],
             block_types: vec![],
             config_schema: None,
+            sandbox: SandboxLimits::default(),
         }
     }
 
@@ -456,5 +516,98 @@ mod tests {
 
         let out = rt.invoke(&handle, "eat", &serde_json::Value::Null).await;
         assert!(out.is_err(), "内存超限必须报错，实际正常返回: {out:?}");
+    }
+
+    /// DK-42 DoD1: manifest 级限额覆盖 + 触顶观测（TA 折中裁决：
+    /// 软拒绝语义不变 + hit_limit 位程序化可查）。
+    #[tokio::test]
+    async fn dk42_manifest_hit_limit_observable() {
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = wat::parse_str(
+            r#"
+            (module
+                (memory 1)
+                (func (export "eat") (result i32)
+                    (loop $l
+                        (br_if $l (i32.ne (memory.grow (i32.const 16)) (i32.const -1)))
+                    )
+                    unreachable
+                )
+                (func (export "answer") (result i32) (i32.const 42))
+            )
+        "#,
+        )
+        .unwrap();
+        let entry = dir.path().join("dk42.wasm");
+        std::fs::write(&entry, wasm).unwrap();
+
+        let mut m = manifest(entry.to_string_lossy().to_string());
+        // manifest 级覆盖：256 KB（初始 1 页 64 KiB，数轮 grow 即触顶）
+        m.sandbox = SandboxLimits {
+            epoch_deadline_ticks: DEFAULT_DEADLINE_TICKS,
+            max_memory_bytes: 256 * 1024,
+        };
+        let mut rt = WasmtimeRuntime::new().unwrap();
+        let handle = rt.load(&m).await.unwrap();
+
+        // 软拒绝：grow 返 -1 → guest unreachable trap（既有语义不变，报错返回）
+        let out = rt.invoke(&handle, "eat", &serde_json::Value::Null).await;
+        assert!(out.is_err(), "超限样本须报错: {out:?}");
+        // 触顶可观测：宿主程序化查询本 call 曾触顶
+        assert!(rt.last_call_hit_limit("test-plugin"), "触顶旗标必须置位");
+        // 未触顶查询：正常调用后旗标复位
+        let ok = rt
+            .invoke(&handle, "answer", &serde_json::Value::Null)
+            .await
+            .unwrap();
+        assert_eq!(ok, serde_json::json!(42));
+        assert!(
+            !rt.last_call_hit_limit("test-plugin"),
+            "正常调用后触顶旗标须复位"
+        );
+    }
+
+    /// DK-42 DoD2: 错误三分类——deadline trap 报 "plugin deadline exceeded"
+    /// （宿主可程序化区分插件超时 vs 插件 bug）。
+    #[tokio::test]
+    async fn dk42_error_classification_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = wat::parse_str(
+            r#"
+            (module
+                (func (export "spin") (result i32) (loop (br 0)) unreachable)
+            )
+        "#,
+        )
+        .unwrap();
+        let entry = dir.path().join("spin42.wasm");
+        std::fs::write(&entry, wasm).unwrap();
+
+        let mut m = manifest(entry.to_string_lossy().to_string());
+        m.sandbox.epoch_deadline_ticks = 20; // 200ms，manifest 级覆盖
+        let mut rt = WasmtimeRuntime::new().unwrap();
+        let handle = rt.load(&m).await.unwrap();
+
+        let err = rt
+            .invoke(&handle, "spin", &serde_json::Value::Null)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("plugin deadline exceeded"),
+            "须分类为 deadline 超期, got {msg}"
+        );
+        assert!(!msg.contains("wasm call:"), "不得落在通用包装: {msg}");
+    }
+
+    /// DK-42 DoD3: serde default 兼容——旧清单（无 sandbox 字段）反序列化
+    /// 自动填缺省安全值（2s/64MiB），已上线清单零迁移。
+    #[test]
+    fn dk42_sandbox_serde_default_compat() {
+        let legacy = r#"{"id":"x","name":"x","version":"0","author":"a","description":"d","runtime":"Wasm","entry":"e.wasm","permissions":[],"hooks":[],"block_types":[],"config_schema":null}"#;
+        let m: PluginManifest = serde_json::from_str(legacy).unwrap();
+        assert_eq!(m.sandbox, SandboxLimits::default());
+        assert_eq!(m.sandbox.epoch_deadline_ticks, DEFAULT_DEADLINE_TICKS);
+        assert_eq!(m.sandbox.max_memory_bytes, DEFAULT_MAX_MEMORY_BYTES);
     }
 }

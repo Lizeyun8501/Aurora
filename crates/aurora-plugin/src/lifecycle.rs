@@ -205,6 +205,7 @@ fn sample_manifest(id: &str, mode: RuntimeType, perms: &[&str]) -> PluginManifes
         hooks: vec!["on_save".to_string()],
         block_types: vec![],
         config_schema: None,
+        sandbox: Default::default(),
     }
 }
 
