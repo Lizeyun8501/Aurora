@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use aurora_core::traits::crypto_provider::{CryptoProvider, Ed25519PublicKey, Ed25519Signature};
+use aurora_core::traits::plugin_runtime::{PluginManifest, RuntimeType, SandboxLimits};
 
 /// 插件来源分类。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -56,12 +57,47 @@ pub struct PluginListing {
     /// 是否通过签名验证
     pub verified: bool,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// DK-43: per-plugin 沙箱限额（市场差异化策略——随 listing 传播进
+    /// 安装后的 PluginManifest）。**签名面外**（#[serde(skip)]：canonical_bytes
+    /// 不含此字段——签名认证代码来源，限额是宿主策略，不参与代码完整性），
+    /// 已签名旧 listing 验证不受影响。bincode/serde 缺省安全值。
+    #[serde(skip, default = "default_sandbox")]
+    pub sandbox: SandboxLimits,
+}
+
+fn default_sandbox() -> SandboxLimits {
+    SandboxLimits::default()
 }
 
 impl PluginListing {
     /// 解析 semver 为 `(major, minor, patch)`，无法解析的分量按 0 处理。
     pub fn version_tuple(&self) -> (u64, u64, u64) {
         parse_semver(&self.version)
+    }
+
+    /// DK-43: 市场安装路径——listing → PluginManifest（sandbox 传播）。
+    /// 宿主按 listing.sandbox 的限额加载市场插件（差异化策略落地点）。
+    pub fn to_manifest(
+        &self,
+        entry: String,
+        permissions: Vec<String>,
+        hooks: Vec<String>,
+        block_types: Vec<String>,
+    ) -> PluginManifest {
+        PluginManifest {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            version: self.version.clone(),
+            author: self.author.clone(),
+            description: self.description.clone(),
+            runtime: RuntimeType::Wasm,
+            entry,
+            permissions,
+            hooks,
+            block_types,
+            config_schema: None,
+            sandbox: self.sandbox,
+        }
     }
 
     /// 规范字节序列（用于签名/校验）。
@@ -334,6 +370,7 @@ mod tests {
             checksum: "deadbeef".to_string(),
             verified: false,
             updated_at: chrono::Utc::now(),
+            sandbox: SandboxLimits::default(),
         }
     }
 
@@ -520,5 +557,54 @@ mod tests {
         m.add_trusted_key(vec![1u8; 32]);
         m.add_trusted_key(vec![2u8; 32]);
         assert_eq!(m.trusted_key_count(), 2);
+    }
+
+    /// DK-43 DoD1: listing→manifest 的 sandbox 传播（市场差异化限额落地点）。
+    #[test]
+    fn dk43_listing_to_manifest_sandbox_propagation() {
+        let mut listing = make_listing("mkt-1", "1.0.0", PluginSource::Official);
+        listing.sandbox = SandboxLimits {
+            epoch_deadline_ticks: 50,
+            max_memory_bytes: 8 * 1024 * 1024,
+        };
+        let m = listing.to_manifest(
+            "plugin.wasm".into(),
+            vec!["fs".into()],
+            vec!["on_save".into()],
+            vec![],
+        );
+        assert_eq!(m.id, "mkt-1");
+        assert_eq!(m.sandbox.epoch_deadline_ticks, 50, "限额须随 listing 传播");
+        assert_eq!(m.sandbox.max_memory_bytes, 8 * 1024 * 1024);
+        assert_eq!(m.permissions, vec!["fs".to_string()]);
+    }
+
+    /// DK-43 DoD2: sandbox 在签名面外——canonical_bytes 不含 sandbox 字段，
+    /// 已签名旧 listing 的签名验证不受新增字段影响（代码完整性 vs 宿主策略分离）。
+    #[test]
+    fn dk43_sandbox_outside_signature_surface() {
+        let a = make_listing("sig-1", "1.0.0", PluginSource::Official);
+        let mut b = make_listing("sig-1", "1.0.0", PluginSource::Official);
+        b.updated_at = a.updated_at; // 对齐时间戳（仅 sandbox 差异参与断言）
+        b.sandbox = SandboxLimits {
+            epoch_deadline_ticks: 1,
+            max_memory_bytes: 1,
+        };
+        // 两个 listing 仅 sandbox 不同 → canonical 字节必须一致（签名稳定）
+        let ba = a.canonical_bytes().unwrap();
+        let bb = b.canonical_bytes().unwrap();
+        assert_eq!(ba, bb, "sandbox 不得进入签名面");
+        // listing 克隆后 sandbox 保留（serde roundtrip 语义面）
+        let cloned = a.clone();
+        assert_eq!(cloned.sandbox, a.sandbox);
+    }
+
+    /// DK-43 DoD3: serde 缺省——旧市场清单 JSON（无 sandbox 字段）反序列化
+    /// 即缺省安全值（2s/64MiB）。
+    #[test]
+    fn dk43_listing_sandbox_serde_default() {
+        let legacy = r#"{"id":"x","name":"x","version":"1.0.0","author":"a","description":"d","source":"Official","download_url":"u","checksum":"c","verified":false,"updated_at":"2026-01-01T00:00:00Z"}"#;
+        let l: PluginListing = serde_json::from_str(legacy).unwrap();
+        assert_eq!(l.sandbox, SandboxLimits::default());
     }
 }
