@@ -35,6 +35,7 @@ mod ai_commands;
 mod attachment_commands;
 mod backup_commands;
 mod import_commands;
+mod plugin_commands;
 mod sync_commands;
 
 /// 桌面端默认数据目录名。
@@ -215,6 +216,9 @@ pub fn run() {
             sync_commands::cmd_conflict_list,
             sync_commands::cmd_conflict_resolve,
             sync_commands::cmd_conflict_resolve_semantic,
+            plugin_commands::cmd_list_plugin_policies,
+            plugin_commands::cmd_set_plugin_policy,
+            plugin_commands::cmd_apply_plugin_policy,
             import_commands::cmd_plan_import,
             import_commands::cmd_import_markdown_dir,
             import_commands::cmd_import_enex,

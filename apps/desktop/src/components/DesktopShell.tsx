@@ -1923,6 +1923,50 @@ export default function DesktopShell() {
       .catch((e) => window.alert(`查询失败：${String(e)}`));
   }, [invoke, refreshSyncStatus]);
 
+  // DK-45：插件沙箱策略（市场差异化限额宿主入口——tauri 模式可用）
+  const showPluginPolicies = useCallback(() => {
+    if (!invoke) return;
+    const publishers = (window.prompt('输入插件作者名单（逗号分隔，空=仅查看已配置）', '') ?? '')
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    invoke('cmd_list_plugin_policies', { publishers })
+      .then((r) => {
+        const list = r as Array<{
+          publisher: string;
+          epoch_deadline_ticks: number;
+          max_memory_bytes: number;
+          configured: boolean;
+        }>;
+        if (list.length === 0) {
+          window.alert('插件沙箱策略：无条目（publisher 名单为空）');
+          return;
+        }
+        const lines = list.map(
+          (it) =>
+            `${it.publisher}${it.configured ? '' : '（未配置·缺省）'}：${it.epoch_deadline_ticks} ticks（${Math.round(it.max_memory_bytes / 1024 / 1024)} MiB）`,
+        );
+        window.alert(lines.join('\n'));
+      })
+      .catch((e) => window.alert(`查询失败：${String(e)}`));
+  }, [invoke]);
+  const setPluginPolicy = useCallback(() => {
+    if (!invoke) return;
+    const publisher = window.prompt('插件作者（publisher）', '');
+    if (!publisher) return;
+    const ticks = Number(window.prompt('epoch deadline ticks（1 tick=10ms；0=回退运行时缺省）', '200'));
+    if (Number.isNaN(ticks) || ticks < 0) return;
+    const mib = Number(window.prompt('内存上限（MiB；0=回退运行时缺省）', '64'));
+    if (Number.isNaN(mib) || mib < 0) return;
+    invoke('cmd_set_plugin_policy', {
+      publisher,
+      epoch_deadline_ticks: Math.floor(ticks),
+      max_memory_bytes: Math.floor(mib) * 1024 * 1024,
+    })
+      .then(() => window.alert(`策略已保存：${publisher}（编辑即写，立即生效于后续安装/调用）`))
+      .catch((e) => window.alert(`保存失败：${String(e)}`));
+  }, [invoke]);
+
   // DK-10 切片 3：AI 云策略开关（tauri 模式可用；mock 模式隐藏）
   const [aiDeny, setAiDeny] = useState<boolean | null>(null);
   useEffect(() => {
@@ -2072,6 +2116,18 @@ export default function DesktopShell() {
                   },
                 ]
               : []),
+            {
+              kind: 'command' as const,
+              id: 'plugin-policy-view',
+              title: '插件沙箱策略（查看 per-publisher 限额）',
+              run: showPluginPolicies,
+            },
+            {
+              kind: 'command' as const,
+              id: 'plugin-policy-set',
+              title: '设置插件沙箱策略（编辑即写，市场安装时生效）',
+              run: setPluginPolicy,
+            },
           ]
         : []),
       {
@@ -2096,6 +2152,8 @@ export default function DesktopShell() {
       drainQueue,
       showConflicts,
       resolveFirstConflict,
+      showPluginPolicies,
+      setPluginPolicy,
     ],
   );
 
