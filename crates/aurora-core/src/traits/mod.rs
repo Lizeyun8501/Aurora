@@ -25,6 +25,7 @@ pub mod crdt_engine;
 pub mod crypto_provider;
 pub mod kv_store;
 pub mod ocr_provider;
+pub mod plugin_policy;
 pub mod plugin_runtime;
 pub mod search_backend;
 pub mod storage;
