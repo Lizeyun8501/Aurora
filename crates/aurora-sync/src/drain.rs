@@ -40,6 +40,92 @@ pub async fn drain_to_peer(
     doc_resolver: &dyn Fn(&str) -> Option<Arc<LoroDoc>>,
     batch: usize,
 ) -> DrainReport {
+    drain_inner(queue, transport, peer_addr, &|id| doc_resolver(id), batch).await
+}
+
+/// DK-44: Send+Sync 约束变体——tauri command 的 future 必须 Send，
+/// `&dyn Fn`（?Sync）无法跨 await。逻辑与 [`drain_to_peer`] 一致
+/// （复制实现，仅 doc_resolver 约束收紧为 Send+Sync；两份须同步维护）。
+pub async fn drain_to_peer_sync(
+    queue: &OfflineQueue,
+    transport: &IrohTransport,
+    peer_addr: &EndpointAddr,
+    doc_resolver: &(dyn Fn(&str) -> Option<Arc<LoroDoc>> + Send + Sync),
+    batch: usize,
+) -> DrainReport {
+    let items: Vec<QueueItem> = queue.dequeue_batch(batch);
+    if items.is_empty() {
+        return DrainReport::default();
+    }
+    debug!("drain_sync: 出队 {} 项", items.len());
+
+    let mut report = DrainReport::default();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut ack_keys: Vec<String> = Vec::with_capacity(items.len());
+    let mut failed: BTreeSet<String> = BTreeSet::new();
+
+    for item in &items {
+        if failed.contains(&item.doc_id) {
+            continue;
+        }
+        if seen.contains(&item.doc_id) {
+            ack_keys.push(item.idempotency_key.clone());
+            report.acked_items += 1;
+            continue;
+        }
+        seen.insert(item.doc_id.clone());
+        let Some(doc) = doc_resolver(&item.doc_id) else {
+            warn!("drain_sync: doc 解析失败 doc_id={}", item.doc_id);
+            failed.insert(item.doc_id.clone());
+            report.failed_docs.push(item.doc_id.clone());
+            continue;
+        };
+        let sync: SyncReport = match transport.sync_with_peer(peer_addr.clone(), &doc).await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("drain_sync: doc={} 传输错误 {}", item.doc_id, e);
+                failed.insert(item.doc_id.clone());
+                report.failed_docs.push(item.doc_id.clone());
+                continue;
+            }
+        };
+        if sync.success {
+            info!(
+                "drain_sync: doc={} 补发成功 sent={}B recv={}B",
+                item.doc_id, sync.sent_bytes, sync.received_bytes
+            );
+            ack_keys.push(item.idempotency_key.clone());
+            report.acked_items += 1;
+            report.synced_docs += 1;
+        } else {
+            warn!("drain_sync: doc={} 补发失败 {:?}", item.doc_id, sync.error);
+            failed.insert(item.doc_id.clone());
+            report.failed_docs.push(item.doc_id.clone());
+        }
+    }
+
+    for key in &ack_keys {
+        queue.ack(key).expect("ack 清理幂等索引不应失败");
+    }
+    for item in items {
+        if failed.contains(&item.doc_id) {
+            queue.requeue(item);
+        }
+    }
+    report
+}
+
+/// drain 共享实现（R: Fn + Send + Sync——两条入口约束各自满足）。
+async fn drain_inner<R>(
+    queue: &OfflineQueue,
+    transport: &IrohTransport,
+    peer_addr: &EndpointAddr,
+    doc_resolver: &R,
+    batch: usize,
+) -> DrainReport
+where
+    R: Fn(&str) -> Option<Arc<LoroDoc>>,
+{
     let items: Vec<QueueItem> = queue.dequeue_batch(batch);
     if items.is_empty() {
         return DrainReport::default();

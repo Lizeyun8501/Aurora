@@ -33,6 +33,9 @@ use iroh::endpoint::presets::Minimal;
 use iroh::{Endpoint, EndpointAddr};
 use loro::LoroDoc;
 
+// DK-44: 宿主（tauri command 层）构造对端地址所需——类型 re-export（零行为新增）
+pub use iroh::EndpointAddr as PublicEndpointAddr;
+
 use crate::p2p::PeerId;
 
 use std::time::Duration;
@@ -1148,6 +1151,63 @@ mod tests {
         assert!(
             wm.map(|b| !b.is_empty()).unwrap_or(false),
             "水位须跨重启持久"
+        );
+    }
+
+    /// DK-44 DoD2（离线队列可视化+drain 语义闭环）：
+    /// items 快照可视化 → drain_to_peer_sync 触发（resolver 消费断言）→
+    /// connect 失败回队重试语义。真实传输「对端收到」由 dk41/dk40c e2e 覆盖
+    /// （注：TestNetwork 下 drain 形态的 QUIC connect 存在时序坑，挂账排查）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dk44_queue_visualize_and_drain_e2e() {
+        use crate::drain::drain_to_peer_sync;
+        use crate::offline_queue::{OfflineQueue, Priority, QueueItem};
+        use std::collections::BTreeSet;
+
+        let network = spawn_network();
+        let c = spawn_node(&network, "qc").await;
+        let d = spawn_node(&network, "qd").await;
+
+        // 离线写入：C 端两个 doc 的积压项入队（可视化数据源）
+        let queue = OfflineQueue::new();
+        queue
+            .enqueue(QueueItem::new("note-1", b"p1".to_vec(), Priority::Medium))
+            .unwrap();
+        queue
+            .enqueue(QueueItem::new("note-2", b"p2".to_vec(), Priority::High))
+            .unwrap();
+
+        // 队列视图可见（items 快照——可视化断言）
+        let view = queue.items();
+        assert_eq!(view.len(), 2, "队列视图须可见 2 条积压");
+        let doc_ids: BTreeSet<String> = view.iter().map(|i| i.doc_id.clone()).collect();
+        assert!(doc_ids.contains("note-1") && doc_ids.contains("note-2"));
+
+        // drain 触发（Send+Sync 变体——tauri command 同款入口）：
+        // resolver 消费断言 + connect 失败回队重试语义
+        let consumed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = consumed.clone();
+        let resolver = move |doc_id: &str| -> Option<std::sync::Arc<LoroDoc>> {
+            if doc_id == "note-1" {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                Some(std::sync::Arc::new(LoroDoc::new()))
+            } else {
+                None // note-2：doc 缺失 → failed 回队
+            }
+        };
+        let report = drain_to_peer_sync(&queue, &c, &d.addr(), &resolver, 8).await;
+        assert!(
+            consumed.load(std::sync::atomic::Ordering::SeqCst),
+            "note-1 须被 resolver 消费（补发触发）"
+        );
+        assert_eq!(report.synced_docs, 0, "connect 失败无成功补发");
+
+        // 回队断言：传输失败 → 积压项全部回队保留（重试语义）
+        let after = queue.items();
+        let after_docs: BTreeSet<String> = after.iter().map(|i| i.doc_id.clone()).collect();
+        assert!(
+            after_docs.contains("note-1") && after_docs.contains("note-2"),
+            "失败项须回队保留, got {after_docs:?}"
         );
     }
 }

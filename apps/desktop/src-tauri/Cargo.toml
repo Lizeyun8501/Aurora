@@ -24,9 +24,11 @@ chrono = { workspace = true }
 aurora-core = { path = "../../../crates/aurora-core" }
 aurora-ai = { path = "../../../crates/aurora-ai" }
 aurora-import = { path = "../../../crates/aurora-import" }
-aurora-sync = { path = "../../../crates/aurora-sync" }
+aurora-sync = { path = "../../../crates/aurora-sync", features = ["iroh-transport"] } # DK-44: drain 消费面
 aurora-security = { path = "../../../crates/aurora-security" }
 # 共享启动装配（迁移 + DEK 保险库 + AppCore DI 注入 + startup）
+loro.workspace = true
+futures = "0.3"
 aurora-bootstrap = { path = "../../../crates/aurora-bootstrap" }
 
 dirs-next = "2.0"

@@ -207,6 +207,12 @@ impl OfflineQueue {
         self.heap.lock().len()
     }
 
+    /// DK-44: 队列快照（只读）——离线队列可视化数据源。
+    /// 返回按入队序（内部堆序）的全部积压项拷贝；不改变队列状态。
+    pub fn items(&self) -> Vec<QueueItem> {
+        self.heap.lock().clone().into_vec()
+    }
+
     /// 是否为空。
     pub fn is_empty(&self) -> bool {
         self.heap.lock().is_empty()

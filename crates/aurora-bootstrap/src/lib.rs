@@ -45,6 +45,15 @@ pub struct BootedApp {
     /// 离线同步队列（与 sync_gate 同源装配；内存形态，KV 持久化随引擎
     /// 生产切片——当前无流量驱动，实例先行就位）。
     pub offline_queue: Arc<aurora_sync::offline_queue::OfflineQueue>,
+    /// DK-44: 真冲突副本登记簿（内存态；同步产出真冲突时登记，
+    /// 桌面冲突 UI 只读消费 + mark_resolved 闭环）。
+    pub conflict_artifacts: Arc<aurora_sync::conflict::ConflictArtifactStore>,
+    /// DK-44: 语义冲突解决器（内存态；CRDT 合并后仍需人工介入的冲突，
+    /// 桌面冲突 UI 消费 resolve/resolve_with_value 既有面）。
+    pub conflict_resolver: Arc<aurora_sync::conflict::ConflictResolver>,
+    /// DK-44: 桌面 P2P 传输句柄（Option——`enable_p2p()` 运行时启用；
+    /// bootstrap 不自动 bind，桌面测试/无 P2P 部署零影响）。
+    pub p2p_transport: std::sync::Mutex<Option<Arc<aurora_sync::iroh_transport::IrohTransport>>>,
 }
 
 impl BootedApp {
@@ -214,6 +223,11 @@ pub fn bootstrap(
         attachments,
         sync_gate,
         offline_queue,
+        conflict_artifacts: Arc::new(aurora_sync::conflict::ConflictArtifactStore::new()),
+        conflict_resolver: Arc::new(aurora_sync::conflict::ConflictResolver::new(
+            aurora_sync::conflict::ConflictResolution::ManualSelect,
+        )),
+        p2p_transport: std::sync::Mutex::new(None),
         ai_policy,
         vector_index: std::sync::Arc::new(
             aurora_core::l2_engines::vector_search::VectorIndex::new(
@@ -291,6 +305,40 @@ pub(crate) fn wifi_only_from_kv(core: &AppCore) -> Result<bool, BootstrapError> 
 
 impl BootedApp {
     /// 查询「仅 Wi-Fi 同步」开关（KV 权威值）。
+    /// DK-44: 启用桌面 P2P 传输（运行时显式调用；bind 失败返回错误，
+    /// 不影响已启动的其余面）。启用后 cmd_queue_drain 可触发真实补发。
+    /// 幂等：重复启用直接成功。
+    ///
+    /// # Errors
+    /// iroh Endpoint bind 失败。
+    pub async fn enable_p2p(&self, peer_id: &str) -> Result<(), BootstrapError> {
+        {
+            let guard = self
+                .p2p_transport
+                .lock()
+                .map_err(|_| BootstrapError::Core("p2p_transport mutex poisoned".into()))?;
+            if guard.is_some() {
+                return Ok(()); // 幂等
+            }
+        }
+        let transport = aurora_sync::iroh_transport::IrohTransport::new(
+            aurora_sync::p2p::PeerId::from_str(peer_id),
+        )
+        .await
+        .map_err(|e| BootstrapError::Core(format!("P2P bind 失败: {e}")))?;
+        let mut guard = self
+            .p2p_transport
+            .lock()
+            .map_err(|_| BootstrapError::Core("p2p_transport mutex poisoned".into()))?;
+        *guard = Some(Arc::new(transport));
+        Ok(())
+    }
+
+    /// DK-44: 取当前 P2P 传输句柄（未启用返回 None）。
+    pub fn p2p(&self) -> Option<Arc<aurora_sync::iroh_transport::IrohTransport>> {
+        self.p2p_transport.lock().ok().and_then(|g| g.clone())
+    }
+
     pub fn wifi_only(&self) -> Result<bool, BootstrapError> {
         wifi_only_from_kv(&self.core)
     }

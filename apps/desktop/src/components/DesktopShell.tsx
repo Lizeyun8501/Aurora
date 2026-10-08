@@ -1787,6 +1787,142 @@ export default function DesktopShell() {
       .catch(() => {});
   }, [invoke, wifiOnly]);
 
+  // DK-44：同步体验三块（状态/离线队列/冲突——tauri 模式可用；mock 模式隐藏）
+  const [syncStatus, setSyncStatus] = useState<{
+    gate: string;
+    wifi_only: boolean;
+    queue_len: number;
+    pending_artifacts: number;
+    pending_semantic: number;
+  } | null>(null);
+  const refreshSyncStatus = useCallback(() => {
+    if (!invoke) return;
+    invoke('cmd_sync_status')
+      .then((r) => setSyncStatus(r as never))
+      .catch(() => setSyncStatus(null));
+  }, [invoke]);
+  useEffect(() => {
+    refreshSyncStatus();
+  }, [refreshSyncStatus]);
+  const showSyncStatus = useCallback(() => {
+    if (!invoke) return;
+    invoke('cmd_sync_status')
+      .then((r) => {
+        const st = r as {
+          gate: string;
+          wifi_only: boolean;
+          queue_len: number;
+          pending_artifacts: number;
+          pending_semantic: number;
+        };
+        const gateText =
+          st.gate === 'Allow'
+            ? '在线（允许同步）'
+            : st.gate === 'DeferUntilOnline'
+              ? '离线（无网络 — 已推迟）'
+              : '门控拦截（仅 Wi-Fi + 计量网络 — 已推迟）';
+        const lines = [
+          `同步状态：${gateText}`,
+          `仅 Wi-Fi：${st.wifi_only ? '开' : '关'}`,
+          `离线队列积压：${st.queue_len} 条`,
+          `待处理冲突：副本 ${st.pending_artifacts} · 语义 ${st.pending_semantic}`,
+        ];
+        window.alert(lines.join('\n'));
+      })
+      .catch((e) => window.alert(`查询失败：${String(e)}`));
+  }, [invoke]);
+  const showQueue = useCallback(() => {
+    if (!invoke) return;
+    invoke('cmd_queue_list')
+      .then((r) => {
+        const items = r as Array<{
+          id: string;
+          doc_id: string;
+          priority: number;
+          attempts: number;
+          created_at: string;
+        }>;
+        if (items.length === 0) {
+          window.alert('离线队列：空（无积压项）');
+          return;
+        }
+        const lines = items
+          .slice(0, 20)
+          .map(
+            (it, i) =>
+              `${i + 1}. [P${it.priority}] ${it.doc_id}（尝试 ${it.attempts} 次）`,
+          );
+        if (items.length > 20) lines.push(`…共 ${items.length} 条`);
+        window.alert(lines.join('\n'));
+      })
+      .catch((e) => window.alert(`查询失败：${String(e)}`));
+  }, [invoke]);
+  const drainQueue = useCallback(() => {
+    if (!invoke) return;
+    invoke('cmd_queue_drain')
+      .then((r) => {
+        const rep = r as { synced_docs: number; failed_docs: string[]; acked_items: number };
+        const lines = [
+          `补发完成：成功 ${rep.synced_docs} 文档 · ack ${rep.acked_items} 项`,
+          rep.failed_docs.length > 0 ? `失败（留队重试）：${rep.failed_docs.join(', ')}` : '无失败项',
+        ];
+        window.alert(lines.join('\n'));
+        refreshSyncStatus();
+      })
+      .catch((e) => window.alert(`补发失败：${String(e)}`));
+  }, [invoke, refreshSyncStatus]);
+  const showConflicts = useCallback(() => {
+    if (!invoke) return;
+    invoke('cmd_conflict_list')
+      .then((r) => {
+        const items = r as Array<{ kind: string; id: string; doc_id: string; summary: string }>;
+        if (items.length === 0) {
+          window.alert('冲突处理：无待处理冲突');
+          return;
+        }
+        const lines = items
+          .slice(0, 20)
+          .map((it, i) => `${i + 1}. [${it.kind}] ${it.doc_id} — ${it.summary}`);
+        if (items.length > 20) lines.push(`…共 ${items.length} 条`);
+        lines.push('', '（选择解决请在命令面板输入"解决冲突"逐条处理）');
+        window.alert(lines.join('\n'));
+      })
+      .catch((e) => window.alert(`查询失败：${String(e)}`));
+  }, [invoke]);
+  const resolveFirstConflict = useCallback(() => {
+    if (!invoke) return;
+    invoke('cmd_conflict_list')
+      .then((r) => {
+        const items = r as Array<{ kind: string; id: string; doc_id: string; summary: string }>;
+        const first = items[0];
+        if (!first) {
+          window.alert('无待处理冲突');
+          return;
+        }
+        if (first.kind === 'artifact') {
+          // 真冲突副本：人工调和完成后标记闭环（采纳当前本地方——副本已留存远端路径）
+          invoke('cmd_conflict_resolve', { artifact_id: first.id })
+            .then(() => {
+              window.alert(`冲突已解决（保留本地，远端副本留存）：${first.doc_id}`);
+              refreshSyncStatus();
+            })
+            .catch((e) => window.alert(`解决失败：${String(e)}`));
+          return;
+        }
+        // 语义冲突：手动选择策略（LWW 起步——逐条交互升级见后续卡）
+        invoke('cmd_conflict_resolve_semantic', {
+          conflict_id: first.id,
+          resolution: 'LastWriteWins',
+        })
+          .then(() => {
+            window.alert(`语义冲突已解决（按最新写入优先）：${first.doc_id}`);
+            refreshSyncStatus();
+          })
+          .catch((e) => window.alert(`解决失败：${String(e)}`));
+      })
+      .catch((e) => window.alert(`查询失败：${String(e)}`));
+  }, [invoke, refreshSyncStatus]);
+
   // DK-10 切片 3：AI 云策略开关（tauri 模式可用；mock 模式隐藏）
   const [aiDeny, setAiDeny] = useState<boolean | null>(null);
   useEffect(() => {
@@ -1886,6 +2022,58 @@ export default function DesktopShell() {
             },
           ]
         : []),
+      ...(invoke && syncStatus
+        ? [
+            {
+              kind: 'command' as const,
+              id: 'sync-status',
+              title: `同步状态（${
+                syncStatus.gate === 'Allow'
+                  ? '在线'
+                  : syncStatus.gate === 'DeferUntilOnline'
+                    ? '离线'
+                    : '门控拦截'
+              } · 队列 ${syncStatus.queue_len} · 冲突 ${
+                syncStatus.pending_artifacts + syncStatus.pending_semantic
+              }）`,
+              run: showSyncStatus,
+            },
+            {
+              kind: 'command' as const,
+              id: 'sync-queue',
+              title: `离线队列（积压 ${syncStatus.queue_len} 条）`,
+              run: showQueue,
+            },
+            ...(syncStatus.queue_len > 0
+              ? [
+                  {
+                    kind: 'command' as const,
+                    id: 'sync-drain',
+                    title: '手动触发补发（离线积压 → 对端）',
+                    run: drainQueue,
+                  },
+                ]
+              : []),
+            {
+              kind: 'command' as const,
+              id: 'sync-conflicts',
+              title: `冲突处理（待处理 ${
+                syncStatus.pending_artifacts + syncStatus.pending_semantic
+              }）`,
+              run: showConflicts,
+            },
+            ...(syncStatus.pending_artifacts + syncStatus.pending_semantic > 0
+              ? [
+                  {
+                    kind: 'command' as const,
+                    id: 'sync-conflict-resolve',
+                    title: '解决最早一条冲突（副本留存/最新写入优先）',
+                    run: resolveFirstConflict,
+                  },
+                ]
+              : []),
+          ]
+        : []),
       {
         kind: 'command',
         id: 'today',
@@ -1893,7 +2081,22 @@ export default function DesktopShell() {
         run: () => setView('today'),
       },
     ],
-    [data, stats, aiDeny, toggleAiDeny, backupBusy, backupNow, showBackupStatus],
+    [
+      data,
+      stats,
+      aiDeny,
+      toggleAiDeny,
+      backupBusy,
+      backupNow,
+      showBackupStatus,
+      invoke,
+      syncStatus,
+      showSyncStatus,
+      showQueue,
+      drainQueue,
+      showConflicts,
+      resolveFirstConflict,
+    ],
   );
 
   const mode = invoke ? 'tauri' : 'browser-mock';
