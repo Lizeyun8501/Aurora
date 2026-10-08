@@ -172,7 +172,7 @@ pub async fn cmd_queue_drain() -> Result<DrainReportDto, String> {
             .ok()
             .flatten()
             .unwrap_or_default();
-        let mut inner = if snap.is_empty() {
+        let inner = if snap.is_empty() {
             loro::LoroDoc::new()
         } else {
             match aurora_core::l1_infrastructure::note_doc::NoteDoc::from_snapshot(&snap) {
