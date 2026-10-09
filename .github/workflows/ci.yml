@@ -162,10 +162,10 @@ jobs:
       # 兜底=失败重跑一次；自愈=失败日志上传（此前该 step 无日志可查）。
       - name: Test (iroh-transport feature)
         run: |
-          cargo test -p aurora-sync --features iroh-transport --verbose 2>&1 | tee /tmp/iroh-test.log; rc=${PIPESTATUS[0]}
+          cargo test -p aurora-sync --features iroh-transport,test-utils --verbose 2>&1 | tee /tmp/iroh-test.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then
             echo "IROH_RETRY: 首轮失败（疑 runner 资源类抖动），重跑一次"
-            cargo test -p aurora-sync --features iroh-transport --verbose 2>&1 | tee /tmp/iroh-test-retry.log; rc=${PIPESTATUS[0]}
+            cargo test -p aurora-sync --features iroh-transport,test-utils --verbose 2>&1 | tee /tmp/iroh-test-retry.log; rc=${PIPESTATUS[0]}
           fi
           exit $rc
       - name: Upload iroh test log

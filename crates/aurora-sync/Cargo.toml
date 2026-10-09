@@ -61,9 +61,13 @@ tempfile = "3"
 # 属 unstable-custom-transports 门控，仅测试构建启用）
 tracing-subscriber = "0.3"
 iroh = { workspace = true, features = ["test-utils", "unstable-custom-transports"] }
+# DK-46: 本地 relay server 测试基建（Server::spawn 零外部依赖会合 e2e——预探 17418e7 范式）
+iroh-relay = { version = "1.0.3", default-features = false, features = ["server", "test-utils"] }
 
 [features]
 default = []
+# DK-46: 测试面专用——启用 relay 自签 TLS 跳过验证（insecure，仅本地测试 relay）
+test-utils = []
 # 启用 Loro CRDT 引擎（需要 Rust 1.87+）
 loro-crdt = ["dep:loro"]
 # 启用 iroh 真实传输层（需要 Rust 1.91+）— V19 §31 DEV-005

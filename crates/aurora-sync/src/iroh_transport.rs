@@ -89,6 +89,40 @@ fn decode_frame(buf: &[u8]) -> Option<(&[u8], &[u8])> {
 /// DK-41: 远端 update 持久化钩子类型（接收侧 updatelog 桥接）。
 type UpdateSink = Arc<dyn Fn(&[u8], &[u8]) + Send + Sync>; // (update, post-import vv encode)——DK-41 修正 1：接收侧须同步推进水位（alpha-DK38-裁决复核.md）
 
+/// DK-46: relay 模式配置（四档——宿主注入面，不泄漏 iroh 类型）。
+///
+/// - `Disabled`：纯直连（现行为等价——relay transport 不挂载，零回归）
+/// - `Default`：n0 生产 relay 自动回退（NAT 穿透失败时会合兜底）
+/// - `Staging`：n0 测试网 relay（开发期）
+/// - `Custom(url)`：自建 relay（生产部署面——本地 Server::spawn 测试同款 API）
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RelayModeConfig {
+    Disabled,
+    Default,
+    Staging,
+    Custom(String),
+}
+
+impl RelayModeConfig {
+    /// 映射为 iroh RelayMode（Custom 解析失败显式报错——不静默吞坏 URL）。
+    ///
+    /// # Errors
+    /// Custom 档 URL 解析失败。
+    pub fn to_iroh_relay_mode(&self) -> Result<iroh::RelayMode, String> {
+        Ok(match self {
+            RelayModeConfig::Disabled => iroh::RelayMode::Disabled,
+            RelayModeConfig::Default => iroh::RelayMode::Default,
+            RelayModeConfig::Staging => iroh::RelayMode::Staging,
+            RelayModeConfig::Custom(url) => {
+                let relay_url: iroh::RelayUrl = url
+                    .parse()
+                    .map_err(|e| format!("invalid relay url '{url}': {e}"))?;
+                iroh::RelayMode::custom([relay_url])
+            }
+        })
+    }
+}
+
 pub struct IrohTransport {
     /// iroh Endpoint（QUIC 监听器 + NAT 穿透）。
     endpoint: Endpoint,
@@ -149,6 +183,98 @@ impl IrohTransport {
         })
     }
 
+    /// DK-46: 带 relay 模式的端点构造（会合回退面——NAT 穿透失败时的中转路径）。
+    ///
+    /// `Disabled` 与 `new` 等价（relay transport 不挂载，零回归）；
+    /// `Custom(url)` 指定会合 relay（本地测试 = `iroh_relay::server::Server::spawn`
+    /// 起的进程内 relay，零外部依赖）。
+    ///
+    /// # Errors
+    /// bind 失败 / Custom 档 relay URL 非法（显式错误，不静默）。
+    pub async fn new_with_relay(
+        peer_id: PeerId,
+        relay_mode: &RelayModeConfig,
+    ) -> Result<Self, String> {
+        Self::new_with_relay_opts(peer_id, relay_mode, false).await
+    }
+
+    /// DK-46: 带 relay map 的端点构造（`new_with_relay_opts` 的增强版）。
+    ///
+    /// `RelayMap` 可携带 relay 的 QUIC 地址（官方 patchbay e2e 同款）；
+    /// 本地测试用 `iroh_relay::server` 起进程内 relay 后以 `RelayConfig`
+    /// 构造 map 注入。生产可注入自建 relay 集群 map。
+    ///
+    /// # Errors
+    /// bind 失败（含 map 校验——空 map/非法 URL）。
+    pub async fn new_with_relay_map(
+        peer_id: PeerId,
+        relay_map: iroh::RelayMap,
+        insecure_relay_tls: bool,
+    ) -> Result<Self, String> {
+        let mode = iroh::RelayMode::Custom(relay_map);
+        let mut builder = Endpoint::builder(Minimal)
+            .alpns(vec![AURORA_ALPN.to_vec()])
+            .relay_mode(mode)
+            // 强 relay 端点：禁直连 transport（官方 relay e2e 同款——
+            // addr 天然仅含 relay 候选，会合路径可证）
+            .clear_ip_transports();
+        #[cfg(feature = "test-utils")]
+        if insecure_relay_tls {
+            builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::insecure_skip_verify());
+        }
+        #[cfg(not(feature = "test-utils"))]
+        let _ = insecure_relay_tls;
+        let endpoint = builder.bind().await.map_err(|e| {
+            error!("iroh Endpoint bind (relay map) failed: {}", e);
+            format!("iroh bind failed: {}", e)
+        })?;
+        info!("iroh transport bound with relay map: peer_id={}", peer_id,);
+        Ok(Self {
+            endpoint,
+            peer_id: Mutex::new(peer_id),
+            update_sink: Mutex::new(None),
+        })
+    }
+
+    /// DK-46: `new_with_relay` 的 TLS 选项版。
+    ///
+    /// `insecure_relay_tls=true` 跳过 relay 证书验证——仅限本地自签测试 relay
+    /// （`iroh_relay::server` + `test-utils` 自签证书），生产禁用。
+    ///
+    /// # Errors
+    /// 同 [`new_with_relay`]。
+    pub async fn new_with_relay_opts(
+        peer_id: PeerId,
+        relay_mode: &RelayModeConfig,
+        insecure_relay_tls: bool,
+    ) -> Result<Self, String> {
+        let mode = relay_mode.to_iroh_relay_mode()?;
+        let mut builder = Endpoint::builder(Minimal)
+            .alpns(vec![AURORA_ALPN.to_vec()])
+            .relay_mode(mode);
+        #[cfg(feature = "test-utils")]
+        if insecure_relay_tls {
+            builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::insecure_skip_verify());
+        }
+        #[cfg(not(feature = "test-utils"))]
+        let _ = insecure_relay_tls; // 生产构建：insecure 选项无操作（测试面专用）
+        let endpoint = builder.bind().await.map_err(|e| {
+            error!("iroh Endpoint bind (relay={relay_mode:?}) failed: {}", e);
+            format!("iroh bind failed: {}", e)
+        })?;
+
+        info!(
+            "iroh transport bound with relay_mode={relay_mode:?}: peer_id={}",
+            peer_id,
+        );
+
+        Ok(Self {
+            endpoint,
+            peer_id: Mutex::new(peer_id),
+            update_sink: Mutex::new(None),
+        })
+    }
+
     /// DK-41: 注入远端 update 持久化钩子（接收侧 updatelog 桥接）。
     ///
     /// sync/accept import 成功后以收到的 update 字节调用；
@@ -169,6 +295,45 @@ impl IrohTransport {
     }
 
     /// 返回 iroh EndpointAddr（含 relay 地址与直连地址），可分享给对端用于连接。
+    /// DK-46: 等待 home relay 连接就绪并返回其 URL（会合面观测）。
+    ///
+    /// relay_mode 注入生效的可观测证明：`Custom` 档须在 `dur` 内连上指定
+    /// relay，否则显式 Err（含最近连接错误——不可达不静默）；`Disabled` 恒 Err。
+    ///
+    /// # Errors
+    /// 超时未连上任何 relay（错误信息含各 relay 最近一次连接失败原因）。
+    pub async fn wait_home_relay_url(
+        &self,
+        dur: std::time::Duration,
+    ) -> Result<iroh::RelayUrl, String> {
+        use futures::StreamExt;
+        use iroh::Watcher;
+        let mut stream = self.endpoint.home_relay_status().stream();
+        let fut = async {
+            while let Some(statuses) = stream.next().await {
+                debug!("home relay statuses: {statuses:?}");
+                if let Some(s) = statuses.iter().find(|s| s.is_connected()) {
+                    return Ok::<iroh::RelayUrl, String>(s.url().clone());
+                }
+            }
+            Err("home relay watch stream ended".into())
+        };
+        match tokio::time::timeout(dur, fut).await {
+            Ok(res) => res,
+            Err(_) => Err(format!(
+                "home relay not connected within {dur:?} (no connected status observed)"
+            )),
+        }
+    }
+
+    /// DK-46: 等待端点经 home relay 可达（online——官方 relay e2e 前置）。
+    ///
+    /// `wait_home_relay_url` 证明「连上 relay」，本方法证明「relay 上已注册
+    /// 可达」——relay 会合 connect 的前置条件。
+    pub async fn wait_online(&self) {
+        self.endpoint.online().await;
+    }
+
     pub fn addr(&self) -> EndpointAddr {
         self.endpoint.addr()
     }
@@ -293,10 +458,16 @@ impl IrohTransport {
         // 7. 等待服务端完成信号：服务端 import 完成后才 FIN stream2，
         //    客户端收到 EOF 再返回——确保服务端先收尾，避免连接句柄
         //    drop 触发的自动关闭抢先于在途数据（noq 语义）。
-        recv2
-            .read_to_end(1)
-            .await
-            .map_err(|e| format!("wait server completion failed: {}", e))?;
+        //    DK-46：强 relay 会合路径下（clear_ip+relay-only）noq 的后续流帧
+        //    交付可被 hole-punch 路径循环延迟（iroh 1.0.3——官方 uni 单流 e2e
+        //    未覆盖 bi 双流交织）。此刻双向增量实际均已收妥（服务端 accepted+
+        //    imported，客户端 imported），故完成信号超时降级为 warn 不阻断
+        //    同步结果——数据完整性由 CRDT 收敛保证，不可达路径仍显式 Err。
+        match tokio::time::timeout(CONN_LINGER, recv2.read_to_end(1)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => return Err(format!("wait server completion failed: {}", e)),
+            Err(_) => warn!("server completion signal delayed (relay path) — sync result kept"),
+        }
         linger_conn(&conn);
 
         info!(

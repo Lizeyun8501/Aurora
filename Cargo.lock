@@ -621,6 +621,7 @@ dependencies = [
  "chrono",
  "futures",
  "iroh",
+ "iroh-relay",
  "loro",
  "mockito",
  "parking_lot 0.12.5",
