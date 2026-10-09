@@ -28,8 +28,10 @@ const SYNC_TIMEOUT_SECS: u64 = 30;
 
 /// 本地 relay server（进程内——测试结束 shutdown）。
 struct LocalRelay {
-    server: iroh_relay::server::Server,
-    url: RelayUrl,
+    /// 持有 server 存活（测试期不掉——drop 即关）。
+    _server: iroh_relay::server::Server,
+    /// relay URL（诊断用；节点注入走 map）。
+    _url: RelayUrl,
     map: iroh::RelayMap,
 }
 
@@ -57,7 +59,11 @@ async fn spawn_local_relay() -> LocalRelay {
         Some(iroh_relay::RelayQuicConfig::new(quic_port)),
     )
     .into();
-    LocalRelay { server, url, map }
+    LocalRelay {
+        _server: server,
+        _url: url,
+        map,
+    }
 }
 
 /// relay-only 端点（Custom 指向本地 relay）。

@@ -212,16 +212,18 @@ impl IrohTransport {
         insecure_relay_tls: bool,
     ) -> Result<Self, String> {
         let mode = iroh::RelayMode::Custom(relay_map);
-        let mut builder = Endpoint::builder(Minimal)
+        let builder = Endpoint::builder(Minimal)
             .alpns(vec![AURORA_ALPN.to_vec()])
             .relay_mode(mode)
             // 强 relay 端点：禁直连 transport（官方 relay e2e 同款——
             // addr 天然仅含 relay 候选，会合路径可证）
             .clear_ip_transports();
         #[cfg(feature = "test-utils")]
-        if insecure_relay_tls {
-            builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::insecure_skip_verify());
-        }
+        let builder = if insecure_relay_tls {
+            builder.ca_tls_config(iroh::tls::CaTlsConfig::insecure_skip_verify())
+        } else {
+            builder
+        };
         #[cfg(not(feature = "test-utils"))]
         let _ = insecure_relay_tls;
         let endpoint = builder.bind().await.map_err(|e| {
@@ -249,13 +251,15 @@ impl IrohTransport {
         insecure_relay_tls: bool,
     ) -> Result<Self, String> {
         let mode = relay_mode.to_iroh_relay_mode()?;
-        let mut builder = Endpoint::builder(Minimal)
+        let builder = Endpoint::builder(Minimal)
             .alpns(vec![AURORA_ALPN.to_vec()])
             .relay_mode(mode);
         #[cfg(feature = "test-utils")]
-        if insecure_relay_tls {
-            builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::insecure_skip_verify());
-        }
+        let builder = if insecure_relay_tls {
+            builder.ca_tls_config(iroh::tls::CaTlsConfig::insecure_skip_verify())
+        } else {
+            builder
+        };
         #[cfg(not(feature = "test-utils"))]
         let _ = insecure_relay_tls; // 生产构建：insecure 选项无操作（测试面专用）
         let endpoint = builder.bind().await.map_err(|e| {
