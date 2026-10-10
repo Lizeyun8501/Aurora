@@ -334,8 +334,13 @@ impl IrohTransport {
     ///
     /// `wait_home_relay_url` 证明「连上 relay」，本方法证明「relay 上已注册
     /// 可达」——relay 会合 connect 的前置条件。
+    ///
+    /// 超时封顶 [`Self::WAIT_ONLINE_CAP`]（30s）——CI/生产均不得死等
+    /// （iroh 1.0.3 的 online() 在 relay 不可达时可能永不就绪）。
     pub async fn wait_online(&self) {
-        self.endpoint.online().await;
+        /// online 等待封顶——防无 relay 环境死等。
+        pub const WAIT_ONLINE_CAP: std::time::Duration = std::time::Duration::from_secs(30);
+        let _ = tokio::time::timeout(WAIT_ONLINE_CAP, self.endpoint.online()).await;
     }
 
     pub fn addr(&self) -> EndpointAddr {
