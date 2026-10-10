@@ -628,6 +628,7 @@ dependencies = [
  "reqwest 0.12.28",
  "ring",
  "rusqlite",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "tempfile",

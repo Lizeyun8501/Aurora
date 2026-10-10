@@ -15,6 +15,7 @@ use aurora_sync::iroh_transport::{IrohTransport, RelayModeConfig};
 use aurora_sync::PeerId;
 use iroh::RelayUrl;
 use loro::LoroDoc;
+use rustls_pki_types::CertificateDer;
 use tokio::time::timeout;
 
 fn init_log() {
@@ -43,12 +44,15 @@ struct LocalRelay {
     /// relay URL（诊断用；节点注入走 map）。
     _url: RelayUrl,
     map: iroh::RelayMap,
+    /// DK-46 CI 修复：自签证书作为客户端显式信任根（CaTlsConfig::custom_roots
+    /// ——无 feature 门控，CI 裸构建生效；替代旧 test-utils 门控 skip verify）。
+    certs: Vec<CertificateDer<'static>>,
 }
 
 async fn spawn_local_relay() -> LocalRelay {
     // 官方 patchbay 范式：self-signed TLS relay + QUIC addr（零外部依赖）
     let bind_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
-    let (_certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+    let (certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
     let tls = iroh_relay::server::TlsConfig::new(
         (bind_ip, 0),
         iroh_relay::server::CertConfig::Manual { server_config },
@@ -73,15 +77,19 @@ async fn spawn_local_relay() -> LocalRelay {
         _server: server,
         _url: url,
         map,
+        certs,
     }
 }
 
 /// relay-only 端点（Custom 指向本地 relay）。
 async fn spawn_relay_node(tag: &str, relay: &LocalRelay) -> Arc<IrohTransport> {
     let peer_id = PeerId::from_str(&format!("relay-{tag}"));
-    let t = IrohTransport::new_with_relay_map(peer_id, relay.map.clone(), true)
-        .await
-        .expect("relay node bind");
+    // DK-46 CI 修复：Some(自签证书) 显式信任根——CI 裸构建（无 test-utils）
+    // 同样生效（旧 insecure bool 在 CI 门控旁路 → UnknownCA 连不上 relay）
+    let t =
+        IrohTransport::new_with_relay_map(peer_id, relay.map.clone(), Some(relay.certs.clone()))
+            .await
+            .expect("relay node bind");
     Arc::new(t)
 }
 

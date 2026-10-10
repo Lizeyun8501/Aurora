@@ -32,6 +32,8 @@ use tracing::{debug, error, info, warn};
 use iroh::endpoint::presets::Minimal;
 use iroh::{Endpoint, EndpointAddr};
 use loro::LoroDoc;
+// DK-46 CI 修复：relay 自签证书信任根类型（CaTlsConfig::custom_roots 参数）
+use rustls_pki_types::CertificateDer;
 
 // DK-44: 宿主（tauri command 层）构造对端地址所需——类型 re-export（零行为新增）
 pub use iroh::EndpointAddr as PublicEndpointAddr;
@@ -195,7 +197,7 @@ impl IrohTransport {
         peer_id: PeerId,
         relay_mode: &RelayModeConfig,
     ) -> Result<Self, String> {
-        Self::new_with_relay_opts(peer_id, relay_mode, false).await
+        Self::new_with_relay_opts(peer_id, relay_mode, None).await
     }
 
     /// DK-46: 带 relay map 的端点构造（`new_with_relay_opts` 的增强版）。
@@ -204,28 +206,29 @@ impl IrohTransport {
     /// 本地测试用 `iroh_relay::server` 起进程内 relay 后以 `RelayConfig`
     /// 构造 map 注入。生产可注入自建 relay 集群 map。
     ///
+    /// `custom_relay_roots`：relay TLS 证书的自定义信任根（DER 编码）。
+    /// 本地自签测试 relay 传 `Some(自签证书)`（`CaTlsConfig::custom_roots`
+    /// 显式信任——**无 feature 门控**，CI 裸构建同样生效；替代旧
+    /// `insecure_skip_verify` 的 test-utils 门控路径）。生产 `None` =
+    /// 默认 Mozilla 根（webpki-roots）。
+    ///
     /// # Errors
     /// bind 失败（含 map 校验——空 map/非法 URL）。
     pub async fn new_with_relay_map(
         peer_id: PeerId,
         relay_map: iroh::RelayMap,
-        insecure_relay_tls: bool,
+        custom_relay_roots: Option<Vec<CertificateDer<'static>>>,
     ) -> Result<Self, String> {
         let mode = iroh::RelayMode::Custom(relay_map);
-        let builder = Endpoint::builder(Minimal)
+        let mut builder = Endpoint::builder(Minimal)
             .alpns(vec![AURORA_ALPN.to_vec()])
             .relay_mode(mode)
             // 强 relay 端点：禁直连 transport（官方 relay e2e 同款——
             // addr 天然仅含 relay 候选，会合路径可证）
             .clear_ip_transports();
-        #[cfg(feature = "test-utils")]
-        let builder = if insecure_relay_tls {
-            builder.ca_tls_config(iroh::tls::CaTlsConfig::insecure_skip_verify())
-        } else {
-            builder
-        };
-        #[cfg(not(feature = "test-utils"))]
-        let _ = insecure_relay_tls;
+        if let Some(roots) = custom_relay_roots {
+            builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::custom_roots(roots));
+        }
         let endpoint = builder.bind().await.map_err(|e| {
             error!("iroh Endpoint bind (relay map) failed: {}", e);
             format!("iroh bind failed: {}", e)
@@ -240,28 +243,24 @@ impl IrohTransport {
 
     /// DK-46: `new_with_relay` 的 TLS 选项版。
     ///
-    /// `insecure_relay_tls=true` 跳过 relay 证书验证——仅限本地自签测试 relay
-    /// （`iroh_relay::server` + `test-utils` 自签证书），生产禁用。
+    /// `custom_relay_roots` 语义同 [`Self::new_with_relay_map`]（本地自签
+    /// 测试 relay 传 `Some(自签证书)`——显式信任根，无 feature 门控；
+    /// 生产传 `None`）。
     ///
     /// # Errors
     /// 同 [`new_with_relay`]。
     pub async fn new_with_relay_opts(
         peer_id: PeerId,
         relay_mode: &RelayModeConfig,
-        insecure_relay_tls: bool,
+        custom_relay_roots: Option<Vec<CertificateDer<'static>>>,
     ) -> Result<Self, String> {
         let mode = relay_mode.to_iroh_relay_mode()?;
-        let builder = Endpoint::builder(Minimal)
+        let mut builder = Endpoint::builder(Minimal)
             .alpns(vec![AURORA_ALPN.to_vec()])
             .relay_mode(mode);
-        #[cfg(feature = "test-utils")]
-        let builder = if insecure_relay_tls {
-            builder.ca_tls_config(iroh::tls::CaTlsConfig::insecure_skip_verify())
-        } else {
-            builder
-        };
-        #[cfg(not(feature = "test-utils"))]
-        let _ = insecure_relay_tls; // 生产构建：insecure 选项无操作（测试面专用）
+        if let Some(roots) = custom_relay_roots {
+            builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::custom_roots(roots));
+        }
         let endpoint = builder.bind().await.map_err(|e| {
             error!("iroh Endpoint bind (relay={relay_mode:?}) failed: {}", e);
             format!("iroh bind failed: {}", e)

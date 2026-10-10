@@ -15,6 +15,10 @@ loro = { workspace = true, optional = true }
 # P2P sync — iroh 1.0 需 Rust 1.91+（工具链已就绪，2026-08-24 启用）
 iroh = { workspace = true, optional = true }
 
+# DK-46 CI 修复：relay 自签证书信任注入（CaTlsConfig::custom_roots 参数类型）
+# ——替代 test-utils 门控的 insecure_skip_verify（CI 裸构建不生效致 UnknownCA）
+rustls-pki-types = { version = "1", optional = true }
+
 # Async traits
 async-trait = { workspace = true }
 
@@ -63,13 +67,15 @@ tracing-subscriber = "0.3"
 iroh = { workspace = true, features = ["test-utils", "unstable-custom-transports"] }
 # DK-46: 本地 relay server 测试基建（Server::spawn 零外部依赖会合 e2e——预探 17418e7 范式）
 iroh-relay = { version = "1.0.3", default-features = false, features = ["server", "test-utils"] }
+# DK-46: 测试内命名 CertificateDer（LocalRelay.certs 字段——自签证书传节点构造器）
+rustls-pki-types = "1"
 
 [features]
 default = []
-# DK-46: 测试面专用——启用 relay 自签 TLS 跳过验证（insecure，仅本地测试 relay）
+# DK-46 历史槽位（insecure_skip_verify 已被 custom_roots 显式信任根取代——保留防破坏引用）
 test-utils = []
 # 启用 Loro CRDT 引擎（需要 Rust 1.87+）
 loro-crdt = ["dep:loro"]
 # 启用 iroh 真实传输层（需要 Rust 1.91+）— V19 §31 DEV-005
 # 依赖 loro: iroh_transport.rs 直接操作 LoroDoc（版本向量交换 + 增量导入）
-iroh-transport = ["dep:iroh", "loro-crdt", "aurora-core/loro-crdt"]
+iroh-transport = ["dep:iroh", "dep:rustls-pki-types", "loro-crdt", "aurora-core/loro-crdt"]
