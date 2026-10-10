@@ -11,7 +11,9 @@
 //! - `note:{id}` — 元数据 JSON（`NoteRecord`）。桌面端经 `SealPair` 加密封装，
 //!   移动端暂为明文（V26 加密统一为后续卡）；同步层工作在 Loro oplog 层，
 //!   不受本机落盘封装影响。
-//! - `notesnap:{id}` — Loro 快照字节（内容权威，五容器模型）。
+//! - `notesnap:{user_id}:{id}` — Loro 快照字节（内容权威，五容器模型）。
+//!   DK-47 per-user 段（key 构造/惰性迁移统一走 [`crate::app_core`] helper）；
+//!   历史无段 `notesnap:{id}` 由读取侧惰性搬迁。
 //!
 //! ## 写入顺序（WAL 思想）
 //!
@@ -26,7 +28,7 @@
 
 use std::collections::HashSet;
 
-use crate::app_core::AppCore;
+use crate::app_core::{self, AppCore};
 use crate::blocks::BlockStore;
 use crate::error_codes::ErrorCode;
 // DK-40a 修复：KVStore 仅 loro-crdt 面（update log 系）消费；
@@ -466,9 +468,15 @@ pub async fn count_update_log(kv: &dyn KVStore, note_id: &str) -> usize {
 
 /// DK-40a: compaction —— 快照回写（调用方已持最新 doc）+ log 清空 + 水位对齐。
 #[cfg(feature = "loro-crdt")]
-async fn compact_update_log(kv: &dyn KVStore, note_id: &str, doc: &NoteDoc) -> Result<(), Error> {
+async fn compact_update_log(
+    kv: &dyn KVStore,
+    user_id: &str,
+    note_id: &str,
+    doc: &NoteDoc,
+) -> Result<(), Error> {
     let snap = doc.export_snapshot()?;
-    kv.set(&format!("notesnap:{note_id}"), &snap).await?;
+    kv.set(&app_core::notesnap_key(user_id, note_id), &snap)
+        .await?;
     let pairs = kv.scan_prefix(&format!("updatelog:{note_id}:")).await?;
     for (k, _) in pairs {
         kv.delete(&k).await?;
@@ -480,11 +488,16 @@ async fn compact_update_log(kv: &dyn KVStore, note_id: &str, doc: &NoteDoc) -> R
     Ok(())
 }
 
-/// 加载（或创建）笔记的 Loro 文档：`notesnap:{id}` 快照 + update log 重放
+/// 加载（或创建）笔记的 Loro 文档：`notesnap:{user}:{id}` 快照（DK-47 惰性
+/// 迁移读——legacy 无段 key 命中即搬迁）+ update log 重放
 /// （DK-40a 混合存储打开链——快照低频 + 增量高频，重放后即为最新态）。
 #[cfg(feature = "loro-crdt")]
-async fn load_or_init_doc(kv: &dyn KVStore, note_id: &str) -> Result<NoteDoc, Error> {
-    match kv.get(&format!("notesnap:{note_id}")).await? {
+async fn load_or_init_doc(
+    kv: &dyn KVStore,
+    user_id: &str,
+    note_id: &str,
+) -> Result<NoteDoc, Error> {
+    match app_core::get_notesnap_with_migration(kv, user_id, note_id).await? {
         Some(bytes) if !bytes.is_empty() => {
             let doc = NoteDoc::from_snapshot(&bytes)?;
             for u in read_update_log(kv, note_id).await? {
@@ -515,13 +528,21 @@ async fn load_or_init_doc(kv: &dyn KVStore, note_id: &str) -> Result<NoteDoc, Er
 /// 重复内容随下次 compaction 渐进清空）。append 后写水位前崩溃 → 下轮重导出
 /// 上一轮 delta，loro apply 幂等自愈（较旧实现每轮全量重复的本质改善）。
 #[cfg(feature = "loro-crdt")]
-async fn persist_doc(kv: &dyn KVStore, note_id: &str, doc: &NoteDoc) -> Result<(), Error> {
-    let old_snap = kv.get(&format!("notesnap:{note_id}")).await?;
+async fn persist_doc(
+    kv: &dyn KVStore,
+    user_id: &str,
+    note_id: &str,
+    doc: &NoteDoc,
+) -> Result<(), Error> {
+    // DK-47：迁移读——legacy 无段 key 有存量时搬迁过来（防存量快照被
+    // 「首次全量初始化」分支覆盖丢失——旧数据零丢失裁决）
+    let old_snap = app_core::get_notesnap_with_migration(kv, user_id, note_id).await?;
     // 无旧快照（首次持久化）→ 直接全量快照初始化（与旧版语义一致——
     // notesnap 从首写即存在，软删/恢复数据源语义不变）；水位=当前态 vv
     if old_snap.as_ref().map(|b| b.is_empty()).unwrap_or(true) {
         let snapshot = doc.export_snapshot()?;
-        kv.set(&format!("notesnap:{note_id}"), &snapshot).await?;
+        kv.set(&app_core::notesnap_key(user_id, note_id), &snapshot)
+            .await?;
         kv.set(&update_vv_key(note_id), &doc.version_vector().encode())
             .await?;
         return Ok(());
@@ -540,7 +561,7 @@ async fn persist_doc(kv: &dyn KVStore, note_id: &str, doc: &NoteDoc) -> Result<(
 
     // compaction：log 达阈值 → 全量快照回写 + log 清空（行为不变性由测试锚定）
     if count_update_log(kv, note_id).await >= UPDATE_LOG_COMPACT_THRESHOLD {
-        compact_update_log(kv, note_id, doc).await?;
+        compact_update_log(kv, user_id, note_id, doc).await?;
     }
     Ok(())
 }
@@ -569,7 +590,7 @@ pub async fn create_note(ctx: &WriteContext, title: &str) -> Result<String, Erro
 
     // 2) 原子保存（WAL：快照先落，元数据后落为权威指针）
     let record = NoteRecord::new(id.clone(), title.to_string());
-    persist_doc(core.kv_store.as_ref(), &id, &doc).await?;
+    persist_doc(core.kv_store.as_ref(), &core.user_id, &id, &doc).await?;
     put_note_meta(core, &id, &record, ctx.seal.as_ref()).await?;
 
     // 3) blocks 派生（内容 → 块树）— 派生失败不阻断主流程（DK-01 DoD:
@@ -632,7 +653,7 @@ pub async fn save_note_content(
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     // 1) Loro 文档：快照恢复或新建后补时间戳
-    let doc = load_or_init_doc(core.kv_store.as_ref(), note_id).await?;
+    let doc = load_or_init_doc(core.kv_store.as_ref(), &core.user_id, note_id).await?;
     doc.set_body(content, now_ms)?;
     let ws = doc.meta().workspace_id.clone();
 
@@ -640,7 +661,7 @@ pub async fn save_note_content(
     //    Loro 快照/blocks 属本机信任边界明文（锁定态排除由 S3 全链路过滤承担）
     record.content = seal_content(ctx, note_id, content, &record.encryption)?;
     record.updated_at = chrono::Utc::now().to_rfc3339();
-    persist_doc(core.kv_store.as_ref(), note_id, &doc).await?;
+    persist_doc(core.kv_store.as_ref(), &core.user_id, note_id, &doc).await?;
     put_note_meta(core, note_id, &record, ctx.seal.as_ref()).await?;
 
     // 3) blocks 派生 — 派生失败不阻断主流程（DK-01 DoD: notes/快照为
@@ -750,12 +771,12 @@ pub async fn verify_dual_write_consistency(ctx: &WriteContext) -> Result<Vec<Str
             continue;
         };
         // Loro 恢复对比（DK-40a 混合存储：恢复态 = 快照 + update log 重放；
-        // 无快照且无 log = 观察期前历史数据, 放行不判不一致）
-        let snap = core
-            .kv_store
-            .get(&format!("notesnap:{note_id}"))
-            .await?
-            .unwrap_or_default();
+        // 无快照且无 log = 观察期前历史数据, 放行不判不一致。DK-47 迁移读——
+        // legacy 无段 key 命中即搬迁，观察语义对带段 key 成立）
+        let snap =
+            app_core::get_notesnap_with_migration(core.kv_store.as_ref(), &core.user_id, note_id)
+                .await?
+                .unwrap_or_default();
         let has_log = count_update_log(core.kv_store.as_ref(), note_id).await > 0;
         if snap.is_empty() && !has_log {
             continue;
@@ -776,7 +797,7 @@ pub async fn verify_dual_write_consistency(ctx: &WriteContext) -> Result<Vec<Str
         } else {
             record.content.clone()
         };
-        match load_or_init_doc(core.kv_store.as_ref(), note_id).await {
+        match load_or_init_doc(core.kv_store.as_ref(), &core.user_id, note_id).await {
             Ok(doc) => {
                 if doc.body() != expected_content {
                     mismatches.push(note_id.to_string());
@@ -847,9 +868,9 @@ pub async fn rename_note(
 
     #[cfg(feature = "loro-crdt")]
     {
-        let doc = load_or_init_doc(core.kv_store.as_ref(), note_id).await?;
+        let doc = load_or_init_doc(core.kv_store.as_ref(), &core.user_id, note_id).await?;
         doc.set_title(new_title, now_ms)?;
-        persist_doc(core.kv_store.as_ref(), note_id, &doc).await?;
+        persist_doc(core.kv_store.as_ref(), &core.user_id, note_id, &doc).await?;
     }
 
     record.title = new_title.to_string();
@@ -1027,7 +1048,14 @@ pub async fn purge_note(ctx: &WriteContext, note_id: &str) -> Result<WriteReceip
 
     core.kv_store.delete(&trash_key(note_id)).await?;
     core.kv_store.delete(&format!("note:{note_id}")).await?;
-    core.kv_store.delete(&format!("notesnap:{note_id}")).await?;
+    // DK-47：双删——per-user 带段 key + legacy 无段 key（用户未读过时
+    // legacy 可能残留；delete 不存在 key 无害，幂等）
+    core.kv_store
+        .delete(&app_core::notesnap_key(&core.user_id, note_id))
+        .await?;
+    core.kv_store
+        .delete(&format!("{}{note_id}", app_core::LEGACY_NOTESNAP_PREFIX))
+        .await?;
 
     // 附件级联（DK-09 裁决）：清 meta + 反向索引；失败不阻塞 purge
     // （blob 由 GC 兜底），日志留痕。
@@ -1988,15 +2016,16 @@ mod dk40a_tests {
     async fn dk40a_log_replay_and_compaction() {
         let kv = kv();
         let note_id = "dk40a-note";
+        let user = app_core::DEFAULT_USER_ID;
         let doc = NoteDoc::new("标题", "ws-test").unwrap();
         doc.insert_body(0, "v0", 1_000).unwrap();
-        persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+        persist_doc(kv.as_ref(), user, note_id, &doc).await.unwrap();
 
         // 连续 3 轮编辑（每轮 persist：增量 append log；无 compaction——<阈值）
         for i in 1..=3 {
             doc.insert_body(doc.body_len(), &format!("v{i}"), 1_000 + i)
                 .unwrap();
-            persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+            persist_doc(kv.as_ref(), user, note_id, &doc).await.unwrap();
         }
         assert_eq!(
             count_update_log(kv.as_ref(), note_id).await,
@@ -2005,15 +2034,15 @@ mod dk40a_tests {
         );
 
         // 重放等价：全新打开（快照+log 重放）== 连续编辑态
-        let reopened = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        let reopened = load_or_init_doc(kv.as_ref(), user, note_id).await.unwrap();
         assert_eq!(reopened.body(), doc.body(), "快照+log 重放 == 连续编辑态");
 
         // compaction：模拟达阈值（阈值常量）——直接 compact 后行为不变 + log 清空
-        compact_update_log(kv.as_ref(), note_id, &doc)
+        compact_update_log(kv.as_ref(), user, note_id, &doc)
             .await
             .unwrap();
         assert_eq!(count_update_log(kv.as_ref(), note_id).await, 0);
-        let after_compact = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        let after_compact = load_or_init_doc(kv.as_ref(), user, note_id).await.unwrap();
         assert_eq!(
             after_compact.body(),
             doc.body(),
@@ -2026,12 +2055,13 @@ mod dk40a_tests {
     async fn dk40a_legacy_first_open_initializes() {
         let kv = kv();
         let note_id = "legacy-note";
+        let user = app_core::DEFAULT_USER_ID;
         // 无 notesnap：首开 → 空文档
-        let doc = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        let doc = load_or_init_doc(kv.as_ref(), user, note_id).await.unwrap();
         doc.insert_body(0, "seed", 1_000).unwrap();
-        persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+        persist_doc(kv.as_ref(), user, note_id, &doc).await.unwrap();
         // 二次打开：快照已落（自动初始化闭环）
-        let reopened = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        let reopened = load_or_init_doc(kv.as_ref(), user, note_id).await.unwrap();
         assert_eq!(reopened.body(), "seed");
     }
 
@@ -2044,14 +2074,18 @@ mod dk40a_tests {
         let note_id = "exact-delta";
         let doc = NoteDoc::new("t", "ws").unwrap();
         doc.insert_body(0, "v0", 1).unwrap();
-        persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+        persist_doc(kv.as_ref(), app_core::DEFAULT_USER_ID, note_id, &doc)
+            .await
+            .unwrap();
         let mut prev_vv = doc.version_vector();
 
         for i in 1..=20usize {
             doc.insert_body(doc.body_len(), &format!("edit-{i:02}"), (i * 100) as i64)
                 .unwrap();
             let expect = doc.export_update_since(&prev_vv).unwrap();
-            persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+            persist_doc(kv.as_ref(), app_core::DEFAULT_USER_ID, note_id, &doc)
+                .await
+                .unwrap();
             let last = read_update_log(kv.as_ref(), note_id)
                 .await
                 .unwrap()
@@ -2072,7 +2106,9 @@ mod dk40a_tests {
             "水位=末态 vv"
         );
         // 重放等价回归：打开链 == 连续编辑态（P2 改动不得破坏 DoD2）
-        let reopened = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        let reopened = load_or_init_doc(kv.as_ref(), app_core::DEFAULT_USER_ID, note_id)
+            .await
+            .unwrap();
         assert_eq!(reopened.body(), doc.body());
     }
 
@@ -2084,14 +2120,18 @@ mod dk40a_tests {
         let note_id = "legacy-no-wm";
         let doc = NoteDoc::new("t", "ws").unwrap();
         doc.insert_body(0, "v0", 1).unwrap();
-        persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+        persist_doc(kv.as_ref(), app_core::DEFAULT_USER_ID, note_id, &doc)
+            .await
+            .unwrap();
         // 模拟存量旧态：删水位键（旧版本无此键）
         kv.delete(&update_vv_key(note_id)).await.unwrap();
         assert!(kv.get(&update_vv_key(note_id)).await.unwrap().is_none());
 
         doc.insert_body(doc.body_len(), "legacy-edit", 2_000)
             .unwrap();
-        persist_doc(kv.as_ref(), note_id, &doc).await.unwrap();
+        persist_doc(kv.as_ref(), app_core::DEFAULT_USER_ID, note_id, &doc)
+            .await
+            .unwrap();
         // 回落路径：append 正常 + 水位键重新落地
         assert_eq!(count_update_log(kv.as_ref(), note_id).await, 1);
         let stored = kv.get(&update_vv_key(note_id)).await.unwrap().unwrap();
@@ -2100,7 +2140,9 @@ mod dk40a_tests {
             doc.version_vector()
         );
         // 重放等价：回落路径不破坏打开链
-        let reopened = load_or_init_doc(kv.as_ref(), note_id).await.unwrap();
+        let reopened = load_or_init_doc(kv.as_ref(), app_core::DEFAULT_USER_ID, note_id)
+            .await
+            .unwrap();
         assert!(reopened.body().contains("legacy-edit"));
     }
 }

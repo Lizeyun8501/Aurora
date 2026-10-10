@@ -166,12 +166,17 @@ pub async fn cmd_queue_drain() -> Result<DrainReportDto, String> {
         .collect();
     let mut pre: StdHashMap<String, StdArc<loro::LoroDoc>> = StdHashMap::new();
     for doc_id in &doc_ids {
-        let snap = kv
-            .get(&format!("notesnap:{doc_id}"))
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+        // DK-47：快照读走惰性迁移 helper（legacy 单用户 key 命中搬迁）——
+        // user 段取 AppCore 上下文（不立账号，缺省 default）
+        let snap = aurora_core::app_core::get_notesnap_with_migration(
+            kv.as_ref(),
+            &booted.core.user_id,
+            doc_id,
+        )
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
         let inner = if snap.is_empty() {
             loro::LoroDoc::new()
         } else {

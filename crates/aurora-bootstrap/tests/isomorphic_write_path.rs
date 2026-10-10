@@ -129,15 +129,20 @@ async fn desktop_and_mobile_write_paths_are_isomorphic() {
     let keys_m = kv_keys(&mobile, "note:").await;
     assert_eq!(keys_d.len(), 1, "desktop note: keys = {keys_d:?}");
     assert_eq!(keys_m.len(), 1, "mobile note: keys = {keys_m:?}");
+    // DK-47：notesnap key 统一带 user 段（default 含段——双端同构 helper 构造）
+    let snap_keys_d = kv_keys(&desktop, "notesnap:").await;
+    let snap_keys_m = kv_keys(&mobile, "notesnap:").await;
+    assert_eq!(snap_keys_d.len(), 1, "desktop notesnap = {snap_keys_d:?}");
+    assert_eq!(snap_keys_m.len(), 1, "mobile notesnap = {snap_keys_m:?}");
     assert_eq!(
-        kv_keys(&desktop, "notesnap:").await.len(),
-        1,
-        "desktop notesnap"
+        snap_keys_d[0],
+        aurora_core::app_core::notesnap_key(aurora_core::app_core::DEFAULT_USER_ID, &id_d),
+        "desktop notesnap key 须带 default 段"
     );
     assert_eq!(
-        kv_keys(&mobile, "notesnap:").await.len(),
-        1,
-        "mobile notesnap"
+        snap_keys_m[0],
+        aurora_core::app_core::notesnap_key(aurora_core::app_core::DEFAULT_USER_ID, &id_m),
+        "mobile notesnap key 须带 default 段"
     );
 
     // ── 对拍 2: 元数据字段一致（seal 往返后内容相同）──

@@ -141,7 +141,8 @@ pub struct SnapshotInfo {
 }
 
 /// 每条笔记对应一个独立的 `NoteDoc`（V19 §30.1 五容器模型），
-/// 快照持久化到 KVStore（`notesnap:{id}`），元数据存 `note:{id}`。
+/// 快照持久化到 KVStore（`notesnap:{user_id}:{id}`——DK-47 per-user 段），
+/// 元数据存 `note:{id}`。
 /// V19 §36.3: 移动端使用原生 Loro 绑定 — CRDT 语义，支持未来多端合并。
 #[derive(uniffi::Object)]
 pub struct UniffiAppCore {
@@ -149,8 +150,10 @@ pub struct UniffiAppCore {
     runtime: tokio::runtime::Runtime,
     data_dir: PathBuf,
     fallback_notes: Mutex<Vec<NoteRecord>>,
-    /// Loro 文档缓存（note_id → NoteDoc 五容器模型）
-    docs: Mutex<std::collections::HashMap<String, NoteDoc>>,
+    /// DK-47：多用户上下文段（不立账号仅存储隔离；构造期固定 default）。
+    user_id: String,
+    /// Loro 文档缓存（(user_id, note_id) → NoteDoc 五容器模型——DK-47 复合键）
+    docs: Mutex<std::collections::HashMap<(String, String), NoteDoc>>,
     is_fallback: bool,
     /// V23-I2: Mirror 单向导出（调度器 + 根目录; 铁律 9 永不读回）
     mirror: Option<(
@@ -208,10 +211,11 @@ impl UniffiAppCore {
                 });
                 let _ = strategy;
                 Ok(Arc::new(Self {
-                    core: Some(booted.core),
+                    core: Some(booted.core.clone()),
                     runtime,
                     data_dir,
                     fallback_notes: Mutex::new(Vec::new()),
+                    user_id: booted.core.user_id.clone(),
                     docs: Mutex::new(std::collections::HashMap::new()),
                     is_fallback: false,
                     mirror,
@@ -229,6 +233,7 @@ impl UniffiAppCore {
                     runtime,
                     data_dir,
                     fallback_notes: Mutex::new(Vec::new()),
+                    user_id: aurora_core::app_core::DEFAULT_USER_ID.to_string(),
                     docs: Mutex::new(std::collections::HashMap::new()),
                     is_fallback: true,
                     sync_gate: None, // 降级模式无 sync 装配
@@ -246,20 +251,29 @@ impl UniffiAppCore {
 
     /// 创建（或从 KVStore 恢复）笔记的 NoteDoc 并放入缓存。
     fn doc_for_note(&self, note_id: &str) -> NoteDoc {
-        // 缓存命中
-        if let Some(doc) = self.docs.lock().unwrap().get(note_id) {
+        let user_id = self.user_id.as_str();
+        // 缓存命中（DK-47 复合键——user 段隔离）
+        if let Some(doc) = self
+            .docs
+            .lock()
+            .unwrap()
+            .get(&(user_id.to_string(), note_id.to_string()))
+        {
             return doc.clone();
         }
 
-        // 尝试从 KVStore 恢复快照
+        // 尝试从 KVStore 恢复快照（DK-47 惰性迁移读——legacy 单用户 key
+        // 命中时搬迁至 per-user 段，旧 key 删除，双端同构单点）
         let mut note_doc =
             NoteDoc::new("", "").unwrap_or_else(|_| NoteDoc::from_doc(loro::LoroDoc::new()));
         if let Some(core) = &self.core {
             let kv = core.kv_store.clone();
-            let key = format!("notesnap:{note_id}");
-            let snapshot = self
-                .runtime
-                .block_on(async { kv.get(&key).await.ok().flatten() });
+            let snapshot = self.runtime.block_on(async {
+                aurora_core::app_core::get_notesnap_with_migration(kv.as_ref(), user_id, note_id)
+                    .await
+                    .ok()
+                    .flatten()
+            });
             if let Some(bytes) = snapshot {
                 if let Ok(d) = NoteDoc::from_snapshot(&bytes) {
                     note_doc = d;
@@ -271,7 +285,7 @@ impl UniffiAppCore {
         self.docs
             .lock()
             .unwrap()
-            .insert(note_id.to_string(), note_doc.clone());
+            .insert((user_id.to_string(), note_id.to_string()), note_doc.clone());
         note_doc
     }
 
@@ -284,7 +298,7 @@ impl UniffiAppCore {
                     message: format!("loro export: {e}"),
                 })?;
             let kv = core.kv_store.clone();
-            let key = format!("notesnap:{note_id}");
+            let key = aurora_core::app_core::notesnap_key(&self.user_id, note_id);
             self.runtime
                 .block_on(async { kv.set(&key, &snapshot).await })
                 .map_err(|e| MobileError::OperationFailed {
@@ -422,12 +436,18 @@ impl UniffiAppCore {
                 .block_on(async move { core_clone.catch_up_projections().await })
                 .ok();
 
-            // 缓存 LoroDoc（WritePath 写 KV 后以本地 doc 同步缓存语义）
-            self.docs.lock().unwrap().insert(note_id.clone(), doc);
+            // 缓存 LoroDoc（WritePath 写 KV 后以本地 doc 同步缓存语义——DK-47 复合键）
+            self.docs
+                .lock()
+                .unwrap()
+                .insert((self.user_id.clone(), note_id.clone()), doc);
             note.id = note_id; // WritePath 生成 id（UUIDv4），与 fallback 记录解耦
         } else {
             // Fallback 模式：内存存储（LoroDoc 仍然提供 CRDT 语义）
-            self.docs.lock().unwrap().insert(note.id.clone(), doc);
+            self.docs
+                .lock()
+                .unwrap()
+                .insert((self.user_id.clone(), note.id.clone()), doc);
             self.fallback_notes.lock().unwrap().push(note.clone());
         }
 
@@ -673,8 +693,11 @@ impl UniffiAppCore {
             self.runtime
                 .block_on(async move { core_clone.catch_up_projections().await })
                 .ok();
-            // 清理 Loro 文档缓存
-            self.docs.lock().unwrap().remove(&note_id);
+            // 清理 Loro 文档缓存（DK-47 复合键）
+            self.docs
+                .lock()
+                .unwrap()
+                .remove(&(self.user_id.clone(), note_id.clone()));
         } else {
             let mut notes = self.fallback_notes.lock().unwrap();
             notes.retain(|n| n.id != note_id);
@@ -930,8 +953,11 @@ impl UniffiAppCore {
                     },
                 })?;
 
-            // 缓存失效（下次 doc_for_note 从最新快照重读 — 保持 CRDT 连续性）
-            self.docs.lock().unwrap().remove(&note_id);
+            // 缓存失效（下次 doc_for_note 从最新快照重读 — 保持 CRDT 连续性；DK-47 复合键）
+            self.docs
+                .lock()
+                .unwrap()
+                .remove(&(self.user_id.clone(), note_id.clone()));
 
             // Mirror/时间机器取最新元数据（WritePath 已派生 blocks）
             let meta = self

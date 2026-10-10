@@ -98,7 +98,10 @@ async fn trash_delete_restore_purge_full_cycle() {
         booted
             .core
             .kv_store
-            .get(&format!("notesnap:{id}"))
+            .get(&aurora_core::app_core::notesnap_key(
+                aurora_core::app_core::DEFAULT_USER_ID,
+                &id,
+            ))
             .await
             .unwrap()
             .is_some(),
@@ -151,7 +154,10 @@ async fn trash_delete_restore_purge_full_cycle() {
     assert!(booted
         .core
         .kv_store
-        .get(&format!("notesnap:{id}"))
+        .get(&aurora_core::app_core::notesnap_key(
+            aurora_core::app_core::DEFAULT_USER_ID,
+            &id,
+        ))
         .await
         .unwrap()
         .is_none());

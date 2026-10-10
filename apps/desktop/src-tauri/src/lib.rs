@@ -446,17 +446,20 @@ async fn cmd_get_note(note_id: String) -> Result<serde_json::Value, String> {
     unwrap_note_bytes(&core, &vault, &data)
 }
 
-/// 编辑器快照读取（DK-05 S3）：kv `notesnap:{id}` 全量快照（含前端
+/// 编辑器快照读取（DK-05 S3）：kv `notesnap:{user_id}:{id}` 全量快照（含前端
 /// loro-prosemirror "doc" 容器 + 内核容器）。无快照返回 null（前端降级 md 灌入）。
+/// DK-47：走惰性迁移 helper——legacy 无段 key 命中即搬迁至 per-user 段。
 #[tauri::command]
 async fn cmd_get_note_snapshot(note_id: String) -> Result<Option<String>, String> {
     use base64::Engine;
     let core = get_core()?;
-    let bytes = core
-        .kv_store
-        .get(&format!("notesnap:{note_id}"))
-        .await
-        .map_err(|e| e.to_string())?;
+    let bytes = aurora_core::app_core::get_notesnap_with_migration(
+        core.kv_store.as_ref(),
+        &core.user_id,
+        &note_id,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(bytes
         .filter(|b| !b.is_empty())
         .map(|b| base64::engine::general_purpose::STANDARD.encode(b)))
@@ -475,7 +478,13 @@ async fn cmd_save_note_snapshot(note_id: String, snapshot_b64: String) -> Result
     if bytes.is_empty() {
         return Ok(());
     }
-    let merged = match core.kv_store.get(&format!("notesnap:{note_id}")).await {
+    let merged = match aurora_core::app_core::get_notesnap_with_migration(
+        core.kv_store.as_ref(),
+        &core.user_id,
+        &note_id,
+    )
+    .await
+    {
         Ok(Some(existing)) if !existing.is_empty() => {
             let doc = aurora_core::l1_infrastructure::note_doc::NoteDoc::from_snapshot(&existing)
                 .map_err(|e| e.to_string())?;
@@ -485,7 +494,10 @@ async fn cmd_save_note_snapshot(note_id: String, snapshot_b64: String) -> Result
         _ => bytes,
     };
     core.kv_store
-        .set(&format!("notesnap:{note_id}"), &merged)
+        .set(
+            &aurora_core::app_core::notesnap_key(&core.user_id, &note_id),
+            &merged,
+        )
         .await
         .map_err(|e| e.to_string())
 }

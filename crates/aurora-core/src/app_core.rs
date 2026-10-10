@@ -49,6 +49,51 @@ pub struct AppCore {
     pub review_queue: Arc<crate::l3_domain::fsrs::ReviewQueue>,
     /// DK-19：每日笔记创建互斥（进程内串行化 check-create-put，防并发双建）。
     pub daily_note_lock: tokio::sync::Mutex<()>,
+    /// DK-47：多用户上下文段（per-user KV key 前缀段——不立账号仅存储隔离；
+    /// builder 缺省 [`DEFAULT_USER_ID`]，零回归）。
+    pub user_id: String,
+}
+
+/// DK-47：缺省用户段（不立账号语义——历史单用户数据的归属段）。
+pub const DEFAULT_USER_ID: &str = "default";
+
+/// DK-47：历史（单用户时代）notesnap key 前缀——惰性迁移源。
+pub const LEGACY_NOTESNAP_PREFIX: &str = "notesnap:";
+
+/// DK-47：notesnap per-user KV key（`notesnap:{user_id}:{note_id}`）。
+///
+/// 双端同构唯一构造点（desktop/mobile 快照 key 不得各自 format）。
+pub fn notesnap_key(user_id: &str, note_id: &str) -> String {
+    format!("notesnap:{user_id}:{note_id}")
+}
+
+/// DK-47：惰性迁移读——单点（get 侧）迁移。
+///
+/// `get(新key)` miss → `get(legacy:notesnap:{note_id})` → 命中则
+/// `set(新key)` + `delete(legacy)`（搬迁一次，旧 key 已删 = 天然幂等）。
+/// 写路径新数据一律落新 key，旧 key 只在读取时搬迁；不立账号（裁决 1）、
+/// `KVStore` trait 不动（裁决 2）、key 统一带段 default 含段（裁决 3）。
+///
+/// # Errors
+/// KVStore 底层 IO 错误透传（不静默吞）。
+pub async fn get_notesnap_with_migration(
+    kv: &dyn kv_store::KVStore,
+    user_id: &str,
+    note_id: &str,
+) -> Result<Option<Vec<u8>>, Error> {
+    let new_key = notesnap_key(user_id, note_id);
+    if let Some(bytes) = kv.get(&new_key).await? {
+        return Ok(Some(bytes));
+    }
+    let legacy_key = format!("{LEGACY_NOTESNAP_PREFIX}{note_id}");
+    match kv.get(&legacy_key).await? {
+        Some(bytes) => {
+            kv.set(&new_key, &bytes).await?;
+            kv.delete(&legacy_key).await?;
+            Ok(Some(bytes))
+        }
+        None => Ok(None),
+    }
 }
 
 /// AppCore 构建器（依赖注入容器）。
@@ -62,6 +107,7 @@ pub struct AppCoreBuilder {
     plugin: Option<Arc<dyn plugin_runtime::PluginRuntime>>,
     event_bus_store: Option<Arc<dyn crate::event_bus::layered::EventQueueStore>>,
     projections: Vec<Arc<dyn crate::event_bus::projection::Projection>>,
+    user_id: String,
 }
 
 impl AppCoreBuilder {
@@ -77,7 +123,14 @@ impl AppCoreBuilder {
             plugin: None,
             event_bus_store: None,
             projections: Vec::new(),
+            user_id: DEFAULT_USER_ID.to_string(),
         }
+    }
+
+    /// DK-47：注入多用户上下文段（缺省 [`DEFAULT_USER_ID`]）。
+    pub fn user(mut self, v: impl Into<String>) -> Self {
+        self.user_id = v.into();
+        self
     }
 
     pub fn sync_target(mut self, v: Arc<dyn sync_target::SyncTarget>) -> Self {
@@ -151,6 +204,7 @@ impl AppCoreBuilder {
             event_bus,
             projections,
             review_queue,
+            user_id: self.user_id,
         }
     }
 }
