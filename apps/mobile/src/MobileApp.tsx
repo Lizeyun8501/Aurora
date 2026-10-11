@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { platform, type NoteSummary, type SearchResult } from './adapters/androidPlatform';
+import SyncStatusBadge from './components/SyncStatusBadge';
+import QueuePanel from './components/QueuePanel';
+import ConflictReviewPanel from './components/ConflictReviewPanel';
 import { Solar, HolidayUtil } from 'lunar-typescript';
 
 // 编辑器懒加载 — schema/wasm 初始化失败不拖垮整个应用（白屏防御）
@@ -283,6 +286,9 @@ export default function App() {
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureDue, setCaptureDue] = useState<string | undefined>(undefined); // 日历入口预置日期
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // DK-50：同步两面板浮层开关（badge 三入口 + menu-pop 两入口共用）
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [conflictOpen, setConflictOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     (localStorage.getItem('aurora.theme') as 'light' | 'dark') ?? 'light');
   const [tasks, setTasks] = useState<Task[]>(loadTasks);
@@ -356,6 +362,8 @@ export default function App() {
             setEditing(null);
           }}
           onDeleted={() => { softDelete(editing.id, editing.title); showToast('已移入回收站'); setEditing(null); }}
+          onOpenQueue={() => setQueueOpen(true)}
+          onOpenConflicts={() => setConflictOpen(true)}
         />
       ) : (
         <>
@@ -364,6 +372,12 @@ export default function App() {
             fallback={fallback}
             onMenu={() => setDrawerOpen(true)}
             onSearch={() => goto('search')}
+            syncBadge={
+              <SyncStatusBadge
+                onOpenQueue={() => setQueueOpen(true)}
+                onOpenConflicts={() => setConflictOpen(true)}
+              />
+            }
           />
           <main className="content">
             {view === 'today' && (
@@ -428,6 +442,20 @@ export default function App() {
         </>
       )}
 
+      {/* DK-50：同步两面板（全屏 sheet；onChanged 联动 badge 刷新） */}
+      {queueOpen && (
+        <QueuePanel
+          onClose={() => setQueueOpen(false)}
+          onChanged={() => undefined}
+        />
+      )}
+      {conflictOpen && (
+        <ConflictReviewPanel
+          onClose={() => setConflictOpen(false)}
+          onChanged={() => undefined}
+        />
+      )}
+
       {captureOpen && (
         <CaptureSheet
           onClose={() => { setCaptureOpen(false); setCaptureDue(undefined); }}
@@ -460,14 +488,17 @@ export default function App() {
 // AppBar — 汉堡 + 标题 + 搜索
 // ===========================================================================
 
-function AppBar({ title, fallback, onMenu, onSearch }: {
+function AppBar({ title, fallback, onMenu, onSearch, syncBadge }: {
   title: string; fallback: boolean; onMenu: () => void; onSearch: () => void;
+  /** DK-50：同步状态徽标（app-bar 常驻，不破现有布局） */
+  syncBadge?: React.ReactNode;
 }) {
   return (
     <header className="app-bar">
       <button className="icon-btn" onClick={onMenu} aria-label="菜单">{I.menu}</button>
       <h1 className="app-bar-title">{title}</h1>
       {fallback && <span className="app-bar-warn">内存模式</span>}
+      {syncBadge}
       <button className="icon-btn" onClick={onSearch} aria-label="搜索">{I.search}</button>
     </header>
   );
@@ -1433,13 +1464,16 @@ function SyncPanel({ noteId }: { noteId: string }) {
 // 编辑页 — V19 移动端页面4（全屏沉浸 · 顶部返回+标题+工具菜单 · 专注模式）
 // ===========================================================================
 
-function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted }: {
+function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onOpenQueue, onOpenConflicts }: {
   noteId: string;
   title: string;
   isFav: boolean;
   onToggleFav: () => void;
   onClose: () => void;
   onDeleted: () => void;
+  /** DK-50：编辑态菜单的同步两入口（App 层面板 state 下传） */
+  onOpenQueue: () => void;
+  onOpenConflicts: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
@@ -1486,6 +1520,12 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted }: {
             </button>
             <button className="menu-item" onClick={() => { setSyncOpen(!syncOpen); setMenuOpen(false); }}>
               {I.sync} P2P 同步
+            </button>
+            <button className="menu-item" onClick={() => { onOpenQueue(); setMenuOpen(false); }}>
+              {I.sync} 离线队列
+            </button>
+            <button className="menu-item" onClick={() => { onOpenConflicts(); setMenuOpen(false); }}>
+              {I.sync} 冲突处理
             </button>
             <button className="menu-item" onClick={() => { setFocusMode(!focusMode); setMenuOpen(false); }}>
               {I.focus} {focusMode ? '退出专注模式' : '专注模式'}

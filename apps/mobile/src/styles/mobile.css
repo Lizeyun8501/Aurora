@@ -878,3 +878,84 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   padding: 1px 6px; border-radius: 8px;
   background: var(--bg-soft, rgba(0,0,0,0.04));
 }
+
+/* ============================================================
+   DK-50: 同步体验三组件（badge 常驻 app-bar + 全屏 sheet）
+   逻辑层移植自桌面 DK-48 三组件；样式为 mobile 体系改写
+   （CSS 变量取 --success/--warning/--danger/--brand；sync-dot 族复用）
+   ============================================================ */
+
+/* app-bar 内常驻徽标（状态点 + 队列数 + 冲突红点，颜色不作唯一载体） */
+.sync-gate-badge {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border: none; border-radius: 8px;
+  background: transparent; font-size: 12px; color: var(--text-secondary);
+}
+.sync-gate-badge:active { background: var(--bg-secondary); }
+.sync-gate-num {
+  min-width: 16px; padding: 0 5px; border-radius: 8px;
+  background: var(--brand); color: var(--bg-primary);
+  font-size: 11px; font-weight: 600; text-align: center; line-height: 16px;
+}
+.sync-red-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--danger); flex: 0 0 auto;
+}
+
+/* 全屏 sheet（L1482 overlay 惯例的底部抽屉形态） */
+.sync-sheet-mask { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 70; }
+.sync-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 71;
+  background: var(--bg-primary);
+  border-radius: 16px 16px 0 0;
+  padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  max-height: 78vh; overflow-y: auto;
+}
+.sync-sheet-grip {
+  width: 36px; height: 4px; border-radius: 2px;
+  background: var(--border); margin: 4px auto 10px;
+}
+.sync-sheet-title {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 16px; font-weight: 600; color: var(--text-primary);
+  margin-bottom: 10px;
+}
+.sync-sheet-close {
+  border: none; background: transparent; color: var(--text-secondary);
+  font-size: 13px; padding: 4px 8px; border-radius: 6px;
+}
+.sync-sheet-close:active { background: var(--bg-secondary); }
+
+/* 明细行（key-value）与操作按钮 */
+.sync-row-line {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-size: 13px; line-height: 1.7; color: var(--text-secondary);
+}
+.sync-row-line b { color: var(--text-primary); font-weight: 500; }
+.sync-btn {
+  flex: 1; min-height: 40px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-secondary); color: var(--text-primary);
+  font-size: 14px; padding: 8px 12px;
+}
+.sync-btn:active { background: var(--bg-card); }
+.sync-btn[disabled] { opacity: 0.4; }
+.sync-btn-row { display: flex; gap: 8px; margin-top: 10px; }
+.sync-btn.danger { color: var(--danger); border-color: var(--danger); }
+.sync-empty { font-size: 13px; color: var(--text-tertiary); text-align: center; padding: 24px 0; }
+
+/* 队列/冲突行 */
+.sync-item {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 8px;
+  font-size: 13px; color: var(--text-primary);
+}
+.sync-item-kind {
+  font-size: 11px; padding: 1px 6px; border-radius: 6px;
+  background: var(--bg-secondary); color: var(--text-secondary);
+  margin-right: 6px;
+}
+.sync-item-sub { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
+.sync-item-err { font-size: 12px; color: var(--danger); margin-top: 4px; }
+.sync-mono { font-family: ui-monospace, monospace; font-size: 12px; }
+.sync-fail { color: var(--danger); font-size: 12px; line-height: 1.6; margin-top: 6px; }
