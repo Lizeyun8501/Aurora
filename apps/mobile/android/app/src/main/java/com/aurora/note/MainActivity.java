@@ -262,13 +262,24 @@ public class MainActivity extends Activity {
         // P2P 同步（V19 §31 DEV-005 — iroh QUIC + NAT 穿透）
         // ------------------------------------------------------------------
 
+        /** DK-49：引擎惰性启动 + 生命周期挂接（drain 补发通道就绪）。 */
+        private void ensureSyncEngine() {
+            if (syncEngine == null) {
+                syncEngine = SyncEngine.start();
+            }
+            if (syncEngine != null && core != null) {
+                try {
+                    core.attachSyncEngine(syncEngine);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+
         /** 启动同步引擎，返回本机端点地址 JSON（供对端 QR/输入交换）。 */
         @JavascriptInterface
         public String startSyncEngine() {
             try {
-                if (syncEngine == null) {
-                    syncEngine = SyncEngine.start();
-                }
+                ensureSyncEngine();
                 return syncEngine != null ? syncEngine.localAddr() : null;
             } catch (Throwable e) {
                 return null;
@@ -279,9 +290,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String getSyncLocalAddr() {
             try {
-                if (syncEngine == null) {
-                    syncEngine = SyncEngine.start();
-                }
+                ensureSyncEngine();
                 return syncEngine != null ? syncEngine.localAddr() : null;
             } catch (Throwable e) {
                 return null;
@@ -296,9 +305,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String syncNote(String peerAddrJson, String noteId) {
             try {
-                if (syncEngine == null) {
-                    syncEngine = SyncEngine.start();
-                }
+                ensureSyncEngine();
                 if (syncEngine == null) return "{\"success\":false,\"error\":\"engine start failed\"}";
                 SyncEngine.SyncReport r = syncEngine.syncNote(core, peerAddrJson, noteId);
                 JSONObject o = new JSONObject();
@@ -317,9 +324,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public boolean startAcceptSync(String noteId) {
             try {
-                if (syncEngine == null) {
-                    syncEngine = SyncEngine.start();
-                }
+                ensureSyncEngine();
                 return syncEngine != null && syncEngine.startAcceptLoop(core, noteId);
             } catch (Throwable e) {
                 return false;
@@ -332,6 +337,78 @@ public class MainActivity extends Activity {
             if (syncEngine != null) {
                 syncEngine.close();
                 syncEngine = null;
+            }
+            // DK-49：引擎生命周期注销 — 防 drain 走已 close 的 transport
+            try {
+                if (core != null) core.detachSyncEngine();
+            } catch (Throwable ignored) {
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // DK-49：移动端同步数据面（对齐桌面 sync_commands 七函数 —
+        // JSON 透传；错误降级 null/"[]"/error json，UI 侧按空态/提示处理）
+        // ------------------------------------------------------------------
+
+        /** 函数 1：同步状态聚合 JSON（gate/wifi_only/queue_len/pending_*）。 */
+        @JavascriptInterface
+        public String syncStatus() {
+            try {
+                return core.syncStatus();
+            } catch (Throwable e) {
+                return null;
+            }
+        }
+
+        /** 函数 2：离线队列明细 JSON 数组。 */
+        @JavascriptInterface
+        public String queueList() {
+            try {
+                return core.queueList();
+            } catch (Throwable e) {
+                return "[]";
+            }
+        }
+
+        /** 函数 3：手动补发 JSON；前置不满足返回 error json（不静默）。 */
+        @JavascriptInterface
+        public String queueDrain() {
+            try {
+                return core.queueDrain();
+            } catch (Throwable e) {
+                return "{\"error\":\"" + e.getMessage() + "\"}";
+            }
+        }
+
+        /** 函数 4：待处理冲突合并视图 JSON 数组。 */
+        @JavascriptInterface
+        public String conflictList() {
+            try {
+                return core.conflictList();
+            } catch (Throwable e) {
+                return "[]";
+            }
+        }
+
+        /** 函数 5：真冲突副本闭环；失败返回 false。 */
+        @JavascriptInterface
+        public boolean conflictResolve(String artifactId) {
+            try {
+                core.conflictResolve(artifactId);
+                return true;
+            } catch (Throwable e) {
+                return false;
+            }
+        }
+
+        /** 函数 6：语义冲突解决；失败返回 false。 */
+        @JavascriptInterface
+        public boolean conflictResolveSemantic(String conflictId, String resolution) {
+            try {
+                core.conflictResolveSemantic(conflictId, resolution);
+                return true;
+            } catch (Throwable e) {
+                return false;
             }
         }
     }

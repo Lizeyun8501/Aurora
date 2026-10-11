@@ -12,11 +12,9 @@
 //! 注意: 当前协议为单文档同步（V19 §31.1 的 note 级语义），
 //! 每篇笔记独立握手；多文档批量同步属于 Cloud/WebSocket 通道范畴。
 
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use aurora_sync::iroh_transport::IrohTransport;
-use aurora_sync::sync_gate::{NetworkClass, NetworkStateProvider};
 use loro::LoroDoc;
 
 use crate::{MobileError, UniffiAppCore};
@@ -72,6 +70,12 @@ impl SyncEngine {
             runtime,
             local_addr_json,
         }))
+    }
+
+    /// DK-49：drain 补发的传输句柄只读访问（同 crate 装配辅助 —
+    /// 非 uniffi 面，不改 SyncEngine 既有三函数语义）。
+    pub(crate) fn transport(&self) -> &IrohTransport {
+        &self.transport
     }
 }
 
@@ -316,15 +320,18 @@ pub extern "system" fn Java_com_aurora_note_SyncEngine_nativeClose(
     unsafe { drop(Arc::from_raw(engine_handle as *const SyncEngine)) };
 }
 
-// 网络状态源已拆至非 gated 模块（DK-08 §7.3 装配切片）——
-// 保留路径兼容 re-export（既有引用/测试不断链）。
-pub use crate::network_state::{
-    network_state_provider, AndroidNetworkState, AndroidNetworkStateProxy, CLASS_METERED,
-    CLASS_OFFLINE, CLASS_UNMETERED, NETWORK_STATE,
-};
+// 网络状态源已拆至非 gated 模块（DK-08 §7.3 装配切片）——原 p2p_sync
+// re-export 已无 crate 外消费者（DK-49 清理，直接 import network_state）。
 #[cfg(test)]
 mod network_state_tests {
     use super::*;
+    use crate::network_state::{
+        network_state_provider, AndroidNetworkState, CLASS_METERED, CLASS_OFFLINE, CLASS_UNMETERED,
+        NETWORK_STATE,
+    };
+    use std::sync::atomic::AtomicU8;
+
+    use aurora_sync::sync_gate::{NetworkClass, NetworkStateProvider};
 
     /// request 验收清单 1：三态映射正确（计量/不计量/离线）。
     #[test]

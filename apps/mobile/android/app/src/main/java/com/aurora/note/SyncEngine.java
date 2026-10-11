@@ -31,6 +31,11 @@ public class SyncEngine {
         this.engineHandle = handle;
     }
 
+    /** DK-49：引擎 JNI 句柄只读访问（UniffiAppCore.attachSyncEngine 注入用）。 */
+    public long engineHandle() {
+        return engineHandle;
+    }
+
     /**
      * 启动同步引擎：绑定 iroh Endpoint（QUIC + NAT 穿透）。
      * 失败返回 null（如无网络权限）。

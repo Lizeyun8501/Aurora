@@ -26,7 +26,8 @@ use std::sync::Arc;
 /// 与 sync_gate.rs「读缓存 + 不污染熔断统计」的语义约定一致。
 pub struct AndroidNetworkState {
     /// 0 = Unmetered / 1 = Metered / 2 = Offline（越界按 0 处理：默认放行）。
-    cached: AtomicU8,
+    /// pub(crate)：p2p_sync 网络测试直构（DK-49 存量破损修复）。
+    pub(crate) cached: AtomicU8,
 }
 
 /// 进程级单例（JNI 回调与 SyncGate 装配共享）。
@@ -78,7 +79,8 @@ pub fn network_state_provider() -> Arc<dyn NetworkStateProvider> {
 }
 
 /// [`NETWORK_STATE`] 的 trait-object 视图（`current_class` 委托单例）。
-struct AndroidNetworkStateProxy;
+/// pub(crate)：p2p_sync.rs 兼容 re-export（DK-08 §7.3 路径不变）。
+pub(crate) struct AndroidNetworkStateProxy;
 
 impl NetworkStateProvider for AndroidNetworkStateProxy {
     fn current_class(&self) -> NetworkClass {

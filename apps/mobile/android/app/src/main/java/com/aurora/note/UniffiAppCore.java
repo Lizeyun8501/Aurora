@@ -66,6 +66,55 @@ public class UniffiAppCore {
         nativeSetWifiOnly(handle, on);
     }
 
+    // ------------------------------------------------------------------
+    // DK-49：移动端同步数据面（对齐桌面 sync_commands 七函数 —
+    // JSON 字符串返回与桌面 DTO 同构；错误抛 Exception 由 bridge 层 catch）。
+    // ------------------------------------------------------------------
+
+    /** 函数 1：同步状态聚合 JSON（gate/wifi_only/queue_len/pending_*）。 */
+    public String syncStatus() {
+        return nativeSyncStatus(handle);
+    }
+
+    /** 函数 2：离线队列明细 JSON 数组（QueueItemDto 同构）。 */
+    public String queueList() {
+        return nativeQueueList(handle);
+    }
+
+    /** 函数 3：手动补发 JSON（DrainReportDto 同构）；前置不满足抛异常。 */
+    public String queueDrain() throws Exception {
+        String r = nativeQueueDrain(handle);
+        if (r == null) {
+            throw new Exception("queue drain failed (native threw)");
+        }
+        return r;
+    }
+
+    /** 函数 4：待处理冲突合并视图 JSON 数组（ConflictDto 同构）。 */
+    public String conflictList() {
+        return nativeConflictList(handle);
+    }
+
+    /** 函数 5：真冲突副本闭环（mark_resolved — 副本留存人工确认）。 */
+    public void conflictResolve(String artifactId) throws Exception {
+        nativeConflictResolve(handle, artifactId);
+    }
+
+    /** 函数 6：语义冲突解决（LocalWins/RemoteWins/LastWriteWins/Branch）。 */
+    public void conflictResolveSemantic(String conflictId, String resolution) throws Exception {
+        nativeConflictResolveSemantic(handle, conflictId, resolution);
+    }
+
+    /** DK-49 装配辅助：挂接 P2P 引擎（startSyncEngine 注入，drain 通道）。 */
+    public void attachSyncEngine(SyncEngine engine) {
+        nativeAttachSyncEngine(handle, engine.engineHandle());
+    }
+
+    /** DK-49 装配辅助：摘除 P2P 引擎（closeSyncEngine 注销）。 */
+    public void detachSyncEngine() {
+        nativeDetachSyncEngine(handle);
+    }
+
     public String createNote(String title) throws Exception {
         String id = nativeCreateNote(handle, title);
         if (id == null) {
@@ -178,6 +227,15 @@ public class UniffiAppCore {
     private static native long nativeNew(String dataDir);
     private static native boolean nativeGetWifiOnly(long handle);
     private static native void nativeSetWifiOnly(long handle, boolean on);
+    // DK-49：同步数据面七函数穿链（JSON 字符串返回；attach/detach 为装配辅助）
+    private static native String nativeSyncStatus(long handle);
+    private static native String nativeQueueList(long handle);
+    private static native String nativeQueueDrain(long handle);
+    private static native String nativeConflictList(long handle);
+    private static native void nativeConflictResolve(long handle, String artifactId);
+    private static native void nativeConflictResolveSemantic(long handle, String conflictId, String resolution);
+    private static native void nativeAttachSyncEngine(long handle, long engineHandle);
+    private static native void nativeDetachSyncEngine(long handle);
     private static native String nativeCreateNote(long handle, String title);
     private static native int nativeListNotesCount(long handle);
     private static native String[] nativeGetNote(long handle, int index);

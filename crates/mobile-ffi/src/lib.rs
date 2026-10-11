@@ -166,6 +166,17 @@ pub struct UniffiAppCore {
     content_cipher: Option<std::sync::Arc<aurora_core::write_path::ContentCipherPair>>,
     /// 同步门（DK-08 §7.3 — full 模式装配；fallback 无 sync 能力为 None）。
     pub sync_gate: Option<std::sync::Arc<aurora_sync::sync_gate::SyncGate>>,
+    /// DK-49：离线同步队列（full 模式从 BootedApp 提取；fallback 无 —
+    /// 内存态挂载，队列落盘缺口另立卡，见工单 §4 停手边界）。
+    pub offline_queue: Option<std::sync::Arc<aurora_sync::offline_queue::OfflineQueue>>,
+    /// DK-49：真冲突副本登记簿（full 模式提取；fallback 无）。
+    pub conflict_artifacts: Option<std::sync::Arc<aurora_sync::conflict::ConflictArtifactStore>>,
+    /// DK-49：语义冲突解决器（full 模式提取；fallback 无）。
+    pub conflict_resolver: Option<std::sync::Arc<aurora_sync::conflict::ConflictResolver>>,
+    /// DK-49：已挂接的 P2P 引擎（drain 补发通道 — MainActivity 生命周期
+    /// 显式注入 attach/detach；不建全局态，照移动端装配模式）。
+    #[cfg(feature = "p2p-sync")]
+    sync_engine: Mutex<Option<Arc<crate::p2p_sync::SyncEngine>>>,
 }
 
 impl UniffiAppCore {
@@ -222,6 +233,12 @@ impl UniffiAppCore {
                     blocks,
                     content_cipher: Some(booted.content_cipher),
                     sync_gate: Some(booted.sync_gate),
+                    // DK-49：同步数据面三件（BootedApp 同源提取 — 内存态挂载）
+                    offline_queue: Some(booted.offline_queue),
+                    conflict_artifacts: Some(booted.conflict_artifacts),
+                    conflict_resolver: Some(booted.conflict_resolver),
+                    #[cfg(feature = "p2p-sync")]
+                    sync_engine: Mutex::new(None),
                 }))
             }
             Err(e) => {
@@ -244,6 +261,12 @@ impl UniffiAppCore {
                     )),
                     blocks: None,
                     content_cipher: None, // 降级模式无加密
+                    // DK-49：降级模式无同步数据面（status 走缺省值，见 impl）
+                    offline_queue: None,
+                    conflict_artifacts: None,
+                    conflict_resolver: None,
+                    #[cfg(feature = "p2p-sync")]
+                    sync_engine: Mutex::new(None),
                 }))
             }
         }
@@ -398,6 +421,263 @@ impl UniffiAppCore {
         gate.set_wifi_only(on);
         tracing::info!(wifi_only = on, "sync gate wifi_only updated");
         Ok(())
+    }
+
+    // =======================================================================
+    // DK-49：移动端同步数据面（对齐桌面 sync_commands.rs 七函数语义）
+    // —— 只读消费 aurora-sync 既有 API + drain 走 DK-41 桥接真实补发；
+    //    gate 三态映射 / DTO 字段与桌面逐一同构，序列化走 JSON 字符串
+    //    （先例：nativeGetAgentContext 的 serde_json::json! 返回模式）。
+    // =======================================================================
+
+    /// 函数 1：同步状态聚合（gate/wifi_only/queue_len/pending_artifacts/
+    /// pending_semantic — 字段名与桌面 SyncStatusDto 逐一同构）。
+    /// fallback 模式返回缺省视图（gate=DeferUntilOnline，计数全 0）。
+    pub fn sync_status_impl(&self) -> serde_json::Value {
+        let gate = match &self.sync_gate {
+            Some(g) => match g.evaluate() {
+                aurora_sync::sync_gate::GateDecision::Allow => "Allow",
+                aurora_sync::sync_gate::GateDecision::DeferUntilUnmetered => "DeferUntilUnmetered",
+                aurora_sync::sync_gate::GateDecision::DeferUntilOnline => "DeferUntilOnline",
+            },
+            None => "DeferUntilOnline",
+        };
+        serde_json::json!({
+            "gate": gate,
+            "wifi_only": self.wifi_only_impl(),
+            "queue_len": self.offline_queue.as_ref().map_or(0, |q| q.len()),
+            "pending_artifacts": self
+                .conflict_artifacts
+                .as_ref()
+                .map_or(0, |s| s.pending().len()),
+            "pending_semantic": self
+                .conflict_resolver
+                .as_ref()
+                .map_or(0, |r| r.pending_conflicts().len()),
+        })
+    }
+
+    /// 函数 2：离线队列明细（QueueItemDto 同构 — id/doc_id/priority/attempts/
+    /// created_at rfc3339）。fallback 返回空数组。
+    pub fn queue_list_impl(&self) -> Vec<serde_json::Value> {
+        match &self.offline_queue {
+            Some(q) => q
+                .items()
+                .into_iter()
+                .map(|i| {
+                    serde_json::json!({
+                        "id": i.id,
+                        "doc_id": i.doc_id,
+                        "priority": i.priority.weight(),
+                        "attempts": i.attempts,
+                        "created_at": i.created_at.to_rfc3339(),
+                    })
+                })
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// 函数 3：手动触发离线队列补发（DrainReportDto 同构，failed_docs 不可丢）。
+    ///
+    /// 前置（照桌面语义）：P2P 引擎已挂接（attach_sync_engine）+ 对端地址
+    /// 已写入 KV（`sync.peer.addr`）。缺任一返回明确错误（前端据此提示）。
+    /// 网络策略联动（wifi_only gate 判定）桌面同款留在调用方 — 记录见报告。
+    #[cfg(feature = "p2p-sync")]
+    pub fn queue_drain_impl(&self) -> Result<serde_json::Value, MobileError> {
+        let engine = self
+            .sync_engine
+            .lock()
+            .map_err(|_| MobileError::InitFailed {
+                message: "sync_engine mutex poisoned".into(),
+            })?
+            .clone()
+            .ok_or_else(|| MobileError::InitFailed {
+                message: "P2P 未启用：请先启动同步引擎并完成设备配对".into(),
+            })?;
+        let core = self.core.as_ref().ok_or_else(|| MobileError::InitFailed {
+            message: "fallback 模式无同步装配".into(),
+        })?;
+        let kv = core.kv_store.clone();
+        // 直接借引擎 transport（engine Arc 活过 block_on；零复制零语义变更）
+        let transport = engine.transport();
+        // 同一 block_on 内完成「对端地址读取 → 文档快照预解析 → 补发」，
+        // resolver 闭包同步查预解析 map（照桌面 cmd_queue_drain 同款模式，
+        // 避免 async 闭包 Send 约束与嵌套 block_on 死锁）。
+        let report =
+            self.own_runtime()
+                .block_on(async move {
+                    let addr_b64 = kv
+                        .get("sync.peer.addr")
+                        .await
+                        .map_err(|e| MobileError::InitFailed {
+                            message: format!("对端地址读取失败: {e}"),
+                        })?
+                        .ok_or_else(|| MobileError::InitFailed {
+                            message: "尚未配置同步对端".into(),
+                        })?;
+                    let addr: aurora_sync::iroh_transport::PublicEndpointAddr =
+                        serde_json::from_slice(&addr_b64).map_err(|e| MobileError::InitFailed {
+                            message: format!("对端地址解析失败: {e}"),
+                        })?;
+                    // 预解析全部队列文档的 Loro 实例（桌面同款 — resolver 只查内存）
+                    let q = self
+                        .offline_queue
+                        .as_ref()
+                        .ok_or_else(|| MobileError::InitFailed {
+                            message: "fallback 模式无同步装配".into(),
+                        })?;
+                    let mut pre: std::collections::HashMap<String, std::sync::Arc<loro::LoroDoc>> =
+                        std::collections::HashMap::new();
+                    for item in q.items() {
+                        let doc_id = item.doc_id.clone();
+                        let note_doc = match self.doc_for_note_public(&doc_id) {
+                            Ok(d) => d,
+                            Err(_) => continue,
+                        };
+                        let inner = std::sync::Arc::new(note_doc.inner().clone());
+                        let updates =
+                            match aurora_core::write_path::read_update_log(kv.as_ref(), &doc_id)
+                                .await
+                            {
+                                Ok(u) => u,
+                                Err(_) => continue,
+                            };
+                        let mut ok = true;
+                        for upd in updates {
+                            if inner.import(&upd).is_err() {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        if ok {
+                            pre.insert(doc_id, inner);
+                        }
+                    }
+                    let resolver = move |doc_id: &str| -> Option<std::sync::Arc<loro::LoroDoc>> {
+                        pre.get(doc_id).cloned()
+                    };
+                    let Some(queue) = self.offline_queue.clone() else {
+                        return Err(MobileError::InitFailed {
+                            message: "fallback 模式无同步装配".into(),
+                        });
+                    };
+                    Ok(aurora_sync::drain::drain_to_peer_sync(
+                        &queue, transport, &addr, &resolver, 64,
+                    )
+                    .await)
+                })
+                .map_err(|e: MobileError| e)?;
+        Ok(serde_json::json!({
+            "synced_docs": report.synced_docs,
+            "failed_docs": report.failed_docs,
+            "acked_items": report.acked_items,
+        }))
+    }
+
+    /// 函数 4：待处理冲突合并视图（ConflictDto 同构 — kind/id/doc_id/
+    /// summary/created_at；artifact=远端路径，semantic=字段名）。
+    pub fn conflict_list_impl(&self) -> Vec<serde_json::Value> {
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        if let Some(store) = &self.conflict_artifacts {
+            out.extend(store.pending().into_iter().map(|a| {
+                serde_json::json!({
+                    "kind": "artifact",
+                    "id": a.artifact_id,
+                    "doc_id": a.doc_id,
+                    "summary": a.remote_path,
+                    "created_at": a.created_at.to_rfc3339(),
+                })
+            }));
+        }
+        if let Some(resolver) = &self.conflict_resolver {
+            out.extend(resolver.pending_conflicts().into_iter().map(|c| {
+                serde_json::json!({
+                    "kind": "semantic",
+                    "id": c.conflict_id,
+                    "doc_id": c.doc_id,
+                    "summary": c.field,
+                    "created_at": c
+                        .local_updated_at
+                        .map(|t| t.to_rfc3339())
+                        .unwrap_or_default(),
+                })
+            }));
+        }
+        out
+    }
+
+    /// 函数 5：真冲突副本闭环（mark_resolved — 副本留存后的人工确认）。
+    pub fn conflict_resolve_impl(&self, artifact_id: &str) -> Result<(), MobileError> {
+        let store = self
+            .conflict_artifacts
+            .as_ref()
+            .ok_or_else(|| MobileError::InitFailed {
+                message: "fallback 模式无同步装配".into(),
+            })?;
+        store
+            .mark_resolved(artifact_id)
+            .map_err(|e| MobileError::InitFailed {
+                message: format!("冲突解决失败: {e}"),
+            })
+    }
+
+    /// 函数 6：语义冲突解决（策略白名单照桌面 — LocalWins/RemoteWins/
+    /// LastWriteWins/Branch；resolve 返回解决结果 Value 与桌面透传同构）。
+    pub fn conflict_resolve_semantic_impl(
+        &self,
+        conflict_id: &str,
+        resolution: &str,
+    ) -> Result<serde_json::Value, MobileError> {
+        let resolver = self
+            .conflict_resolver
+            .as_ref()
+            .ok_or_else(|| MobileError::InitFailed {
+                message: "fallback 模式无同步装配".into(),
+            })?;
+        let strategy = match resolution {
+            "LocalWins" => aurora_sync::conflict::ConflictResolution::LocalWins,
+            "RemoteWins" => aurora_sync::conflict::ConflictResolution::RemoteWins,
+            "LastWriteWins" => aurora_sync::conflict::ConflictResolution::LastWriteWins,
+            "Branch" => aurora_sync::conflict::ConflictResolution::Branch,
+            other => {
+                return Err(MobileError::InitFailed {
+                    message: format!("非法解决策略: {other}"),
+                })
+            }
+        };
+        resolver
+            .resolve(conflict_id, strategy)
+            .map_err(|e| MobileError::InitFailed {
+                message: format!("冲突解决失败: {e}"),
+            })
+    }
+
+    /// DK-49 装配辅助：挂接 P2P 引擎（MainActivity.startSyncEngine 注入）。
+    #[cfg(feature = "p2p-sync")]
+    pub fn attach_sync_engine(&self, engine: Arc<crate::p2p_sync::SyncEngine>) {
+        if let Ok(mut slot) = self.sync_engine.lock() {
+            *slot = Some(engine);
+        }
+    }
+
+    /// DK-49 装配辅助：摘除 P2P 引擎（MainActivity.closeSyncEngine 注销 —
+    /// 防 use-after-close：close 后 transport 已死，drain 回明确错误）。
+    #[cfg(feature = "p2p-sync")]
+    pub fn detach_sync_engine(&self) {
+        if let Ok(mut slot) = self.sync_engine.lock() {
+            *slot = None;
+        }
+    }
+
+    /// DK-49：drain 专用 runtime（临时 current_thread — 照 wifi_only_impl
+    /// 现有模式，避开共享 runtime 嵌套 block_on 死锁）。
+    #[cfg(feature = "p2p-sync")]
+    fn own_runtime(&self) -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("dk49 drain runtime")
     }
 
     fn create_note_impl(self: &Arc<Self>, title: String) -> Result<String, MobileError> {
@@ -1226,6 +1506,189 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeSetWifiOnly(
         let msg = e.to_string();
         let _ = env.throw_new("java/lang/IllegalStateException", &msg);
     }
+}
+
+// ===========================================================================
+// DK-49：移动端同步数据面 JNI 导出（对齐桌面 sync_commands 七函数 —
+// JSON 字符串返回走 nativeGetAgentContext 既有模式；错误 throw 照
+// nativeSetWifiOnly 模式，Java 侧 catch 后降级 mock/空态）。
+// ===========================================================================
+
+/// DK-49 JSON 序列化失败兜底：throw + null（不吞错误也不 panic）。
+fn dk49_json_to_jstring(env: &mut JNIEnv, v: &serde_json::Value) -> jstring {
+    match serde_json::to_string(v) {
+        Ok(s) => rust_str_to_jstring(env, &s),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// DK-49 函数 1：同步状态聚合 JSON（字段与桌面 SyncStatusDto 同构）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeSyncStatus(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    dk49_json_to_jstring(&mut env, &core.sync_status_impl())
+}
+
+/// DK-49 函数 2：离线队列明细 JSON 数组（QueueItemDto 同构）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeQueueList(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    dk49_json_to_jstring(&mut env, &serde_json::Value::Array(core.queue_list_impl()))
+}
+
+/// DK-49 函数 3：手动补发（DrainReportDto 同构 — failed_docs 不可丢）。
+/// 业务前置（未挂接引擎/未配置对端）throw IllegalStateException，
+/// Java 侧 catch 后返回 `{"error": ...}` 供 UI 提示。
+#[cfg(feature = "p2p-sync")]
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeQueueDrain(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    match core.queue_drain_impl() {
+        Ok(v) => dk49_json_to_jstring(&mut env, &v),
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = env.throw_new("java/lang/IllegalStateException", &msg);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// DK-49 函数 3（非 p2p-sync 编译面）：显式业务错误优于 UnsatisfiedLinkError
+/// （Java 侧无需探测编译面，统一走 catch → `{"error": ...}` 提示路径）。
+#[cfg(not(feature = "p2p-sync"))]
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeQueueDrain(
+    mut env: JNIEnv,
+    _class: JClass,
+    _handle: jlong,
+) -> jstring {
+    let _ = env.throw_new(
+        "java/lang/IllegalStateException",
+        "P2P 功能未编译（aurora-mobile-ffi 缺 p2p-sync feature）",
+    );
+    std::ptr::null_mut()
+}
+
+/// DK-49 函数 4：待处理冲突合并视图 JSON 数组（ConflictDto 同构）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeConflictList(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    dk49_json_to_jstring(
+        &mut env,
+        &serde_json::Value::Array(core.conflict_list_impl()),
+    )
+}
+
+/// DK-49 函数 5：真冲突副本闭环（mark_resolved — 副本留存人工确认）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeConflictResolve(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    artifact_id: JString,
+) {
+    let core = unsafe { core_from_handle(handle) };
+    let Some(artifact_id) = jstring_to_rust(&mut env, &artifact_id) else {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "artifact_id null");
+        return;
+    };
+    if let Err(e) = core.conflict_resolve_impl(&artifact_id) {
+        let msg = e.to_string();
+        let _ = env.throw_new("java/lang/IllegalStateException", &msg);
+    }
+}
+
+/// DK-49 函数 6：语义冲突解决（策略白名单 LocalWins/RemoteWins/
+/// LastWriteWins/Branch — 非法策略 throw）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeConflictResolveSemantic(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    conflict_id: JString,
+    resolution: JString,
+) {
+    let core = unsafe { core_from_handle(handle) };
+    let (Some(conflict_id), Some(resolution)) = (
+        jstring_to_rust(&mut env, &conflict_id),
+        jstring_to_rust(&mut env, &resolution),
+    ) else {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "argument null");
+        return;
+    };
+    if let Err(e) = core.conflict_resolve_semantic_impl(&conflict_id, &resolution) {
+        let msg = e.to_string();
+        let _ = env.throw_new("java/lang/IllegalStateException", &msg);
+    }
+}
+
+/// DK-49 装配辅助：挂接 P2P 引擎（engineHandle = SyncEngine JNI handle，
+/// 同 crate 指针语义还原 Arc — MainActivity.startSyncEngine 注入）。
+#[cfg(feature = "p2p-sync")]
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeAttachSyncEngine(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    engine_handle: jlong,
+) {
+    let core = unsafe { core_from_handle(handle) };
+    // 照 core_from_handle 同款：from_raw → clone → forget（计数 +1）——
+    // engineHandle 所有权仍归 Java（close 时释放），attach 侧持独立强引用。
+    let engine = unsafe { Arc::from_raw(engine_handle as *const crate::p2p_sync::SyncEngine) };
+    let cloned = Arc::clone(&engine);
+    std::mem::forget(engine);
+    core.attach_sync_engine(cloned);
+}
+
+/// DK-49 装配辅助（非 p2p-sync 编译面）：no-op（引擎面未编译，挂接无意义；
+/// 保持符号存在 — Java 侧零探测）。
+#[cfg(not(feature = "p2p-sync"))]
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeAttachSyncEngine(
+    _env: JNIEnv,
+    _class: JClass,
+    _handle: jlong,
+    _engine_handle: jlong,
+) {
+}
+
+/// DK-49 装配辅助：摘除 P2P 引擎（closeSyncEngine 注销 — 防 use-after-close）。
+#[cfg(feature = "p2p-sync")]
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeDetachSyncEngine(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    let core = unsafe { core_from_handle(handle) };
+    core.detach_sync_engine();
+}
+
+/// DK-49 装配辅助（非 p2p-sync 编译面）：no-op（保持符号存在）。
+#[cfg(not(feature = "p2p-sync"))]
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeDetachSyncEngine(
+    _env: JNIEnv,
+    _class: JClass,
+    _handle: jlong,
+) {
 }
 
 #[no_mangle]
@@ -2177,5 +2640,68 @@ mod tests {
 
         core.clone().delete_note(id).unwrap();
         assert!(core.clone().list_notes().is_empty());
+    }
+
+    /// DK-49 函数 1：同步状态聚合五字段与桌面 SyncStatusDto 同构
+    /// （真 bootstrap 装配下队列/冲突初始为空 — 数据面挂载即消费验证）。
+    #[test]
+    fn dk49_sync_status_aggregates() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        assert!(!core.is_fallback, "测试环境应装配 full 模式");
+        let st = core.sync_status_impl();
+        assert_eq!(st["queue_len"], 0);
+        assert_eq!(st["pending_artifacts"], 0);
+        assert_eq!(st["pending_semantic"], 0);
+        // gate 三态白名单（映射与桌面逐一同构）
+        let gate = st["gate"].as_str().unwrap();
+        assert!(
+            matches!(gate, "Allow" | "DeferUntilUnmetered" | "DeferUntilOnline"),
+            "非法 gate 值: {gate}"
+        );
+        assert_eq!(st["wifi_only"], core.wifi_only_impl());
+        // 装配面挂载（BootedApp 同源提取非 None）
+        assert!(core.offline_queue.is_some());
+        assert!(core.conflict_artifacts.is_some());
+        assert!(core.conflict_resolver.is_some());
+    }
+
+    /// DK-49 函数 4：冲突合并视图结构（空态返回空数组 — 字段形状由
+    /// conflict_list_impl 的 json! 字面保证，同桌面 ConflictDto 五字段）。
+    #[test]
+    fn dk49_conflict_list_empty_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        assert!(core.conflict_list_impl().is_empty());
+    }
+
+    /// DK-49 函数 6：非法解决策略拒绝（白名单照桌面 — 防任意字符串透传）。
+    #[test]
+    fn dk49_conflict_resolve_semantic_invalid_policy_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        let err = core
+            .conflict_resolve_semantic_impl("c-1", "CoinFlip")
+            .unwrap_err();
+        assert!(err.to_string().contains("非法解决策略"));
+    }
+
+    /// DK-49 函数 2：队列明细空态（真装配下 OfflineQueue 初始空）。
+    #[test]
+    fn dk49_queue_list_empty_initially() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        assert!(core.queue_list_impl().is_empty());
+    }
+
+    /// DK-49 函数 3：drain 前置校验 — 引擎未挂接返回明确错误（照桌面
+    /// 「P2P 未启用」语义；真补发链路依赖真机网络，单测止于前置门）。
+    #[cfg(feature = "p2p-sync")]
+    #[test]
+    fn dk49_queue_drain_requires_attached_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        let err = core.queue_drain_impl().unwrap_err();
+        assert!(err.to_string().contains("P2P 未启用"));
     }
 }
