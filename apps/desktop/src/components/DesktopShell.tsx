@@ -24,6 +24,10 @@ import TrashView from './TrashView';
 import SmartFolderView from './SmartFolderView';
 import TodayDailyNote from './TodayDailyNote';
 import LiquifyReview from './LiquifyReview';
+// DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
+import SyncStatusBadge from './SyncStatusBadge';
+import QueuePanel from './QueuePanel';
+import ConflictReviewPanel from './ConflictReviewPanel';
 
 export interface InvokeFn {
   (cmd: string, args?: Record<string, unknown>): Promise<unknown>;
@@ -1773,6 +1777,9 @@ export default function DesktopShell() {
 
   // DK-08 §7.3：仅 Wi-Fi 同步开关（tauri 模式可用；mock 模式隐藏）
   const [wifiOnly, setWifiOnly] = useState<boolean | null>(null);
+  // DK-48：同步面板浮层开关（badge 三快捷入口 + Palette 条目共用）
+  const [queuePanelOpen, setQueuePanelOpen] = useState(false);
+  const [conflictPanelOpen, setConflictPanelOpen] = useState(false);
   useEffect(() => {
     if (!invoke) return;
     invoke('cmd_get_wifi_only')
@@ -1831,32 +1838,10 @@ export default function DesktopShell() {
       })
       .catch((e) => window.alert(`查询失败：${String(e)}`));
   }, [invoke]);
+  // DK-48 深化：原 alert 盲选升级为可视化面板（函数名/条目引用不变）
   const showQueue = useCallback(() => {
-    if (!invoke) return;
-    invoke('cmd_queue_list')
-      .then((r) => {
-        const items = r as Array<{
-          id: string;
-          doc_id: string;
-          priority: number;
-          attempts: number;
-          created_at: string;
-        }>;
-        if (items.length === 0) {
-          window.alert('离线队列：空（无积压项）');
-          return;
-        }
-        const lines = items
-          .slice(0, 20)
-          .map(
-            (it, i) =>
-              `${i + 1}. [P${it.priority}] ${it.doc_id}（尝试 ${it.attempts} 次）`,
-          );
-        if (items.length > 20) lines.push(`…共 ${items.length} 条`);
-        window.alert(lines.join('\n'));
-      })
-      .catch((e) => window.alert(`查询失败：${String(e)}`));
-  }, [invoke]);
+    setQueuePanelOpen(true);
+  }, []);
   const drainQueue = useCallback(() => {
     if (!invoke) return;
     invoke('cmd_queue_drain')
@@ -1871,24 +1856,10 @@ export default function DesktopShell() {
       })
       .catch((e) => window.alert(`补发失败：${String(e)}`));
   }, [invoke, refreshSyncStatus]);
+  // DK-48 深化：原 alert 盲选升级为逐条决策面板（函数名/条目引用不变）
   const showConflicts = useCallback(() => {
-    if (!invoke) return;
-    invoke('cmd_conflict_list')
-      .then((r) => {
-        const items = r as Array<{ kind: string; id: string; doc_id: string; summary: string }>;
-        if (items.length === 0) {
-          window.alert('冲突处理：无待处理冲突');
-          return;
-        }
-        const lines = items
-          .slice(0, 20)
-          .map((it, i) => `${i + 1}. [${it.kind}] ${it.doc_id} — ${it.summary}`);
-        if (items.length > 20) lines.push(`…共 ${items.length} 条`);
-        lines.push('', '（选择解决请在命令面板输入"解决冲突"逐条处理）');
-        window.alert(lines.join('\n'));
-      })
-      .catch((e) => window.alert(`查询失败：${String(e)}`));
-  }, [invoke]);
+    setConflictPanelOpen(true);
+  }, []);
   const resolveFirstConflict = useCallback(() => {
     if (!invoke) return;
     invoke('cmd_conflict_list')
@@ -2202,6 +2173,15 @@ export default function DesktopShell() {
             今日视图 · 进行中 {stats.active} / 已完成 {stats.done}
           </span>
         )}
+        {invoke && (
+          <SyncStatusBadge
+            invoke={invoke}
+            wifiOnly={wifiOnly}
+            onToggleWifiOnly={toggleWifiOnly}
+            onOpenQueue={showQueue}
+            onOpenConflicts={showConflicts}
+          />
+        )}
       </header>
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <Sidebar
@@ -2312,6 +2292,21 @@ export default function DesktopShell() {
         openNote={(id) => setSelectedId(id)}
         items={[...builtins, ...results]}
       />
+      {/* DK-48：同步两面板（独立浮层组件；onChanged 联动 badge 刷新） */}
+      {queuePanelOpen && invoke && (
+        <QueuePanel
+          invoke={invoke}
+          onClose={() => setQueuePanelOpen(false)}
+          onChanged={refreshSyncStatus}
+        />
+      )}
+      {conflictPanelOpen && invoke && (
+        <ConflictReviewPanel
+          invoke={invoke}
+          onClose={() => setConflictPanelOpen(false)}
+          onChanged={refreshSyncStatus}
+        />
+      )}
     </div>
   );
 }
