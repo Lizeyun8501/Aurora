@@ -17,6 +17,8 @@ import { platform, type SyncStatus } from '../adapters/androidPlatform';
 interface Props {
   onOpenQueue: () => void;
   onOpenConflicts: () => void;
+  /** DK-50.1：面板 onChanged 时间戳（变化即刷——决策后不等 15s 轮询） */
+  lastChangedAt?: number;
 }
 
 const POLL_MS = 15_000;
@@ -45,7 +47,7 @@ function gateDotClass(gate: string): string {
   }
 }
 
-export default function SyncStatusBadge({ onOpenQueue, onOpenConflicts }: Props) {
+export default function SyncStatusBadge({ onOpenQueue, onOpenConflicts, lastChangedAt }: Props) {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [wifiOnly, setWifiOnly] = useState<boolean | null>(null);
@@ -76,6 +78,12 @@ export default function SyncStatusBadge({ onOpenQueue, onOpenConflicts }: Props)
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [refresh]);
+
+  // DK-50.1：面板 onChanged 联动——lastChangedAt 变化即刷（决策后即时
+  // 反映到 badge，不等下一轮 15s 轮询；undefined 初值不触发）
+  useEffect(() => {
+    if (lastChangedAt !== undefined) refresh();
+  }, [lastChangedAt, refresh]);
 
   const toggleWifi = useCallback(() => {
     if (wifiOnly === null || toggling) return;

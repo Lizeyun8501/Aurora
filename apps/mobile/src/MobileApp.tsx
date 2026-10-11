@@ -289,6 +289,8 @@ export default function App() {
   // DK-50：同步两面板浮层开关（badge 三入口 + menu-pop 两入口共用）
   const [queueOpen, setQueueOpen] = useState(false);
   const [conflictOpen, setConflictOpen] = useState(false);
+  // DK-50.1：面板决策时间戳（bump 触发 badge 即刷——联动打通）
+  const [syncChangedAt, setSyncChangedAt] = useState(0);
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     (localStorage.getItem('aurora.theme') as 'light' | 'dark') ?? 'light');
   const [tasks, setTasks] = useState<Task[]>(loadTasks);
@@ -376,6 +378,7 @@ export default function App() {
               <SyncStatusBadge
                 onOpenQueue={() => setQueueOpen(true)}
                 onOpenConflicts={() => setConflictOpen(true)}
+                lastChangedAt={syncChangedAt}
               />
             }
           />
@@ -442,17 +445,17 @@ export default function App() {
         </>
       )}
 
-      {/* DK-50：同步两面板（全屏 sheet；onChanged 联动 badge 刷新） */}
+      {/* DK-50：同步两面板（全屏 sheet；onChanged→syncChangedAt bump→badge 即刷） */}
       {queueOpen && (
         <QueuePanel
           onClose={() => setQueueOpen(false)}
-          onChanged={() => undefined}
+          onChanged={() => setSyncChangedAt(Date.now())}
         />
       )}
       {conflictOpen && (
         <ConflictReviewPanel
           onClose={() => setConflictOpen(false)}
-          onChanged={() => undefined}
+          onChanged={() => setSyncChangedAt(Date.now())}
         />
       )}
 
