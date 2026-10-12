@@ -1,0 +1,15 @@
+[package]
+name = "plugin-hello-guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# DK-14d.3: guest 侧绑定生成（版本与 wasmtime 36.0.17 生态同窗——
+# 0.57.1 已在 Cargo.lock 传递链，零新增编译面；不焊死：升级以
+# guest 编译过 + 宿主实例化类型校验过为判据）
+wit-bindgen = { workspace = true }

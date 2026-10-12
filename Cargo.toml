@@ -12,6 +12,9 @@ members = [
     "crates/entity",
     "crates/migration",
     "crates/mobile-ffi",
+    # DK-14d.3: guest 构建链（仅 wasm32-wasip2 目标；host 默认编译集
+    # 不含——cargo build --workspace 需 --exclude，CI wasm-guest job 专编）
+    "crates/plugin-hello-guest",
     # 桌面平台适配（Tauri v2）— Rust 1.91 工具链已就绪，V20 GAP-01 关闭
     "apps/desktop/src-tauri",
 ]
@@ -44,6 +47,10 @@ anyhow = "1"
 loro = "1"
 # DK-33: wasm 文本内联编译（e2e 测试样本——纯库非工具链）
 wat = "1"
+# DK-14d.3: guest 侧 WIT 绑定生成——版本与 wasmtime 36.0.17 生态同窗
+# （0.57.1 已在 Cargo.lock 传递链；不焊死：升级以 guest 编译过+宿主
+# 实例化类型校验过为最终判据——教训⑦假设+复核口径）
+wit-bindgen = "0.57.1"
 
 # P2P sync — iroh 1.0 需 Rust 1.91+，workspace 中保留定义供 optional 引用
 iroh = "1.0"
