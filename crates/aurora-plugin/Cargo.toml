@@ -44,3 +44,5 @@ parking_lot = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 # Real CryptoProvider implementation for signature verification tests
 aurora-security = { path = "../aurora-security" }
+# DK-14d.d1: wasm 文本 fixture 编译（DK-33 惯例——纯库非工具链）
+wat = { workspace = true }

@@ -1,0 +1,28 @@
+// DK-14d.d1 最小宿主合约 · aurora-plugin
+//
+// # DK-14c 前置映射（capability 参数位语义）
+//
+// `capability: string` 为能力令牌占位——14c 落地时升级为 capability
+// resource（borrow 传参）+ 宿主侧 CapabilityManifest 校验（本 crate
+// permission.rs 三级权限已有宿主面）。届时签名替换：
+//   `capability: string` → `capability: borrow<capability-token>`
+// guest 校验语义保持「先校验后动作」；本版实现可先校验空（占位非空
+// 校验在 14c 配置层落地）。
+//
+// # 范围
+// 仅 export host 接口（无 import）——bindgen 宿主侧零 trait 实现负担；
+// d2 以此 world 对真实 guest component 做实例化类型校验。
+package aurora:plugin@0.1.0;
+
+interface host {
+    /// 插件初始化（加载后调用一次）。
+    init: func(capability: string) -> result;
+
+    /// 宿主事件入口（宿主 → 插件事件通道）。
+    handle-event: func(capability: string, event: string, payload: string) -> result;
+}
+
+/// 最小插件世界（guest 导出 host 接口）。
+world plugin {
+    export host;
+}

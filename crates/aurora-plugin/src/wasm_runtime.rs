@@ -16,6 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -245,23 +246,92 @@ impl HostFunctionRegistry for DefaultHostFunctions {
     }
 }
 
+/// DK-14d.d1：epoch ticker Drop 关停——置停机位后 join，不留孤儿线程
+/// （shutdown 路径：进程退出/runtime drop 均触发，见 struct 文档）。
+impl Drop for WasmRuntime {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+        self.ticker_stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.ticker_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+// DK-14d.d1：最小 WIT 合约绑定（host 侧生成）——宏展开产物在本模块
+// 作用域（PluginWorld 等 pub 类型直接可见）。
+// 合约文件 `wit/aurora-plugin.wit`；文件头含 capability 参数位与
+// DK-14c 的映射说明。world `plugin` 仅 export host 接口（无 import
+// → bindgen 不要求宿主侧 trait 实现，编译零负担）。d2 起以此合约
+// 类型校验真实 guest component。
+wasmtime::component::bindgen!({
+    path: "wit",
+    world: "plugin",
+});
+
 /// WASM 插件运行时：管理插件能力清单并分派宿主函数调用。
 ///
-/// 持有 `wasmtime::Engine` 表示运行时引擎已就绪；宿主函数通过注入的
-/// `HostFunctionRegistry` 实现，能力校验在调用前强制执行。
+/// 持有 `wasmtime::Engine`（DK-14d.d1：component model + epoch 抢占配置）
+/// 表示运行时引擎已就绪；宿主函数通过注入的 `HostFunctionRegistry`
+/// 实现，能力校验在调用前强制执行。
+///
+/// # epoch ticker 生命周期（工单执行规约）
+/// 后台线程每 [`EPOCH_TICK_MS`] ms 调 `Engine::increment_epoch`——
+/// shutdown 路径：[`Drop`] 置停机位后 join（进程退出 / runtime drop
+/// 均会关停，不留孤儿线程）。
 pub struct WasmRuntime {
     engine: wasmtime::Engine,
     registry: Arc<dyn HostFunctionRegistry>,
     manifests: Arc<RwLock<HashMap<PluginId, CapabilityManifest>>>,
+    /// epoch ticker 停机位（Drop 关停路径）
+    ticker_stop: Arc<std::sync::atomic::AtomicBool>,
+    /// ticker 线程句柄（Drop 时 join）
+    ticker_handle: Option<std::thread::JoinHandle<()>>,
 }
+
+/// epoch 心跳间隔（ms）。deadline 单位=tick 数，50ms 粒度即可支撑
+/// 毫秒级死循环打断（DK-14b 单测实证）。
+const EPOCH_TICK_MS: u64 = 50;
 
 impl WasmRuntime {
     /// 使用指定宿主函数注册表构造运行时。
+    ///
+    /// DK-14d.d1 Config 重构（原 `Engine::default()`）：
+    /// - `wasm_component_model(true)`——WIT 合约 Component 加载前置；
+    /// - `epoch_interruption(true)` + 后台 ticker——死循环 wasm 可被打断
+    ///   （DK-14b 并入本项一次重构；Store 级 `set_deadline` 在实例化层接线）；
+    /// - ResourceLimiter 错误类型经 workspace 传递依赖显式声明（DK-39
+    ///   惯例，workspace Cargo.toml L41 注释），limiter 挂载点在 Store
+    ///   创建层（d2 生产接线）。
     pub fn new(registry: Arc<dyn HostFunctionRegistry>) -> Self {
+        use std::sync::atomic::AtomicBool;
+
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true);
+        config.epoch_interruption(true);
+        let engine = wasmtime::Engine::new(&config).expect("engine config valid");
+
+        // epoch ticker 后台线程（Drop 关停 + join，见 struct 文档）
+        let ticker_stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = ticker_stop.clone();
+        let ticker_engine = engine.clone();
+        let ticker_handle = std::thread::Builder::new()
+            .name("wasm-epoch-ticker".into())
+            .spawn(move || {
+                use std::sync::atomic::Ordering;
+                while !stop_flag.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(EPOCH_TICK_MS));
+                    ticker_engine.increment_epoch();
+                }
+            })
+            .expect("spawn wasm-epoch-ticker thread");
+
         Self {
-            engine: wasmtime::Engine::default(),
+            engine,
             registry,
             manifests: Arc::new(RwLock::new(HashMap::new())),
+            ticker_stop,
+            ticker_handle: Some(ticker_handle),
         }
     }
 
@@ -273,6 +343,19 @@ impl WasmRuntime {
     /// 返回底层 Wasmtime 引擎句柄（生产环境用于模块实例化）。
     pub fn engine(&self) -> &wasmtime::Engine {
         &self.engine
+    }
+
+    /// DK-14d.d1：真实 WASM Component 加载（component model API）。
+    ///
+    /// 验证 wasm 字节是否为合法 component——d2 以此替换模拟执行段
+    /// （wasm_runtime L331 区，本卡零触碰）。加载失败返回明确错误
+    /// （无效字节/类型节损坏均走 [`crate::Error::WasmRuntime`]）。
+    pub fn load_component(
+        &self,
+        wasm_bytes: &[u8],
+    ) -> Result<wasmtime::component::Component, crate::Error> {
+        wasmtime::component::Component::new(&self.engine, wasm_bytes)
+            .map_err(|e| crate::Error::WasmRuntime(format!("component load failed: {e}")))
     }
 
     /// 注册插件及其能力清单。
@@ -572,5 +655,129 @@ mod tests {
         let rt = WasmRuntime::with_default_registry();
         // 引擎句柄可访问，表明 Wasmtime 运行时已就绪
         let _engine = rt.engine();
+    }
+
+    // ===== DK-14d.d1：Config 重构 + Component 加载 + WIT 合约 =====
+
+    /// DoD：epoch deadline 打断死循环 wasm（DK-14b 并入验证——
+    /// fixture = wat 文本编译的 core module 死循环，wat 纯库非工具链）。
+    #[test]
+    fn test_epoch_deadline_interrupts_infinite_loop() {
+        let rt = WasmRuntime::with_default_registry();
+        let mut store = wasmtime::Store::new(&rt.engine, ());
+        let wat = r#"(module (func (export "spin") (loop br 0)))"#;
+        let module = wasmtime::Module::new(&rt.engine, wat).expect("wat module valid");
+        let instance = wasmtime::Linker::<()>::new(&rt.engine)
+            .instantiate(&mut store, &module)
+            .expect("instantiate");
+        let spin = instance
+            .get_typed_func::<(), ()>(&mut store, "spin")
+            .expect("spin export");
+
+        // 当前 epoch + 2 tick（~100ms）后强制打断——ticker 线程在推进 epoch
+        store.set_epoch_deadline(2);
+
+        let err = spin.call(&mut store, ()).expect_err("死循环必须被打断");
+        // epoch 打断根因在错误因果链深处（wasmtime 36 无 Trap::Interrupted
+        // 变体——Debug 格式展开完整链后按 interrupt/epoch 关键词断言）
+        let msg = format!("{err:?}").to_lowercase();
+        assert!(
+            msg.contains("interrupt") || msg.contains("epoch"),
+            "应为 epoch 打断 trap，实际: {err:?}"
+        );
+    }
+
+    /// DoD：Component::new 加载真实 wasm 成功（component model 配置生效——
+    /// 极简合法 component fixture，wat→binary 贴近生产二进制路径）。
+    #[test]
+    fn test_component_new_success() {
+        let rt = WasmRuntime::with_default_registry();
+        let wat = r#"(component (core module $m (memory 1)) (core instance $i (instantiate $m)))"#;
+        let bytes = wat::parse_str(wat).expect("wat parses");
+        let comp = match rt.load_component(&bytes) {
+            Ok(c) => c,
+            Err(e) => panic!("合法 component 必须加载成功: {e}"),
+        };
+        let _ = comp; // 类型即证明：wasmtime::component::Component
+    }
+
+    /// DoD：失败路径返回明确错误（垃圾字节 → Error::WasmRuntime）。
+    #[test]
+    fn test_component_new_invalid_bytes_error() {
+        let rt = WasmRuntime::with_default_registry();
+        let err = match rt.load_component(&[0xDE, 0xAD, 0xBE, 0xEF]) {
+            Err(e) => e,
+            Ok(_) => panic!("垃圾字节不应加载成功"),
+        };
+        match err {
+            crate::Error::WasmRuntime(m) => {
+                assert!(m.contains("component load failed"), "错误需可定位: {m}");
+            }
+            other => panic!("应为 WasmRuntime 错误，实际: {other:?}"),
+        }
+    }
+
+    /// DoD：WIT 合约文件在库 + bindgen 编译过 + capability 参数位在签名
+    /// （签名断言：合约文件 init/handle-event 均含 capability 参数——
+    /// 14c 前置契约；bindgen 宏编译通过即产物类型面生效）。
+    #[test]
+    fn test_wit_contract_capability_signature() {
+        // 合约签名面：capability 参数位在两个函数签名中（前缀断言——
+        // init 单参带右括号；handle-event 后随更多参数）
+        let wit = include_str!("../wit/aurora-plugin.wit");
+        for sig in [
+            "init: func(capability: string)",
+            "handle-event: func(capability: string",
+        ] {
+            assert!(wit.contains(sig), "WIT 缺 capability 签名: {sig}");
+        }
+        assert!(wit.contains("world plugin"), "world 定义在库");
+    }
+
+    /// DoD：epoch ticker 关停路径——Drop 置停机位+join（结构保证：
+    /// drop 返回即线程已停，无孤儿线程泄漏）。
+    #[test]
+    fn test_epoch_ticker_stops_on_drop() {
+        let rt = WasmRuntime::with_default_registry();
+        drop(rt); // Drop 内部 join——若死锁/泄漏此测试挂起
+                  // 二次 drop 语义：Option<JoinHandle> take 后不重复 join ✓
+    }
+
+    /// ResourceLimiter 接线验证（DK-39 经验：错误类型走 workspace 传递
+    /// 依赖）——Store 级 limiter 通路可用，内存超限返回明确错误。
+    #[test]
+    fn test_resource_limiter_store_wiring() {
+        struct Cap1Mib;
+        impl wasmtime::ResourceLimiter for Cap1Mib {
+            fn memory_growing(
+                &mut self,
+                _current: usize,
+                desired: usize,
+                _maximum: Option<usize>,
+            ) -> Result<bool, wasmtime::Error> {
+                Ok(desired <= 1024 * 1024)
+            }
+            fn table_growing(
+                &mut self,
+                _current: usize,
+                _desired: usize,
+                _maximum: Option<usize>,
+            ) -> Result<bool, wasmtime::Error> {
+                Ok(true)
+            }
+        }
+        let rt = WasmRuntime::with_default_registry();
+        let mut store = wasmtime::Store::new(&rt.engine, Cap1Mib);
+        store.limiter(|state: &mut Cap1Mib| state);
+        // 4MiB 巨型 memory 声明被 limiter 拒绝
+        let wat = r#"(module (memory (export "m") 64))"#; // 64 页 = 4MiB
+        let module = wasmtime::Module::new(&rt.engine, wat).expect("wat valid");
+        let err = wasmtime::Linker::<Cap1Mib>::new(&rt.engine)
+            .instantiate(&mut store, &module)
+            .expect_err("超限 memory 必须被 limiter 拒绝");
+        assert!(
+            format!("{err}").to_lowercase().contains("memory"),
+            "应为 memory 超限错误: {err}"
+        );
     }
 }
