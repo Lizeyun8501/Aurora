@@ -20,13 +20,12 @@
 //! );
 //! ```
 //!
-//! # 实现说明
-//! 本模块以内存 [`std::collections::BinaryHeap`] 模拟 SQLite 表与优先级排序。
-//! 真实实现使用 `rusqlite` 持久化，公开 API 保持一致。
+//! # 实现说明 (DK-51 案一)
+//! 已 rusqlite 真实化：[`OfflineQueue::new`] 进程内内存库（行为与旧
+//! 内存版同构），[`OfflineQueue::open`] 落盘持久版（WAL + 幂等建表）。
+//! 公开 API 与旧内存版完全一致，消费端无感知。
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
-use std::sync::Arc;
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -130,52 +129,134 @@ pub const SCHEMA: &str = r#"CREATE TABLE IF NOT EXISTS sync_queue (
   attempts INTEGER DEFAULT 0
 );"#;
 
-/// 离线队列 (内存模拟 SQLite 表)。
+/// 离线队列 (rusqlite 真实化，DK-51 案一)。
 ///
-/// 真实实现使用 rusqlite 持久化；接口与内存版一致。
+/// 存储即 [`SCHEMA`] 的 `sync_queue` 表：
+/// - `new()` = 进程内 SQLite（内存库）——签名与旧行为完全一致（测试/
+///   默认装配零改动）；
+/// - [`OfflineQueue::open`] = 落盘版（`data_dir/sync_queue.db`）——
+///   进程重启队列不丢，两端装配点（aurora-bootstrap 单点）已切换。
+///
+/// 语义对齐内存版（消费端无感知）：
+/// - 出队即离队（行删除）；补发失败经 [`OfflineQueue::requeue`] 回插，
+///   attempts 随 INSERT 落库——进程中断不丢重试计数；
+/// - 幂等键 `UNIQUE` 约束由表承担（INSERT OR IGNORE 去重）；
+/// - `ack` 清除该键对应行（操作已成功语义；生产流 ack 均在出队后
+///   调用，行已离队，行为与内存版等价）。
 pub struct OfflineQueue {
-    heap: Arc<Mutex<BinaryHeap<QueueItem>>>,
-    /// 幂等键去重索引：idempotency_key -> item id。
-    idempotency_index: Arc<Mutex<HashMap<String, String>>>,
+    conn: Mutex<rusqlite::Connection>,
 }
 
 impl OfflineQueue {
+    /// 进程内 SQLite 版（内存库，与旧内存版同构：进程结束即消失）。
     pub fn new() -> Self {
+        let conn =
+            rusqlite::Connection::open_in_memory().expect("in-memory sqlite always available");
+        Self::init_conn(conn)
+    }
+
+    /// 落盘版：打开（或创建）持久化队列库。
+    ///
+    /// WAL 模式（崩溃安全：enqueue 落库即持久）；表结构幂等创建。
+    pub fn open(path: &std::path::Path) -> crate::Result<Self> {
+        let conn =
+            rusqlite::Connection::open(path).map_err(|e| crate::Error::Database(e.to_string()))?;
+        // WAL：写不阻塞读 + 断电安全（队列项是少量小行，checkpoint 开销可忽略）
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .map_err(|e| crate::Error::Database(e.to_string()))?;
+        Ok(Self::init_conn(conn))
+    }
+
+    /// 幂等建表 + 包 Mutex。
+    fn init_conn(conn: rusqlite::Connection) -> Self {
+        conn.execute_batch(SCHEMA).expect("sync_queue schema valid");
         Self {
-            heap: Arc::new(Mutex::new(BinaryHeap::new())),
-            idempotency_index: Arc::new(Mutex::new(HashMap::new())),
+            conn: Mutex::new(conn),
         }
     }
 
     /// 入队；若幂等键已存在则返回已有项 ID (去重)。
     pub fn enqueue(&self, item: QueueItem) -> crate::Result<String> {
-        let mut idx = self.idempotency_index.lock();
-        if let Some(existing_id) = idx.get(&item.idempotency_key) {
+        let conn = self.conn.lock();
+        let affected = conn
+            .execute(
+                "INSERT OR IGNORE INTO sync_queue
+                 (id, idempotency_key, doc_id, payload, priority, created_at, attempts)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    item.id,
+                    item.idempotency_key,
+                    item.doc_id,
+                    item.payload,
+                    item.priority.weight(),
+                    item.created_at.timestamp_micros(),
+                    item.attempts,
+                ],
+            )
+            .map_err(|e| crate::Error::Database(e.to_string()))?;
+        if affected == 0 {
+            // 幂等键 UNIQUE 冲突 → 返回已有项 ID（去重语义与内存版一致）
+            let existing: String = conn
+                .query_row(
+                    "SELECT id FROM sync_queue WHERE idempotency_key = ?1",
+                    rusqlite::params![item.idempotency_key],
+                    |r| r.get(0),
+                )
+                .map_err(|e| crate::Error::Database(e.to_string()))?;
             debug!(
                 "enqueue dedup: key={} existing={}",
-                item.idempotency_key, existing_id
+                item.idempotency_key, existing
             );
-            return Ok(existing_id.clone());
+            return Ok(existing);
         }
-        let id = item.id.clone();
-        idx.insert(item.idempotency_key.clone(), id.clone());
-        drop(idx);
-        self.heap.lock().push(item);
-        info!("enqueue ok: id={}", id);
-        Ok(id)
+        info!("enqueue ok: id={}", item.id);
+        Ok(item.id)
     }
 
     /// 出队最高优先级项 (FIFO 内部排序)，并递增尝试次数。
+    ///
+    /// 出队即离队（行删除，与内存版堆弹出一致）；attempts 递增随返回值
+    /// 携带，由 [`OfflineQueue::requeue`] 落库持久。
     pub fn dequeue(&self) -> Option<QueueItem> {
-        let mut item = self.heap.lock().pop()?;
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, idempotency_key, doc_id, payload, priority, created_at, attempts
+             FROM sync_queue ORDER BY priority ASC, created_at ASC LIMIT 1",
+            )
+            .ok()?;
+        let item = stmt.query_row([], Self::row_to_item).ok()?;
+        drop(stmt);
+        // 同连接内删除（出队即离队）
+        conn.execute(
+            "DELETE FROM sync_queue WHERE id = ?1",
+            rusqlite::params![item.id],
+        )
+        .ok()?;
+        let mut item = item;
         item.attempts += 1;
         Some(item)
     }
 
-    /// DK-40b: 补发失败回队——item 回插堆中，幂等索引保持不动
-    /// （失败≠放弃，语义与 ack 相反；attempts 已由 dequeue 递增）。
+    /// DK-40b: 补发失败回队——item 回插表中，幂等索引保持不动
+    /// （失败≠放弃，语义与 ack 相反；attempts 已由 dequeue 递增，
+    /// INSERT 落库 → 进程中断不丢重试计数）。
     pub fn requeue(&self, item: QueueItem) {
-        self.heap.lock().push(item);
+        let conn = self.conn.lock();
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO sync_queue
+             (id, idempotency_key, doc_id, payload, priority, created_at, attempts)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                item.id,
+                item.idempotency_key,
+                item.doc_id,
+                item.payload,
+                item.priority.weight(),
+                item.created_at.timestamp_micros(),
+                item.attempts,
+            ],
+        );
     }
 
     /// 批量出队 (最多 n 项)。
@@ -204,29 +285,84 @@ impl OfflineQueue {
 
     /// 当前队列长度。
     pub fn len(&self) -> usize {
-        self.heap.lock().len()
+        let conn = self.conn.lock();
+        conn.query_row("SELECT COUNT(*) FROM sync_queue", [], |r| r.get(0))
+            .unwrap_or(0)
     }
 
     /// DK-44: 队列快照（只读）——离线队列可视化数据源。
-    /// 返回按入队序（内部堆序）的全部积压项拷贝；不改变队列状态。
+    /// 返回按出队序（优先级 → 入队时序 FIFO）的全部积压项拷贝；
+    /// 不改变队列状态。
     pub fn items(&self) -> Vec<QueueItem> {
-        self.heap.lock().clone().into_vec()
+        let conn = self.conn.lock();
+        let mut stmt = match conn.prepare(
+            "SELECT id, idempotency_key, doc_id, payload, priority, created_at, attempts
+             FROM sync_queue ORDER BY priority ASC, created_at ASC",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt.query_map([], Self::row_to_item);
+        match rows {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// 是否为空。
     pub fn is_empty(&self) -> bool {
-        self.heap.lock().is_empty()
+        self.len() == 0
     }
 
     /// 确认某幂等键对应的操作已成功 (清理索引，允许未来相同语义重新入队)。
+    ///
+    /// SQLite 版：删除该键所在行（幂等键即行上 UNIQUE 列）。生产流 ack
+    /// 均在 dequeue 之后调用（行已离队），此处为防御性清理 + 语义兜底。
     pub fn ack(&self, idempotency_key: &str) -> crate::Result<()> {
-        self.idempotency_index.lock().remove(idempotency_key);
+        let conn = self.conn.lock();
+        conn.execute(
+            "DELETE FROM sync_queue WHERE idempotency_key = ?1",
+            rusqlite::params![idempotency_key],
+        )
+        .map_err(|e| crate::Error::Database(e.to_string()))?;
         Ok(())
     }
 
     /// 幂等键是否已存在于队列中。
     pub fn contains_key(&self, idempotency_key: &str) -> bool {
-        self.idempotency_index.lock().contains_key(idempotency_key)
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sync_queue WHERE idempotency_key = ?1)",
+            rusqlite::params![idempotency_key],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|v| v != 0)
+        .unwrap_or(false)
+    }
+
+    /// 行 → QueueItem 映射（created_at 以微秒精度存取，避免纳秒截断歧义）。
+    fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItem> {
+        let priority: u8 = row.get(4)?;
+        let created_micros: i64 = row.get(5)?;
+        Ok(QueueItem {
+            id: row.get(0)?,
+            idempotency_key: row.get(1)?,
+            doc_id: row.get(2)?,
+            payload: row.get(3)?,
+            priority: Self::priority_from_weight(priority),
+            created_at: chrono::DateTime::from_timestamp_micros(created_micros)
+                .unwrap_or_else(chrono::Utc::now),
+            attempts: row.get::<_, i64>(6).unwrap_or(0).max(0) as u32,
+        })
+    }
+
+    /// weight(u8) → Priority（越界回退 Medium）。
+    fn priority_from_weight(w: u8) -> Priority {
+        match w {
+            0 => Priority::High,
+            2 => Priority::Low,
+            _ => Priority::Medium,
+        }
     }
 }
 
@@ -357,5 +493,106 @@ mod tests {
         assert_eq!(first.id, early_id);
         let second = q.dequeue().unwrap();
         assert_eq!(second.id, late_id);
+    }
+
+    // ===== DK-51 案一：落盘持久化（reopen）验证 =====
+
+    fn tmpdir() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("sync_queue.db");
+        (dir, path)
+    }
+
+    /// DoD：enqueue 落库即持久——写入→杀（drop 连接）→重开→items() 仍在。
+    #[test]
+    fn test_persist_reopen_items_survive() {
+        let (_dir, path) = tmpdir();
+        {
+            let q = OfflineQueue::open(&path).expect("open");
+            q.enqueue(QueueItem::new("doc-a", vec![1], Priority::High))
+                .unwrap();
+            q.enqueue(QueueItem::new("doc-b", vec![2], Priority::Low))
+                .unwrap();
+            assert_eq!(q.len(), 2);
+        } // drop = 模拟进程退出
+        let q2 = OfflineQueue::open(&path).expect("reopen");
+        assert_eq!(q2.len(), 2);
+        let items = q2.items();
+        assert_eq!(items[0].doc_id, "doc-a"); // High 优先
+        assert_eq!(items[1].doc_id, "doc-b");
+        assert_eq!(items[0].priority, Priority::High);
+    }
+
+    /// 幂等键跨进程去重：重开后同键 enqueue 仍被去重。
+    #[test]
+    fn test_idempotency_survives_reopen() {
+        let (_dir, path) = tmpdir();
+        {
+            let q = OfflineQueue::open(&path).unwrap();
+            let item = QueueItem::new("doc", vec![1], Priority::Medium).with_idempotency_key("k1");
+            q.enqueue(item).unwrap();
+        }
+        let q2 = OfflineQueue::open(&path).unwrap();
+        let dup = QueueItem::new("doc", vec![9], Priority::High).with_idempotency_key("k1");
+        let id = q2.enqueue(dup).unwrap();
+        assert_eq!(q2.len(), 1, "同键重开仍去重");
+        assert!(q2.contains_key("k1"));
+        let back = q2.dequeue().unwrap();
+        assert_eq!(back.id, id);
+        assert_eq!(back.payload, vec![1], "去重保留的是首次入队项");
+    }
+
+    /// DoD：attempts 递增经 requeue 落库——dequeue(1) → requeue → 重开 →
+    /// dequeue 得 attempts=2（进程中断不丢重试计数）。
+    #[test]
+    fn test_attempts_persist_via_requeue_reopen() {
+        let (_dir, path) = tmpdir();
+        let first_id = {
+            let q = OfflineQueue::open(&path).unwrap();
+            let item = QueueItem::new("doc", vec![1], Priority::Medium).with_idempotency_key("ra");
+            let id = q.enqueue(item).unwrap();
+            let out = q.dequeue().unwrap();
+            assert_eq!(out.attempts, 1);
+            q.requeue(out); // 补发失败回队（attempts=1 落库）
+            id
+        };
+        let q2 = OfflineQueue::open(&path).unwrap();
+        assert_eq!(q2.len(), 1, "requeue 行持久");
+        let again = q2.dequeue().unwrap();
+        assert_eq!(again.id, first_id);
+        assert_eq!(again.attempts, 2, "重试计数跨进程累计");
+    }
+
+    /// 出队即离队语义持久：dequeue 后（未 requeue）重开 → 项不在
+    /// （in-flight 崩溃窗口与旧内存版一致，披露见模块文档）。
+    #[test]
+    fn test_dequeued_item_not_persisted() {
+        let (_dir, path) = tmpdir();
+        {
+            let q = OfflineQueue::open(&path).unwrap();
+            q.enqueue(QueueItem::new("doc", vec![1], Priority::Medium))
+                .unwrap();
+            assert!(q.dequeue().is_some());
+            assert!(q.is_empty());
+        }
+        let q2 = OfflineQueue::open(&path).unwrap();
+        assert!(q2.is_empty(), "已出队项不随重启复活");
+    }
+
+    /// items() 快照序稳定：优先级 → 同级入队时序（可视化数据源契约）。
+    #[test]
+    fn test_items_sorted_by_priority_then_time() {
+        let q = OfflineQueue::new();
+        q.enqueue(QueueItem::new("doc", vec![1], Priority::Low))
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        q.enqueue(QueueItem::new("doc", vec![2], Priority::Low))
+            .unwrap();
+        q.enqueue(QueueItem::new("doc", vec![3], Priority::High))
+            .unwrap();
+        let items = q.items();
+        assert_eq!(items[0].priority, Priority::High);
+        assert_eq!(items[1].payload, vec![1], "同优先级 FIFO");
+        assert_eq!(items[2].payload, vec![2]);
     }
 }

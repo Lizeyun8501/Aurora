@@ -202,7 +202,12 @@ pub fn bootstrap(
         network_provider,
         wifi_only,
     ));
-    let offline_queue = Arc::new(aurora_sync::offline_queue::OfflineQueue::new());
+    // DK-51 案一：rusqlite 落盘真实化（data_dir/sync_queue.db，WAL）——
+    // 进程重启队列不丢（桌面与移动两端共用本单点装配）。
+    let offline_queue = Arc::new(
+        aurora_sync::offline_queue::OfflineQueue::open(&data_dir.join("sync_queue.db"))
+            .map_err(|e| BootstrapError::Core(format!("offline queue open failed: {e}")))?,
+    );
 
     // DK-10 切片 3：AI 云策略装配——resolver 启动预载（当前 desktop 单工作区
     // "default"；多工作区立项后 ids 来源升级为工作区清单）。键缺失/读失败 →
