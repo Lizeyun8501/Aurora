@@ -136,6 +136,15 @@ pub struct DrainReportDto {
 #[tauri::command]
 pub async fn cmd_queue_drain() -> Result<DrainReportDto, String> {
     let booted = get_booted()?;
+    // DK-51 案二：drain 过门——网络策略拒绝不进入补发（Defer 不是错误，
+    // 不入重试/熔断统计；错误信息携带 decision+reason，前端直接展示）。
+    let decision = booted.sync_gate.evaluate();
+    if !decision.is_allowed() {
+        return Err(format!(
+            "同步被门禁推迟（{decision:?}）：{}——检查网络或「仅 Wi-Fi」设置后重试",
+            decision.reason()
+        ));
+    }
     let Some(transport) = booted.p2p() else {
         return Err("P2P 未启用：请先完成设备配对".into());
     };

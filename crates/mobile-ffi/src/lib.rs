@@ -480,11 +480,27 @@ impl UniffiAppCore {
 
     /// 函数 3：手动触发离线队列补发（DrainReportDto 同构，failed_docs 不可丢）。
     ///
-    /// 前置（照桌面语义）：P2P 引擎已挂接（attach_sync_engine）+ 对端地址
+    /// 前置（照桌面语义）：网络门 Allow（DK-51 案二：Defer 推迟并携
+    /// decision/reason）+ P2P 引擎已挂接（attach_sync_engine）+ 对端地址
     /// 已写入 KV（`sync.peer.addr`）。缺任一返回明确错误（前端据此提示）。
-    /// 网络策略联动（wifi_only gate 判定）桌面同款留在调用方 — 记录见报告。
+    /// 降级路径：sync_gate=None 时门禁跳过（行为=DK-49 现状，不加隐形拦截）。
     #[cfg(feature = "p2p-sync")]
     pub fn queue_drain_impl(&self) -> Result<serde_json::Value, MobileError> {
+        // DK-51 案二：drain 过门（桌面 cmd_queue_drain 同款语义）——
+        // 网络策略拒绝不进入补发；错误信息携带 decision+reason。
+        // sync_gate=None 降级路径保持现状（无门装配不加隐形拦截，
+        // 降级模式已知且登记——工单执行规约）。
+        if let Some(gate) = &self.sync_gate {
+            let decision = gate.evaluate();
+            if !decision.is_allowed() {
+                return Err(MobileError::InitFailed {
+                    message: format!(
+                        "同步被门禁推迟（{decision:?}）：{}——检查网络或「仅 Wi-Fi」设置后重试",
+                        decision.reason()
+                    ),
+                });
+            }
+        }
         let engine = self
             .sync_engine
             .lock()

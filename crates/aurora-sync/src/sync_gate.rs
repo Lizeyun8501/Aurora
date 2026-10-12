@@ -51,6 +51,23 @@ pub enum GateDecision {
     DeferUntilOnline,
 }
 
+impl GateDecision {
+    /// 是否放行（drain 门禁判定用——`Defer*` 一律不放行，DK-51 案二）。
+    pub fn is_allowed(self) -> bool {
+        matches!(self, GateDecision::Allow)
+    }
+
+    /// 人话原因（两端 drain 拒绝错误信息共用——decision 之外携带
+    /// 可读解释，前端直接展示）。
+    pub fn reason(self) -> &'static str {
+        match self {
+            GateDecision::Allow => "策略允许同步",
+            GateDecision::DeferUntilUnmetered => "仅 Wi-Fi 同步已开启，当前为计量网络",
+            GateDecision::DeferUntilOnline => "当前无网络连接",
+        }
+    }
+}
+
 /// 仅 Wi-Fi 同步门（运行时可切换设置）。
 pub struct SyncGate {
     wifi_only: AtomicBool,
@@ -181,5 +198,46 @@ mod tests {
     fn always_unmetered_provider_allows() {
         let gate = SyncGate::new(Arc::new(AlwaysUnmetered), true);
         assert_eq!(gate.evaluate(), GateDecision::Allow);
+    }
+
+    /// DK-51 案二：evaluate 组合矩阵全覆盖（网络态 × wifi_only）。
+    /// Offline 恒推迟优先于 wifi_only（模块语义：与「仅 Wi-Fi」开关无关）。
+    #[test]
+    fn gate_matrix_all_combinations() {
+        // wifi_only=false：仅 Offline 推迟，其余放行
+        let (g, p) = gate(false);
+        p.set(NetworkClass::Offline);
+        assert_eq!(g.evaluate(), GateDecision::DeferUntilOnline);
+        p.set(NetworkClass::Metered);
+        assert_eq!(
+            g.evaluate(),
+            GateDecision::Allow,
+            "计量+wifi_only=false=不推迟"
+        );
+        p.set(NetworkClass::Unmetered);
+        assert_eq!(g.evaluate(), GateDecision::Allow);
+
+        // wifi_only=true：Offline 恒推迟 > 计量推迟 > 不计量放行
+        let (g, p) = gate(true);
+        p.set(NetworkClass::Offline);
+        assert_eq!(
+            g.evaluate(),
+            GateDecision::DeferUntilOnline,
+            "Offline 优先于 wifi_only"
+        );
+        p.set(NetworkClass::Metered);
+        assert_eq!(g.evaluate(), GateDecision::DeferUntilUnmetered);
+        p.set(NetworkClass::Unmetered);
+        assert_eq!(g.evaluate(), GateDecision::Allow);
+
+        // helper 一致性（drain 门禁判定契约）
+        assert!(GateDecision::Allow.is_allowed());
+        assert!(!GateDecision::DeferUntilOnline.is_allowed());
+        assert!(!GateDecision::DeferUntilUnmetered.is_allowed());
+        assert_eq!(GateDecision::DeferUntilOnline.reason(), "当前无网络连接");
+        assert_eq!(
+            GateDecision::DeferUntilUnmetered.reason(),
+            "仅 Wi-Fi 同步已开启，当前为计量网络"
+        );
     }
 }
