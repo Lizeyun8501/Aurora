@@ -287,7 +287,33 @@ pub struct WasmRuntime {
     ticker_stop: Arc<std::sync::atomic::AtomicBool>,
     /// ticker 线程句柄（Drop 时 join）
     ticker_handle: Option<std::thread::JoinHandle<()>>,
+    /// DK-14d.2：已登记 component 字节（懒实例化源）
+    components: Arc<RwLock<HashMap<PluginId, Vec<u8>>>>,
+    /// DK-14d.2：实例缓存（plugin → Mutex<PluginInstance>；per-plugin
+    /// 锁粒度——同插件 invoke 串行，Store &mut 不可重入）
+    instances: Arc<RwLock<HashMap<PluginId, std::sync::Arc<parking_lot::Mutex<PluginInstance>>>>>,
+    /// DK-14d.2：epoch deadline ticks（运行时可调，默认 200=10s）
+    epoch_deadline_ticks: std::sync::atomic::AtomicU64,
+    /// DK-14d.2：实例化计数（缓存命中观测——测试用，生产可作指标）
+    instantiations: std::sync::atomic::AtomicU64,
 }
+
+/// DK-14d.2：Store 上下文——宿主函数实现（d3 宿主回调接线）侧读取。
+/// 字段登记即意图（d3 消费；当前仅挂载未读——挂接清单列明）。
+#[allow(dead_code)]
+struct WasmStoreCtx {
+    plugin_id: String,
+    manifest: CapabilityManifest,
+}
+
+/// DK-14d.2：已实例化插件（Store+实例句柄；per-plugin Mutex 包裹）。
+struct PluginInstance {
+    store: wasmtime::Store<WasmStoreCtx>,
+    instance: wasmtime::component::Instance,
+}
+
+/// DK-14d.2：epoch deadline 默认值（ticks；200×50ms=10s，工单建议）。
+const DEFAULT_EPOCH_DEADLINE_TICKS: u64 = 200;
 
 /// epoch 心跳间隔（ms）。deadline 单位=tick 数，50ms 粒度即可支撑
 /// 毫秒级死循环打断（DK-14b 单测实证）。
@@ -332,6 +358,10 @@ impl WasmRuntime {
             manifests: Arc::new(RwLock::new(HashMap::new())),
             ticker_stop,
             ticker_handle: Some(ticker_handle),
+            components: Arc::new(RwLock::new(HashMap::new())),
+            instances: Arc::new(RwLock::new(HashMap::new())),
+            epoch_deadline_ticks: std::sync::atomic::AtomicU64::new(DEFAULT_EPOCH_DEADLINE_TICKS),
+            instantiations: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -347,7 +377,7 @@ impl WasmRuntime {
 
     /// DK-14d.d1：真实 WASM Component 加载（component model API）。
     ///
-    /// 验证 wasm 字节是否为合法 component——d2 以此替换模拟执行段
+    /// 验证 wasm 字节是否为合法 component——d2 真执行链的加载前置
     /// （wasm_runtime L331 区，本卡零触碰）。加载失败返回明确错误
     /// （无效字节/类型节损坏均走 [`crate::Error::WasmRuntime`]）。
     pub fn load_component(
@@ -369,9 +399,166 @@ impl WasmRuntime {
         self.manifests.write().insert(id, manifest);
     }
 
+    /// DK-14d.2：登记插件 wasm 字节（component）——首次 invoke 时懒实例化。
+    ///
+    /// 生产接线：真实插件包分发后调用本方法登记；测试用 wat 编译产物。
+    /// 重复登记以最新字节为准并清除既有实例（下次 invoke 重新实例化）。
+    pub fn install_component(&self, plugin_id: &str, wasm_bytes: Vec<u8>) {
+        self.components
+            .write()
+            .insert(plugin_id.to_string(), wasm_bytes);
+        self.instances.write().remove(plugin_id);
+    }
+
     /// 注销插件。
     pub fn unregister(&self, plugin_id: &str) {
         self.manifests.write().remove(plugin_id);
+        // DK-14d.2：实例层同步 Drop（Store+instance 释放；再注册即重新实例化）
+        self.instances.write().remove(plugin_id);
+        self.components.write().remove(plugin_id);
+    }
+
+    /// DK-14d.2：epoch deadline 运行时可调（ticks；1 tick=50ms）。
+    ///
+    /// 默认 200 ticks=10s（工单建议值）；测试用小值避免挂死。
+    pub fn set_epoch_deadline_ticks(&self, ticks: u64) {
+        self.epoch_deadline_ticks
+            .store(ticks, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// DK-14d.2：capability 串派生——注册 Manifest 的 granted 集合逗号连接。
+    ///
+    /// 14c 资源化时替换为真 capability token（合约文件头有映射说明）。
+    fn derive_capability_string(manifest: &CapabilityManifest) -> String {
+        const ALL: [Capability; 4] = [
+            Capability::Fs,
+            Capability::Network,
+            Capability::Native,
+            Capability::Storage,
+        ];
+        ALL.iter()
+            .filter(|c| manifest.grants(**c))
+            .map(|c| c.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// DK-14d.2：懒实例化（缓存命中直接返回）。
+    ///
+    /// 全链：load_component → Store::new(WasmStoreCtx) → set_epoch_deadline →
+    /// component Linker → instantiate。per-plugin Mutex 粒度：同一插件
+    /// invoke 串行（Store &mut 借用不可重入），不同插件互不阻塞。
+    fn get_or_instantiate(
+        &self,
+        plugin_id: &str,
+    ) -> Result<std::sync::Arc<parking_lot::Mutex<PluginInstance>>, crate::Error> {
+        use std::sync::atomic::Ordering;
+        // 快路径：已实例化
+        if let Some(hit) = self.instances.read().get(plugin_id) {
+            return Ok(hit.clone());
+        }
+        // 慢路径：登记字节 → 加载 → 实例化
+        let bytes = self
+            .components
+            .read()
+            .get(plugin_id)
+            .cloned()
+            .ok_or_else(|| {
+                crate::Error::NotFound(format!("plugin component not installed: {}", plugin_id))
+            })?;
+        let manifest = self.manifest(plugin_id).ok_or_else(|| {
+            crate::Error::NotFound(format!("plugin not registered: {}", plugin_id))
+        })?;
+        let component = self.load_component(&bytes)?;
+        let mut store = wasmtime::Store::new(
+            &self.engine,
+            WasmStoreCtx {
+                plugin_id: plugin_id.to_string(),
+                manifest,
+            },
+        );
+        store.set_epoch_deadline(self.epoch_deadline_ticks.load(Ordering::Relaxed));
+        let linker = wasmtime::component::Linker::<WasmStoreCtx>::new(&self.engine);
+        let instance = linker
+            .instantiate(&mut store, &component)
+            .map_err(|e| crate::Error::WasmRuntime(format!("component instantiate failed: {e}")))?;
+        let inst = std::sync::Arc::new(parking_lot::Mutex::new(PluginInstance { store, instance }));
+        self.instantiations.fetch_add(1, Ordering::Relaxed);
+        self.instances
+            .write()
+            .insert(plugin_id.to_string(), inst.clone());
+        Ok(inst)
+    }
+
+    /// DK-14d.2：真执行链——调用插件导出函数（host → plugin 导出）。
+    ///
+    /// result 检查：guest 返回 err → `Error::WasmRuntime`；成功返回确认
+    /// JSON（真调用后，非模拟确认）。typed 调用（强类型参数映射）；
+    /// Store 级 epoch deadline 在每次 wasm 调用进入时以当前 epoch 为
+    /// 基线生效（懒计算）。
+    fn call_export_init(
+        &self,
+        plugin_id: &str,
+        capability: String,
+    ) -> Result<serde_json::Value, crate::Error> {
+        let inst = self.get_or_instantiate(plugin_id)?;
+        let mut guard = inst.lock();
+        let PluginInstance { store, instance } = &mut *guard;
+        let func = instance
+            .get_typed_func::<(&str,), (Result<(), ()>,)>(&mut *store, "init")
+            .map_err(|e| {
+                crate::Error::WasmRuntime(format!("component lacks export `init`: {e}"))
+            })?;
+        let (r,) = func
+            .call(&mut *store, (capability.as_str(),))
+            .map_err(|e| crate::Error::WasmRuntime(format!("export `init` call failed: {e}")))?;
+        r.map_err(|()| crate::Error::WasmRuntime("export `init` returned error".into()))?;
+        // post-return：解锁实例（guest 声明 post-return 时必调，否则
+        // 二次 invoke 报 "cannot enter component instance"——DK-14d.2 实证）
+        func.post_return(&mut *store).map_err(|e| {
+            crate::Error::WasmRuntime(format!("export `init` post-return failed: {e}"))
+        })?;
+        Ok(serde_json::json!({
+            "ok": true,
+            "plugin": plugin_id,
+            "method": "init",
+        }))
+    }
+
+    /// DK-14d.2：handle-event 导出调用（三 string 参数）。
+    fn call_export_handle_event(
+        &self,
+        plugin_id: &str,
+        capability: String,
+        event: String,
+        payload: String,
+    ) -> Result<serde_json::Value, crate::Error> {
+        let inst = self.get_or_instantiate(plugin_id)?;
+        let mut guard = inst.lock();
+        let PluginInstance { store, instance } = &mut *guard;
+        let func = instance
+            .get_typed_func::<(&str, &str, &str), (Result<(), ()>,)>(&mut *store, "handle-event")
+            .map_err(|e| {
+                crate::Error::WasmRuntime(format!("component lacks export `handle-event`: {e}"))
+            })?;
+        let (r,) = func
+            .call(
+                &mut *store,
+                (capability.as_str(), event.as_str(), payload.as_str()),
+            )
+            .map_err(|e| {
+                crate::Error::WasmRuntime(format!("export `handle-event` call failed: {e}"))
+            })?;
+        r.map_err(|()| crate::Error::WasmRuntime("export `handle-event` returned error".into()))?;
+        // post-return：解锁实例（同 init 注释）
+        func.post_return(&mut *store).map_err(|e| {
+            crate::Error::WasmRuntime(format!("export `handle-event` post-return failed: {e}"))
+        })?;
+        Ok(serde_json::json!({
+            "ok": true,
+            "plugin": plugin_id,
+            "method": "handle-event",
+        }))
     }
 
     /// 返回插件能力清单快照。
@@ -411,33 +598,48 @@ impl WasmRuntime {
 
     /// 调用插件导出方法（host → plugin）。
     ///
-    /// 若方法名匹配某宿主函数，则按宿主函数分派（模拟插件回调宿主）；
-    /// 否则模拟执行插件导出函数并返回确认结果。
+    /// 双路语义（DK-14d.2 模拟段划界后的最终形态）：
+    /// - `HostFunction::parse` 命中 → 宿主函数分派（真实：registry.call
+    ///   + capability 校验，插件回调宿主通道）；
+    /// - `init` / `handle-event` → 真执行链（懒实例化 + component 导出
+    ///   调用；capability 串由注册 Manifest 派生，14c 换真 token）；
+    /// - 其余 → `InvalidInput`（NotSupported——不再假 ok）。
     pub fn invoke(
         &self,
         plugin_id: &str,
         method: &str,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, crate::Error> {
-        if self.manifest(plugin_id).is_none() {
-            return Err(crate::Error::NotFound(format!(
-                "plugin not registered: {}",
-                plugin_id
-            )));
-        }
+        let manifest = self.manifest(plugin_id).ok_or_else(|| {
+            crate::Error::NotFound(format!("plugin not registered: {}", plugin_id))
+        })?;
         if let Some(f) = HostFunction::parse(method) {
             return self.call_host_function(plugin_id, f, args);
         }
-        debug!(
-            "wasm runtime: invoke plugin {} export `{}`",
-            plugin_id, method
-        );
-        Ok(serde_json::json!({
-            "ok": true,
-            "plugin": plugin_id,
-            "method": method,
-            "args": args,
-        }))
+        match method {
+            "init" => {
+                let capability = Self::derive_capability_string(&manifest);
+                self.call_export_init(plugin_id, capability)
+            }
+            "handle-event" => {
+                let capability = Self::derive_capability_string(&manifest);
+                let event = args
+                    .get("event")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let payload = match args.get("payload") {
+                    Some(serde_json::Value::String(s)) => s.clone(),
+                    Some(other) => other.to_string(),
+                    None => String::new(),
+                };
+                self.call_export_handle_event(plugin_id, capability, event, payload)
+            }
+            other => Err(crate::Error::InvalidInput(format!(
+                "method not supported: {}",
+                other
+            ))),
+        }
     }
 }
 
@@ -632,11 +834,17 @@ mod tests {
     fn test_wasm_runtime_invoke_unknown_method() {
         let rt = WasmRuntime::with_default_registry();
         rt.register("p1", CapabilityManifest::new());
-        let out = rt
+        // DK-14d.2 裁决：非 init/handle-event 且非宿主函数 → NotSupported
+        // （原假确认 JSON 段已删除）
+        let err = rt
             .invoke("p1", "render", &serde_json::json!({"x": 1}))
-            .unwrap();
-        assert_eq!(out["ok"], serde_json::json!(true));
-        assert_eq!(out["method"], serde_json::json!("render"));
+            .unwrap_err();
+        match err {
+            crate::Error::InvalidInput(m) => {
+                assert!(m.contains("not supported"), "错误需可定位: {m}");
+            }
+            other => panic!("应为 InvalidInput，实际: {other:?}"),
+        }
     }
 
     #[test]
@@ -647,6 +855,127 @@ mod tests {
         let err = rt
             .invoke("ghost", "log", &serde_json::json!({}))
             .unwrap_err();
+        assert!(matches!(err, crate::Error::NotFound(_)));
+    }
+
+    // ===== DK-14d.2：真执行链（模拟段替换）=====
+
+    /// 最小 guest component 字节（wat→binary 贴近生产路径）。
+    fn minimal_guest() -> Vec<u8> {
+        wat::parse_str(include_str!("../tests/fixtures/guest_minimal.wat"))
+            .expect("guest_minimal.wat 语法合法")
+    }
+
+    fn registered_runtime_with_guest() -> (WasmRuntime, &'static str) {
+        let rt = WasmRuntime::with_default_registry();
+        rt.register("p1", {
+            let mut m = CapabilityManifest::new();
+            m.grant(Capability::Storage);
+            m.grant(Capability::Network);
+            m
+        });
+        rt.install_component("p1", minimal_guest());
+        (rt, "p1")
+    }
+
+    /// DoD：invoke("init") 全链通过——load→Store→Linker→instantiate→call
+    /// （capability 串由 Manifest 派生，真调用成功返回确认 JSON）。
+    #[test]
+    fn test_invoke_init_full_chain() {
+        let (rt, id) = registered_runtime_with_guest();
+        let out = rt.invoke(id, "init", &serde_json::json!({})).unwrap();
+        assert_eq!(out["ok"], serde_json::json!(true));
+        assert_eq!(out["plugin"], serde_json::json!(id));
+        assert_eq!(out["method"], serde_json::json!("init"));
+    }
+
+    /// DoD：invoke("handle-event") 全链通过（event/payload 参数提取）。
+    #[test]
+    fn test_invoke_handle_event_full_chain() {
+        let (rt, id) = registered_runtime_with_guest();
+        let out = rt
+            .invoke(
+                id,
+                "handle-event",
+                &serde_json::json!({"event": "doc_saved", "payload": {"id": 1}}),
+            )
+            .unwrap();
+        assert_eq!(out["ok"], serde_json::json!(true));
+        assert_eq!(out["method"], serde_json::json!("handle-event"));
+    }
+
+    /// DoD：实例缓存命中——二次 invoke 不重复实例化（instantiations 计数=1）。
+    #[test]
+    fn test_instance_cache_hit() {
+        let (rt, id) = registered_runtime_with_guest();
+        rt.invoke(id, "init", &serde_json::json!({})).unwrap();
+        rt.invoke(id, "handle-event", &serde_json::json!({}))
+            .unwrap();
+        rt.invoke(id, "init", &serde_json::json!({})).unwrap();
+        assert_eq!(
+            rt.instantiations.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "三次 invoke 共享一次实例化"
+        );
+    }
+
+    /// 挂接自查：unregister 清实例缓存——再注册+invoke 重新实例化（计数=2）。
+    #[test]
+    fn test_unregister_drops_instance_cache() {
+        let (rt, id) = registered_runtime_with_guest();
+        rt.invoke(id, "init", &serde_json::json!({})).unwrap();
+        assert_eq!(
+            rt.instantiations.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        rt.unregister(id);
+        // 未注册 → NotFound（行为保持）
+        let err = rt.invoke(id, "init", &serde_json::json!({})).unwrap_err();
+        assert!(matches!(err, crate::Error::NotFound(_)));
+        // 再注册+登记 → 重新实例化
+        rt.register(id, CapabilityManifest::new());
+        rt.install_component(id, minimal_guest());
+        rt.invoke(id, "init", &serde_json::json!({})).unwrap();
+        assert_eq!(
+            rt.instantiations.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "unregister 后缓存已清，重新实例化"
+        );
+    }
+
+    /// DoD：epoch deadline 对 guest 生效——死循环 component 被 epoch
+    /// 打断 → 明确错误返回（Store 级接线，ticks 运行时可调）。
+    #[test]
+    fn test_epoch_deadline_kills_spin_guest() {
+        let rt = WasmRuntime::with_default_registry();
+        rt.set_epoch_deadline_ticks(2); // 2 tick（~100ms）后打断
+        rt.register("spin", CapabilityManifest::new());
+        rt.install_component(
+            "spin",
+            wat::parse_str(include_str!("../tests/fixtures/guest_spin.wat"))
+                .expect("guest_spin.wat 语法合法"),
+        );
+        let err = rt
+            .invoke(
+                "spin",
+                "handle-event",
+                &serde_json::json!({"event": "x", "payload": ""}),
+            )
+            .unwrap_err();
+        match err {
+            crate::Error::WasmRuntime(m) => {
+                assert!(m.contains("call failed"), "错误需可定位: {m}");
+            }
+            other => panic!("应为 WasmRuntime 错误，实际: {other:?}"),
+        }
+    }
+
+    /// 未登记 component 的已注册插件 → NotFound（懒实例化前置缺失）。
+    #[test]
+    fn test_invoke_without_installed_component() {
+        let rt = WasmRuntime::with_default_registry();
+        rt.register("p2", CapabilityManifest::new());
+        let err = rt.invoke("p2", "init", &serde_json::json!({})).unwrap_err();
         assert!(matches!(err, crate::Error::NotFound(_)));
     }
 
