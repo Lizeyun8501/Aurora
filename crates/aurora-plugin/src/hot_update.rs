@@ -10,7 +10,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -90,7 +89,9 @@ struct UpdateJob {
     old_blob: Vec<u8>,
     /// 新版本字节码
     new_blob: Vec<u8>,
-    /// 测试钩子：标记切换应失败以触发回滚
+    /// 故障注入位：标记切换应失败以触发回滚（DK-14a——生产路径恒 false，
+    /// 仅测试经 cfg(test) 的 `simulate_switch_failure` 置位；失败→
+    /// `RolledBack` 分支为真实状态机语义，由测试驱动）
     switch_should_fail: bool,
 }
 
@@ -171,7 +172,11 @@ impl HotUpdateManager {
             .unwrap_or(false)
     }
 
-    /// 测试钩子：标记下次切换应失败（用于验证回滚路径）。
+    /// 测试钩子（DK-14a 移入 cfg(test)）：标记下次切换应失败以触发回滚。
+    ///
+    /// 注入路径不属生产 API 面；`confirm_switch` 的失败→`RolledBack`
+    /// 分支为真实状态机语义，保留并由本钩子（测试侧）驱动。
+    #[cfg(test)]
     pub fn simulate_switch_failure(&self, plugin_id: &str) -> Result<(), crate::Error> {
         let mut jobs = self.jobs.write();
         let job = jobs
@@ -181,7 +186,11 @@ impl HotUpdateManager {
         Ok(())
     }
 
-    /// 后台预加载新版本。模拟异步下载，完成后状态为 `Pending`。
+    /// 后台预加载新版本。完成后状态为 `Pending`。
+    ///
+    /// DK-14a API 卫生如实化：`new_blob` 由调用方就绪后登记，本方法只做
+    /// 状态流转占位（真实网络下载属 marketplace 未来层——签名信任链已备，
+    /// 分发能力未建）。
     pub async fn preload(
         &self,
         plugin_id: impl Into<String>,
@@ -217,8 +226,8 @@ impl HotUpdateManager {
                 },
             );
         }
-        // 模拟后台下载 I/O
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        // DK-14a：删除 1ms 装饰性 sleep（原"模拟后台下载 I/O"——无数据
+        // 伪造价值，纯耗时装饰；真实下载接入见 marketplace 未来层）
 
         // 预加载完成 → Pending
         self.jobs.write().get_mut(&id).unwrap().state = UpdateState::Pending;
