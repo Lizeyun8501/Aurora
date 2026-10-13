@@ -58,7 +58,7 @@ jobs:
           WASM=wasm-tools-1.261.0-x86_64-linux/wasm-tools
           CRATE_NAME=$(echo "${{ matrix.guest }}" | tr '-' '_')
           $WASM component wit target/wasm32-wasip2/release/${CRATE_NAME}.wasm > /tmp/guest.wit
-          grep -q 'export aurora:plugin/host@0.1.0' /tmp/guest.wit
+          grep -q 'export aurora:plugin/host@0.2.0' /tmp/guest.wit
           grep -q 'init: func' /tmp/guest.wit
           grep -q 'handle-event: func' /tmp/guest.wit
           echo "guest export surface verified against aurora:plugin/host contract"
