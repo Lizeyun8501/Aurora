@@ -12,9 +12,12 @@ members = [
     "crates/entity",
     "crates/migration",
     "crates/mobile-ffi",
-    # DK-14d.3: guest 构建链（仅 wasm32-wasip2 目标；host 默认编译集
-    # 不含——cargo build --workspace 需 --exclude，CI wasm-guest job 专编）
+    # DK-14d.3/14e.1: guest 构建链（wasm32-wasip2 目标为主；rlib 面
+    # 供 host 单测。host 默认编译集不含——cargo build --workspace 需
+    # --exclude，CI wasm job 矩阵专编）
     "crates/plugin-hello-guest",
+    "crates/plugin-wordcount-guest",
+    "crates/plugin-auditlog-guest",
     # 桌面平台适配（Tauri v2）— Rust 1.91 工具链已就绪，V20 GAP-01 关闭
     "apps/desktop/src-tauri",
 ]
@@ -68,6 +71,9 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 
 # WASM runtime
 wasmtime = "36"
+# DK-14e.1: 真组件 WASI 面（wasm32-wasip2 组件必带 wasi:io/cli import——
+# e2e 实证缺口；与 wasmtime 同窗同期发版，版本跟随主 crate）
+wasmtime-wasi = "36"
 
 # DK-36：增量同步块数据压缩（incremental compress/decompress）
 zstd = "0.13"

@@ -1,0 +1,13 @@
+[package]
+name = "plugin-auditlog-guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# DK-14e.1 被动监听型模板：零业务逻辑旁路记录（最简第三方起步模板）
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen = { workspace = true }

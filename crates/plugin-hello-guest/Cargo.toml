@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+# DK-14e.1: rlib 使纯逻辑单测可在 host target 跑（cargo test -p）；
+# cdylib 为 wasm32-wasip2 构建目标（CI wasm job）——wit 绑定与逻辑
+# 以 cfg(target_arch) 隔离（双面零干扰）
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # DK-14d.3: guest 侧绑定生成（版本与 wasmtime 36.0.17 生态同窗——

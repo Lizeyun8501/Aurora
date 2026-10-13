@@ -1,0 +1,16 @@
+[package]
+name = "plugin-wordcount-guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# DK-14e.1 计算型模板：payload JSON 解析+统计，单行 JSON 结构化输出
+# （测试可断言第一判据——见 docs/plugin-log-conventions.md）
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen = { workspace = true }
+# 纯 Rust，wasm32-wasip2 编译无碍（工单勘察口径）
+serde_json = { workspace = true }

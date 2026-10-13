@@ -304,6 +304,20 @@ pub struct WasmRuntime {
 struct WasmStoreCtx {
     plugin_id: String,
     manifest: CapabilityManifest,
+    /// DK-14e.1: WASI 上下文（真 wasip2 组件必带 wasi:io/cli import——
+    /// e2e 实证缺口；stderr 继承宿主进程，插件 log 可观测可捕获）
+    wasi: wasmtime_wasi::WasiCtx,
+    /// WIT 资源表（WasiView 协议要求；WASI 资源 handle 存放处）
+    table: wasmtime_wasi::ResourceTable,
+}
+
+impl wasmtime_wasi::WasiView for WasmStoreCtx {
+    fn ctx(&mut self) -> wasmtime_wasi::WasiCtxView<'_> {
+        wasmtime_wasi::WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
+    }
 }
 
 /// DK-14d.2：已实例化插件（Store+实例句柄；per-plugin Mutex 包裹）。
@@ -475,10 +489,22 @@ impl WasmRuntime {
             WasmStoreCtx {
                 plugin_id: plugin_id.to_string(),
                 manifest,
+                // stderr 继承宿主进程：插件 eprintln! 侧信道可观测（14e
+                // 日志约定）；stdin/out 同继承（后续卡按需收紧）
+                wasi: wasmtime_wasi::WasiCtxBuilder::new()
+                    .inherit_stderr()
+                    .inherit_stdout()
+                    .inherit_stdin()
+                    .build(),
+                table: wasmtime_wasi::ResourceTable::new(),
             },
         );
         store.set_epoch_deadline(self.epoch_deadline_ticks.load(Ordering::Relaxed));
-        let linker = wasmtime::component::Linker::<WasmStoreCtx>::new(&self.engine);
+        let mut linker = wasmtime::component::Linker::<WasmStoreCtx>::new(&self.engine);
+        // DK-14e.1: 挂载 wasi:io/cli 预实现（真 wasip2 组件 import 面；
+        // 同步调用栈——add_to_linker_sync）
+        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
+            .map_err(|e| crate::Error::WasmRuntime(format!("wasi linker mount failed: {e}")))?;
         let instance = linker
             .instantiate(&mut store, &component)
             .map_err(|e| crate::Error::WasmRuntime(format!("component instantiate failed: {e}")))?;
@@ -488,6 +514,39 @@ impl WasmRuntime {
             .write()
             .insert(plugin_id.to_string(), inst.clone());
         Ok(inst)
+    }
+
+    /// DK-14e.1：导出函数双路径寻址。
+    ///
+    /// 优先：合约接口实例导出（wit-bindgen 生成形态——`aurora:plugin/host@0.1.0`
+    /// instance 内嵌 init/handle-event，真 wasm32-wasip2 组件均此形态）；
+    /// 回退：平铺顶层导出（wat fixture 手写形态——d2 测试载荷保持不变）。
+    fn export_typed_func<Params, Results>(
+        &self,
+        store: &mut wasmtime::Store<WasmStoreCtx>,
+        instance: &wasmtime::component::Instance,
+        flat_name: &str,
+    ) -> Result<wasmtime::component::TypedFunc<Params, Results>, crate::Error>
+    where
+        Params: wasmtime::component::ComponentNamedList + wasmtime::component::Lower,
+        Results: wasmtime::component::ComponentNamedList + wasmtime::component::Lift,
+    {
+        const CONTRACT_IFACE: &str = "aurora:plugin/host@0.1.0";
+        // 优先：合约接口实例内寻址（ComponentExportIndex 本身实现
+        // InstanceExportLookup——get_typed_func 直接在嵌套实例内查平名）
+        if let Some(iface_idx) = instance.get_export_index(&mut *store, None, CONTRACT_IFACE) {
+            if let Ok(f) = instance.get_typed_func::<Params, Results>(&mut *store, &iface_idx) {
+                return Ok(f);
+            }
+        }
+        // 回退：平铺顶层导出（wat fixture 形态——d2 测试载荷保持不变）
+        instance
+            .get_typed_func::<Params, Results>(&mut *store, flat_name)
+            .map_err(|e| {
+                crate::Error::WasmRuntime(format!(
+                    "component lacks export `{flat_name}`: {e}"
+                ))
+            })
     }
 
     /// DK-14d.2：真执行链——调用插件导出函数（host → plugin 导出）。
@@ -504,11 +563,8 @@ impl WasmRuntime {
         let inst = self.get_or_instantiate(plugin_id)?;
         let mut guard = inst.lock();
         let PluginInstance { store, instance } = &mut *guard;
-        let func = instance
-            .get_typed_func::<(&str,), (Result<(), ()>,)>(&mut *store, "init")
-            .map_err(|e| {
-                crate::Error::WasmRuntime(format!("component lacks export `init`: {e}"))
-            })?;
+        let func =
+            self.export_typed_func::<(&str,), (Result<(), ()>,)>(&mut *store, instance, "init")?;
         let (r,) = func
             .call(&mut *store, (capability.as_str(),))
             .map_err(|e| crate::Error::WasmRuntime(format!("export `init` call failed: {e}")))?;
@@ -536,11 +592,11 @@ impl WasmRuntime {
         let inst = self.get_or_instantiate(plugin_id)?;
         let mut guard = inst.lock();
         let PluginInstance { store, instance } = &mut *guard;
-        let func = instance
-            .get_typed_func::<(&str, &str, &str), (Result<(), ()>,)>(&mut *store, "handle-event")
-            .map_err(|e| {
-                crate::Error::WasmRuntime(format!("component lacks export `handle-event`: {e}"))
-            })?;
+        let func = self.export_typed_func::<(&str, &str, &str), (Result<(), ()>,)>(
+            &mut *store,
+            instance,
+            "handle-event",
+        )?;
         let (r,) = func
             .call(
                 &mut *store,

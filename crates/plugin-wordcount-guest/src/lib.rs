@@ -1,0 +1,106 @@
+//! DK-14e.1 示范插件 · 计算型模板：plugin-wordcount-guest。
+//!
+//! 绑定自 `../aurora-plugin/wit/aurora-plugin.wit`（单一事实源）生成。
+//!
+//! 行为约定（docs/plugin-log-conventions.md）：handle-event 解析 payload
+//! JSON（取 `text` 字段，缺省回退整段 payload），统计字数/字符数/行数，
+//! 输出**单行 JSON**（测试可断言第一判据）：
+//! `[wordcount] {"chars":N,"words":N,"lines":N}`
+//!
+//! 工程结构同 hello 模板：逻辑在 [`logic`]（host 可测），绑定 cfg 隔离。
+
+pub mod logic {
+    /// 计数核心：(chars, words, lines)。
+    /// words=空白分隔词数；lines=非空文本按 \n 分行数（空文本为 0）。
+    pub fn count(text: &str) -> (usize, usize, usize) {
+        let chars = text.chars().count();
+        let words = text.split_whitespace().count();
+        let lines = if text.is_empty() { 0 } else { text.lines().count() };
+        (chars, words, lines)
+    }
+
+    /// payload JSON 提取：对象含 "text" 字符串字段则取之，否则整段回退。
+    pub fn extract_text(payload: &str) -> String {
+        serde_json::from_str::<serde_json::Value>(payload)
+            .ok()
+            .and_then(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
+            .unwrap_or_else(|| payload.to_string())
+    }
+
+    /// 结构化输出行（单行 JSON——`[wordcount] {...}`）。
+    pub fn output_line(text: &str) -> String {
+        let (chars, words, lines) = count(text);
+        format!("[wordcount] {{\"chars\":{chars},\"words\":{words},\"lines\":{lines}}}")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn count_english_basic() {
+            // "hello world"(11) + "\n"(1) + "second line"(11) = 23 chars
+            assert_eq!(count("hello world\nsecond line"), (23, 4, 2));
+        }
+
+        #[test]
+        fn count_empty_is_zero() {
+            assert_eq!(count(""), (0, 0, 0));
+        }
+
+        #[test]
+        fn count_unicode_chars() {
+            // 4 个汉字（chars 计字符数非字节数）
+            assert_eq!(count("笔记应用"), (4, 1, 1));
+        }
+
+        #[test]
+        fn extract_text_from_json_object() {
+            assert_eq!(extract_text(r#"{"text":"a b c","id":7}"#), "a b c");
+        }
+
+        #[test]
+        fn extract_text_falls_back_to_raw_payload() {
+            assert_eq!(extract_text("plain text"), "plain text");
+            assert_eq!(extract_text(r#"{"other":1}"#), r#"{"other":1}"#);
+        }
+
+        #[test]
+        fn output_line_is_single_line_json() {
+            let line = output_line("one two\nthree");
+            assert_eq!(line, "[wordcount] {\"chars\":13,\"words\":3,\"lines\":2}");
+            assert!(!line.contains('\n'));
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm_exports {
+    wit_bindgen::generate!({
+        path: "../aurora-plugin/wit",
+        world: "plugin",
+    });
+
+    struct WordcountGuest;
+
+    impl exports::aurora::plugin::host::Guest for WordcountGuest {
+        fn init(capability: String) -> Result<(), ()> {
+            eprintln!("[wordcount] init ok capability={capability:?}");
+            Ok(())
+        }
+
+        fn handle_event(
+            _capability: String,
+            _event: String,
+            payload: String,
+        ) -> Result<(), ()> {
+            eprintln!(
+                "{}",
+                super::logic::output_line(&super::logic::extract_text(&payload))
+            );
+            Ok(())
+        }
+    }
+
+    export!(WordcountGuest);
+}

@@ -28,18 +28,27 @@ jobs:
 
 
   wasm-guest:
-    name: Wasm guest build (DK-14d.3)
+    # DK-14e.1: 矩阵泛化——三示范插件（分支响应/计算/被动监听三模式），
+    # 批量冷启动等第三方生态信号再扩（工单口径）
+    name: Wasm guest build (${{ matrix.guest }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        guest:
+          - plugin-hello-guest
+          - plugin-wordcount-guest
+          - plugin-auditlog-guest
     steps:
       - uses: actions/checkout@v4
-      # DK-14d.3: guest 构建链——wasm32-wasip2 target（rust-toolchain.toml
-      # 已声明 targets，此处显式透传给 dtolnay action 保证 job 内安装）
+      # guest 构建链——wasm32-wasip2 target（rust-toolchain.toml 已声明
+      # targets，此处显式透传给 dtolnay action 保证 job 内安装）
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip2
       - uses: Swatinem/rust-cache@v2
       - name: Build guest (wasm32-wasip2)
-        run: cargo build -p plugin-hello-guest --target wasm32-wasip2 --release
+        run: cargo build -p ${{ matrix.guest }} --target wasm32-wasip2 --release
       # 类型校验闭环：wasm-tools component wit 从二进制反推 WIT——
       # 证明 guest 导出面与 wit/aurora-plugin.wit 合约匹配（单一事实源）。
       # wasm-tools 版本钉死 v1.261.0（本机实证通过版；升级需重跑本 job 判据）
@@ -47,7 +56,8 @@ jobs:
         run: |
           curl -sL https://github.com/bytecodealliance/wasm-tools/releases/download/v1.261.0/wasm-tools-1.261.0-x86_64-linux.tar.gz | tar xz
           WASM=wasm-tools-1.261.0-x86_64-linux/wasm-tools
-          $WASM component wit target/wasm32-wasip2/release/plugin_hello_guest.wasm > /tmp/guest.wit
+          CRATE_NAME=$(echo "${{ matrix.guest }}" | tr '-' '_')
+          $WASM component wit target/wasm32-wasip2/release/${CRATE_NAME}.wasm > /tmp/guest.wit
           grep -q 'export aurora:plugin/host@0.1.0' /tmp/guest.wit
           grep -q 'init: func' /tmp/guest.wit
           grep -q 'handle-event: func' /tmp/guest.wit
@@ -55,8 +65,8 @@ jobs:
       # 产物不入库（源码在库、二进制 CI 产出）；保留 30 天
       - uses: actions/upload-artifact@v4
         with:
-          name: plugin-hello-guest-wasm
-          path: target/wasm32-wasip2/release/plugin_hello_guest.wasm
+          name: ${{ matrix.guest }}-wasm
+          path: target/wasm32-wasip2/release/plugin_*_guest.wasm
           retention-days: 30
           if-no-files-found: error
 
@@ -88,7 +98,7 @@ jobs:
             libxdo-dev \
             patchelf
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --exclude aurora-desktop --exclude plugin-hello-guest --all-targets -- -D warnings
+      - run: cargo clippy --workspace --exclude aurora-desktop --exclude plugin-hello-guest --exclude plugin-wordcount-guest --exclude plugin-auditlog-guest --all-targets -- -D warnings
 
   test:
     name: Test (stable)
@@ -145,7 +155,7 @@ jobs:
       # clippy/test 同集合已绿）、desktop-check 加 4G swap、削并行度。
       - name: Build
         run: |
-          cargo build --workspace --exclude aurora-desktop --exclude plugin-hello-guest --verbose 2>&1 | tee /tmp/build.log; rc=${PIPESTATUS[0]}
+          cargo build --workspace --exclude aurora-desktop --exclude plugin-hello-guest --exclude plugin-wordcount-guest --exclude plugin-auditlog-guest --verbose 2>&1 | tee /tmp/build.log; rc=${PIPESTATUS[0]}
           echo "BUILD_RC=$rc"; df -h / || true
           exit $rc
       - name: Upload build log
@@ -160,10 +170,10 @@ jobs:
       # 代码同面 353 绿）；两轮都挂=真失败证据链更强，单轮挂=环境瞬时抖动。
       - name: Test
         run: |
-          cargo test --workspace --exclude aurora-desktop --exclude plugin-hello-guest --verbose 2>&1 | tee /tmp/test.log; rc=${PIPESTATUS[0]}
+          cargo test --workspace --exclude aurora-desktop --exclude plugin-hello-guest --exclude plugin-wordcount-guest --exclude plugin-auditlog-guest --verbose 2>&1 | tee /tmp/test.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then
             echo "TEST_RETRY: 首轮失败（疑 runner 环境 flake），重跑一次"
-            cargo test --workspace --exclude aurora-desktop --exclude plugin-hello-guest --verbose 2>&1 | tee /tmp/test-retry.log; rc=${PIPESTATUS[0]}
+            cargo test --workspace --exclude aurora-desktop --exclude plugin-hello-guest --exclude plugin-wordcount-guest --exclude plugin-auditlog-guest --verbose 2>&1 | tee /tmp/test-retry.log; rc=${PIPESTATUS[0]}
           fi
           echo "TEST_RC=$rc"
           exit $rc
@@ -247,7 +257,7 @@ jobs:
             patchelf
       - uses: Swatinem/rust-cache@v2
       - name: Check (MSRV)
-        run: cargo check --workspace --exclude aurora-desktop
+        run: cargo check --workspace --exclude aurora-desktop --exclude plugin-hello-guest --exclude plugin-wordcount-guest --exclude plugin-auditlog-guest
 
   # V20 P0-1: 桌面端 workspace 编译验证（需 GTK/WebKit 系统库）
   desktop-check:

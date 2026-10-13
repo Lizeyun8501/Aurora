@@ -13,6 +13,8 @@ async-trait = { workspace = true }
 
 # WASM runtime
 wasmtime = { workspace = true }
+# DK-14e.1: wasi:cli/io 预实现挂载（真 wasip2 组件 stderr 依赖）
+wasmtime-wasi = { workspace = true }
 
 # Cryptography (Ed25519 code signing)
 ring = { workspace = true }
