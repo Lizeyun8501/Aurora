@@ -35,40 +35,46 @@ fn guest_wasm_bytes(crate_name: &str, wasm_file: &str) -> Option<Vec<u8>> {
                 "wasm32-wasip2",
                 "--release",
             ])
-            .current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."))
             .status()
             .ok()?;
         if !rc.success() {
+            eprintln!(
+                "[e2e-skip] {crate_name} wasm build failed——产物缺失且现场构建失败；\
+                 提示：cargo build -p {crate_name} --target wasm32-wasip2 --release"
+            );
             return None;
         }
     }
-    std::fs::read(&path).ok()
+    std::fs::read(&path)
+        .map_err(|e| eprintln!("[e2e-skip] {crate_name} wasm read failed: {e}"))
+        .ok()
 }
 
-/// e2e：真 wasip2 组件全链证明（三插件逐一 install→register→invoke）。
+/// 真组件全链：install → register → init → handle-event。
 ///
-/// 断言形状：invoke 返回 Ok——真组件被 wasmtime 36 实例化并完成导出调用
-/// （init/handle-event）。stderr 侧信道（[hello]/[wordcount]/[audit] 前缀
-/// 行）由 wasmtime 默认透传宿主 stderr，CI 日志可直接观测。
+/// 断言口径（行为级）：真 wasip2 组件被 wasmtime 36 **实例化**并完成
+/// **两次导出调用**（init/handle-event 返回 Ok）——stderr 侧信道输出
+/// 由 wasmtime 透传宿主 stderr（CI 日志可观测；前缀约定见
+/// docs/plugin-log-conventions.md）。
 #[test]
 fn e2e_real_wasip2_components_full_chain() {
     let runtime = WasmRuntime::with_default_registry();
-    let mut installed = 0usize;
+    let mut installed = 0;
 
     for (crate_name, wasm_file) in GUESTS {
         let plugin_id = crate_name.trim_end_matches("-guest");
         let Some(bytes) = guest_wasm_bytes(crate_name, wasm_file) else {
             eprintln!(
-                "[e2e] SKIP {plugin_id}: wasm 产物缺失且现场构建失败——\
-                 先跑 cargo build -p {crate_name} --target wasm32-wasip2 --release"
+                "[e2e-skip] {plugin_id}: wasm 产物缺失（CI wasm job 产物或本地 \
+                 `cargo build -p {crate_name} --target wasm32-wasip2 --release` 后重跑）"
             );
             continue;
         };
 
-        // 1) install：登记真组件字节（wasm32-wasip2 wasip2 组件——非 wat）
+        // 1) install：真 wasm 字节登记（非 wat fixture）
         runtime.install_component(plugin_id, bytes);
 
-        // 2) register：capability 串由 Manifest 派生（d2 合约）
+        // 2) register：capability 串由 Manifest granted 集合派生（d2 合约）
         runtime.register(
             plugin_id,
             CapabilityManifest::from_permissions(&["fs".into()]),

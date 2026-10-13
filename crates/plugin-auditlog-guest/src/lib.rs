@@ -21,7 +21,10 @@ pub mod logic {
 
     /// 审计行（单行、固定前缀——测试可断言）。
     pub fn audit_line(ts: u64, event: &str, payload: &str) -> String {
-        format!("[audit] ts={ts} event={event} payload_len={}", payload.len())
+        format!(
+            "[audit] ts={ts} event={event} payload_len={}",
+            payload.len()
+        )
     }
 
     #[cfg(test)]
@@ -58,11 +61,7 @@ mod wasm_exports {
             Ok(())
         }
 
-        fn handle_event(
-            _capability: String,
-            event: String,
-            payload: String,
-        ) -> Result<(), ()> {
+        fn handle_event(_capability: String, event: String, payload: String) -> Result<(), ()> {
             let ts = super::logic::next_ts();
             eprintln!("{}", super::logic::audit_line(ts, &event, &payload));
             Ok(())

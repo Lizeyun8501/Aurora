@@ -518,9 +518,10 @@ impl WasmRuntime {
 
     /// DK-14e.1：导出函数双路径寻址。
     ///
-    /// 优先：合约接口实例导出（wit-bindgen 生成形态——`aurora:plugin/host@0.1.0`
-    /// instance 内嵌 init/handle-event，真 wasm32-wasip2 组件均此形态）；
-    /// 回退：平铺顶层导出（wat fixture 手写形态——d2 测试载荷保持不变）。
+    /// 优先：wit-bindgen 平铺导出（真 wasm32-wasip2 组件把接口导出平铺为
+    /// 顶层函数，形如 `aurora:plugin/host@0.1.0#init`——wasm-tools dump
+    /// 实证；WIT 视图里的 "export instance" 是语义糖）；
+    /// 回退：裸名顶层导出（wat fixture 手写形态——d2 测试载荷保持不变）。
     fn export_typed_func<Params, Results>(
         &self,
         store: &mut wasmtime::Store<WasmStoreCtx>,
@@ -532,20 +533,26 @@ impl WasmRuntime {
         Results: wasmtime::component::ComponentNamedList + wasmtime::component::Lift,
     {
         const CONTRACT_IFACE: &str = "aurora:plugin/host@0.1.0";
-        // 优先：合约接口实例内寻址（ComponentExportIndex 本身实现
-        // InstanceExportLookup——get_typed_func 直接在嵌套实例内查平名）
-        if let Some(iface_idx) = instance.get_export_index(&mut *store, None, CONTRACT_IFACE) {
-            if let Ok(f) = instance.get_typed_func::<Params, Results>(&mut *store, &iface_idx) {
-                return Ok(f);
+        // 优先：合约接口实例嵌套寻址（wit-bindgen 组件顶层导出
+        // `aurora:plugin/host@0.1.0` instance——wasm-tools print 实证；
+        // 嵌套链：get_export(None) 拿 instance index → get_export(Some)
+        // 在 instance 内查平名 → index 转 Func → typed）
+        if let Some((_, iface_idx)) = instance.get_export(&mut *store, None, CONTRACT_IFACE) {
+            if let Some((_, func_idx)) =
+                instance.get_export(&mut *store, Some(&iface_idx), flat_name)
+            {
+                if let Some(f) = instance.get_func(&mut *store, func_idx) {
+                    if let Ok(typed) = f.typed::<Params, Results>(&mut *store) {
+                        return Ok(typed);
+                    }
+                }
             }
         }
-        // 回退：平铺顶层导出（wat fixture 形态——d2 测试载荷保持不变）
+        // 回退：裸名顶层导出（wat fixture 形态——d2 测试载荷保持不变）
         instance
             .get_typed_func::<Params, Results>(&mut *store, flat_name)
             .map_err(|e| {
-                crate::Error::WasmRuntime(format!(
-                    "component lacks export `{flat_name}`: {e}"
-                ))
+                crate::Error::WasmRuntime(format!("component lacks export `{flat_name}`: {e}"))
             })
     }
 

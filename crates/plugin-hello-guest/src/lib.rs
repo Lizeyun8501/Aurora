@@ -95,7 +95,10 @@ mod wasm_exports {
         }
 
         fn handle_event(capability: String, event: String, payload: String) -> Result<(), ()> {
-            eprintln!("{}", super::logic::event_line(&capability, &event, &payload));
+            eprintln!(
+                "{}",
+                super::logic::event_line(&capability, &event, &payload)
+            );
             Ok(())
         }
     }

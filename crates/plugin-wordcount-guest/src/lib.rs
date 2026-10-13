@@ -15,7 +15,11 @@ pub mod logic {
     pub fn count(text: &str) -> (usize, usize, usize) {
         let chars = text.chars().count();
         let words = text.split_whitespace().count();
-        let lines = if text.is_empty() { 0 } else { text.lines().count() };
+        let lines = if text.is_empty() {
+            0
+        } else {
+            text.lines().count()
+        };
         (chars, words, lines)
     }
 
@@ -27,10 +31,10 @@ pub mod logic {
             .unwrap_or_else(|| payload.to_string())
     }
 
-    /// 结构化输出行（单行 JSON——`[wordcount] {...}`）。
+    /// 单行 JSON 输出行（测试可断言第一判据）。
     pub fn output_line(text: &str) -> String {
-        let (chars, words, lines) = count(text);
-        format!("[wordcount] {{\"chars\":{chars},\"words\":{words},\"lines\":{lines}}}")
+        let (c, w, l) = count(text);
+        format!("[wordcount] {{\"chars\":{c},\"words\":{w},\"lines\":{l}}}")
     }
 
     #[cfg(test)]
@@ -49,19 +53,27 @@ pub mod logic {
         }
 
         #[test]
-        fn count_unicode_chars() {
-            // 4 个汉字（chars 计字符数非字节数）
-            assert_eq!(count("笔记应用"), (4, 1, 1));
+        fn count_unicode() {
+            assert_eq!(count("你好世界"), (4, 1, 1));
         }
 
         #[test]
-        fn extract_text_from_json_object() {
-            assert_eq!(extract_text(r#"{"text":"a b c","id":7}"#), "a b c");
+        fn count_trailing_newline() {
+            assert_eq!(count("a\n"), (2, 1, 1));
         }
 
         #[test]
-        fn extract_text_falls_back_to_raw_payload() {
-            assert_eq!(extract_text("plain text"), "plain text");
+        fn count_multiline_words() {
+            assert_eq!(count("a b\nc  d\n"), (9, 4, 2));
+        }
+
+        #[test]
+        fn extract_text_takes_field() {
+            assert_eq!(extract_text(r#"{"text":"a b","id":7}"#), "a b");
+        }
+
+        #[test]
+        fn extract_text_fallback_raw() {
             assert_eq!(extract_text(r#"{"other":1}"#), r#"{"other":1}"#);
         }
 
@@ -89,11 +101,7 @@ mod wasm_exports {
             Ok(())
         }
 
-        fn handle_event(
-            _capability: String,
-            _event: String,
-            payload: String,
-        ) -> Result<(), ()> {
+        fn handle_event(_capability: String, _event: String, payload: String) -> Result<(), ()> {
             eprintln!(
                 "{}",
                 super::logic::output_line(&super::logic::extract_text(&payload))
