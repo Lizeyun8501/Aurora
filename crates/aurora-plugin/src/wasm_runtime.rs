@@ -490,11 +490,11 @@ impl WasmRuntime {
                 plugin_id: plugin_id.to_string(),
                 manifest,
                 // stderr 继承宿主进程：插件 eprintln! 侧信道可观测（14e
-                // 日志约定）；stdin/out 同继承（后续卡按需收紧）
+                // 日志约定）。stdin/stdout 不继承——最小权限（插件=不可信
+                // 代码，读宿主 stdin/写宿主 stdout 超出 14e 日志约定必要面；
+                // Alpha 审核 2026-10-13 收紧，用户可见输出属后续卡议题）
                 wasi: wasmtime_wasi::WasiCtxBuilder::new()
                     .inherit_stderr()
-                    .inherit_stdout()
-                    .inherit_stdin()
                     .build(),
                 table: wasmtime_wasi::ResourceTable::new(),
             },
