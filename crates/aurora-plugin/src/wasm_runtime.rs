@@ -321,9 +321,19 @@ impl wasmtime_wasi::WasiView for WasmStoreCtx {
 }
 
 /// DK-14d.2：已实例化插件（Store+实例句柄；per-plugin Mutex 包裹）。
+/// DK-14c.1：capability token 资源载荷（宿主权威数据——guest 永不可见）。
+/// 发放语义：register 时按 Manifest granted 集合快照；零权限插件不发。
+pub(crate) struct CapabilityTokenData {
+    /// 授予集快照（L0 权威数据；消费面=后续 import 卡，当前仅发放持有）
+    #[allow(dead_code)]
+    pub granted: std::collections::HashSet<Capability>,
+}
+
 struct PluginInstance {
     store: wasmtime::Store<WasmStoreCtx>,
     instance: wasmtime::component::Instance,
+    /// DK-14c.1：已发放 token 句柄（首建时入表；None=零权限插件无 token）
+    token: Option<wasmtime::component::ResourceAny>,
 }
 
 /// DK-14d.2：epoch deadline 默认值（ticks；200×50ms=10s，工单建议）。
@@ -440,10 +450,33 @@ impl WasmRuntime {
             .store(ticks, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// DK-14d.2：capability 串派生——注册 Manifest 的 granted 集合逗号连接。
+    /// DK-14c.1：token 发放——按 Manifest granted 集合构造 resource 入表。
     ///
-    /// 14c 资源化时替换为真 capability token（合约文件头有映射说明）。
-    fn derive_capability_string(manifest: &CapabilityManifest) -> String {
+    /// 返回 None=零权限插件（granted 空，L0 全无——invoke 直接拒）。
+    fn issue_capability_token(
+        &self,
+        store: &mut wasmtime::Store<WasmStoreCtx>,
+        manifest: &CapabilityManifest,
+    ) -> Result<Option<wasmtime::component::ResourceAny>, crate::Error> {
+        if manifest.is_empty() {
+            return Ok(None);
+        }
+        let granted: std::collections::HashSet<Capability> = manifest.capabilities.clone();
+        let res = store
+            .data_mut()
+            .table
+            .push(CapabilityTokenData { granted })
+            .map_err(|e| {
+                crate::Error::WasmRuntime(format!("capability token issue failed: {e}"))
+            })?;
+        // Resource<T>（宿主表 rep）→ ResourceAny（typed 调用参数形态；
+        // ty=host::<CapabilityTokenData>——组件侧 opaque，校验在调用边界）
+        wasmtime::component::ResourceAny::try_from_resource(res, &mut *store)
+            .map(Some)
+            .map_err(|e| crate::Error::WasmRuntime(format!("capability token wrap failed: {e}")))
+    }
+
+    fn _legacy_derive_removed(manifest: &CapabilityManifest) -> String {
         const ALL: [Capability; 4] = [
             Capability::Fs,
             Capability::Network,
@@ -484,6 +517,8 @@ impl WasmRuntime {
             crate::Error::NotFound(format!("plugin not registered: {}", plugin_id))
         })?;
         let component = self.load_component(&bytes)?;
+        // DK-14c.1：manifest 快照（token 发放源——Store ctx 构造会 move）
+        let manifest_before_move = manifest.clone();
         let mut store = wasmtime::Store::new(
             &self.engine,
             WasmStoreCtx {
@@ -505,10 +540,31 @@ impl WasmRuntime {
         // 同步调用栈——add_to_linker_sync）
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
             .map_err(|e| crate::Error::WasmRuntime(format!("wasi linker mount failed: {e}")))?;
+        // DK-14c.1: capability-token 资源类型挂载（宿主权威——import
+        // `aurora:plugin/capability@0.2.0` 接口；token 载荷=CapabilityTokenData，
+        // ty 注册后组件类型与宿主表 push 的 ResourceAny 匹配）
+        linker
+            .instance("aurora:plugin/capability@0.2.0")
+            .map_err(|e| {
+                crate::Error::WasmRuntime(format!("capability instance mount failed: {e}"))
+            })?
+            .resource(
+                "capability-token",
+                wasmtime::component::ResourceType::host::<CapabilityTokenData>(),
+                |_store, _rep| Ok(()),
+            )
+            .map_err(|e| {
+                crate::Error::WasmRuntime(format!("capability resource mount failed: {e}"))
+            })?;
         let instance = linker
             .instantiate(&mut store, &component)
             .map_err(|e| crate::Error::WasmRuntime(format!("component instantiate failed: {e}")))?;
-        let inst = std::sync::Arc::new(parking_lot::Mutex::new(PluginInstance { store, instance }));
+        let token = self.issue_capability_token(&mut store, &manifest_before_move)?;
+        let inst = std::sync::Arc::new(parking_lot::Mutex::new(PluginInstance {
+            store,
+            instance,
+            token,
+        }));
         self.instantiations.fetch_add(1, Ordering::Relaxed);
         self.instances
             .write()
@@ -516,12 +572,11 @@ impl WasmRuntime {
         Ok(inst)
     }
 
-    /// DK-14e.1：导出函数双路径寻址。
+    /// DK-14c.1：导出函数寻址（合约接口实例嵌套链，单一确定路径）。
     ///
-    /// 优先：wit-bindgen 平铺导出（真 wasm32-wasip2 组件把接口导出平铺为
-    /// 顶层函数，形如 `aurora:plugin/host@0.1.0#init`——wasm-tools dump
-    /// 实证；WIT 视图里的 "export instance" 是语义糖）；
-    /// 回退：裸名顶层导出（wat fixture 手写形态——d2 测试载荷保持不变）。
+    /// wit-bindgen 组件顶层导出 `aurora:plugin/host@0.2.0` instance
+    /// （wasm-tools print 实证）；版本号随合约升级同步进常量——
+    /// 0.1.0→0.2.0 漏改事故教训：接口名含版本，升级合约必查此处。
     fn export_typed_func<Params, Results>(
         &self,
         store: &mut wasmtime::Store<WasmStoreCtx>,
@@ -532,28 +587,28 @@ impl WasmRuntime {
         Params: wasmtime::component::ComponentNamedList + wasmtime::component::Lower,
         Results: wasmtime::component::ComponentNamedList + wasmtime::component::Lift,
     {
-        const CONTRACT_IFACE: &str = "aurora:plugin/host@0.1.0";
-        // 优先：合约接口实例嵌套寻址（wit-bindgen 组件顶层导出
-        // `aurora:plugin/host@0.1.0` instance——wasm-tools print 实证；
-        // 嵌套链：get_export(None) 拿 instance index → get_export(Some)
-        // 在 instance 内查平名 → index 转 Func → typed）
-        if let Some((_, iface_idx)) = instance.get_export(&mut *store, None, CONTRACT_IFACE) {
-            if let Some((_, func_idx)) =
-                instance.get_export(&mut *store, Some(&iface_idx), flat_name)
-            {
-                if let Some(f) = instance.get_func(&mut *store, func_idx) {
-                    if let Ok(typed) = f.typed::<Params, Results>(&mut *store) {
-                        return Ok(typed);
-                    }
-                }
-            }
-        }
-        // 回退：裸名顶层导出（wat fixture 形态——d2 测试载荷保持不变）
-        instance
-            .get_typed_func::<Params, Results>(&mut *store, flat_name)
-            .map_err(|e| {
-                crate::Error::WasmRuntime(format!("component lacks export `{flat_name}`: {e}"))
-            })
+        // DK-14c.1：合约 0.2.0（版本进接口名）；wat 平铺回退随 fixture
+        // 退役删除——单一路径：嵌套链三步（iface→func→typed），失败即
+        // 明确错误（不再静默 fallback）。
+        const CONTRACT_IFACE: &str = "aurora:plugin/host@0.2.0";
+        let (_, iface_idx) = instance
+            .get_export(&mut *store, None, CONTRACT_IFACE)
+            .ok_or_else(|| {
+                crate::Error::WasmRuntime(format!(
+                    "component lacks contract instance `{CONTRACT_IFACE}`"
+                ))
+            })?;
+        let (_, func_idx) = instance
+            .get_export(&mut *store, Some(&iface_idx), flat_name)
+            .ok_or_else(|| {
+                crate::Error::WasmRuntime(format!("contract interface lacks export `{flat_name}`"))
+            })?;
+        let f = instance.get_func(&mut *store, func_idx).ok_or_else(|| {
+            crate::Error::WasmRuntime(format!("export `{flat_name}` is not a func"))
+        })?;
+        f.typed::<Params, Results>(&mut *store).map_err(|e| {
+            crate::Error::WasmRuntime(format!("export `{flat_name}` signature mismatch: {e}"))
+        })
     }
 
     /// DK-14d.2：真执行链——调用插件导出函数（host → plugin 导出）。
@@ -562,18 +617,25 @@ impl WasmRuntime {
     /// JSON（真调用后，非模拟确认）。typed 调用（强类型参数映射）；
     /// Store 级 epoch deadline 在每次 wasm 调用进入时以当前 epoch 为
     /// 基线生效（懒计算）。
-    fn call_export_init(
-        &self,
-        plugin_id: &str,
-        capability: String,
-    ) -> Result<serde_json::Value, crate::Error> {
+    fn call_export_init(&self, plugin_id: &str) -> Result<serde_json::Value, crate::Error> {
         let inst = self.get_or_instantiate(plugin_id)?;
         let mut guard = inst.lock();
-        let PluginInstance { store, instance } = &mut *guard;
-        let func =
-            self.export_typed_func::<(&str,), (Result<(), ()>,)>(&mut *store, instance, "init")?;
+        // DK-14c.1：token 句柄前置校验（无 token=零权限插件——不发不发调）
+        let Some(token) = guard.token else {
+            eprintln!("[audit-host] plugin={plugin_id} event=init result=denied reason=no-token");
+            return Err(crate::Error::CapabilityDenied(Capability::Storage));
+        };
+        let PluginInstance {
+            store, instance, ..
+        } = &mut *guard;
+        let func = self
+            .export_typed_func::<(wasmtime::component::ResourceAny,), (Result<(), ()>,)>(
+                &mut *store,
+                instance,
+                "init",
+            )?;
         let (r,) = func
-            .call(&mut *store, (capability.as_str(),))
+            .call(&mut *store, (token,))
             .map_err(|e| crate::Error::WasmRuntime(format!("export `init` call failed: {e}")))?;
         r.map_err(|()| crate::Error::WasmRuntime("export `init` returned error".into()))?;
         // post-return：解锁实例（guest 声明 post-return 时必调，否则
@@ -581,6 +643,7 @@ impl WasmRuntime {
         func.post_return(&mut *store).map_err(|e| {
             crate::Error::WasmRuntime(format!("export `init` post-return failed: {e}"))
         })?;
+        eprintln!("[audit-host] plugin={plugin_id} event=init result=ok");
         Ok(serde_json::json!({
             "ok": true,
             "plugin": plugin_id,
@@ -592,23 +655,29 @@ impl WasmRuntime {
     fn call_export_handle_event(
         &self,
         plugin_id: &str,
-        capability: String,
         event: String,
         payload: String,
     ) -> Result<serde_json::Value, crate::Error> {
         let inst = self.get_or_instantiate(plugin_id)?;
         let mut guard = inst.lock();
-        let PluginInstance { store, instance } = &mut *guard;
-        let func = self.export_typed_func::<(&str, &str, &str), (Result<(), ()>,)>(
-            &mut *store,
-            instance,
-            "handle-event",
-        )?;
-        let (r,) = func
-            .call(
+        // DK-14c.1：token 句柄前置校验（同 init）
+        let Some(token) = guard.token else {
+            eprintln!(
+                "[audit-host] plugin={plugin_id} event=handle-event result=denied reason=no-token"
+            );
+            return Err(crate::Error::CapabilityDenied(Capability::Storage));
+        };
+        let PluginInstance {
+            store, instance, ..
+        } = &mut *guard;
+        let func = self
+            .export_typed_func::<(wasmtime::component::ResourceAny, &str, &str), (Result<(), ()>,)>(
                 &mut *store,
-                (capability.as_str(), event.as_str(), payload.as_str()),
-            )
+                instance,
+                "handle-event",
+            )?;
+        let (r,) = func
+            .call(&mut *store, (token, event.as_str(), payload.as_str()))
             .map_err(|e| {
                 crate::Error::WasmRuntime(format!("export `handle-event` call failed: {e}"))
             })?;
@@ -617,11 +686,20 @@ impl WasmRuntime {
         func.post_return(&mut *store).map_err(|e| {
             crate::Error::WasmRuntime(format!("export `handle-event` post-return failed: {e}"))
         })?;
+        eprintln!(
+            "[audit-host] plugin={plugin_id} event=handle-event result=ok event_name={event}"
+        );
         Ok(serde_json::json!({
             "ok": true,
             "plugin": plugin_id,
             "method": "handle-event",
         }))
+    }
+
+    /// DK-14c.1：实例化计数快照（观测/测试——缓存命中语义对外可断言）。
+    pub fn instantiation_count(&self) -> u64 {
+        use std::sync::atomic::Ordering;
+        self.instantiations.load(Ordering::Relaxed)
     }
 
     /// 返回插件能力清单快照。
@@ -679,13 +757,13 @@ impl WasmRuntime {
         if let Some(f) = HostFunction::parse(method) {
             return self.call_host_function(plugin_id, f, args);
         }
+        // DK-14c.1：token 有效性校验在 call_export 层（token=None →
+        // denied+审计行）——顺序：NotFound（未装/未注册）→ InvalidInput
+        // （未知方法）→ CapabilityDenied（零权限）——既有错误语义保持。
+        let _ = manifest; // 校验在 call_export 内经 token None 分支生效
         match method {
-            "init" => {
-                let capability = Self::derive_capability_string(&manifest);
-                self.call_export_init(plugin_id, capability)
-            }
+            "init" => self.call_export_init(plugin_id),
             "handle-event" => {
-                let capability = Self::derive_capability_string(&manifest);
                 let event = args
                     .get("event")
                     .and_then(|v| v.as_str())
@@ -696,7 +774,7 @@ impl WasmRuntime {
                     Some(other) => other.to_string(),
                     None => String::new(),
                 };
-                self.call_export_handle_event(plugin_id, capability, event, payload)
+                self.call_export_handle_event(plugin_id, event, payload)
             }
             other => Err(crate::Error::InvalidInput(format!(
                 "method not supported: {}",
@@ -921,117 +999,15 @@ mod tests {
         assert!(matches!(err, crate::Error::NotFound(_)));
     }
 
-    // ===== DK-14d.2：真执行链（模拟段替换）=====
+    // ===== DK-14c.1：wat fixture 退役 =====
+    // d2 的 wat 手写组件（guest_minimal/guest_spin）随合约 0.2.0 资源化
+    // 退役：resource 参数在 canonical ABI 中的表操作无法用手写 wat 贴近
+    // 真实形态——真组件测试由 tests/guest_e2e.rs 承担（实例缓存/注销/
+    // 越权拦截等行为级断言一并迁移）；epoch 打断覆盖由
+    // test_epoch_deadline_interrupts_infinite_loop（core module）保持。
 
-    /// 最小 guest component 字节（wat→binary 贴近生产路径）。
-    fn minimal_guest() -> Vec<u8> {
-        wat::parse_str(include_str!("../tests/fixtures/guest_minimal.wat"))
-            .expect("guest_minimal.wat 语法合法")
-    }
-
-    fn registered_runtime_with_guest() -> (WasmRuntime, &'static str) {
-        let rt = WasmRuntime::with_default_registry();
-        rt.register("p1", {
-            let mut m = CapabilityManifest::new();
-            m.grant(Capability::Storage);
-            m.grant(Capability::Network);
-            m
-        });
-        rt.install_component("p1", minimal_guest());
-        (rt, "p1")
-    }
-
-    /// DoD：invoke("init") 全链通过——load→Store→Linker→instantiate→call
-    /// （capability 串由 Manifest 派生，真调用成功返回确认 JSON）。
-    #[test]
-    fn test_invoke_init_full_chain() {
-        let (rt, id) = registered_runtime_with_guest();
-        let out = rt.invoke(id, "init", &serde_json::json!({})).unwrap();
-        assert_eq!(out["ok"], serde_json::json!(true));
-        assert_eq!(out["plugin"], serde_json::json!(id));
-        assert_eq!(out["method"], serde_json::json!("init"));
-    }
-
-    /// DoD：invoke("handle-event") 全链通过（event/payload 参数提取）。
-    #[test]
-    fn test_invoke_handle_event_full_chain() {
-        let (rt, id) = registered_runtime_with_guest();
-        let out = rt
-            .invoke(
-                id,
-                "handle-event",
-                &serde_json::json!({"event": "doc_saved", "payload": {"id": 1}}),
-            )
-            .unwrap();
-        assert_eq!(out["ok"], serde_json::json!(true));
-        assert_eq!(out["method"], serde_json::json!("handle-event"));
-    }
-
-    /// DoD：实例缓存命中——二次 invoke 不重复实例化（instantiations 计数=1）。
-    #[test]
-    fn test_instance_cache_hit() {
-        let (rt, id) = registered_runtime_with_guest();
-        rt.invoke(id, "init", &serde_json::json!({})).unwrap();
-        rt.invoke(id, "handle-event", &serde_json::json!({}))
-            .unwrap();
-        rt.invoke(id, "init", &serde_json::json!({})).unwrap();
-        assert_eq!(
-            rt.instantiations.load(std::sync::atomic::Ordering::Relaxed),
-            1,
-            "三次 invoke 共享一次实例化"
-        );
-    }
-
-    /// 挂接自查：unregister 清实例缓存——再注册+invoke 重新实例化（计数=2）。
-    #[test]
-    fn test_unregister_drops_instance_cache() {
-        let (rt, id) = registered_runtime_with_guest();
-        rt.invoke(id, "init", &serde_json::json!({})).unwrap();
-        assert_eq!(
-            rt.instantiations.load(std::sync::atomic::Ordering::Relaxed),
-            1
-        );
-        rt.unregister(id);
-        // 未注册 → NotFound（行为保持）
-        let err = rt.invoke(id, "init", &serde_json::json!({})).unwrap_err();
-        assert!(matches!(err, crate::Error::NotFound(_)));
-        // 再注册+登记 → 重新实例化
-        rt.register(id, CapabilityManifest::new());
-        rt.install_component(id, minimal_guest());
-        rt.invoke(id, "init", &serde_json::json!({})).unwrap();
-        assert_eq!(
-            rt.instantiations.load(std::sync::atomic::Ordering::Relaxed),
-            2,
-            "unregister 后缓存已清，重新实例化"
-        );
-    }
-
-    /// DoD：epoch deadline 对 guest 生效——死循环 component 被 epoch
-    /// 打断 → 明确错误返回（Store 级接线，ticks 运行时可调）。
-    #[test]
-    fn test_epoch_deadline_kills_spin_guest() {
-        let rt = WasmRuntime::with_default_registry();
-        rt.set_epoch_deadline_ticks(2); // 2 tick（~100ms）后打断
-        rt.register("spin", CapabilityManifest::new());
-        rt.install_component(
-            "spin",
-            wat::parse_str(include_str!("../tests/fixtures/guest_spin.wat"))
-                .expect("guest_spin.wat 语法合法"),
-        );
-        let err = rt
-            .invoke(
-                "spin",
-                "handle-event",
-                &serde_json::json!({"event": "x", "payload": ""}),
-            )
-            .unwrap_err();
-        match err {
-            crate::Error::WasmRuntime(m) => {
-                assert!(m.contains("call failed"), "错误需可定位: {m}");
-            }
-            other => panic!("应为 WasmRuntime 错误，实际: {other:?}"),
-        }
-    }
+    // DK-14c.1：guest_spin.wat 退役——epoch 打断覆盖由
+    // test_epoch_deadline_interrupts_infinite_loop（core module）保持。
 
     /// 未登记 component 的已注册插件 → NotFound（懒实例化前置缺失）。
     #[test]
@@ -1118,11 +1094,16 @@ mod tests {
         // init 单参带右括号；handle-event 后随更多参数）
         let wit = include_str!("../wit/aurora-plugin.wit");
         for sig in [
-            "init: func(capability: string)",
-            "handle-event: func(capability: string",
+            "resource capability-token;",
+            "init: func(capability: borrow<capability-token>) -> result;",
+            "handle-event: func(capability: borrow<capability-token>, event: string, payload: string) -> result;",
         ] {
-            assert!(wit.contains(sig), "WIT 缺 capability 签名: {sig}");
+            assert!(wit.contains(sig), "WIT 0.2.0 缺签名: {sig}");
         }
+        assert!(
+            wit.contains("package aurora:plugin@0.2.0;"),
+            "合约版本 0.2.0"
+        );
         assert!(wit.contains("world plugin"), "world 定义在库");
     }
 

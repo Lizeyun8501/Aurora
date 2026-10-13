@@ -96,12 +96,16 @@ mod wasm_exports {
     struct WordcountGuest;
 
     impl exports::aurora::plugin::host::Guest for WordcountGuest {
-        fn init(capability: String) -> Result<(), ()> {
-            eprintln!("[wordcount] init ok capability={capability:?}");
+        fn init(_capability: &exports::aurora::plugin::host::CapabilityToken) -> Result<(), ()> {
+            eprintln!("[wordcount] init ok");
             Ok(())
         }
 
-        fn handle_event(_capability: String, _event: String, payload: String) -> Result<(), ()> {
+        fn handle_event(
+            _capability: &exports::aurora::plugin::host::CapabilityToken,
+            _event: String,
+            payload: String,
+        ) -> Result<(), ()> {
             eprintln!(
                 "{}",
                 super::logic::output_line(&super::logic::extract_text(&payload))

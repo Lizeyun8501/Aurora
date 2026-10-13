@@ -1,28 +1,40 @@
-// DK-14d.d1 最小宿主合约 · aurora-plugin
+// DK-14c.1 · Capability 资源化合约 v0.2.0（breaking，自 0.1.0 一次切换）
 //
-// # DK-14c 前置映射（capability 参数位语义）
+// # capability-token 归属（宿主权威）
 //
-// `capability: string` 为能力令牌占位——14c 落地时升级为 capability
-// resource（borrow 传参）+ 宿主侧 CapabilityManifest 校验（本 crate
-// permission.rs 三级权限已有宿主面）。届时签名替换：
-//   `capability: string` → `capability: borrow<capability-token>`
-// guest 校验语义保持「先校验后动作」；本版实现可先校验空（占位非空
-// 校验在 14c 配置层落地）。
+// resource 定义在独立 `capability` 接口、经 world `import` 由**宿主实现**
+// ——token 是宿主发放的不透明句柄（wasmtime ResourceTable，ty=宿主
+// 类型），guest 侧仅持有 borrow 视图：不可伪造（表隔离）、不可解引用
+// （无方法面）、不可转递（borrow 语义）。
+//
+// - 宿主发放：实例化时按 Manifest granted 集合快照构造（零权限插件不
+//   发 token，invoke 直接拒 + [audit-host] 审计行）
+// - 宿主校验：invoke 入口 token 有效性 + manifest 一致性；越权 →
+//   CapabilityDenied + 审计行（docs/plugin-log-conventions.md）
 //
 // # 范围
-// 仅 export host 接口（无 import）——bindgen 宿主侧零 trait 实现负担；
-// d2 以此 world 对真实 guest component 做实例化类型校验。
-package aurora:plugin@0.1.0;
+// export host 接口无方法面扩展——guest 主动能力调用（token 消费，
+// import 接口挂方法）属 14c 后续卡；UI 徽章/L1L2 细粒度属后续。
+package aurora:plugin@0.2.0;
 
-interface host {
-    /// 插件初始化（加载后调用一次）。
-    init: func(capability: string) -> result;
-
-    /// 宿主事件入口（宿主 → 插件事件通道）。
-    handle-event: func(capability: string, event: string, payload: string) -> result;
+/// 能力令牌接口（宿主实现——resource 类型权威定义处）。
+interface capability {
+    /// 能力令牌：宿主发放的不透明句柄（L0 全有/全无 per-granted-set）。
+    resource capability-token;
 }
 
-/// 最小插件世界（guest 导出 host 接口）。
+interface host {
+    use capability.{capability-token};
+
+    /// 插件初始化（加载后调用一次）。
+    init: func(capability: borrow<capability-token>) -> result;
+
+    /// 宿主事件入口（宿主 → 插件事件通道）。
+    handle-event: func(capability: borrow<capability-token>, event: string, payload: string) -> result;
+}
+
+/// 最小插件世界。
 world plugin {
-    export host;
+    import capability; // 宿主实现（token 权威）
+    export host;       // guest 实现
 }

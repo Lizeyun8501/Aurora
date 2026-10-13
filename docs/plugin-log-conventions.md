@@ -7,9 +7,19 @@
 
 | 前缀 | 插件 | 模式 | 输出形状 |
 |---|---|---|---|
-| `[hello]` | plugin-hello-guest | 分支响应型 | `note.created capability="..." payload_len=N payload_preview="..."`；未知 event 打 `[hello] WARN unknown event=...`；init 拒绝打 `[hello] ERROR init rejected: ...` |
+| `[hello]` | plugin-hello-guest | 分支响应型 | `note.created payload_len=N payload_preview="..."`；未知 event 打 `[hello] WARN unknown event=...`（capability 字段随 0.2.0 资源化退役——token 不透明不可打印） |
 | `[wordcount]` | plugin-wordcount-guest | 计算型 | **单行 JSON**：`{"chars":N,"words":N,"lines":N}` |
 | `[audit]` | plugin-auditlog-guest | 被动监听型 | `ts=N event=<event> payload_len=<len>`（N=调用计数，1 起递增） |
+
+## 宿主侧审计行（DK-14c.1 起）
+
+宿主每次 invoke 记审计行到 stderr（`[audit-host]` 前缀）：
+
+`[audit-host] plugin=<id> event=<init|handle-event> result=<ok|denied> [reason=<...>] [event_name=<...>]`
+
+样例：
+- `[audit-host] plugin=plugin-hello event=init result=ok`
+- `[audit-host] plugin=denied event=init result=denied reason=no-token`（零权限插件越权拦截）
 
 ## 判据与规约
 

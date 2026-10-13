@@ -106,3 +106,112 @@ fn e2e_real_wasip2_components_full_chain() {
         "三示范插件应全部走通真组件全链（缺失即 skip/报错——查 wasm job 或本地构建）"
     );
 }
+
+/// DK-14c.1：token 生命周期——实例缓存跨 invoke 共享（迁移自 d2
+/// test_instance_cache_hit；wat fixture 退役后由真组件承担）。
+#[test]
+fn e2e_instance_cache_shared_across_invokes() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失——查 wasm job 或本地构建");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "p1",
+        CapabilityManifest::from_permissions(&["storage".into()]),
+    );
+    runtime.install_component("p1", bytes);
+
+    runtime
+        .invoke("p1", "init", &serde_json::json!({}))
+        .unwrap();
+    runtime
+        .invoke(
+            "p1",
+            "handle-event",
+            &serde_json::json!({"event": "note.created", "payload": "x"}),
+        )
+        .unwrap();
+    runtime
+        .invoke("p1", "init", &serde_json::json!({}))
+        .unwrap();
+    assert_eq!(
+        runtime.instantiation_count(),
+        1,
+        "三次 invoke 共享一次实例化（token 随实例发放一次）"
+    );
+}
+
+/// DK-14c.1：unregister 清实例缓存——再注册+invoke 重新实例化
+/// （迁移自 d2 test_unregister_drops_instance_cache）。
+#[test]
+fn e2e_unregister_drops_instance_cache() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失——查 wasm job 或本地构建");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "p2",
+        CapabilityManifest::from_permissions(&["storage".into()]),
+    );
+    runtime.install_component("p2", bytes.clone());
+    runtime
+        .invoke("p2", "init", &serde_json::json!({}))
+        .unwrap();
+    assert_eq!(runtime.instantiation_count(), 1);
+
+    runtime.unregister("p2");
+    let err = runtime
+        .invoke("p2", "init", &serde_json::json!({}))
+        .unwrap_err();
+    assert!(matches!(err, aurora_plugin::Error::NotFound(_)));
+
+    // 再注册+登记 → 重新实例化（token 随新实例重新发放）
+    runtime.register(
+        "p2",
+        CapabilityManifest::from_permissions(&["storage".into()]),
+    );
+    runtime.install_component("p2", bytes.clone());
+    runtime
+        .invoke("p2", "init", &serde_json::json!({}))
+        .unwrap();
+    assert_eq!(runtime.instantiation_count(), 2);
+}
+
+/// DoD：越权拦截——零权限插件（空 granted manifest）不发 token，invoke
+/// 直接拒（Error::CapabilityDenied）+ [audit-host] 审计行（stderr 透传，
+/// `cargo test -- --nocapture` 可观测；样例：[audit-host] plugin=denied
+/// event=init result=denied reason=zero-grant-manifest）。
+#[test]
+fn e2e_zero_grant_invoke_denied() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失——查 wasm job 或本地构建");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    // 零权限 manifest（granted 空）
+    runtime.register("denied", CapabilityManifest::new());
+    runtime.install_component("denied", bytes);
+
+    let err = runtime
+        .invoke("denied", "init", &serde_json::json!({}))
+        .unwrap_err();
+    assert!(
+        matches!(err, aurora_plugin::Error::CapabilityDenied(_)),
+        "零权限插件 invoke 应被拒（CapabilityDenied），实际 {err:?}"
+    );
+
+    // 对照组：granted 非空 → 正常放行（token 发放）
+    runtime.register(
+        "ok",
+        CapabilityManifest::from_permissions(&["storage".into()]),
+    );
+    runtime.install_component(
+        "ok",
+        guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm").unwrap(),
+    );
+    runtime
+        .invoke("ok", "init", &serde_json::json!({}))
+        .expect("granted 非空插件应走通（token 发放）");
+}
