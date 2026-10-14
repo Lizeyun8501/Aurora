@@ -162,14 +162,23 @@ pub struct Plugin {
 
 impl Plugin {
     /// 根据清单与模式构造插件实例（初始状态 `Loaded`）。
-    pub fn new(manifest: PluginManifest, mode: PluginMode) -> Self {
-        let capabilities = CapabilityManifest::from_permissions(&manifest.permissions);
+    /// DK-15a fail-closed：manifest 含未知 capability 串→Err 拒绝加载
+    /// （诊断含非法串与合法清单；不静默忽略）。
+    pub fn new(manifest: PluginManifest, mode: PluginMode) -> Result<Self, aurora_core::Error> {
+        let capabilities = CapabilityManifest::from_permissions(&manifest.permissions)
+            .map_err(|e| aurora_core::Error::InvalidInput(format!("{e}")))?;
         let permissions = manifest
             .permissions
             .iter()
-            .filter_map(|p| Permission::parse(p.as_str()))
-            .collect();
-        Self {
+            .map(|p| {
+                Permission::parse(p.as_str()).ok_or_else(|| {
+                    aurora_core::Error::InvalidInput(format!(
+                        "unknown permission `{p}`; valid set: [fs, network, native, storage, clipboard, notifications, dialog]"
+                    ))
+                })
+            })
+            .collect::<Result<HashSet<_>, _>>()?;
+        Ok(Self {
             id: manifest.id.clone(),
             manifest,
             mode,
@@ -177,7 +186,7 @@ impl Plugin {
             capabilities,
             permissions,
             loaded_at: chrono::Utc::now(),
-        }
+        })
     }
 
     /// 是否处于可调用状态（Running）。
@@ -467,7 +476,8 @@ impl PluginRuntime for PluginManager {
         manifest: &PluginManifest,
     ) -> Result<PluginHandle, aurora_core::Error> {
         let mode = PluginMode::from(manifest.runtime.clone());
-        let plugin = Plugin::new(manifest.clone(), mode);
+        // DK-15a fail-closed：未知 capability 串→拒绝加载（Err 透传）
+        let plugin = Plugin::new(manifest.clone(), mode)?;
         let handle = PluginHandle {
             id: plugin.id.clone(),
             manifest: plugin.manifest.clone(),
@@ -612,7 +622,7 @@ mod tests {
     #[test]
     fn test_plugin_new_derives_capabilities_and_permissions() {
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &["fs", "storage", "clipboard"]);
-        let plugin = Plugin::new(manifest, PluginMode::Wasm);
+        let plugin = Plugin::new(manifest, PluginMode::Wasm).unwrap();
         assert_eq!(plugin.id, "p1");
         assert_eq!(plugin.mode, PluginMode::Wasm);
         assert_eq!(plugin.status, PluginStatus::Loaded);
@@ -641,7 +651,7 @@ mod tests {
     async fn test_plugin_manager_lifecycle_init_start_suspend_resume() {
         let mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &[]);
-        mgr.register_plugin(Plugin::new(manifest, PluginMode::Wasm));
+        mgr.register_plugin(Plugin::new(manifest, PluginMode::Wasm).unwrap());
 
         assert_eq!(mgr.status("p1").unwrap(), PluginStatus::Loaded);
         // 未初始化直接 start 应失败
@@ -660,7 +670,7 @@ mod tests {
     async fn test_plugin_manager_invoke_wasm_dispatch() {
         let mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &["storage"]);
-        mgr.register_plugin(Plugin::new(manifest, PluginMode::Wasm));
+        mgr.register_plugin(Plugin::new(manifest, PluginMode::Wasm).unwrap());
         mgr.init("p1").unwrap();
         mgr.start("p1").unwrap();
 
@@ -683,7 +693,7 @@ mod tests {
     async fn test_plugin_manager_invoke_iframe_dispatch() {
         let mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Iframe, &[]);
-        mgr.register_plugin(Plugin::new(manifest, PluginMode::Iframe));
+        mgr.register_plugin(Plugin::new(manifest, PluginMode::Iframe).unwrap());
         mgr.init("p1").unwrap();
         mgr.start("p1").unwrap();
         let out = mgr
@@ -696,7 +706,7 @@ mod tests {
     fn test_plugin_manager_invoke_not_running_rejected() {
         let mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &[]);
-        mgr.register_plugin(Plugin::new(manifest, PluginMode::Wasm));
+        mgr.register_plugin(Plugin::new(manifest, PluginMode::Wasm).unwrap());
         // Loaded 状态调用应失败
         let err = mgr
             .invoke_plugin("p1", "ping", &serde_json::json!({}))
@@ -708,7 +718,7 @@ mod tests {
     async fn test_plugin_manager_unload() {
         let mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &[]);
-        mgr.register_plugin(Plugin::new(manifest, PluginMode::Wasm));
+        mgr.register_plugin(Plugin::new(manifest, PluginMode::Wasm).unwrap());
         mgr.init("p1").unwrap();
         mgr.start("p1").unwrap();
         mgr.unload_plugin("p1").unwrap();
@@ -725,8 +735,8 @@ mod tests {
         let m1 = sample_manifest("p1", RuntimeType::Wasm, &[]);
         let mut m2 = sample_manifest("p2", RuntimeType::Wasm, &[]);
         m2.hooks = vec!["on_save".to_string(), "on_open".to_string()];
-        mgr.register_plugin(Plugin::new(m1, PluginMode::Wasm));
-        mgr.register_plugin(Plugin::new(m2, PluginMode::Wasm));
+        mgr.register_plugin(Plugin::new(m1, PluginMode::Wasm).unwrap());
+        mgr.register_plugin(Plugin::new(m2, PluginMode::Wasm).unwrap());
 
         let on_save = mgr.hook_plugin_ids("on_save");
         // m1 和 m2 都注册了 on_save
@@ -742,7 +752,7 @@ mod tests {
     fn test_plugin_manager_unload_removes_hooks() {
         let mgr = PluginManager::new();
         let manifest = sample_manifest("p1", RuntimeType::Wasm, &[]);
-        mgr.register_plugin(Plugin::new(manifest, PluginMode::Wasm));
+        mgr.register_plugin(Plugin::new(manifest, PluginMode::Wasm).unwrap());
         assert_eq!(mgr.hook_plugin_ids("on_save").len(), 1);
         mgr.unload_plugin("p1").unwrap();
         assert_eq!(mgr.hook_plugin_ids("on_save").len(), 0);

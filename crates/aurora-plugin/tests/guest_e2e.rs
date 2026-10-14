@@ -77,7 +77,8 @@ fn e2e_real_wasip2_components_full_chain() {
         // 2) register：capability 串由 Manifest granted 集合派生（d2 合约）
         runtime.register(
             plugin_id,
-            CapabilityManifest::from_permissions(&["fs".into(), "log".into(), "storage".into()]),
+            CapabilityManifest::from_permissions(&["fs".into(), "log".into(), "storage".into()])
+                .unwrap(),
         );
 
         // 3) invoke：init + handle-event 真调用（真组件被 wasmtime 36
@@ -118,7 +119,7 @@ fn e2e_instance_cache_shared_across_invokes() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "p1",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
     );
     runtime.install_component("p1", bytes);
 
@@ -153,7 +154,7 @@ fn e2e_unregister_drops_instance_cache() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "p2",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
     );
     runtime.install_component("p2", bytes.clone());
     runtime
@@ -170,7 +171,7 @@ fn e2e_unregister_drops_instance_cache() {
     // 再注册+登记 → 重新实例化（token 随新实例重新发放）
     runtime.register(
         "p2",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
     );
     runtime.install_component("p2", bytes.clone());
     runtime
@@ -205,7 +206,7 @@ fn e2e_zero_grant_invoke_denied() {
     // 对照组：granted 非空 → 正常放行（token 发放）
     runtime.register(
         "ok",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
     );
     runtime.install_component(
         "ok",
@@ -228,7 +229,7 @@ fn e2e_log_method_denied_without_grant() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "nolog",
-        CapabilityManifest::from_permissions(&["storage".into()]),
+        CapabilityManifest::from_permissions(&["storage".into()]).unwrap(),
     );
     runtime.install_component("nolog", bytes);
     // hello init 内 capability.log → 宿主 require(Log) 拒 → trap → invoke err
@@ -256,7 +257,7 @@ fn e2e_log_method_granted_forwards() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "withlog",
-        CapabilityManifest::from_permissions(&["log".into(), "storage".into()]),
+        CapabilityManifest::from_permissions(&["log".into(), "storage".into()]).unwrap(),
     );
     runtime.install_component("withlog", bytes);
     runtime
@@ -283,7 +284,7 @@ fn e2e_dataplane_granted_full_chain() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "withdata",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
     );
     runtime.install_component("withdata", bytes.clone());
     runtime
@@ -321,7 +322,7 @@ fn e2e_dataplane_denied_without_storage() {
     runtime.register(
         "nodata",
         // log 有 storage 无——log 放行 write-doc 拒
-        CapabilityManifest::from_permissions(&["log".into()]),
+        CapabilityManifest::from_permissions(&["log".into()]).unwrap(),
     );
     runtime.install_component("nodata", bytes);
     let err = runtime
@@ -345,7 +346,7 @@ fn e2e_dataplane_size_guard() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "bigdata",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
     );
     runtime.install_component("bigdata", bytes);
     let big = "x".repeat(1024 * 1024 + 1);
@@ -375,7 +376,8 @@ fn e2e_dataplane_shared_kv_semantics() {
         return;
     };
     let runtime = WasmRuntime::with_default_registry();
-    let manifest = || CapabilityManifest::from_permissions(&["storage".into(), "log".into()]);
+    let manifest =
+        || CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap();
     runtime.register("p1", manifest());
     runtime.install_component("p1", bytes.clone());
     runtime
@@ -406,7 +408,7 @@ fn e2e_dataplane_empty_content_and_newline_key() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "regress",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
     );
     runtime.install_component("regress", bytes);
     // guest init 内：write("note-empty","")→read Some("") 自验；

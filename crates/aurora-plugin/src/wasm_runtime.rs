@@ -78,19 +78,25 @@ impl CapabilityManifest {
     }
 
     /// 从权限字符串列表派生能力清单。
-    /// 识别 `fs` / `network` / `native` / `storage`，忽略未知项。
-    pub fn from_permissions(perms: &[String]) -> Self {
+    /// DK-15a fail-closed：未知 capability 串→拒绝加载（Err 含非法串+
+    /// 位置+合法清单）——fail-open（静默忽略）是能力面漏洞（guest 预期
+    /// 能力缺失行为不可预测）。
+    pub fn from_permissions(perms: &[String]) -> Result<Self, crate::Error> {
         let mut caps = HashSet::new();
-        for p in perms {
-            if let Some(cap) = Capability::parse(p.as_str()) {
-                caps.insert(cap);
-            } else if let Some(perm) = crate::permission::Permission::parse(p.as_str()) {
-                if let Some(cap) = perm.as_capability() {
-                    caps.insert(cap);
-                }
+        for (i, p) in perms.iter().enumerate() {
+            let s = p.as_str();
+            // 识别两层：Capability（沙箱能力）或 Permission（UI 级——
+            // clipboard/notifications/dialog 合法但无沙箱映射）；两者
+            // 均不识别才是未知串（fail-closed 拒绝）
+            let known = Capability::parse(s).map(|c| caps.insert(c)).is_some()
+                || crate::permission::Permission::parse(s).is_some();
+            if !known {
+                return Err(crate::Error::InvalidInput(format!(
+                    "unknown capability `{s}` at position {i}; valid set: [fs, network, native, storage, log, clipboard, notifications, dialog]"
+                )));
             }
         }
-        Self { capabilities: caps }
+        Ok(Self { capabilities: caps })
     }
 
     /// 追加一个能力
@@ -992,17 +998,54 @@ mod tests {
 
     #[test]
     fn test_capability_manifest_from_permissions() {
+        // DK-15a fail-closed：合法串全集通过
         let m = CapabilityManifest::from_permissions(&[
             "fs".to_string(),
             "network".to_string(),
             "storage".to_string(),
-            "ignored".to_string(),
-        ]);
+        ])
+        .unwrap();
         assert!(m.grants(Capability::Fs));
         assert!(m.grants(Capability::Network));
         assert!(m.grants(Capability::Storage));
         assert!(!m.grants(Capability::Native));
         assert_eq!(m.len(), 3);
+    }
+
+    #[test]
+    fn test_capability_ts_alignment() {
+        // DK-15a：Rust Capability 权威清单 ↔ TS Capability 枚举互证
+        // （shared/types/src/plugin.ts 为 TS 侧单源；变体漂移即红）
+        const TS: &str = include_str!("../../../shared/types/src/plugin.ts");
+        for name in [
+            Capability::Fs.as_str(),
+            Capability::Network.as_str(),
+            Capability::Native.as_str(),
+            Capability::Storage.as_str(),
+            Capability::Log.as_str(),
+        ] {
+            assert!(
+                TS.contains(&format!("'{name}'")),
+                "TS Capability 枚举应含 Rust 权威变体 `{name}`（防漂移）"
+            );
+        }
+        // fail-closed 语义对齐：TS 侧不得再含宽开放 `(string & {})`
+        assert!(
+            !TS.contains("string & {}"),
+            "TS Capability 应收紧为封闭枚举（fail-closed 视觉层前提）"
+        );
+    }
+
+    #[test]
+    fn test_capability_manifest_fail_closed_on_unknown() {
+        // DK-15a：未知 capability 串→拒绝加载（诊断含非法串与合法清单）
+        let err =
+            CapabilityManifest::from_permissions(&["fs".to_string(), "bogus-perm".to_string()])
+                .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("bogus-perm"), "诊断应含非法串，实际 {msg}");
+        assert!(msg.contains("valid set"), "诊断应含合法清单，实际 {msg}");
+        assert!(msg.contains("position 1"), "诊断应含位置，实际 {msg}");
     }
 
     #[test]

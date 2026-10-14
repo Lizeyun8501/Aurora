@@ -21,16 +21,14 @@ export type PluginStatus =
 
 /** A capability the plugin may request access to. */
 export type Capability =
-  | 'file_system'
+  | 'fs'
   | 'network'
+  | 'native'
+  | 'storage'
+  | 'log'
   | 'clipboard'
   | 'notifications'
-  | 'database'
-  | 'editor'
-  | 'ai'
-  | 'sync'
-  | 'system_settings'
-  | (string & {});
+  | 'dialog';
 
 /** Permission state for a capability. */
 export type PermissionState = 'granted' | 'denied' | 'prompt';
