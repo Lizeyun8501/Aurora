@@ -174,6 +174,15 @@ impl HostFunction {
 /// 生产环境中由 `Linker` 绑定的 WASM import 实现；此处以 trait 抽象，
 /// 便于注入不同实现（真实文档引擎 / 测试桩）。
 pub trait HostFunctionRegistry: Send + Sync {
+    /// DK-14c.3：数据面共享 KV 直通（guest-invoked docs 与 host-invoked
+    /// 同一存储——设计使然）。实现方持有 docs Arc 时返回 Some；无数据面
+    /// 实现（测试 fake 等）返回 None→运行时数据面挂载报错（组件未
+    /// import 三函数时不影响既有路径——挂载前仅 Default 路径带三函数）。
+    fn docs_store(
+        &self,
+    ) -> Option<std::sync::Arc<parking_lot::RwLock<HashMap<String, serde_json::Value>>>> {
+        None
+    }
     /// 执行宿主函数调用。
     fn call(
         &self,
@@ -207,6 +216,12 @@ impl DefaultHostFunctions {
 }
 
 impl HostFunctionRegistry for DefaultHostFunctions {
+    fn docs_store(
+        &self,
+    ) -> Option<std::sync::Arc<parking_lot::RwLock<HashMap<String, serde_json::Value>>>> {
+        Some(std::sync::Arc::clone(&self.docs))
+    }
+
     fn call(
         &self,
         function: HostFunction,
@@ -272,6 +287,15 @@ impl Drop for WasmRuntime {
 wasmtime::component::bindgen!({
     path: "wit",
     world: "plugin",
+    imports: {
+        "aurora:plugin/capability": trappable,
+    },
+    // capability-token 宿主类型映射=CapabilityTokenData（14c.1 语义保持
+    // ——issue_capability_token push 的即此类型；默认 bindgen 类型会
+    // 与 push 侧 mismatched resource types）
+    with: {
+        "aurora:plugin/capability/capability-token": CapabilityTokenData,
+    },
 });
 
 /// WASM 插件运行时：管理插件能力清单并分派宿主函数调用。
@@ -316,6 +340,13 @@ struct WasmStoreCtx {
     table: wasmtime_wasi::ResourceTable,
     /// DK-14c.2：log 方法首调标记（审计节流——仅越权+首调记审计行）
     log_first_called: bool,
+    /// DK-14c.3：read-doc/query-docs 各自首调标记（查询类审计节流；
+    /// write-doc 逐条审计不走标记）
+    read_first_called: bool,
+    query_first_called: bool,
+    /// DK-14c.3：数据面共享 KV（bindgen Host trait 方法经 self 访问——
+    /// registry.docs_store() 在 install_component 时注入）
+    docs: Option<std::sync::Arc<parking_lot::RwLock<HashMap<String, serde_json::Value>>>>,
 }
 
 impl wasmtime_wasi::WasiView for WasmStoreCtx {
@@ -330,7 +361,7 @@ impl wasmtime_wasi::WasiView for WasmStoreCtx {
 /// DK-14d.2：已实例化插件（Store+实例句柄；per-plugin Mutex 包裹）。
 /// DK-14c.1：capability token 资源载荷（宿主权威数据——guest 永不可见）。
 /// 发放语义：register 时按 Manifest granted 集合快照；零权限插件不发。
-pub(crate) struct CapabilityTokenData {
+pub struct CapabilityTokenData {
     /// 授予集快照（L0 权威数据；消费面=后续 import 卡，当前仅发放持有）
     #[allow(dead_code)]
     pub granted: std::collections::HashSet<Capability>,
@@ -540,6 +571,9 @@ impl WasmRuntime {
                     .build(),
                 table: wasmtime_wasi::ResourceTable::new(),
                 log_first_called: false,
+                read_first_called: false,
+                query_first_called: false,
+                docs: self.registry.docs_store(),
             },
         );
         store.set_epoch_deadline(self.epoch_deadline_ticks.load(Ordering::Relaxed));
@@ -548,79 +582,15 @@ impl WasmRuntime {
         // 同步调用栈——add_to_linker_sync）
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
             .map_err(|e| crate::Error::WasmRuntime(format!("wasi linker mount failed: {e}")))?;
-        // DK-14c.1: capability-token 资源类型挂载（宿主权威——import
-        // `aurora:plugin/capability@0.2.0` 接口；token 载荷=CapabilityTokenData，
-        // ty 注册后组件类型与宿主表 push 的 ResourceAny 匹配）
-        let mut capability_inst =
-            linker
-                .instance("aurora:plugin/capability@0.2.0")
-                .map_err(|e| {
-                    crate::Error::WasmRuntime(format!("capability instance mount failed: {e}"))
-                })?;
-        capability_inst
-            .resource(
-                "capability-token",
-                wasmtime::component::ResourceType::host::<CapabilityTokenData>(),
-                |_store, _rep| Ok(()),
-            )
-            .map_err(|e| {
-                crate::Error::WasmRuntime(format!("capability resource mount failed: {e}"))
-            })?;
-        // DK-14c.2：log 方法（guest-invoked 首个能力消费端点）——
-        // 自由函数形态（WIT 形态裁决：resource method 经 wit-bindgen
-        // 0.57.1 组件生成实证受阻，自由函数 token 显式 borrow 参数语义
-        // 等价）；组件 import 命名=接口内平名 "log"；
-        // 参数首项=token 句柄 rep（i32），level=enum（i32: 0..3）
-        capability_inst
-            .func_wrap(
-                "log",
-                |mut ctx: wasmtime::StoreContextMut<'_, WasmStoreCtx>,
-                 (res, level, msg): (
-                    wasmtime::component::Resource<CapabilityTokenData>,
-                    String,
-                    String,
-                )|
-                 -> Result<(), wasmtime::Error> {
-                    let plugin_id = ctx.data().plugin_id.clone();
-                    // 表取 token 数据（borrow 句柄→Resource<T>，wasmtime
-                    // 负责 guest 句柄→宿主 rep 的转换）
-                    let granted_log = ctx
-                        .data()
-                        .table
-                        .get(&res)
-                        .map(|d| d.granted.contains(&Capability::Log))
-                        .unwrap_or(false);
-                    // L0 per-method require：granted 含 Log 才可调
-                    if !granted_log {
-                        eprintln!(
-                            "[audit-host] plugin={plugin_id} event=log result=denied reason=log-denied level={level}"
-                        );
-                        return Err(wasmtime::Error::msg(
-                            crate::Error::CapabilityDenied(Capability::Log),
-                        ));
-                    }
-                    // 审计节流：仅首调记行（正常转发不刷屏）
-                    let first = !ctx.data().log_first_called;
-                    if first {
-                        ctx.data_mut().log_first_called = true;
-                        eprintln!(
-                            "[audit-host] plugin={plugin_id} event=log result=ok reason=first-call"
-                        );
-                    }
-                    // tracing 转发（带 plugin_id 前缀——日志约定文档；
-                    // level 字符串映射 tracing 级别，未知值按 info 兜底）
-                    match level.as_str() {
-                        "debug" => tracing::debug!(plugin = %plugin_id, "plugin log: {msg}"),
-                        "warn" => tracing::warn!(plugin = %plugin_id, "plugin log: {msg}"),
-                        "error" => tracing::error!(plugin = %plugin_id, "plugin log: {msg}"),
-                        _ => tracing::info!(plugin = %plugin_id, "plugin log: {msg}"),
-                    }
-                    Ok(())
-                },
-            )
-            .map_err(|e| {
-                crate::Error::WasmRuntime(format!("capability log method mount failed: {e}"))
-            })?;
+        // DK-14c.3：capability 接口挂载迁至 bindgen 生成面（capability::
+        // add_to_linker）——低层 func_wrap 对单值/option/result 返回的
+        // ComponentNamedList 受阻（14c.3 实证），Host trait 形态全自动；
+        // 宿主语义（require/审计/guard）迁 impl capability::Host（本文件尾）
+        aurora::plugin::capability::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
+            &mut linker,
+            |state: &mut WasmStoreCtx| state,
+        )
+        .map_err(|e| crate::Error::WasmRuntime(format!("capability add_to_linker failed: {e}")))?;
         let instance = linker
             .instantiate(&mut store, &component)
             .map_err(|e| crate::Error::WasmRuntime(format!("component instantiate failed: {e}")))?;
@@ -847,6 +817,166 @@ impl WasmRuntime {
             ))),
         }
     }
+}
+
+/// DK-14c.3：capability 接口宿主实现（bindgen 生成 Host trait）——
+/// 语义自低层 func_wrap 全量迁移（14c.2 log+14c.3 数据面）：
+/// per-method require+差异化审计+1 MiB guard+tracing 转发。
+impl aurora::plugin::capability::Host for WasmStoreCtx {
+    fn log(
+        &mut self,
+        token: wasmtime::component::Resource<CapabilityTokenData>,
+        level: String,
+        msg: String,
+    ) -> Result<(), wasmtime::Error> {
+        let plugin_id = self.plugin_id.clone();
+        let granted_log = self
+            .table
+            .get(&token)
+            .map(|d| d.granted.contains(&Capability::Log))
+            .unwrap_or(false);
+        if !granted_log {
+            eprintln!("[audit-host] plugin={plugin_id} event=log result=denied reason=log-denied level={level}");
+            return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
+                Capability::Log,
+            )));
+        }
+        if !self.log_first_called {
+            self.log_first_called = true;
+            eprintln!("[audit-host] plugin={plugin_id} event=log result=ok reason=first-call");
+        }
+        match level.as_str() {
+            "debug" => tracing::debug!(plugin = %plugin_id, "plugin log: {msg}"),
+            "warn" => tracing::warn!(plugin = %plugin_id, "plugin log: {msg}"),
+            "error" => tracing::error!(plugin = %plugin_id, "plugin log: {msg}"),
+            _ => tracing::info!(plugin = %plugin_id, "plugin log: {msg}"),
+        }
+        Ok(())
+    }
+
+    fn read_doc(
+        &mut self,
+        token: wasmtime::component::Resource<CapabilityTokenData>,
+        doc_id: String,
+    ) -> wasmtime::Result<String> {
+        let plugin_id = self.plugin_id.clone();
+        let granted = self
+            .table
+            .get(&token)
+            .map(|d| d.granted.contains(&Capability::Storage))
+            .unwrap_or(false);
+        if !granted {
+            eprintln!("[audit-host] plugin={plugin_id} event=read-doc result=denied reason=data-denied doc_id={doc_id}");
+            return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
+                Capability::Storage,
+            )));
+        }
+        if !self.read_first_called {
+            self.read_first_called = true;
+            eprintln!("[audit-host] plugin={plugin_id} event=read-doc result=ok reason=first-call");
+        }
+        let Some(docs) = self.docs.as_ref() else {
+            return Ok(String::new());
+        };
+        // Value::String 直取；host-invoked 写的其他 Value 序列化回传（不丢数据）；
+        // 不存在→空串（option 语义协议化，披露）
+        Ok(docs
+            .read()
+            .get(&doc_id)
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .unwrap_or_default())
+    }
+
+    fn write_doc(
+        &mut self,
+        token: wasmtime::component::Resource<CapabilityTokenData>,
+        doc_id: String,
+        data: String,
+    ) -> wasmtime::Result<String> {
+        let plugin_id = self.plugin_id.clone();
+        let granted = self
+            .table
+            .get(&token)
+            .map(|d| d.granted.contains(&Capability::Storage))
+            .unwrap_or(false);
+        if !granted {
+            eprintln!("[audit-host] plugin={plugin_id} event=write-doc result=denied reason=data-denied size={}", data.len());
+            return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
+                Capability::Storage,
+            )));
+        }
+        // 1 MiB 容量 guard（超限 err+审计含 size；err 协议=非空 string）
+        if data.len() > 1024 * 1024 {
+            eprintln!("[audit-host] plugin={plugin_id} event=write-doc result=denied reason=size-exceeded doc_id={doc_id} size={}", data.len());
+            return Ok(format!(
+                "write-doc: payload exceeds 1 MiB limit ({} bytes)",
+                data.len()
+            ));
+        }
+        // 逐条审计（状态变更留痕：doc_id+size）
+        eprintln!("[audit-host] plugin={plugin_id} event=write-doc result=ok reason=write doc_id={doc_id} size={}", data.len());
+        let Some(docs) = self.docs.as_ref() else {
+            return Ok("write-doc: no docs store".into());
+        };
+        docs.write().insert(doc_id, serde_json::Value::String(data));
+        Ok(String::new())
+    }
+
+    fn query_docs(
+        &mut self,
+        token: wasmtime::component::Resource<CapabilityTokenData>,
+        pattern: String,
+    ) -> wasmtime::Result<String> {
+        let plugin_id = self.plugin_id.clone();
+        let granted = self
+            .table
+            .get(&token)
+            .map(|d| d.granted.contains(&Capability::Storage))
+            .unwrap_or(false);
+        if !granted {
+            eprintln!("[audit-host] plugin={plugin_id} event=query-docs result=denied reason=data-denied pattern={pattern}");
+            return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
+                Capability::Storage,
+            )));
+        }
+        if !self.query_first_called {
+            self.query_first_called = true;
+            eprintln!(
+                "[audit-host] plugin={plugin_id} event=query-docs result=ok reason=first-call"
+            );
+        }
+        let Some(docs) = self.docs.as_ref() else {
+            return Ok(String::new());
+        };
+        // 键检索（contains）→换行分隔（doc-id 约定不含换行）
+        let keys: Vec<String> = docs
+            .read()
+            .keys()
+            .filter(|k| k.contains(&pattern))
+            .cloned()
+            .collect();
+        Ok(keys.join("\n"))
+    }
+}
+
+/// DK-14c.1 资源 trait（bindgen 生成）——token drop 语义：表项由
+/// ResourceTable 统一回收（dtor 空实现——无外部资源句柄）。
+impl aurora::plugin::capability::HostCapabilityToken for WasmStoreCtx {
+    fn drop(
+        &mut self,
+        _rep: wasmtime::component::Resource<CapabilityTokenData>,
+    ) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+/// DK-14c.3：bindgen store-data 抽象（add_to_linker 的 HostWithStore
+/// 泛型约束链）——WasmStoreCtx 自关联（Data=&mut Self）。
+impl wasmtime::component::HasData for WasmStoreCtx {
+    type Data<'a> = &'a mut WasmStoreCtx;
 }
 
 #[cfg(test)]

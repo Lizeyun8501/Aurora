@@ -15,6 +15,19 @@
 
 ## capability.log 转发形态（DK-14c.2 起）
 
+## 数据面 guest-invoked（DK-14c.3 起）
+
+三自由函数（bindgen Host trait 挂载——`add_to_linker`+`HasSelf` 形态）：`read-doc(token, doc-id) -> string` / `write-doc(token, doc-id, data) -> string` / `query-docs(token, pattern) -> string`。
+
+**返回 string 协议（形态裁决披露）**：单值复合返回（option/result/list）经 wasmtime func_wrap ComponentNamedList（仅 tuple 实现）受阻，bindgen Host trait 的 HostWithStore/HasData 链与自定义 store-data 深耦合——统一 string 协议化：
+- `read-doc`：空串=不存在（option 语义）；host-invoked 写的非 string Value 序列化回传
+- `write-doc`：空串=ok；非空=err message（1 MiB guard→`payload exceeds 1 MiB limit (N bytes)`）
+- `query-docs`：换行分隔键集（doc-id 约定不含换行；contains 匹配，非内容搜索）
+
+**共享 KV 语义（安全披露）**：`docs` 无 plugin_id 维度——**全 runtime 插件共享一个 KV 空间**（与 host-invoked ReadDoc/WriteDoc 同一存储，跨调用模式可见——设计使然）。L0 语义可接受（granted per-set+同机互信）；per-plugin namespace 进 14c.4+ 候选。
+
+**审计策略**：write-doc **逐条**（doc_id+size；含 size-exceeded/data-denied）；read-doc/query-docs **首调+越权**（对齐 14c.2 log 先例）；越权逐条 `reason=data-denied`（含 method，不节流）。
+
 guest 经 WIT import `aurora:plugin/capability@0.2.0` 的自由函数 `log(token, level, msg)` 主动发结构化日志（token 显式 borrow 参数——resource-method 形态经 wit-bindgen 0.57.1 组件生成实证受阻的形态裁决）。宿主 per-method require（granted 含 Log）→ 越权 trap；正常转发 tracing（`plugin` 字段=插件 id），级别映射 `debug|info|warn|error`（未知按 info 兜底）。
 
 **eprintln 侧信道（[hello] 等前缀）保留**：零迁移成本路径不删——stderr 直通对照可观测。

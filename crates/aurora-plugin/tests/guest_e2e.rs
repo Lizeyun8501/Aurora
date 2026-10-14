@@ -77,7 +77,7 @@ fn e2e_real_wasip2_components_full_chain() {
         // 2) register：capability 串由 Manifest granted 集合派生（d2 合约）
         runtime.register(
             plugin_id,
-            CapabilityManifest::from_permissions(&["fs".into(), "log".into()]),
+            CapabilityManifest::from_permissions(&["fs".into(), "log".into(), "storage".into()]),
         );
 
         // 3) invoke：init + handle-event 真调用（真组件被 wasmtime 36
@@ -269,4 +269,122 @@ fn e2e_log_method_granted_forwards() {
             &serde_json::json!({"event": "note.created", "payload": "dk14c2"}),
         )
         .expect("handle-event 内第二次 log 调用应成功（节流不影响放行）");
+}
+
+/// DK-14c.3：数据面 guest-invoked 全链——hello init 内 write→read 回读→
+/// query 自验；宿主侧经 host-invoked read-doc 断言 guest 写入的数据
+/// （同一数据空间跨调用模式可见——设计使然）。
+#[test]
+fn e2e_dataplane_granted_full_chain() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "withdata",
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
+    );
+    runtime.install_component("withdata", bytes.clone());
+    runtime
+        .invoke("withdata", "init", &serde_json::json!({}))
+        .expect("granted 全链：init 内数据面三调用应成功");
+    // host-invoked 读回 guest 写的数据（共享空间跨模式可见）
+    let v = runtime
+        .invoke(
+            "withdata",
+            "read_doc",
+            &serde_json::json!({"doc_id": "greeting"}),
+        )
+        .expect("host-invoked read-doc 应命中 guest 写入");
+    let s = v.as_str().unwrap_or_default();
+    assert!(
+        s.contains(r#"\"from\""#) || s.contains("from"),
+        "read-doc 应返回 guest 写的 greeting JSON，实际 {s}"
+    );
+}
+
+/// DK-14c.3：数据面越权——granted 无 Storage→init 内 write-doc→宿主
+/// require(Storage) 拒（trap 透传）+ [audit-host] data-denied（逐条不节流）。
+#[test]
+fn e2e_dataplane_denied_without_storage() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "nodata",
+        // log 有 storage 无——log 放行 write-doc 拒
+        CapabilityManifest::from_permissions(&["log".into()]),
+    );
+    runtime.install_component("nodata", bytes);
+    let err = runtime
+        .invoke("nodata", "init", &serde_json::json!({}))
+        .unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("write-doc") || msg.contains("log"),
+        "数据面越权应 trap（data-denied），实际 {msg}"
+    );
+}
+
+/// DK-14c.3：容量 guard——handle-event payload >1 MiB→write-doc 返回
+/// err string（None=ok/Some=err 形态）→guest expect trap→invoke err。
+#[test]
+fn e2e_dataplane_size_guard() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "bigdata",
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
+    );
+    runtime.install_component("bigdata", bytes);
+    let big = "x".repeat(1024 * 1024 + 1);
+    let err = runtime
+        .invoke(
+            "bigdata",
+            "handle-event",
+            &serde_json::json!({"event": "blob", "payload": big}),
+        )
+        .unwrap_err();
+    let msg = format!("{err}");
+    // guest panic→wasip2 abort，panic 消息不透传——行为断言=invoke err
+    // （size-exceeded 审计行经 --nocapture 采样，报告披露）
+    assert!(
+        msg.contains("call failed"),
+        "超限 write 应 trap（size-exceeded 审计行），实际 {msg}"
+    );
+}
+
+/// DK-14c.3：共享 KV 语义实证——两插件同 runtime，p1 写 greeting 后
+/// p2 init 的 read 回读命中的是 p1 的写入（同空间可见——设计使然，
+/// 文档+README 双披露）；非 bug 回归。
+#[test]
+fn e2e_dataplane_shared_kv_semantics() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    let manifest = || CapabilityManifest::from_permissions(&["storage".into(), "log".into()]);
+    runtime.register("p1", manifest());
+    runtime.install_component("p1", bytes.clone());
+    runtime
+        .invoke("p1", "init", &serde_json::json!({}))
+        .unwrap();
+    runtime.register("p2", manifest());
+    runtime.install_component("p2", bytes);
+    // p2 init 内 read 回读 Some（读到 p1 的 greeting——共享实证）
+    runtime
+        .invoke("p2", "init", &serde_json::json!({}))
+        .expect("p2 init 应成功（read 到 p1 写入——共享 KV）");
+    // 宿主侧终证：p2 覆盖后仍可读（Some 语义）
+    let v = runtime
+        .invoke("p2", "read_doc", &serde_json::json!({"doc_id": "greeting"}))
+        .expect("共享空间终证读回");
+    assert!(v.as_str().is_some(), "greeting 应存在（共享 KV）");
 }

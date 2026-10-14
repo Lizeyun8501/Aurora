@@ -65,6 +65,8 @@ mod wasm_exports {
         world: "plugin",
     });
 
+    use aurora::plugin::capability as cap;
+
     struct PluginHello;
 
     impl exports::aurora::plugin::host::Guest for PluginHello {
@@ -74,6 +76,23 @@ mod wasm_exports {
             // 宿主转发 tracing::info!（带 plugin_id）；stderr 侧信道保留
             // 对照；err 传播（越权→trap→invoke 层可断言）
             aurora::plugin::capability::log(capability, "info", "hello init via capability.log");
+            // DK-14c.3：数据面自验（write→read 回读→query 键检索）——
+            // 共享 KV 语义（同 runtime 全插件可见）见文档+README 披露
+            let wres = cap::write_doc(capability, "greeting", r#"{"from":"hello"}"#);
+            if !wres.is_empty() {
+                panic!("write-doc failed: {wres}");
+            }
+            let back = cap::read_doc(capability, "greeting");
+            if back.is_empty() {
+                panic!("read-doc read-back empty");
+            }
+            let keys = cap::query_docs(capability, "greeting");
+            let key_count = keys.lines().count();
+            aurora::plugin::capability::log(
+                capability,
+                "info",
+                &format!("hello data ok keys={key_count}"),
+            );
             Ok(())
         }
 
@@ -83,6 +102,11 @@ mod wasm_exports {
             payload: String,
         ) -> Result<(), ()> {
             eprintln!("{}", super::logic::event_line(&event, &payload));
+            // DK-14c.3：事件数据落 KV（e2e 容量例经此注入 >1MiB payload）
+            let wres = cap::write_doc(capability, &format!("event-{event}"), &payload);
+            if !wres.is_empty() {
+                panic!("write-doc failed: {wres}");
+            }
             aurora::plugin::capability::log(capability, "info", &format!("hello event={event}"));
             Ok(())
         }
