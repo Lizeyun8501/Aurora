@@ -19,10 +19,10 @@
 
 三自由函数（bindgen Host trait 挂载——`add_to_linker`+`HasSelf` 形态）：`read-doc(token, doc-id) -> string` / `write-doc(token, doc-id, data) -> string` / `query-docs(token, pattern) -> string`。
 
-**返回 string 协议（形态裁决披露）**：单值复合返回（option/result/list）经 wasmtime func_wrap ComponentNamedList（仅 tuple 实现）受阻，bindgen Host trait 的 HostWithStore/HasData 链与自定义 store-data 深耦合——统一 string 协议化：
-- `read-doc`：空串=不存在（option 语义）；host-invoked 写的非 string Value 序列化回传
-- `write-doc`：空串=ok；非空=err message（1 MiB guard→`payload exceeds 1 MiB limit (N bytes)`）
-- `query-docs`：换行分隔键集（doc-id 约定不含换行；contains 匹配，非内容搜索）
+**返回原生类型（DK-14c.4 返工——string 协议撤）**：14c.3 曾以 func_wrap ComponentNamedList 受阻为由让步 string 协议化；Alpha 验收实验证伪（bindgen trait 路径下 option/list/result 原生支持，host+guest 全链编译 EXIT=0）——返工为设计稿原令形态：
+- `read-doc -> option<string>`：不存在→none（空内容文档可表示）；host-invoked 写的非 string Value 序列化回传
+- `write-doc -> result<_, string>`：外层 wasmtime trap（require/存储故障）；内层 Err=协议 err（1 MiB guard→`payload exceeds 1 MiB limit (N bytes)`）
+- `query-docs -> list<string>`：键集类型保证（doc-id 可含任意字符——无分隔协议歧义；contains 匹配，非内容搜索）
 
 **共享 KV 语义（安全披露）**：`docs` 无 plugin_id 维度——**全 runtime 插件共享一个 KV 空间**（与 host-invoked ReadDoc/WriteDoc 同一存储，跨调用模式可见——设计使然）。L0 语义可接受（granted per-set+同机互信）；per-plugin namespace 进 14c.4+ 候选。
 

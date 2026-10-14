@@ -78,16 +78,33 @@ mod wasm_exports {
             aurora::plugin::capability::log(capability, "info", "hello init via capability.log");
             // DK-14c.3：数据面自验（write→read 回读→query 键检索）——
             // 共享 KV 语义（同 runtime 全插件可见）见文档+README 披露
-            let wres = cap::write_doc(capability, "greeting", r#"{"from":"hello"}"#);
-            if !wres.is_empty() {
-                panic!("write-doc failed: {wres}");
+            // DK-14c.4：原生类型（option/result/list）——哨兵协议撤
+            if let Err(e) = cap::write_doc(capability, "greeting", r#"{"from":"hello"}"#) {
+                panic!("write-doc failed: {e}");
             }
             let back = cap::read_doc(capability, "greeting");
-            if back.is_empty() {
-                panic!("read-doc read-back empty");
+            if back.is_none() {
+                panic!("read-doc read-back none");
+            }
+            // DK-14c.4 回归自验：空内容文档（option 语义——空串可表示）
+            // + 含换行 doc_id（list 类型保证——无分隔协议歧义）
+            if let Err(e) = cap::write_doc(capability, "note-empty", "") {
+                panic!("write-doc empty failed: {e}");
+            }
+            let empty_back = cap::read_doc(capability, "note-empty");
+            match empty_back {
+                Some(v) if v.is_empty() => {}
+                other => panic!("read-doc empty expected Some(\"\"), got {other:?}"),
+            }
+            if let Err(e) = cap::write_doc(capability, "line\nbreak", "nl") {
+                panic!("write-doc newline failed: {e}");
+            }
+            let nl_keys = cap::query_docs(capability, "line\n");
+            if !nl_keys.iter().any(|k| k.contains('\n')) {
+                panic!("query newline key missing: {nl_keys:?}");
             }
             let keys = cap::query_docs(capability, "greeting");
-            let key_count = keys.lines().count();
+            let key_count = keys.len();
             aurora::plugin::capability::log(
                 capability,
                 "info",
@@ -103,9 +120,8 @@ mod wasm_exports {
         ) -> Result<(), ()> {
             eprintln!("{}", super::logic::event_line(&event, &payload));
             // DK-14c.3：事件数据落 KV（e2e 容量例经此注入 >1MiB payload）
-            let wres = cap::write_doc(capability, &format!("event-{event}"), &payload);
-            if !wres.is_empty() {
-                panic!("write-doc failed: {wres}");
+            if let Err(e) = cap::write_doc(capability, &format!("event-{event}"), &payload) {
+                panic!("write-doc failed: {e}");
             }
             aurora::plugin::capability::log(capability, "info", &format!("hello event={event}"));
             Ok(())

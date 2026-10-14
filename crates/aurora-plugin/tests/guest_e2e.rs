@@ -297,10 +297,15 @@ fn e2e_dataplane_granted_full_chain() {
             &serde_json::json!({"doc_id": "greeting"}),
         )
         .expect("host-invoked read-doc 应命中 guest 写入");
+    // DK-14c.4：类型断言（哨兵协议撤）——read-doc 返回 option<string>
+    // →host-invoked 读回 Value::String(json)→解析断言字段
     let s = v.as_str().unwrap_or_default();
-    assert!(
-        s.contains(r#"\"from\""#) || s.contains("from"),
-        "read-doc 应返回 guest 写的 greeting JSON，实际 {s}"
+    let parsed: serde_json::Value =
+        serde_json::from_str(s).expect("guest 写的 greeting 应为合法 JSON");
+    assert_eq!(
+        parsed.get("from").and_then(|f| f.as_str()),
+        Some("hello"),
+        "greeting.from 应为 hello（类型断言），实际 {parsed}"
     );
 }
 
@@ -387,4 +392,48 @@ fn e2e_dataplane_shared_kv_semantics() {
         .invoke("p2", "read_doc", &serde_json::json!({"doc_id": "greeting"}))
         .expect("共享空间终证读回");
     assert!(v.as_str().is_some(), "greeting 应存在（共享 KV）");
+}
+
+/// DK-14c.4 回归例：空内容文档（option 语义——空串可表示，非哨兵歧义）
+/// 与含换行 doc_id（list 键集类型保证）。断言走 host-invoked 读回和
+/// query 键集（类型断言）。
+#[test]
+fn e2e_dataplane_empty_content_and_newline_key() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "regress",
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
+    );
+    runtime.install_component("regress", bytes);
+    // guest init 内：write("note-empty","")→read Some("") 自验；
+    // write("line\nbreak","nl")→query("line\n") 含换行键自验
+    runtime
+        .invoke("regress", "init", &serde_json::json!({}))
+        .expect("回归自验应过（空内容+含换行 doc_id）");
+    // host-invoked 终证：空内容可表示
+    let v = runtime
+        .invoke(
+            "regress",
+            "read_doc",
+            &serde_json::json!({"doc_id": "note-empty"}),
+        )
+        .expect("note-empty 应存在");
+    assert_eq!(v.as_str(), Some(""), "空内容文档应可表示（Some(\"\")）");
+    // host-invoked query 终证：含换行键完整（list 无分隔歧义）
+    let q = runtime
+        .invoke("regress", "query", &serde_json::json!({"query": "line\n"}))
+        .expect("query 应返回键集");
+    let keys = q
+        .get("results")
+        .and_then(|r| r.as_array())
+        .expect("键集应为数组（d2 query 结果形态）");
+    assert!(
+        keys.iter()
+            .any(|k| k.as_str().map(|s| s.contains('\n')).unwrap_or(false)),
+        "键集应含换行键，实际 {keys:?}"
+    );
 }

@@ -858,7 +858,7 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
         &mut self,
         token: wasmtime::component::Resource<CapabilityTokenData>,
         doc_id: String,
-    ) -> wasmtime::Result<String> {
+    ) -> wasmtime::Result<Option<String>> {
         let plugin_id = self.plugin_id.clone();
         let granted = self
             .table
@@ -876,18 +876,14 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
             eprintln!("[audit-host] plugin={plugin_id} event=read-doc result=ok reason=first-call");
         }
         let Some(docs) = self.docs.as_ref() else {
-            return Ok(String::new());
+            return Ok(None);
         };
         // Value::String 直取；host-invoked 写的其他 Value 序列化回传（不丢数据）；
-        // 不存在→空串（option 语义协议化，披露）
-        Ok(docs
-            .read()
-            .get(&doc_id)
-            .map(|v| match v {
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string(),
-            })
-            .unwrap_or_default())
+        // 不存在→None（option 原生语义，DK-14c.4 返工）
+        Ok(docs.read().get(&doc_id).map(|v| match v {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        }))
     }
 
     fn write_doc(
@@ -895,7 +891,7 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
         token: wasmtime::component::Resource<CapabilityTokenData>,
         doc_id: String,
         data: String,
-    ) -> wasmtime::Result<String> {
+    ) -> wasmtime::Result<Result<(), String>> {
         let plugin_id = self.plugin_id.clone();
         let granted = self
             .table
@@ -908,28 +904,28 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
                 Capability::Storage,
             )));
         }
-        // 1 MiB 容量 guard（超限 err+审计含 size；err 协议=非空 string）
+        // 1 MiB 容量 guard（超限走内层 Err——协议 err 非 trap）
         if data.len() > 1024 * 1024 {
             eprintln!("[audit-host] plugin={plugin_id} event=write-doc result=denied reason=size-exceeded doc_id={doc_id} size={}", data.len());
-            return Ok(format!(
+            return Ok(Err(format!(
                 "write-doc: payload exceeds 1 MiB limit ({} bytes)",
                 data.len()
-            ));
+            )));
         }
         // 逐条审计（状态变更留痕：doc_id+size）
         eprintln!("[audit-host] plugin={plugin_id} event=write-doc result=ok reason=write doc_id={doc_id} size={}", data.len());
         let Some(docs) = self.docs.as_ref() else {
-            return Ok("write-doc: no docs store".into());
+            return Ok(Err("write-doc: no docs store".into()));
         };
         docs.write().insert(doc_id, serde_json::Value::String(data));
-        Ok(String::new())
+        Ok(Ok(()))
     }
 
     fn query_docs(
         &mut self,
         token: wasmtime::component::Resource<CapabilityTokenData>,
         pattern: String,
-    ) -> wasmtime::Result<String> {
+    ) -> wasmtime::Result<Vec<String>> {
         let plugin_id = self.plugin_id.clone();
         let granted = self
             .table
@@ -949,16 +945,15 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
             );
         }
         let Some(docs) = self.docs.as_ref() else {
-            return Ok(String::new());
+            return Ok(Vec::new());
         };
-        // 键检索（contains）→换行分隔（doc-id 约定不含换行）
-        let keys: Vec<String> = docs
+        // 键检索（contains）→键集 Vec（类型保证，无分隔协议歧义）
+        Ok(docs
             .read()
             .keys()
             .filter(|k| k.contains(&pattern))
             .cloned()
-            .collect();
-        Ok(keys.join("\n"))
+            .collect())
     }
 }
 

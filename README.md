@@ -119,4 +119,4 @@ cargo +1.91 build -p aurora-mobile-ffi --release --target aarch64-linux-android
 
 ## 插件数据语义（DK-14c.3）
 
-guest 经 `capability` 接口三自由函数访问 `docs` KV（read-doc/write-doc/query-docs，1 MiB guard，审计留痕）。**docs 是全 runtime 插件共享空间**（与 host-invoked 同一存储）——无 per-plugin 隔离，granted 含 Storage 即可互读互写（同机互信模型；per-plugin namespace 进 14c.4+ 候选）。返回 string 协议细节见 `docs/plugin-log-conventions.md`。
+guest 经 `capability` 接口三自由函数访问 `docs` KV（read-doc/write-doc/query-docs，原生 option/result/list 返回，1 MiB guard，审计留痕）。**docs 是全 runtime 插件共享空间**（与 host-invoked 同一存储）——无 per-plugin 隔离，granted 含 Storage 即可互读互写（同机互信模型；per-plugin namespace 进 14c.4+ 候选）。返回 string 协议细节见 `docs/plugin-log-conventions.md`。

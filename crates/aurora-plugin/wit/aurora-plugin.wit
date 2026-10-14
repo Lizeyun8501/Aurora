@@ -33,18 +33,16 @@ interface capability {
     /// ComponentNamedList 对单值/option/result 返回受阻——形态全自动）。
     log: func(token: borrow<capability-token>, level: string, msg: string);
 
-    /// 读 KV（d2 docs 空间，全 runtime 共享——语义见文档）。不存在→空串
-    /// （返回形态裁决：单值复合返回 option/result/list 经 wasmtime
-    /// func_wrap ComponentNamedList（仅 tuple 实现）受阻，bindgen Host
-    /// trait 的 HostWithStore/HasData 链与自定义 store-data 深耦合——
-    /// 数据面统一 string 协议化，确定性优先，语义披露于文档）。
-    read-doc: func(token: borrow<capability-token>, doc-id: string) -> string;
-    /// 写 KV（data=JSON 序列化字符串；上限 1 MiB）。返回空串=ok；
-    /// 非空=err message（协议化）。
-    write-doc: func(token: borrow<capability-token>, doc-id: string, data: string) -> string;
-    /// 键检索（doc-id contains 匹配，非内容搜索）。返回换行分隔键集
-    /// （doc-id 约定不含换行）。
-    query-docs: func(token: borrow<capability-token>, pattern: string) -> string;
+    /// 读 KV（d2 docs 空间，全 runtime 共享——语义见文档）。
+    /// 不存在→none（DK-14c.4：bindgen trait 路径下原生类型支持——
+    /// string 协议化让步已撤，Alpha 实验证伪受阻论证）。
+    read-doc: func(token: borrow<capability-token>, doc-id: string) -> option<string>;
+    /// 写 KV（data=JSON 序列化字符串；上限 1 MiB）。外层 trap/内层协议
+    /// err：超限与写失败走内层 Err(message)。
+    write-doc: func(token: borrow<capability-token>, doc-id: string, data: string) -> result<_, string>;
+    /// 键检索（doc-id contains 匹配，非内容搜索）。键集类型保证
+    /// （doc-id 可含任意字符——无分隔协议歧义）。
+    query-docs: func(token: borrow<capability-token>, pattern: string) -> list<string>;
 }
 
 interface host {
