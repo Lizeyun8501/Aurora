@@ -68,17 +68,22 @@ mod wasm_exports {
     struct PluginHello;
 
     impl exports::aurora::plugin::host::Guest for PluginHello {
-        fn init(_capability: &exports::aurora::plugin::host::CapabilityToken) -> Result<(), ()> {
+        fn init(capability: &exports::aurora::plugin::host::CapabilityToken) -> Result<(), ()> {
             eprintln!("[hello] init ok");
+            // DK-14c.2：首个 guest-invoked 能力消费（结构化日志）——
+            // 宿主转发 tracing::info!（带 plugin_id）；stderr 侧信道保留
+            // 对照；err 传播（越权→trap→invoke 层可断言）
+            aurora::plugin::capability::log(capability, "info", "hello init via capability.log");
             Ok(())
         }
 
         fn handle_event(
-            _capability: &exports::aurora::plugin::host::CapabilityToken,
+            capability: &exports::aurora::plugin::host::CapabilityToken,
             event: String,
             payload: String,
         ) -> Result<(), ()> {
             eprintln!("{}", super::logic::event_line(&event, &payload));
+            aurora::plugin::capability::log(capability, "info", &format!("hello event={event}"));
             Ok(())
         }
     }

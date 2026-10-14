@@ -21,6 +21,17 @@ package aurora:plugin@0.2.0;
 interface capability {
     /// 能力令牌：宿主发放的不透明句柄（L0 全有/全无 per-granted-set）。
     resource capability-token;
+
+    /// 结构化日志（宿主转发 tracing，带 plugin_id 前缀）——token 显式
+    /// borrow 参数（语义等价 resource 方法：句柄携带 rep，宿主经表 require）。
+    /// L0 语义：granted 含 Log 才可调（per-method require）——
+    /// 越权 CapabilityDenied + [audit-host] 审计行 reason=log-denied。
+    /// 形态裁决（DK-14c.2）：自由函数而非 resource 方法——wit-bindgen
+    /// 0.57.1 对 resource-method import 的组件生成实证受阻（import 面
+    /// 无 log，疑 wit-component 剔除），自由函数路径确定性高；level 用
+    /// string 而非 enum——wasmtime func_wrap 对 WIT enum 需专用
+    /// ComponentType derive，字符串形态确定性高（"debug"|"info"|"warn"|"error"）。
+    log: func(token: borrow<capability-token>, level: string, msg: string);
 }
 
 interface host {

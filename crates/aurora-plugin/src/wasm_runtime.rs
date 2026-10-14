@@ -36,6 +36,9 @@ pub enum Capability {
     Native,
     /// 文档/KV 存储访问
     Storage,
+    /// 结构化日志（guest-invoked capability-token.log 消费——DK-14c.2；
+    /// host-invoked HostFunction::Log 映射保持 None，两套语义独立）
+    Log,
 }
 
 impl Capability {
@@ -46,6 +49,7 @@ impl Capability {
             Capability::Network => "network",
             Capability::Native => "native",
             Capability::Storage => "storage",
+            Capability::Log => "log",
         }
     }
 
@@ -56,6 +60,7 @@ impl Capability {
             "network" => Some(Capability::Network),
             "native" => Some(Capability::Native),
             "storage" => Some(Capability::Storage),
+            "log" => Some(Capability::Log),
             _ => None,
         }
     }
@@ -309,6 +314,8 @@ struct WasmStoreCtx {
     wasi: wasmtime_wasi::WasiCtx,
     /// WIT 资源表（WasiView 协议要求；WASI 资源 handle 存放处）
     table: wasmtime_wasi::ResourceTable,
+    /// DK-14c.2：log 方法首调标记（审计节流——仅越权+首调记审计行）
+    log_first_called: bool,
 }
 
 impl wasmtime_wasi::WasiView for WasmStoreCtx {
@@ -532,6 +539,7 @@ impl WasmRuntime {
                     .inherit_stderr()
                     .build(),
                 table: wasmtime_wasi::ResourceTable::new(),
+                log_first_called: false,
             },
         );
         store.set_epoch_deadline(self.epoch_deadline_ticks.load(Ordering::Relaxed));
@@ -543,11 +551,13 @@ impl WasmRuntime {
         // DK-14c.1: capability-token 资源类型挂载（宿主权威——import
         // `aurora:plugin/capability@0.2.0` 接口；token 载荷=CapabilityTokenData，
         // ty 注册后组件类型与宿主表 push 的 ResourceAny 匹配）
-        linker
-            .instance("aurora:plugin/capability@0.2.0")
-            .map_err(|e| {
-                crate::Error::WasmRuntime(format!("capability instance mount failed: {e}"))
-            })?
+        let mut capability_inst =
+            linker
+                .instance("aurora:plugin/capability@0.2.0")
+                .map_err(|e| {
+                    crate::Error::WasmRuntime(format!("capability instance mount failed: {e}"))
+                })?;
+        capability_inst
             .resource(
                 "capability-token",
                 wasmtime::component::ResourceType::host::<CapabilityTokenData>(),
@@ -555,6 +565,61 @@ impl WasmRuntime {
             )
             .map_err(|e| {
                 crate::Error::WasmRuntime(format!("capability resource mount failed: {e}"))
+            })?;
+        // DK-14c.2：log 方法（guest-invoked 首个能力消费端点）——
+        // 自由函数形态（WIT 形态裁决：resource method 经 wit-bindgen
+        // 0.57.1 组件生成实证受阻，自由函数 token 显式 borrow 参数语义
+        // 等价）；组件 import 命名=接口内平名 "log"；
+        // 参数首项=token 句柄 rep（i32），level=enum（i32: 0..3）
+        capability_inst
+            .func_wrap(
+                "log",
+                |mut ctx: wasmtime::StoreContextMut<'_, WasmStoreCtx>,
+                 (res, level, msg): (
+                    wasmtime::component::Resource<CapabilityTokenData>,
+                    String,
+                    String,
+                )|
+                 -> Result<(), wasmtime::Error> {
+                    let plugin_id = ctx.data().plugin_id.clone();
+                    // 表取 token 数据（borrow 句柄→Resource<T>，wasmtime
+                    // 负责 guest 句柄→宿主 rep 的转换）
+                    let granted_log = ctx
+                        .data()
+                        .table
+                        .get(&res)
+                        .map(|d| d.granted.contains(&Capability::Log))
+                        .unwrap_or(false);
+                    // L0 per-method require：granted 含 Log 才可调
+                    if !granted_log {
+                        eprintln!(
+                            "[audit-host] plugin={plugin_id} event=log result=denied reason=log-denied level={level}"
+                        );
+                        return Err(wasmtime::Error::msg(
+                            crate::Error::CapabilityDenied(Capability::Log),
+                        ));
+                    }
+                    // 审计节流：仅首调记行（正常转发不刷屏）
+                    let first = !ctx.data().log_first_called;
+                    if first {
+                        ctx.data_mut().log_first_called = true;
+                        eprintln!(
+                            "[audit-host] plugin={plugin_id} event=log result=ok reason=first-call"
+                        );
+                    }
+                    // tracing 转发（带 plugin_id 前缀——日志约定文档；
+                    // level 字符串映射 tracing 级别，未知值按 info 兜底）
+                    match level.as_str() {
+                        "debug" => tracing::debug!(plugin = %plugin_id, "plugin log: {msg}"),
+                        "warn" => tracing::warn!(plugin = %plugin_id, "plugin log: {msg}"),
+                        "error" => tracing::error!(plugin = %plugin_id, "plugin log: {msg}"),
+                        _ => tracing::info!(plugin = %plugin_id, "plugin log: {msg}"),
+                    }
+                    Ok(())
+                },
+            )
+            .map_err(|e| {
+                crate::Error::WasmRuntime(format!("capability log method mount failed: {e}"))
             })?;
         let instance = linker
             .instantiate(&mut store, &component)
@@ -1095,6 +1160,7 @@ mod tests {
         let wit = include_str!("../wit/aurora-plugin.wit");
         for sig in [
             "resource capability-token;",
+            "log: func(token: borrow<capability-token>, level: string, msg: string);",
             "init: func(capability: borrow<capability-token>) -> result;",
             "handle-event: func(capability: borrow<capability-token>, event: string, payload: string) -> result;",
         ] {

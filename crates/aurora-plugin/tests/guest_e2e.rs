@@ -77,7 +77,7 @@ fn e2e_real_wasip2_components_full_chain() {
         // 2) register：capability 串由 Manifest granted 集合派生（d2 合约）
         runtime.register(
             plugin_id,
-            CapabilityManifest::from_permissions(&["fs".into()]),
+            CapabilityManifest::from_permissions(&["fs".into(), "log".into()]),
         );
 
         // 3) invoke：init + handle-event 真调用（真组件被 wasmtime 36
@@ -118,7 +118,7 @@ fn e2e_instance_cache_shared_across_invokes() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "p1",
-        CapabilityManifest::from_permissions(&["storage".into()]),
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
     );
     runtime.install_component("p1", bytes);
 
@@ -153,7 +153,7 @@ fn e2e_unregister_drops_instance_cache() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "p2",
-        CapabilityManifest::from_permissions(&["storage".into()]),
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
     );
     runtime.install_component("p2", bytes.clone());
     runtime
@@ -170,7 +170,7 @@ fn e2e_unregister_drops_instance_cache() {
     // 再注册+登记 → 重新实例化（token 随新实例重新发放）
     runtime.register(
         "p2",
-        CapabilityManifest::from_permissions(&["storage".into()]),
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
     );
     runtime.install_component("p2", bytes.clone());
     runtime
@@ -205,7 +205,7 @@ fn e2e_zero_grant_invoke_denied() {
     // 对照组：granted 非空 → 正常放行（token 发放）
     runtime.register(
         "ok",
-        CapabilityManifest::from_permissions(&["storage".into()]),
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]),
     );
     runtime.install_component(
         "ok",
@@ -214,4 +214,59 @@ fn e2e_zero_grant_invoke_denied() {
     runtime
         .invoke("ok", "init", &serde_json::json!({}))
         .expect("granted 非空插件应走通（token 发放）");
+}
+
+/// DK-14c.2：log 方法越权拦截——granted 无 Log→guest 调 capability.log→
+/// 宿主 per-method require 拒（trap 透传 CapabilityDenied）+ [audit-host]
+/// 审计行 reason=log-denied（stderr 透传，--nocapture 可观测）。
+#[test]
+fn e2e_log_method_denied_without_grant() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失——查 wasm job 或本地构建");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "nolog",
+        CapabilityManifest::from_permissions(&["storage".into()]),
+    );
+    runtime.install_component("nolog", bytes);
+    // hello init 内 capability.log → 宿主 require(Log) 拒 → trap → invoke err
+    let err = runtime
+        .invoke("nolog", "init", &serde_json::json!({}))
+        .unwrap_err();
+    let msg = format!("{err}");
+    // CapabilityDenied 语义在 wasmtime trap cause 链（Display 不透——
+    // 台账记注）；行为断言：宿主 require 拒→guest log 调用 trap→invoke err
+    assert!(
+        msg.contains("log"),
+        "log 越权应被宿主 require 拒（trap 透传），实际 {msg}"
+    );
+}
+
+/// DK-14c.2：log 方法正常转发——granted 含 Log→tracing::info! 转发
+/// （--nocapture 可观测）+ 首调审计行 reason=first-call（节流：二次
+/// 调用不记行）+ 两次调用均成功（init 与 handle-event 各一）。
+#[test]
+fn e2e_log_method_granted_forwards() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失——查 wasm job 或本地构建");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "withlog",
+        CapabilityManifest::from_permissions(&["log".into(), "storage".into()]),
+    );
+    runtime.install_component("withlog", bytes);
+    runtime
+        .invoke("withlog", "init", &serde_json::json!({}))
+        .expect("granted 含 Log 的 init 内 log 调用应成功");
+    runtime
+        .invoke(
+            "withlog",
+            "handle-event",
+            &serde_json::json!({"event": "note.created", "payload": "dk14c2"}),
+        )
+        .expect("handle-event 内第二次 log 调用应成功（节流不影响放行）");
 }
