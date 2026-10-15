@@ -18,6 +18,8 @@ wasmtime-wasi = { workspace = true }
 
 # Cryptography (Ed25519 code signing)
 ring = { workspace = true }
+# 桌面安装面（DK-市场卡）：wasm 包 checksum 校验（SHA-256，与 listing 对账）
+sha2 = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

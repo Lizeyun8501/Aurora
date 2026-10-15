@@ -29,6 +29,7 @@ import SyncStatusBadge from './SyncStatusBadge';
 import QueuePanel from './QueuePanel';
 import ConflictReviewPanel from './ConflictReviewPanel';
 import MarketplaceView from './MarketplaceView';
+import PluginsView from './PluginsView';
 
 export interface InvokeFn {
   (cmd: string, args?: Record<string, unknown>): Promise<unknown>;
@@ -155,7 +156,8 @@ export type MainView =
   | 'liquify'
   | 'agent'
   | 'smartfolder'
-  | 'marketplace';
+  | 'marketplace'
+  | 'plugins';
 
 /** browser-mock 演示数据 — 形状与内核 NoteSummary/NoteContent 对齐 */
 const MOCK_NOTES: NoteSummary[] = [
@@ -1003,7 +1005,7 @@ function Sidebar(props: {
         ⤓ 导入笔记
       </button>
       <nav style={{ display: 'flex', gap: tokens.spacing.xs }} aria-label="主导航">
-        {(['notes', 'today', 'canvas', 'trash', 'liquify', 'agent', 'marketplace'] as const).map((v) => (
+        {(['notes', 'today', 'canvas', 'trash', 'liquify', 'agent', 'marketplace', 'plugins'] as const).map((v) => (
           <button
             key={v}
             onClick={() => onView(v)}
@@ -2234,6 +2236,9 @@ export default function DesktopShell() {
         ) : view === 'marketplace' ? (
           /* DK-15c：marketplace 徽章面（详情能力展示——列表页/权限切换另卡） */
           <MarketplaceView pluginName="demo-plugin" granted={[]} />
+        ) : view === 'plugins' ? (
+          /* DK-市场卡：已安装插件管理（列表/卸载/invoke 冒烟——安装表单随市场下载器卡） */
+          <PluginsView invoke={invoke} />
         ) : view === 'agent' ? (
           /* DK-10 Agent 会话面板（15min 限时 + Kill-Switch + 审计链查看） */
           <AgentPanel invoke={invoke} />

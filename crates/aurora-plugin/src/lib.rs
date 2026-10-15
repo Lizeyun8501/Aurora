@@ -13,6 +13,7 @@
 
 pub mod hot_update;
 pub mod iframe_runtime;
+pub mod installer;
 pub mod lifecycle;
 pub mod marketplace;
 pub mod permission;
@@ -42,6 +43,10 @@ pub enum Error {
     HostFunction(String),
     #[error("WASM runtime error: {0}")]
     WasmRuntime(String),
+    /// KV 存储错误（桌面安装面 DK-市场卡：aurora_core::Error 转接——
+    /// KVStore trait 错误域是 aurora_core::Error，安装链统一到本枚举）。
+    #[error("KV store error: {0}")]
+    Kv(String),
     #[error("JSON-RPC error: {0}")]
     JsonRpc(String),
     #[error("Signature verification failed: {0}")]

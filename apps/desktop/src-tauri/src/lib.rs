@@ -219,6 +219,10 @@ pub fn run() {
             plugin_commands::cmd_list_plugin_policies,
             plugin_commands::cmd_set_plugin_policy,
             plugin_commands::cmd_apply_plugin_policy,
+            plugin_commands::cmd_plugin_install,
+            plugin_commands::cmd_plugin_list,
+            plugin_commands::cmd_plugin_uninstall,
+            plugin_commands::cmd_plugin_invoke,
             import_commands::cmd_plan_import,
             import_commands::cmd_import_markdown_dir,
             import_commands::cmd_import_enex,
@@ -338,6 +342,18 @@ pub fn run() {
 
             // 注册平台能力（托盘/快捷键/剪贴板/通知），供后续 command 使用
             app.manage(TauriDesktopPlatform::new(app.handle().clone()));
+
+            // DK-市场卡：插件运行时状态（WasmRuntime + Marketplace）挂载
+            // + 已安装件启动恢复（restore 损坏不阻断启动——installer 语义）
+            let plugin_state = plugin_commands::PluginState::new();
+            let restored = tauri::async_runtime::block_on(
+                aurora_plugin::installer::restore_installed(
+                    &plugin_state.runtime,
+                    &booted_arc.core.kv_store,
+                ),
+            );
+            info!(restored, "plugin runtime restored installed plugins");
+            app.manage(plugin_state);
 
             info!("Aurora Desktop initialized and ready");
             Ok(())

@@ -26,6 +26,8 @@ aurora-ai = { path = "../../../crates/aurora-ai" }
 aurora-import = { path = "../../../crates/aurora-import" }
 aurora-sync = { path = "../../../crates/aurora-sync", features = ["iroh-transport"] } # DK-44: drain 消费面
 aurora-security = { path = "../../../crates/aurora-security" }
+# DK-市场卡：桌面安装面接线（installer 语义层 + WasmRuntime/Marketplace）
+aurora-plugin = { path = "../../../crates/aurora-plugin" }
 # 共享启动装配（迁移 + DEK 保险库 + AppCore DI 注入 + startup）
 loro.workspace = true
 futures = "0.3"

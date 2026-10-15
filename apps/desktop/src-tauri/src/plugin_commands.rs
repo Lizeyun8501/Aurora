@@ -117,3 +117,118 @@ pub async fn cmd_apply_plugin_policy(
     apply_sandbox_policy(&mut m, policy);
     Ok(m)
 }
+
+// ===== 桌面安装面接线（DK-市场卡）：installer 语义层薄委托 =====
+//
+// 领地纪律：fail-closed 语义全部在 aurora-plugin::installer（纯函数可单测）；
+// 本层只做 IO（wasm 文件读取）+ 状态持有 + 错误转 String。
+
+use std::sync::Arc;
+use tauri::State;
+
+use aurora_plugin::installer;
+use aurora_plugin::marketplace::Marketplace;
+use aurora_plugin::wasm_runtime::WasmRuntime;
+
+/// 插件运行时状态（setup 时 manage；market 注入 SecurityCryptoProvider）。
+pub struct PluginState {
+    pub runtime: Arc<WasmRuntime>,
+    pub market: Arc<Marketplace>,
+}
+
+impl PluginState {
+    pub fn new() -> Self {
+        Self {
+            runtime: Arc::new(WasmRuntime::with_default_registry()),
+            market: Arc::new(Marketplace::new(Arc::new(
+                aurora_security::crypto_provider_impl::SecurityCryptoProvider::new(),
+            ))),
+        }
+    }
+}
+
+impl Default for PluginState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// 安装插件（市场 listing + manifest + 本地 wasm 文件路径）。
+///
+/// fail-closed 链在 installer（listing 存在性/id 一致/checksum/Plugin::new
+/// 强签名/register/KV 持久化）；wasm 字节从 `wasm_path` 读入（市场下载器
+/// 另卡——当前本地开发安装语义）。
+///
+/// # Errors
+/// 文件读取失败 / installer 任一环拒绝（错误串透传）。
+#[tauri::command]
+pub async fn cmd_plugin_install(
+    state: State<'_, PluginState>,
+    listing_id: String,
+    manifest: PluginManifest,
+    wasm_path: String,
+) -> Result<PluginManifest, String> {
+    let booted = crate::sync_commands::get_booted()?;
+    let wasm_bytes = tokio::fs::read(&wasm_path)
+        .await
+        .map_err(|e| format!("read wasm `{wasm_path}`: {e}"))?;
+    installer::install_plugin(
+        &state.runtime,
+        &booted.core.kv_store,
+        &state.market,
+        &listing_id,
+        manifest,
+        &wasm_bytes,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// 已安装插件清单（KV 前缀扫描；损坏条目上抛不静默）。
+///
+/// # Errors
+/// 应用未初始化 / KV 读失败 / 元数据损坏。
+#[tauri::command]
+pub async fn cmd_plugin_list() -> Result<Vec<PluginManifest>, String> {
+    let booted = crate::sync_commands::get_booted()?;
+    installer::list_installed(&booted.core.kv_store)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 卸载插件（runtime 反注册 + shares 双向清理（DK-17.1）+ KV 两键清除）。
+///
+/// # Errors
+/// 未安装 / KV 删除失败。
+#[tauri::command]
+pub async fn cmd_plugin_uninstall(
+    state: State<'_, PluginState>,
+    plugin_id: String,
+) -> Result<(), String> {
+    let booted = crate::sync_commands::get_booted()?;
+    installer::uninstall_plugin(&state.runtime, &booted.core.kv_store, &plugin_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 插件方法调用（宿主函数面 or guest 导出面——runtime 既有语义透传）。
+///
+/// # Errors
+/// 未注册 / 未知方法 / 能力拒绝 / 沙箱执行错误。
+#[tauri::command]
+pub async fn cmd_plugin_invoke(
+    state: State<'_, PluginState>,
+    plugin_id: String,
+    method: String,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let runtime = state.runtime.clone();
+    // wasmtime 同步执行放 blocking 线程（epoch 中断依赖 ticker 线程，不受影响）
+    tokio::task::spawn_blocking(move || {
+        runtime
+            .invoke(&plugin_id, &method, &args)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?
+}
