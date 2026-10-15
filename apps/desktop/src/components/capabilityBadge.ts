@@ -32,6 +32,15 @@ export const BADGE_MAP: Record<string, Omit<BadgeSpec, 'key'>> = {
  * 未授予能力不渲染（详情页只展示已获面）——零权限插件授予空集，
  * 由 callers 以 "零权限" 徽章正展示（默认零权限是卖点）。
  */
+/**
+ * accept_share（DK-17 L2）→ 中性色徽章（非能力项，数据流偏好）。
+ * true 时插件详情页显示"可接收分享"——与能力徽章分开渲染。
+ */
+export function acceptShareBadge(acceptShare: boolean | undefined): BadgeSpec | null {
+  if (!acceptShare) return null;
+  return { key: 'accept-share', label: '可接收分享', danger: false };
+}
+
 export function badgesForGranted(granted: readonly string[]): BadgeSpec[] {
   const seen = new Set<string>();
   const out: BadgeSpec[] = [];

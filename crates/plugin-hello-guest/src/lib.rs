@@ -69,9 +69,17 @@ mod wasm_exports {
 
     struct PluginHello;
 
+    /// A-5：init 传入的 self-id（handle-event 前缀派生源——wasm 单线程，
+    /// OnceLock 安全）
+    static SELF_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
     impl exports::aurora::plugin::host::Guest for PluginHello {
-        fn init(capability: &exports::aurora::plugin::host::CapabilityToken) -> Result<(), ()> {
-            eprintln!("[hello] init ok");
+        fn init(
+            capability: &exports::aurora::plugin::host::CapabilityToken,
+            plugin_id: String,
+        ) -> Result<(), ()> {
+            eprintln!("[hello] init ok plugin_id={plugin_id}");
+            let _ = SELF_ID.set(plugin_id.clone());
             // DK-14c.2：首个 guest-invoked 能力消费（结构化日志）——
             // 宿主转发 tracing::info!（带 plugin_id）；stderr 侧信道保留
             // 对照；err 传播（越权→trap→invoke 层可断言）
@@ -79,26 +87,28 @@ mod wasm_exports {
             // DK-14c.3：数据面自验（write→read 回读→query 键检索）——
             // 共享 KV 语义（同 runtime 全插件可见）见文档+README 披露
             // DK-14c.4：原生类型（option/result/list）——哨兵协议撤
-            if let Err(e) =
-                cap::write_doc(capability, "plugin-hello:greeting", r#"{"from":"hello"}"#)
-            {
+            if let Err(e) = cap::write_doc(
+                capability,
+                &format!("{plugin_id}:greeting"),
+                r#"{"from":"hello"}"#,
+            ) {
                 panic!("write-doc failed: {e}");
             }
-            let back = cap::read_doc(capability, "plugin-hello:greeting");
+            let back = cap::read_doc(capability, &format!("{plugin_id}:greeting"));
             if back.is_none() {
                 panic!("read-doc read-back none");
             }
             // DK-14c.4 回归自验：空内容文档（option 语义——空串可表示）
             // + 含换行 doc_id（list 类型保证——无分隔协议歧义）
-            if let Err(e) = cap::write_doc(capability, "plugin-hello:note-empty", "") {
+            if let Err(e) = cap::write_doc(capability, &format!("{plugin_id}:note-empty"), "") {
                 panic!("write-doc empty failed: {e}");
             }
-            let empty_back = cap::read_doc(capability, "plugin-hello:note-empty");
+            let empty_back = cap::read_doc(capability, &format!("{plugin_id}:note-empty"));
             match empty_back {
                 Some(v) if v.is_empty() => {}
                 other => panic!("read-doc empty expected Some(\"\"), got {other:?}"),
             }
-            if let Err(e) = cap::write_doc(capability, "plugin-hello:line\nbreak", "nl") {
+            if let Err(e) = cap::write_doc(capability, &format!("{plugin_id}:line\nbreak"), "nl") {
                 panic!("write-doc newline failed: {e}");
             }
             let nl_keys = cap::query_docs(capability, "line\n");
@@ -120,10 +130,35 @@ mod wasm_exports {
             event: String,
             payload: String,
         ) -> Result<(), ()> {
+            let plugin_id = SELF_ID.get().map(|s| s.as_str()).unwrap_or("unknown");
             eprintln!("{}", super::logic::event_line(&event, &payload));
+            // DK-17 L2：read-back 探针——读宿主编排给的任意 doc_id（share
+            // 豁免/namespace 拒的 guest 面断言载体；跨前缀未授权→trap）
+            if event == "read-back" {
+                match cap::read_doc(capability, &payload) {
+                    Some(v) => {
+                        if let Err(e) =
+                            cap::print(capability, &format!("read-back {payload} = {v}"))
+                        {
+                            panic!("print failed: {e}");
+                        }
+                        return Ok(());
+                    }
+                    None => panic!("read-back {payload} = <none>"),
+                }
+            }
+            // DK-17 L2：write-back 探针——payload="doc_id|value"，写指定键
+            // （跨前缀写→guard 拒 trap；share 只读语义的 guest 面断言载体）
+            if let Some((target, value)) = payload.split_once('|') {
+                if event == "write-back" {
+                    cap::write_doc(capability, target, value)
+                        .unwrap_or_else(|e| panic!("write-back {target} failed: {e}"));
+                    return Ok(());
+                }
+            }
             // DK-14c.3：事件数据落 KV（e2e 容量例经此注入 >1MiB payload）
             if let Err(e) =
-                cap::write_doc(capability, &format!("plugin-hello:event-{event}"), &payload)
+                cap::write_doc(capability, &format!("{plugin_id}:event-{event}"), &payload)
             {
                 panic!("write-doc failed: {e}");
             }
@@ -134,7 +169,7 @@ mod wasm_exports {
             // DK-16 L1：query 键集（本插件前缀过滤后）落 KV——e2e 隔离断言载体
             let keys = cap::query_docs(capability, "");
             let list = keys.join(",");
-            let _ = cap::write_doc(capability, "plugin-hello:query-keys", &list);
+            let _ = cap::write_doc(capability, &format!("{plugin_id}:query-keys"), &list);
             aurora::plugin::capability::log(capability, "info", &format!("hello event={event}"));
             Ok(())
         }

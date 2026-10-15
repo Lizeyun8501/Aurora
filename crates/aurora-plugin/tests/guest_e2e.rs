@@ -441,7 +441,16 @@ fn e2e_dataplane_namespace_isolation() {
         .unwrap(),
     );
     runtime.install_component("p2", bytes);
-    let r = runtime.invoke("p2", "init", &serde_json::json!({}));
+    // A-5 后 p2 init 自包含（SELF_ID 派生——读写 p2:* 不跨前缀）
+    runtime
+        .invoke("p2", "init", &serde_json::json!({}))
+        .expect("p2 init 应过（A-5 self-id 派生——自包含语义）");
+    // 隔离断言（guest 面 read-back 探针）：p2 读 A 的键仍拒
+    let r = runtime.invoke(
+        "p2",
+        "handle-event",
+        &serde_json::json!({"event": "read-back", "payload": "plugin-hello:greeting"}),
+    );
     assert!(
         r.is_err(),
         "p2 跨前缀 read 应拒（namespace 隔离），实际 {r:?}"
@@ -624,8 +633,16 @@ fn e2e_namespace_read_denied() {
         .unwrap(),
     );
     runtime.install_component("p2", bytes);
-    // hello init 首动作 read "plugin-hello:greeting"——p2 前缀 "p2:"→namespace 拒
-    let r = runtime.invoke("p2", "init", &serde_json::json!({}));
+    // A-5 后 p2 init 自包含（SELF_ID 派生——init 读写 p2:* 应过）
+    runtime
+        .invoke("p2", "init", &serde_json::json!({}))
+        .expect("p2 init 应过（A-5 self-id 派生——写死前缀退役）");
+    // 跨前缀 read 拒断言移至 read-back 探针（guest 面）
+    let r = runtime.invoke(
+        "p2",
+        "handle-event",
+        &serde_json::json!({"event": "read-back", "payload": "plugin-hello:greeting"}),
+    );
     assert!(r.is_err(), "跨前缀 read 应 namespace 拒，实际 {r:?}");
 }
 
@@ -675,6 +692,9 @@ fn e2e_query_isolation() {
         .unwrap(),
     );
     runtime.install_component("plugin-hello", bytes);
+    runtime
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
+        .expect("init 应过（SELF_ID 派生源）");
     // host 特权面预置跨前缀键（模拟他插件存量数据——host 不过 guest guard）
     runtime
         .invoke(
@@ -775,4 +795,178 @@ fn unknown_permission_rejected() {
         mmsg.contains("position 0"),
         "诊断应含 position，实际 {mmsg:?}"
     );
+}
+
+/// DK-17 L2：share 只读授权——A 写→host share→B（accept_share opt-in）
+/// 读命中；未 share 键 B 读拒；B 写 A 空间拒（share 只读）。
+#[test]
+fn e2e_share_read_and_isolation() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    // A=plugin-hello（hello 前缀派生自 self-id）
+    let mut ma = CapabilityManifest::from_permissions(&[
+        "storage".into(),
+        "log".into(),
+        "user-output".into(),
+    ])
+    .unwrap();
+    ma.accept_share = false; // A 不接收分享（write 路径不受影响）
+    runtime.register("plugin-hello", ma);
+    runtime.install_component("plugin-hello", bytes.clone());
+    runtime
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
+        .expect("A init 应过");
+    // B=p2（opt-in 接收分享）
+    let mut mb = CapabilityManifest::from_permissions(&[
+        "storage".into(),
+        "log".into(),
+        "user-output".into(),
+    ])
+    .unwrap();
+    mb.accept_share = true;
+    runtime.register("p2", mb.clone());
+    runtime.install_component("p2", bytes.clone());
+    // p2 init 先行（自包含——A-5 self-id 派生，读写 p2:* 不跨前缀）
+    runtime
+        .invoke("p2", "init", &serde_json::json!({}))
+        .expect("p2 init 应过（A-5 self-id 派生）");
+    // share：A 的 greeting 键 → p2（宿主特权面）
+    let r = runtime.invoke(
+        "plugin-hello",
+        "share",
+        &serde_json::json!({"doc_id": "plugin-hello:greeting", "to_plugin": "p2"}),
+    );
+    assert!(r.is_ok(), "share 应过（A 键+p2 opt-in），实际 {r:?}");
+    // 未 share 键：p2 guest 面读拒（namespace-denied 不变——read-back 探针；
+    // trap 后实例不可重入——14d.2 实证，后续断言前 re-install 清缓存）
+    let denied = runtime.invoke(
+        "p2",
+        "handle-event",
+        &serde_json::json!({"event": "read-back", "payload": "plugin-hello:note-empty"}),
+    );
+    assert!(
+        denied.is_err(),
+        "未 share 键 guest 面读应拒，实际 {denied:?}"
+    );
+    runtime.install_component("p2", bytes.clone());
+    // share 命中：p2 guest 面读 A 的 greeting（share 豁免放行）
+    let hit = runtime.invoke(
+        "p2",
+        "handle-event",
+        &serde_json::json!({"event": "read-back", "payload": "plugin-hello:greeting"}),
+    );
+    assert!(hit.is_ok(), "share 命中应放行 read，实际 {hit:?}");
+    // B 写 A 空间拒（写路径不豁免——share 只读；guest 面 write-back 探针）
+    let wdenied = runtime.invoke(
+        "p2",
+        "handle-event",
+        &serde_json::json!({"event": "write-back", "payload": "plugin-hello:greeting|hijack"}),
+    );
+    assert!(
+        wdenied.is_err(),
+        "B 写 A 空间应拒（share 只读），实际 {wdenied:?}"
+    );
+}
+
+/// DK-17 L2：accept_share=false 时 share 动作本身拒（fail-closed 默认）。
+#[test]
+fn e2e_share_target_not_optin_denied() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "plugin-hello",
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
+    );
+    runtime.install_component("plugin-hello", bytes.clone());
+    runtime.register(
+        "p3",
+        // 缺省 accept_share=false（fail-closed）
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
+    );
+    runtime.install_component("p3", bytes);
+    let r = runtime.invoke(
+        "plugin-hello",
+        "share",
+        &serde_json::json!({"doc_id": "plugin-hello:greeting", "to_plugin": "p3"}),
+    );
+    assert!(r.is_err(), "目标未 opt-in 的 share 应拒，实际 {r:?}");
+}
+
+/// DK-17 L2：revoke 后 B 读拒（授权可撤销）。
+#[test]
+fn e2e_share_revoke_blocks_read() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "plugin-hello",
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
+    );
+    runtime.install_component("plugin-hello", bytes.clone());
+    let mut mb = CapabilityManifest::from_permissions(&[
+        "storage".into(),
+        "log".into(),
+        "user-output".into(),
+    ])
+    .unwrap();
+    mb.accept_share = true;
+    runtime.register("p2", mb.clone());
+    runtime.install_component("p2", bytes);
+    // A init（先于 share——greeting 键写入 docs，share 对象真实存在）
+    runtime
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
+        .expect("A init 应过");
+    runtime
+        .invoke(
+            "plugin-hello",
+            "share",
+            &serde_json::json!({"doc_id": "plugin-hello:greeting", "to_plugin": "p2"}),
+        )
+        .expect("share 应过");
+    runtime
+        .invoke("p2", "init", &serde_json::json!({}))
+        .expect("p2 init 应过");
+    let hit = runtime.invoke(
+        "p2",
+        "handle-event",
+        &serde_json::json!({"event": "read-back", "payload": "plugin-hello:greeting"}),
+    );
+    assert!(hit.is_ok(), "revoke 前 read 应命中，实际 {hit:?}");
+    // revoke
+    runtime
+        .invoke(
+            "plugin-hello",
+            "revoke",
+            &serde_json::json!({"doc_id": "plugin-hello:greeting", "to_plugin": "p2"}),
+        )
+        .expect("revoke 应过");
+    let denied = runtime.invoke(
+        "p2",
+        "handle-event",
+        &serde_json::json!({"event": "read-back", "payload": "plugin-hello:greeting"}),
+    );
+    assert!(denied.is_err(), "revoke 后 read 应拒，实际 {denied:?}");
 }

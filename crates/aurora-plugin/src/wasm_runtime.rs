@@ -79,6 +79,10 @@ pub struct CapabilityManifest {
     /// Some(set)=仅授权集内方法（require 链第三环）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_methods: Option<HashSet<StorageMethod>>,
+    /// DK-17 L2：是否接受跨插件分享（缺省 false=fail-closed——插件显式
+    /// opt-in 才可能被分享；最小暴露面）
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub accept_share: bool,
 }
 
 /// DK-16 L1：storage 方法级授权（可选渐进）——声明后越 method 拒
@@ -127,6 +131,7 @@ impl CapabilityManifest {
         Ok(Self {
             capabilities: caps,
             storage_methods: None,
+            accept_share: false,
         })
     }
 
@@ -193,6 +198,10 @@ pub enum HostFunction {
     Log,
     /// 拉取插件用户可见输出缓冲（DK-15b——宿主侧 API，无需 manifest 能力）
     PullOutput,
+    /// 跨插件只读授权（DK-17 L2——宿主特权面）：share(doc_id, to_plugin)
+    Share,
+    /// 撤销跨插件授权（DK-17 L2——宿主特权面）
+    Revoke,
 }
 
 impl HostFunction {
@@ -204,6 +213,8 @@ impl HostFunction {
             HostFunction::Query => "query",
             HostFunction::Log => "log",
             HostFunction::PullOutput => "pull_output",
+            HostFunction::Share => "share",
+            HostFunction::Revoke => "revoke",
         }
     }
 
@@ -215,6 +226,8 @@ impl HostFunction {
             "query" => Some(HostFunction::Query),
             "log" => Some(HostFunction::Log),
             "pull_output" => Some(HostFunction::PullOutput),
+            "share" => Some(HostFunction::Share),
+            "revoke" => Some(HostFunction::Revoke),
             _ => None,
         }
     }
@@ -225,8 +238,11 @@ impl HostFunction {
             HostFunction::ReadDoc | HostFunction::WriteDoc | HostFunction::Query => {
                 Some(Capability::Storage)
             }
-            // PullOutput：宿主侧拉取 API（非 guest 可 require 面）
-            HostFunction::Log | HostFunction::PullOutput => None,
+            // PullOutput/Share/Revoke：宿主特权面（非 guest 可 require 面）
+            HostFunction::Log
+            | HostFunction::PullOutput
+            | HostFunction::Share
+            | HostFunction::Revoke => None,
         }
     }
 }
@@ -324,11 +340,11 @@ impl HostFunctionRegistry for DefaultHostFunctions {
                 }
                 Ok(serde_json::json!({"ok": true}))
             }
-            // PullOutput 已在 WasmRuntime::call_host_function 拦截
-            // （runtime 自有 per-plugin 缓冲面）——registry 侧不可达
-            HostFunction::PullOutput => Err(crate::Error::HostFunction(
-                "pull_output is host-side only (runtime-owned)".into(),
-            )),
+            // PullOutput/Share/Revoke 已在 WasmRuntime::call_host_function
+            // 拦截（runtime 自有面）——registry 侧不可达
+            HostFunction::PullOutput | HostFunction::Share | HostFunction::Revoke => Err(
+                crate::Error::HostFunction("host-side only (runtime-owned)".into()),
+            ),
         }
     }
 }
@@ -421,6 +437,14 @@ impl UserOutputBuf {
     }
 }
 
+/// A-1（DK-17）：调用方上下文——宿主特权面的调用来源标识。
+/// 当前全内控（session=None 直通）；桌面 IPC 接线时填 session 并在
+/// call_host_function 的校验位鉴权（本卡只留接口不给实现）。
+#[derive(Debug, Clone, Default)]
+pub struct CallerCtx {
+    pub session: Option<String>,
+}
+
 pub struct WasmRuntime {
     engine: wasmtime::Engine,
     registry: Arc<dyn HostFunctionRegistry>,
@@ -440,6 +464,12 @@ pub struct WasmRuntime {
     instantiations: std::sync::atomic::AtomicU64,
     /// DK-15b：per-plugin 用户可见输出缓冲（register 时建槽）
     user_outputs: Arc<RwLock<HashMap<PluginId, Arc<RwLock<UserOutputBuf>>>>>,
+    /// DK-17 L2：跨插件只读授权图谱——(from_plugin, doc_id) → to_plugin
+    /// （宿主侧治理状态，guest 不可见；内存 KV 先行，落盘随同步卡）
+    shares: Arc<RwLock<HashMap<(String, String), String>>>,
+    /// A-1：调用方上下文（内控=None 直通；IPC 接线时 Some(session)——
+    /// with_ctx 调用期间临时挂载）
+    caller_ctx: RwLock<Option<CallerCtx>>,
 }
 
 /// DK-14d.2：Store 上下文——宿主函数实现（d3 宿主回调接线）侧读取。
@@ -467,6 +497,8 @@ struct WasmStoreCtx {
     /// DK-15b：用户可见输出缓冲槽（bindgen Host print 经 self 访问——
     /// runtime.user_outputs 惰性建槽注入）
     user_output: Option<Arc<RwLock<UserOutputBuf>>>,
+    /// DK-17 L2：授权图谱句柄（read 豁免检查——runtime.shares 注入）
+    shares: Arc<RwLock<HashMap<(String, String), String>>>,
 }
 
 impl wasmtime_wasi::WasiView for WasmStoreCtx {
@@ -545,6 +577,8 @@ impl WasmRuntime {
             epoch_deadline_ticks: std::sync::atomic::AtomicU64::new(DEFAULT_EPOCH_DEADLINE_TICKS),
             instantiations: std::sync::atomic::AtomicU64::new(0),
             user_outputs: Arc::new(RwLock::new(HashMap::new())),
+            shares: Arc::new(RwLock::new(HashMap::new())),
+            caller_ctx: RwLock::new(None),
         }
     }
 
@@ -718,6 +752,7 @@ impl WasmRuntime {
                         .clone();
                     Some(slot)
                 },
+                shares: Arc::clone(&self.shares),
             },
         );
         store.set_epoch_deadline(self.epoch_deadline_ticks.load(Ordering::Relaxed));
@@ -808,13 +843,14 @@ impl WasmRuntime {
             store, instance, ..
         } = &mut *guard;
         let func = self
-            .export_typed_func::<(wasmtime::component::ResourceAny,), (Result<(), ()>,)>(
+            .export_typed_func::<(wasmtime::component::ResourceAny, String), (Result<(), ()>,)>(
                 &mut *store,
                 instance,
                 "init",
             )?;
+        // A-5：init 传 self-id——guest 前缀派生（写死退役）
         let (r,) = func
-            .call(&mut *store, (token,))
+            .call(&mut *store, (token, plugin_id.to_string()))
             .map_err(|e| crate::Error::WasmRuntime(format!("export `init` call failed: {e}")))?;
         r.map_err(|()| crate::Error::WasmRuntime("export `init` returned error".into()))?;
         // post-return：解锁实例（guest 声明 post-return 时必调，否则
@@ -899,12 +935,103 @@ impl WasmRuntime {
     }
 
     /// 调用宿主函数：先校验能力，再分派到注册表。
+    /// A-1（DK-17）：带调用方上下文的宿主函数调用（接口位——session
+    /// 鉴权在 call_host_function 校验位，IPC 接线时填实现）
+    pub fn call_host_function_with_ctx(
+        &self,
+        ctx: CallerCtx,
+        plugin_id: &str,
+        function: HostFunction,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, crate::Error> {
+        *self.caller_ctx.write() = Some(ctx);
+        let r = self.call_host_function(plugin_id, function, args);
+        *self.caller_ctx.write() = None;
+        r
+    }
+
     pub fn call_host_function(
         &self,
         plugin_id: &str,
         function: HostFunction,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, crate::Error> {
+        // A-1（DK-17）：调用方上下文校验位——当前全内控直通（session=None
+        // 即内控调用）；桌面 IPC 接线时填 session 并在此鉴权（本卡只留
+        // 接口不给实现，见 DK-17 L2 设计稿 2.3）
+        if let Some(ctx) = self.caller_ctx.read().as_ref() {
+            let _ = ctx; // TODO(L2+): IPC session 鉴权挂点
+        }
+        // DK-17 L2：share/revoke=宿主特权面（授权治理，无需 manifest 能力；
+        // 授权图谱 guest 不可见）
+        if function == HostFunction::Share {
+            let doc_id = args
+                .get("doc_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| crate::Error::HostFunction("share requires `doc_id`".into()))?;
+            let to_plugin = args
+                .get("to_plugin")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| crate::Error::HostFunction("share requires `to_plugin`".into()))?;
+            // 仅本命名空间内的键可分享：doc_id 必须带 "from:" 前缀形态
+            let Some((from, _rest)) = doc_id.split_once(':') else {
+                return Err(crate::Error::HostFunction(format!(
+                    "share: doc_id `{doc_id}` lacks namespace prefix"
+                )));
+            };
+            if to_plugin == from {
+                return Err(crate::Error::HostFunction(
+                    "share: to_plugin must differ from owner".into(),
+                ));
+            }
+            let to_registered = self.manifests.read().contains_key(to_plugin);
+            if !to_registered {
+                return Err(crate::Error::NotFound(format!(
+                    "share: target plugin not registered: {to_plugin}"
+                )));
+            }
+            let to_accepts = self
+                .manifests
+                .read()
+                .get(to_plugin)
+                .map(|m| m.accept_share)
+                .unwrap_or(false);
+            if !to_accepts {
+                return Err(crate::Error::CapabilityDenied(Capability::Storage));
+            }
+            self.shares.write().insert(
+                (from.to_string(), doc_id.to_string()),
+                to_plugin.to_string(),
+            );
+            eprintln!(
+                "[audit-host] event=share result=ok from={from} doc_id={doc_id} to={to_plugin}"
+            );
+            return Ok(serde_json::json!({"ok": true, "from": from, "to": to_plugin}));
+        }
+        if function == HostFunction::Revoke {
+            let doc_id = args
+                .get("doc_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| crate::Error::HostFunction("revoke requires `doc_id`".into()))?;
+            let to_plugin = args
+                .get("to_plugin")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| crate::Error::HostFunction("revoke requires `to_plugin`".into()))?;
+            let Some((from, _)) = doc_id.split_once(':') else {
+                return Err(crate::Error::HostFunction(format!(
+                    "revoke: doc_id `{doc_id}` lacks namespace prefix"
+                )));
+            };
+            let removed = self
+                .shares
+                .write()
+                .remove(&(from.to_string(), doc_id.to_string()));
+            eprintln!(
+                "[audit-host] event=revoke result={} from={from} doc_id={doc_id} to={to_plugin}",
+                if removed.is_some() { "ok" } else { "noop" }
+            );
+            return Ok(serde_json::json!({"ok": removed.is_some()}));
+        }
         // DK-15b：pull_output=runtime 自有面（per-plugin 缓冲槽），
         // 宿主/桌面轮询拉取（拉取即消费），无需 manifest 能力
         if function == HostFunction::PullOutput {
@@ -1157,10 +1284,29 @@ impl WasmStoreCtx {
         if let Some(doc_id) = doc_id {
             let prefix = format!("{plugin_id}:");
             if !doc_id.starts_with(&prefix) {
-                eprintln!("[audit-host] plugin={plugin_id} event={event} result=denied reason=namespace-denied doc_id={doc_id}");
-                return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
-                    Capability::Storage,
-                )));
+                // DK-17 L2 read 豁免：shares 命中（显式授权）+本插件
+                // accept_share opt-in→放行（写路径不豁免——share 只读）
+                let shared_in = event == "read-doc"
+                    && self.manifest.accept_share
+                    && self
+                        .shares
+                        .read()
+                        .get(&(
+                            doc_id
+                                .split_once(':')
+                                .map(|(f, _)| f.to_string())
+                                .unwrap_or_default(),
+                            doc_id.to_string(),
+                        ))
+                        .map(|to| to == &plugin_id)
+                        .unwrap_or(false);
+                if !shared_in {
+                    eprintln!("[audit-host] plugin={plugin_id} event={event} result=denied reason=namespace-denied doc_id={doc_id}");
+                    return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
+                        Capability::Storage,
+                    )));
+                }
+                eprintln!("[audit-host] plugin={plugin_id} event={event} result=ok reason=share-read doc_id={doc_id}");
             }
         }
         // 第三环：method 授权（仅当 manifest 声明 storage_methods——缺省全开）
@@ -1557,7 +1703,8 @@ mod tests {
         for sig in [
             "resource capability-token;",
             "log: func(token: borrow<capability-token>, level: string, msg: string);",
-            "init: func(capability: borrow<capability-token>) -> result;",
+            // A-5（DK-17）：init 扩参 self-id——guest 前缀派生，写死退役
+            "init: func(capability: borrow<capability-token>, plugin-id: string) -> result;",
             "handle-event: func(capability: borrow<capability-token>, event: string, payload: string) -> result;",
         ] {
             assert!(wit.contains(sig), "WIT 0.2.0 缺签名: {sig}");

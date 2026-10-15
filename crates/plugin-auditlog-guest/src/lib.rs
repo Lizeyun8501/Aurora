@@ -56,7 +56,10 @@ mod wasm_exports {
     struct AuditlogGuest;
 
     impl exports::aurora::plugin::host::Guest for AuditlogGuest {
-        fn init(_capability: &exports::aurora::plugin::host::CapabilityToken) -> Result<(), ()> {
+        fn init(
+            _capability: &exports::aurora::plugin::host::CapabilityToken,
+            _plugin_id: String,
+        ) -> Result<(), ()> {
             eprintln!("[audit] init ok");
             Ok(())
         }

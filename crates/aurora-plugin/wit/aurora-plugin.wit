@@ -53,7 +53,9 @@ interface host {
     use capability.{capability-token};
 
     /// 插件初始化（加载后调用一次）。
-    init: func(capability: borrow<capability-token>) -> result;
+    /// A-5（DK-17）：init 传 self plugin_id——guest 前缀派生，
+    /// 写死前缀退役（结构性耦合消除）
+    init: func(capability: borrow<capability-token>, plugin-id: string) -> result;
 
     /// 宿主事件入口（宿主 → 插件事件通道）。
     handle-event: func(capability: borrow<capability-token>, event: string, payload: string) -> result;

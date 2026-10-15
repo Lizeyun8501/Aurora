@@ -96,7 +96,10 @@ mod wasm_exports {
     struct WordcountGuest;
 
     impl exports::aurora::plugin::host::Guest for WordcountGuest {
-        fn init(_capability: &exports::aurora::plugin::host::CapabilityToken) -> Result<(), ()> {
+        fn init(
+            _capability: &exports::aurora::plugin::host::CapabilityToken,
+            _plugin_id: String,
+        ) -> Result<(), ()> {
             eprintln!("[wordcount] init ok");
             Ok(())
         }

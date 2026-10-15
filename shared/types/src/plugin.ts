@@ -58,6 +58,8 @@ export interface PluginManifest {
   min_host_version: string;
   homepage: string | null;
   license: string | null;
+  /** DK-17 L2：是否接受跨插件分享（缺省 false——fail-closed） */
+  accept_share?: boolean;
 }
 
 /** A loaded plugin instance. */

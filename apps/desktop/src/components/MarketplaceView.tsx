@@ -11,20 +11,23 @@
  * 纯前端 diff（src/ 内，src-tauri 不动）。
  */
 import type { Capability } from '@aurora/shared-types/plugin';
-import { badgesForGranted } from './capabilityBadge';
+import { acceptShareBadge, badgesForGranted } from './capabilityBadge';
 
 export interface MarketplaceViewProps {
   /** 插件展示名（无后端 listing 拉取前由调用方传入） */
   pluginName: string;
   /** manifest granted 集合（Rust Capability 字符串——15a 类型对齐的 TS 消费） */
   granted: readonly Capability[];
+  /** DK-17 L2：是否接受跨插件分享（缺省 false 不渲染） */
+  acceptShare?: boolean;
 }
 
 /** 零权限徽章文案（默认零权限是卖点，正着展示） */
 const ZERO_GRANT_LABEL = '零权限（沙箱默认）';
 
-export default function MarketplaceView({ pluginName, granted }: MarketplaceViewProps) {
+export default function MarketplaceView({ pluginName, granted, acceptShare }: MarketplaceViewProps) {
   const badges = badgesForGranted(granted);
+  const shareBadge = acceptShareBadge(acceptShare);
   return (
     <main style={{ flex: 1, padding: 24, overflow: 'auto' }}>
       <h1 style={{ margin: '0 0 8px', fontSize: 22 }}>插件详情 · {pluginName}</h1>
@@ -47,6 +50,24 @@ export default function MarketplaceView({ pluginName, granted }: MarketplaceView
           </span>
         ) : (
           <ul style={{ display: 'flex', gap: 8, flexWrap: 'wrap', listStyle: 'none', margin: 0, padding: 0 }}>
+            {shareBadge && (
+              <li
+                key={shareBadge.key}
+                data-testid={`badge-${shareBadge.key}`}
+                aria-label={`数据流偏好 ${shareBadge.label}`}
+                style={{
+                  display: 'inline-block',
+                  padding: '2px 10px',
+                  borderRadius: 999,
+                  fontSize: 13,
+                  border: '1px solid #868e96',
+                  color: '#495057',
+                  background: 'rgba(134,142,150,0.08)',
+                }}
+              >
+                {shareBadge.label}
+              </li>
+            )}
             {badges.map((b) => (
               <li
                 key={b.key}
