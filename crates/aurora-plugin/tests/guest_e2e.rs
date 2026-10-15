@@ -77,8 +77,13 @@ fn e2e_real_wasip2_components_full_chain() {
         // 2) register：capability 串由 Manifest granted 集合派生（d2 合约）
         runtime.register(
             plugin_id,
-            CapabilityManifest::from_permissions(&["fs".into(), "log".into(), "storage".into()])
-                .unwrap(),
+            CapabilityManifest::from_permissions(&[
+                "fs".into(),
+                "log".into(),
+                "storage".into(),
+                "user-output".into(),
+            ])
+            .unwrap(),
         );
 
         // 3) invoke：init + handle-event 真调用（真组件被 wasmtime 36
@@ -119,7 +124,12 @@ fn e2e_instance_cache_shared_across_invokes() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "p1",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
     );
     runtime.install_component("p1", bytes);
 
@@ -154,7 +164,12 @@ fn e2e_unregister_drops_instance_cache() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "p2",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
     );
     runtime.install_component("p2", bytes.clone());
     runtime
@@ -171,7 +186,12 @@ fn e2e_unregister_drops_instance_cache() {
     // 再注册+登记 → 重新实例化（token 随新实例重新发放）
     runtime.register(
         "p2",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
     );
     runtime.install_component("p2", bytes.clone());
     runtime
@@ -206,7 +226,12 @@ fn e2e_zero_grant_invoke_denied() {
     // 对照组：granted 非空 → 正常放行（token 发放）
     runtime.register(
         "ok",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
     );
     runtime.install_component(
         "ok",
@@ -257,7 +282,12 @@ fn e2e_log_method_granted_forwards() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "withlog",
-        CapabilityManifest::from_permissions(&["log".into(), "storage".into()]).unwrap(),
+        CapabilityManifest::from_permissions(&[
+            "log".into(),
+            "storage".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
     );
     runtime.install_component("withlog", bytes);
     runtime
@@ -284,7 +314,12 @@ fn e2e_dataplane_granted_full_chain() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "withdata",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
     );
     runtime.install_component("withdata", bytes.clone());
     runtime
@@ -346,7 +381,12 @@ fn e2e_dataplane_size_guard() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "bigdata",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
     );
     runtime.install_component("bigdata", bytes);
     let big = "x".repeat(1024 * 1024 + 1);
@@ -408,7 +448,12 @@ fn e2e_dataplane_empty_content_and_newline_key() {
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
         "regress",
-        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
     );
     runtime.install_component("regress", bytes);
     // guest init 内：write("note-empty","")→read Some("") 自验；
@@ -438,4 +483,96 @@ fn e2e_dataplane_empty_content_and_newline_key() {
             .any(|k| k.as_str().map(|s| s.contains('\n')).unwrap_or(false)),
         "键集应含换行键，实际 {keys:?}"
     );
+}
+
+/// DK-15b e2e：用户可见输出受控通道——granted 打印可拉取（拉取即消费：
+/// 二次拉取为空）。
+#[test]
+fn e2e_useroutput_pull() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "uo1",
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
+    );
+    runtime.install_component("uo1", bytes);
+    runtime
+        .invoke("uo1", "init", &serde_json::json!({}))
+        .expect("init 应过（含 data 面自验）");
+    runtime
+        .invoke(
+            "uo1",
+            "handle-event",
+            &serde_json::json!({"event": "pull", "payload": "x"}),
+        )
+        .expect("handle-event 应过（print granted）");
+    let v = runtime
+        .invoke("uo1", "pull_output", &serde_json::json!({}))
+        .expect("pull_output 应返回缓冲行");
+    let lines = v
+        .get("lines")
+        .and_then(|l| l.as_array())
+        .expect("lines 应为数组");
+    assert!(
+        lines.iter().any(|l| l
+            .as_str()
+            .map(|s| s.contains("hello event=pull"))
+            .unwrap_or(false)),
+        "缓冲应含 print 行，实际 {lines:?}"
+    );
+    // 拉取即消费：二次拉取为空
+    let v2 = runtime
+        .invoke("uo1", "pull_output", &serde_json::json!({}))
+        .expect("二次拉取应过");
+    let lines2 = v2
+        .get("lines")
+        .and_then(|l| l.as_array())
+        .expect("lines 应为数组");
+    assert!(
+        lines2.is_empty(),
+        "拉取即消费——二次拉取应为空，实际 {lines2:?}"
+    );
+}
+
+/// DK-15b e2e：越权拒——manifest 无 user-output→print panic（trap）
+/// →handle-event invoke 报 Err（差异化审计 denied 留痕）。
+#[test]
+fn e2e_useroutput_denied() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "uo2",
+        // 窄授权：无 user-output——print 应被 require 拒
+        CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
+    );
+    runtime.install_component("uo2", bytes);
+    let r = runtime.invoke(
+        "uo2",
+        "handle-event",
+        &serde_json::json!({"event": "deny", "payload": "y"}),
+    );
+    assert!(
+        r.is_err(),
+        "无 user-output 的插件 print 应 trap 拒绝，实际 {r:?}"
+    );
+    // 二次 pull 无缓冲（越权调用未达 push）
+    let v = runtime
+        .invoke("uo2", "pull_output", &serde_json::json!({}))
+        .expect("pull_output 面不设权限");
+    let lines = v
+        .get("lines")
+        .and_then(|l| l.as_array())
+        .expect("lines 应为数组");
+    assert!(lines.is_empty(), "越权 print 不得入缓冲");
 }

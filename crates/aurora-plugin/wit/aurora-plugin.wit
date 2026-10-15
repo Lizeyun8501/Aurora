@@ -43,6 +43,10 @@ interface capability {
     /// 键检索（doc-id contains 匹配，非内容搜索）。键集类型保证
     /// （doc-id 可含任意字符——无分隔协议歧义）。
     query-docs: func(token: borrow<capability-token>, pattern: string) -> list<string>;
+
+    /// 用户可见输出（DK-15b：per-plugin 64KiB 环形缓冲，宿主经
+    /// pull_output 拉取——与 log 诊断流分界）。内层 Err=协议 err。
+    print: func(token: borrow<capability-token>, text: string) -> result<_, string>;
 }
 
 interface host {

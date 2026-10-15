@@ -39,6 +39,9 @@ pub enum Capability {
     /// 结构化日志（guest-invoked capability-token.log 消费——DK-14c.2；
     /// host-invoked HostFunction::Log 映射保持 None，两套语义独立）
     Log,
+    /// 用户可见输出（DK-15b：guest print 经 per-plugin 64KiB 环形缓冲，
+    /// host 经 pull_output 拉取——与 log 诊断流分界，见文档）
+    UserOutput,
 }
 
 impl Capability {
@@ -50,6 +53,7 @@ impl Capability {
             Capability::Native => "native",
             Capability::Storage => "storage",
             Capability::Log => "log",
+            Capability::UserOutput => "user-output",
         }
     }
 
@@ -61,6 +65,7 @@ impl Capability {
             "native" => Some(Capability::Native),
             "storage" => Some(Capability::Storage),
             "log" => Some(Capability::Log),
+            "user-output" => Some(Capability::UserOutput),
             _ => None,
         }
     }
@@ -92,7 +97,7 @@ impl CapabilityManifest {
                 || crate::permission::Permission::parse(s).is_some();
             if !known {
                 return Err(crate::Error::InvalidInput(format!(
-                    "unknown capability `{s}` at position {i}; valid set: [fs, network, native, storage, log, clipboard, notifications, dialog]"
+                    "unknown capability `{s}` at position {i}; valid set: [fs, network, native, storage, log, user-output, clipboard, notifications, dialog]"
                 )));
             }
         }
@@ -140,6 +145,8 @@ pub enum HostFunction {
     Query,
     /// 日志输出
     Log,
+    /// 拉取插件用户可见输出缓冲（DK-15b——宿主侧 API，无需 manifest 能力）
+    PullOutput,
 }
 
 impl HostFunction {
@@ -150,6 +157,7 @@ impl HostFunction {
             HostFunction::WriteDoc => "write_doc",
             HostFunction::Query => "query",
             HostFunction::Log => "log",
+            HostFunction::PullOutput => "pull_output",
         }
     }
 
@@ -160,6 +168,7 @@ impl HostFunction {
             "write_doc" => Some(HostFunction::WriteDoc),
             "query" => Some(HostFunction::Query),
             "log" => Some(HostFunction::Log),
+            "pull_output" => Some(HostFunction::PullOutput),
             _ => None,
         }
     }
@@ -170,7 +179,8 @@ impl HostFunction {
             HostFunction::ReadDoc | HostFunction::WriteDoc | HostFunction::Query => {
                 Some(Capability::Storage)
             }
-            HostFunction::Log => None,
+            // PullOutput：宿主侧拉取 API（非 guest 可 require 面）
+            HostFunction::Log | HostFunction::PullOutput => None,
         }
     }
 }
@@ -268,6 +278,11 @@ impl HostFunctionRegistry for DefaultHostFunctions {
                 }
                 Ok(serde_json::json!({"ok": true}))
             }
+            // PullOutput 已在 WasmRuntime::call_host_function 拦截
+            // （runtime 自有 per-plugin 缓冲面）——registry 侧不可达
+            HostFunction::PullOutput => Err(crate::Error::HostFunction(
+                "pull_output is host-side only (runtime-owned)".into(),
+            )),
         }
     }
 }
@@ -314,6 +329,52 @@ wasmtime::component::bindgen!({
 /// 后台线程每 [`EPOCH_TICK_MS`] ms 调 `Engine::increment_epoch`——
 /// shutdown 路径：[`Drop`] 置停机位后 join（进程退出 / runtime drop
 /// 均会关停，不留孤儿线程）。
+/// DK-15b：per-plugin 用户可见输出环形缓冲（上限 64 KiB，FIFO 淘汰；
+/// 拉取即消费语义）。
+#[derive(Debug, Default)]
+pub struct UserOutputBuf {
+    lines: std::collections::VecDeque<String>,
+    bytes: usize,
+}
+
+/// 缓冲上限（64 KiB/插件）
+pub const USER_OUTPUT_CAP: usize = 64 * 1024;
+
+impl UserOutputBuf {
+    /// 追加一行；单条超上限→None（协议 Err 由调用方生成），
+    /// 淘汰直至容纳（FIFO）。
+    pub fn push(&mut self, text: &str) -> bool {
+        let l = text.len();
+        if l + 1 > USER_OUTPUT_CAP {
+            return false;
+        }
+        while self.bytes + l + 1 > USER_OUTPUT_CAP {
+            if let Some(old) = self.lines.pop_front() {
+                self.bytes = self.bytes.saturating_sub(old.len() + 1);
+            } else {
+                break;
+            }
+        }
+        self.bytes += l + 1;
+        self.lines.push_back(text.to_string());
+        true
+    }
+
+    /// 拉取即消费：drain 全部行。
+    pub fn drain(&mut self) -> Vec<String> {
+        self.bytes = 0;
+        self.lines.drain(..).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.lines.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+}
+
 pub struct WasmRuntime {
     engine: wasmtime::Engine,
     registry: Arc<dyn HostFunctionRegistry>,
@@ -331,6 +392,8 @@ pub struct WasmRuntime {
     epoch_deadline_ticks: std::sync::atomic::AtomicU64,
     /// DK-14d.2：实例化计数（缓存命中观测——测试用，生产可作指标）
     instantiations: std::sync::atomic::AtomicU64,
+    /// DK-15b：per-plugin 用户可见输出缓冲（register 时建槽）
+    user_outputs: Arc<RwLock<HashMap<PluginId, Arc<RwLock<UserOutputBuf>>>>>,
 }
 
 /// DK-14d.2：Store 上下文——宿主函数实现（d3 宿主回调接线）侧读取。
@@ -350,9 +413,14 @@ struct WasmStoreCtx {
     /// write-doc 逐条审计不走标记）
     read_first_called: bool,
     query_first_called: bool,
+    /// DK-15b：print 首调标记（审计节流）
+    print_first_called: bool,
     /// DK-14c.3：数据面共享 KV（bindgen Host trait 方法经 self 访问——
     /// registry.docs_store() 在 install_component 时注入）
     docs: Option<std::sync::Arc<parking_lot::RwLock<HashMap<String, serde_json::Value>>>>,
+    /// DK-15b：用户可见输出缓冲槽（bindgen Host print 经 self 访问——
+    /// runtime.user_outputs 惰性建槽注入）
+    user_output: Option<Arc<RwLock<UserOutputBuf>>>,
 }
 
 impl wasmtime_wasi::WasiView for WasmStoreCtx {
@@ -430,6 +498,7 @@ impl WasmRuntime {
             instances: Arc::new(RwLock::new(HashMap::new())),
             epoch_deadline_ticks: std::sync::atomic::AtomicU64::new(DEFAULT_EPOCH_DEADLINE_TICKS),
             instantiations: std::sync::atomic::AtomicU64::new(0),
+            user_outputs: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -579,7 +648,17 @@ impl WasmRuntime {
                 log_first_called: false,
                 read_first_called: false,
                 query_first_called: false,
+                print_first_called: false,
                 docs: self.registry.docs_store(),
+                user_output: {
+                    let slots = self.user_outputs.clone();
+                    let slot = slots
+                        .write()
+                        .entry(plugin_id.to_string())
+                        .or_insert_with(|| Arc::new(RwLock::new(UserOutputBuf::default())))
+                        .clone();
+                    Some(slot)
+                },
             },
         );
         store.set_epoch_deadline(self.epoch_deadline_ticks.load(Ordering::Relaxed));
@@ -767,6 +846,18 @@ impl WasmRuntime {
         function: HostFunction,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value, crate::Error> {
+        // DK-15b：pull_output=runtime 自有面（per-plugin 缓冲槽），
+        // 宿主/桌面轮询拉取（拉取即消费），无需 manifest 能力
+        if function == HostFunction::PullOutput {
+            let slots = self.user_outputs.read();
+            return match slots.get(plugin_id) {
+                Some(slot) => {
+                    let lines = slot.write().drain();
+                    Ok(serde_json::json!({ "lines": lines }))
+                }
+                None => Ok(serde_json::json!({ "lines": [] })),
+            };
+        }
         if let Some(cap) = function.required_capability() {
             self.validate_capability(plugin_id, cap)?;
         }
@@ -829,6 +920,46 @@ impl WasmRuntime {
 /// 语义自低层 func_wrap 全量迁移（14c.2 log+14c.3 数据面）：
 /// per-method require+差异化审计+1 MiB guard+tracing 转发。
 impl aurora::plugin::capability::Host for WasmStoreCtx {
+    fn print(
+        &mut self,
+        token: wasmtime::component::Resource<CapabilityTokenData>,
+        text: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        // DK-15b：用户可见输出（受控通道）——require(UserOutput)，
+        // 首调+越权审计（print 可能高频：内容经 tracing debug 留痕，
+        // 审计节流复用 14c.3 差异化模式）；缓冲淘汰语义见 UserOutputBuf
+        let plugin_id = self.plugin_id.clone();
+        let granted = self
+            .table
+            .get(&token)
+            .map(|d| d.granted.contains(&Capability::UserOutput))
+            .unwrap_or(false);
+        if !granted {
+            eprintln!("[audit-host] plugin={plugin_id} event=print result=denied reason=useroutput-denied size={}", text.len());
+            return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
+                Capability::UserOutput,
+            )));
+        }
+        if !self.print_first_called {
+            self.print_first_called = true;
+            eprintln!(
+                "[audit-host] plugin={plugin_id} event=print result=ok reason=first-call size={}",
+                text.len()
+            );
+        }
+        tracing::debug!(target: "plugin", "[plugin={plugin_id}] user-output: {text}");
+        let Some(slot) = self.user_output.as_ref() else {
+            return Ok(Err("print: no user-output buffer".into()));
+        };
+        if slot.write().push(&text) {
+            Ok(Ok(()))
+        } else {
+            Ok(Err(format!(
+                "print: text exceeds user-output buffer limit ({USER_OUTPUT_CAP} bytes)"
+            )))
+        }
+    }
+
     fn log(
         &mut self,
         token: wasmtime::component::Resource<CapabilityTokenData>,
@@ -1386,5 +1517,55 @@ mod tests {
             format!("{err}").to_lowercase().contains("memory"),
             "应为 memory 超限错误: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod user_output_tests {
+    use super::*;
+
+    #[test]
+    fn test_user_output_buf_fifo_eviction() {
+        // DK-15b：64KiB FIFO 淘汰——push 多条→最老行被挤出
+        let mut b = UserOutputBuf::default();
+        let line = "x".repeat(1024);
+        for i in 0..80 {
+            assert!(b.push(&format!("{i:0>8}-{line}")), "第 {i} 条应在容量内");
+        }
+        // 80KiB>64KiB——早期行应被淘汰
+        let drained = b.drain();
+        assert!(
+            drained.len() < 80,
+            "应有 FIFO 淘汰，实际 {} 行",
+            drained.len()
+        );
+        assert!(!drained.is_empty());
+        // 最老行不在（已淘汰），最新行在
+        assert!(!drained[0].starts_with("00000000-"), "最老行应被淘汰");
+        assert!(
+            drained.last().unwrap().starts_with("00000079-"),
+            "最新行应在"
+        );
+    }
+
+    #[test]
+    fn test_user_output_buf_single_line_over_cap() {
+        // 单条超 64KiB→拒（协议 Err 由 Host print 生成）
+        let mut b = UserOutputBuf::default();
+        let huge = "y".repeat(USER_OUTPUT_CAP + 1);
+        assert!(!b.push(&huge), "单条超限应拒");
+        assert!(b.is_empty());
+    }
+
+    #[test]
+    fn test_user_output_buf_drain_consumes() {
+        let mut b = UserOutputBuf::default();
+        assert!(b.push("a"));
+        assert!(b.push("b"));
+        assert_eq!(b.len(), 2);
+        let d = b.drain();
+        assert_eq!(d, vec!["a".to_string(), "b".to_string()]);
+        assert!(b.is_empty(), "drain 后应清空（拉取即消费）");
+        assert_eq!(b.drain(), Vec::<String>::new());
     }
 }

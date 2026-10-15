@@ -26,6 +26,7 @@ export type Capability =
   | 'native'
   | 'storage'
   | 'log'
+  | 'user-output'
   | 'clipboard'
   | 'notifications'
   | 'dialog';

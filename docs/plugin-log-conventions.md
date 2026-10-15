@@ -42,6 +42,18 @@ guest 经 WIT import `aurora:plugin/capability@0.2.0` 的自由函数 `log(token
 - `[audit-host] plugin=nolog event=log result=denied reason=log-denied level=info`（log 越权——DK-14c.2）
 - `[audit-host] plugin=withlog event=log result=ok reason=first-call`（log 首调节流——后续正常转发不记行）
 
+## 用户可见输出 vs 诊断日志（DK-15b 分界）
+
+| 通道 | 能力 | 面向 | 载体 | 消费方 |
+|---|---|---|---|---|
+| `capability-token.log` / HostFunction::log | `log` | 开发者向（诊断流） | stderr 侧信道 + tracing | CI 日志/宿主控制台 |
+| `capability-token.print`（DK-15b） | `user-output` | 产品向（用户可见内容） | per-plugin 64KiB 环形缓冲 | 宿主/桌面经 `pull_output` 轮询拉取（拉取即消费） |
+
+- **print 形态**（14c.4 原生类型裁决复用）：`print: func(token: borrow<capability-token>, text: string) -> result<_, string>`——单条超 64KiB 缓冲上限走内层 Err；FIFO 淘汰（`UserOutputBuf`）
+- **审计**：print 首调+越权（`useroutput-denied`）留痕；高频调用内容仅 `tracing::debug`（差异化审计节流——print 可能高频，逐条审计会刷爆日志）
+- **不回退红线**：stdout/stdin 仍不继承（14e1 收紧有效——插件=不可信代码）；pull_output 为宿主侧 API，不设 manifest 能力
+- **T6 钩子**：实时推送落地后 pull_output 可挂 event 通知（现 15s 轮询兼容）
+
 ## 判据与规约
 
 1. **测试可断言第一判据**：每行单行、固定前缀、字段 `key=value` 或 JSON——

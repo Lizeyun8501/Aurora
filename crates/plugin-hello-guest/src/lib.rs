@@ -123,6 +123,10 @@ mod wasm_exports {
             if let Err(e) = cap::write_doc(capability, &format!("event-{event}"), &payload) {
                 panic!("write-doc failed: {e}");
             }
+            // DK-15b：用户可见输出（受控通道演示——与 log 诊断流分界）
+            if let Err(e) = cap::print(capability, &format!("hello event={event}")) {
+                panic!("print failed: {e}");
+            }
             aurora::plugin::capability::log(capability, "info", &format!("hello event={event}"));
             Ok(())
         }
