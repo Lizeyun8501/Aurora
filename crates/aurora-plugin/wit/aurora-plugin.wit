@@ -1,4 +1,4 @@
-// DK-14c.1 · Capability 资源化合约 v0.2.0（breaking，自 0.1.0 一次切换）
+// DK-14c.1 · Capability 资源化合约 v0.3.0（breaking，0.2.0→0.3.0 随 DK-17 init 扩参；0.1.0→0.2.0 首切）
 //
 // # capability-token 归属（宿主权威）
 //
@@ -15,7 +15,7 @@
 // # 范围
 // export host 接口无方法面扩展——guest 主动能力调用（token 消费，
 // import 接口挂方法）属 14c 后续卡；UI 徽章/L1L2 细粒度属后续。
-package aurora:plugin@0.2.0;
+package aurora:plugin@0.3.0;
 
 /// 能力令牌接口（宿主实现——resource 类型权威定义处）。
 interface capability {

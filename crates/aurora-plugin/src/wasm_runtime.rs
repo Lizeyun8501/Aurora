@@ -646,6 +646,12 @@ impl WasmRuntime {
         // DK-14d.2：实例层同步 Drop（Store+instance 释放；再注册即重新实例化）
         self.instances.write().remove(plugin_id);
         self.components.write().remove(plugin_id);
+        // DK-17.1（A-7）：L2 授权图谱双向清理——授权主体（from）或接收方
+        // （to）任一注销，相关 shares 一并失效（悬挂授权堵口：防卸载重装
+        // 后旧授权自动复活——opt-in 状态随 manifest 重置，shares 不得残留）
+        self.shares
+            .write()
+            .retain(|(from, _), to| from != plugin_id && to != plugin_id);
     }
 
     /// DK-14d.2：epoch deadline 运行时可调（ticks；1 tick=50ms）。
@@ -788,7 +794,7 @@ impl WasmRuntime {
 
     /// DK-14c.1：导出函数寻址（合约接口实例嵌套链，单一确定路径）。
     ///
-    /// wit-bindgen 组件顶层导出 `aurora:plugin/host@0.2.0` instance
+    /// wit-bindgen 组件顶层导出 `aurora:plugin/host@0.3.0` instance
     /// （wasm-tools print 实证）；版本号随合约升级同步进常量——
     /// 0.1.0→0.2.0 漏改事故教训：接口名含版本，升级合约必查此处。
     fn export_typed_func<Params, Results>(
@@ -801,10 +807,10 @@ impl WasmRuntime {
         Params: wasmtime::component::ComponentNamedList + wasmtime::component::Lower,
         Results: wasmtime::component::ComponentNamedList + wasmtime::component::Lift,
     {
-        // DK-14c.1：合约 0.2.0（版本进接口名）；wat 平铺回退随 fixture
+        // DK-14c.1：合约 0.3.0（版本进接口名）；wat 平铺回退随 fixture
         // 退役删除——单一路径：嵌套链三步（iface→func→typed），失败即
         // 明确错误（不再静默 fallback）。
-        const CONTRACT_IFACE: &str = "aurora:plugin/host@0.2.0";
+        const CONTRACT_IFACE: &str = "aurora:plugin/host@0.3.0";
         let (_, iface_idx) = instance
             .get_export(&mut *store, None, CONTRACT_IFACE)
             .ok_or_else(|| {
@@ -1606,8 +1612,26 @@ mod tests {
         assert!(rt.manifests.read().contains_key("a"));
     }
 
+    /// DK-17.1（A-7）：unregister 双向清 shares——授权主体或接收方任一
+    /// 注销，相关授权一并失效（悬挂授权堵口；防卸载重装授权自动复活）。
+    #[test]
+    fn test_unregister_clears_shares_bidirectionally() {
+        let rt = WasmRuntime::with_default_registry();
+        {
+            let mut s = rt.shares.write();
+            s.insert(("a".into(), "a:k1".into()), "b".into());
+            s.insert(("c".into(), "c:k1".into()), "a".into());
+            s.insert(("c".into(), "c:k2".into()), "b".into());
+        }
+        rt.unregister("a");
+        let s = rt.shares.read();
+        assert!(!s.contains_key(&("a".to_string(), "a:k1".to_string())), "from=a 应清");
+        assert!(!s.contains_key(&("c".to_string(), "c:k1".to_string())), "to=a 应清");
+        assert!(s.contains_key(&("c".to_string(), "c:k2".to_string())), "无关条目应保留");
+    }
+
     // ===== DK-14c.1：wat fixture 退役 =====
-    // d2 的 wat 手写组件（guest_minimal/guest_spin）随合约 0.2.0 资源化
+    // d2 的 wat 手写组件（guest_minimal/guest_spin）随合约 0.3.0 资源化
     // 退役：resource 参数在 canonical ABI 中的表操作无法用手写 wat 贴近
     // 真实形态——真组件测试由 tests/guest_e2e.rs 承担（实例缓存/注销/
     // 越权拦截等行为级断言一并迁移）；epoch 打断覆盖由
@@ -1707,11 +1731,11 @@ mod tests {
             "init: func(capability: borrow<capability-token>, plugin-id: string) -> result;",
             "handle-event: func(capability: borrow<capability-token>, event: string, payload: string) -> result;",
         ] {
-            assert!(wit.contains(sig), "WIT 0.2.0 缺签名: {sig}");
+            assert!(wit.contains(sig), "WIT 0.3.0 缺签名: {sig}");
         }
         assert!(
-            wit.contains("package aurora:plugin@0.2.0;"),
-            "合约版本 0.2.0"
+            wit.contains("package aurora:plugin@0.3.0;"),
+            "合约版本 0.3.0"
         );
         assert!(wit.contains("world plugin"), "world 定义在库");
     }

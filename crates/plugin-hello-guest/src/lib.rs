@@ -1,4 +1,4 @@
-//! DK-14c.1 分支响应型模板：plugin-hello-guest（合约 0.2.0）。
+//! DK-14c.1 分支响应型模板：plugin-hello-guest（合约 0.3.0）。
 //!
 //! 绑定自 `../aurora-plugin/wit/aurora-plugin.wit`（单一事实源）生成——
 //! world `plugin` export host 接口（resource capability-token 版）。
