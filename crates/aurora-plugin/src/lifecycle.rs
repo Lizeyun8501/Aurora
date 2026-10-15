@@ -165,6 +165,14 @@ impl Plugin {
     /// DK-15a fail-closed：manifest 含未知 capability 串→Err 拒绝加载
     /// （诊断含非法串与合法清单；不静默忽略）。
     pub fn new(manifest: PluginManifest, mode: PluginMode) -> Result<Self, aurora_core::Error> {
+        // DK-16.1 fail-closed：id 含 `:` → Err（L1 namespace 前缀完整性，
+        // 与 WasmRuntime::register 双侧同语义；A-4 逃逸面堵口）
+        if manifest.id.contains(':') {
+            return Err(aurora_core::Error::InvalidInput(format!(
+                "invalid plugin id `{}`: must not contain ':' (namespace prefix integrity, DK-16.1)",
+                manifest.id
+            )));
+        }
         let capabilities = CapabilityManifest::from_permissions(&manifest.permissions)
             .map_err(|e| aurora_core::Error::InvalidInput(format!("{e}")))?;
         let permissions = manifest
@@ -799,5 +807,30 @@ mod tests {
         assert!(msg.contains("no-such-cap"), "应含非法串 {msg:?}");
         assert!(msg.contains("position 1"), "应含 position {msg:?}");
         assert!(msg.contains("valid set"), "应含合法清单 {msg:?}");
+    }
+
+    /// DK-16.1：id 含 `:` 直接拒（Plugin::new 强签名 Err——A-4 逃逸面堵口，
+    /// 诊断含原串与 DK 编号）。
+    #[test]
+    fn plugin_id_with_colon_rejected_in_lifecycle() {
+        let mut m = sample_manifest("a:b", RuntimeType::Wasm, &["storage"]);
+        m.id = "a:b".into();
+        let Err(err) = Plugin::new(m, PluginMode::Wasm) else {
+            panic!("含 `:` 的 plugin_id 必须拒（namespace 前缀完整性）");
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("a:b"), "诊断应含原串 {msg:?}");
+        assert!(msg.contains("':'"), "诊断应含禁止说明 {msg:?}");
+    }
+
+    /// DK-16.1：嵌套 id 组合——`a` 注册合法，`a:b` 被拒（逃逸组合面）。
+    #[test]
+    fn plugin_id_nested_colon_rejected() {
+        let mut ok = sample_manifest("a", RuntimeType::Wasm, &["storage"]);
+        ok.id = "a".into();
+        assert!(Plugin::new(ok, PluginMode::Wasm).is_ok());
+        let mut bad = sample_manifest("a:b", RuntimeType::Wasm, &["storage"]);
+        bad.id = "a:b".into();
+        assert!(Plugin::new(bad, PluginMode::Wasm).is_err());
     }
 }

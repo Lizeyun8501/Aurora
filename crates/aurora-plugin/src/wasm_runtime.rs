@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// 插件唯一标识（与 `crate::lifecycle::PluginId` 同型）
 pub type PluginId = String;
@@ -572,8 +572,21 @@ impl WasmRuntime {
     }
 
     /// 注册插件及其能力清单。
+    ///
+    /// DK-16.1 fail-closed：plugin_id 含 `:` → 拒绝入库（A-4 审计——
+    /// L1 namespace 前缀校验 `starts_with("{id}:")` 在 id 呈前缀嵌套时
+    /// 可跨命名空间逃逸，如 `a` 与 `a:b`；禁 `:` 保证命名空间扁平且
+    /// 前缀无歧义）。堵口语义：不入 manifests + error 留痕可观测；
+    /// 强签名 Result 化（try_register）随 L2 安装面接线统一收口——
+    /// 届时调用方感知 Err。lifecycle 侧 Plugin::new 已是强签名（Err）。
     pub fn register(&self, plugin_id: impl Into<PluginId>, manifest: CapabilityManifest) {
         let id = plugin_id.into();
+        if id.contains(':') {
+            error!(
+                "register rejected: plugin id `{id}` contains ':' (namespace prefix integrity, DK-16.1)"
+            );
+            return;
+        }
         debug!(
             "wasm runtime: register plugin {} with {} capabilities",
             id,
@@ -1430,6 +1443,21 @@ mod tests {
             .invoke("ghost", "log", &serde_json::json!({}))
             .unwrap_err();
         assert!(matches!(err, crate::Error::NotFound(_)));
+    }
+
+    /// DK-16.1：register 含 `:` 堵口——不入 manifests（error 留痕），
+    /// 后续 invoke 走 NotFound 而非进入 namespace 校验体系。
+    #[test]
+    fn test_register_colon_id_rejected_silently() {
+        let rt = WasmRuntime::with_default_registry();
+        rt.register("a:b", CapabilityManifest::new());
+        assert!(
+            !rt.manifests.read().contains_key("a:b"),
+            "含 `:` 的 id 不得入库（namespace 前缀完整性堵口）"
+        );
+        // 合法 id 正常入库
+        rt.register("a", CapabilityManifest::new());
+        assert!(rt.manifests.read().contains_key("a"));
     }
 
     // ===== DK-14c.1：wat fixture 退役 =====
