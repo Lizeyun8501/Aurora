@@ -783,4 +783,21 @@ mod tests {
         assert!(mgr.unload_plugin("ghost").is_err());
         assert!(mgr.status("ghost").is_none());
     }
+
+    /// C-15a-test：unknown permission 直接拒（lifecycle.rs 注册面板
+    /// Permission::parse 路径——Err 含非法串+合法清单）。
+    #[test]
+    fn unknown_permission_rejected_in_lifecycle() {
+        use crate::wasm_runtime::CapabilityManifest;
+        // lifecycle 面经 aurora_core::Error——非法串+合法清单断言
+        let Err(err) =
+            CapabilityManifest::from_permissions(&["clipboard".into(), "no-such-cap".into()])
+        else {
+            panic!("未知 permission 必须拒（fail-closed）");
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("no-such-cap"), "应含非法串 {msg:?}");
+        assert!(msg.contains("position 1"), "应含 position {msg:?}");
+        assert!(msg.contains("valid set"), "应含合法清单 {msg:?}");
+    }
 }

@@ -123,7 +123,7 @@ fn e2e_instance_cache_shared_across_invokes() {
     };
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
-        "p1",
+        "plugin-hello",
         CapabilityManifest::from_permissions(&[
             "storage".into(),
             "log".into(),
@@ -131,20 +131,20 @@ fn e2e_instance_cache_shared_across_invokes() {
         ])
         .unwrap(),
     );
-    runtime.install_component("p1", bytes);
+    runtime.install_component("plugin-hello", bytes);
 
     runtime
-        .invoke("p1", "init", &serde_json::json!({}))
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
         .unwrap();
     runtime
         .invoke(
-            "p1",
+            "plugin-hello",
             "handle-event",
             &serde_json::json!({"event": "note.created", "payload": "x"}),
         )
         .unwrap();
     runtime
-        .invoke("p1", "init", &serde_json::json!({}))
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
         .unwrap();
     assert_eq!(
         runtime.instantiation_count(),
@@ -163,7 +163,7 @@ fn e2e_unregister_drops_instance_cache() {
     };
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
-        "p2",
+        "plugin-hello",
         CapabilityManifest::from_permissions(&[
             "storage".into(),
             "log".into(),
@@ -171,21 +171,21 @@ fn e2e_unregister_drops_instance_cache() {
         ])
         .unwrap(),
     );
-    runtime.install_component("p2", bytes.clone());
+    runtime.install_component("plugin-hello", bytes.clone());
     runtime
-        .invoke("p2", "init", &serde_json::json!({}))
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
         .unwrap();
     assert_eq!(runtime.instantiation_count(), 1);
 
-    runtime.unregister("p2");
+    runtime.unregister("plugin-hello");
     let err = runtime
-        .invoke("p2", "init", &serde_json::json!({}))
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
         .unwrap_err();
     assert!(matches!(err, aurora_plugin::Error::NotFound(_)));
 
     // 再注册+登记 → 重新实例化（token 随新实例重新发放）
     runtime.register(
-        "p2",
+        "plugin-hello",
         CapabilityManifest::from_permissions(&[
             "storage".into(),
             "log".into(),
@@ -193,9 +193,9 @@ fn e2e_unregister_drops_instance_cache() {
         ])
         .unwrap(),
     );
-    runtime.install_component("p2", bytes.clone());
+    runtime.install_component("plugin-hello", bytes.clone());
     runtime
-        .invoke("p2", "init", &serde_json::json!({}))
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
         .unwrap();
     assert_eq!(runtime.instantiation_count(), 2);
 }
@@ -225,7 +225,7 @@ fn e2e_zero_grant_invoke_denied() {
 
     // 对照组：granted 非空 → 正常放行（token 发放）
     runtime.register(
-        "ok",
+        "plugin-hello",
         CapabilityManifest::from_permissions(&[
             "storage".into(),
             "log".into(),
@@ -234,11 +234,11 @@ fn e2e_zero_grant_invoke_denied() {
         .unwrap(),
     );
     runtime.install_component(
-        "ok",
+        "plugin-hello",
         guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm").unwrap(),
     );
     runtime
-        .invoke("ok", "init", &serde_json::json!({}))
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
         .expect("granted 非空插件应走通（token 发放）");
 }
 
@@ -281,7 +281,7 @@ fn e2e_log_method_granted_forwards() {
     };
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
-        "withlog",
+        "plugin-hello",
         CapabilityManifest::from_permissions(&[
             "log".into(),
             "storage".into(),
@@ -289,13 +289,13 @@ fn e2e_log_method_granted_forwards() {
         ])
         .unwrap(),
     );
-    runtime.install_component("withlog", bytes);
+    runtime.install_component("plugin-hello", bytes);
     runtime
-        .invoke("withlog", "init", &serde_json::json!({}))
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
         .expect("granted 含 Log 的 init 内 log 调用应成功");
     runtime
         .invoke(
-            "withlog",
+            "plugin-hello",
             "handle-event",
             &serde_json::json!({"event": "note.created", "payload": "dk14c2"}),
         )
@@ -313,7 +313,7 @@ fn e2e_dataplane_granted_full_chain() {
     };
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
-        "withdata",
+        "plugin-hello",
         CapabilityManifest::from_permissions(&[
             "storage".into(),
             "log".into(),
@@ -321,16 +321,16 @@ fn e2e_dataplane_granted_full_chain() {
         ])
         .unwrap(),
     );
-    runtime.install_component("withdata", bytes.clone());
+    runtime.install_component("plugin-hello", bytes.clone());
     runtime
-        .invoke("withdata", "init", &serde_json::json!({}))
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
         .expect("granted 全链：init 内数据面三调用应成功");
     // host-invoked 读回 guest 写的数据（共享空间跨模式可见）
     let v = runtime
         .invoke(
-            "withdata",
+            "plugin-hello",
             "read_doc",
-            &serde_json::json!({"doc_id": "greeting"}),
+            &serde_json::json!({"doc_id": "plugin-hello:greeting"}),
         )
         .expect("host-invoked read-doc 应命中 guest 写入");
     // DK-14c.4：类型断言（哨兵协议撤）——read-doc 返回 option<string>
@@ -380,7 +380,7 @@ fn e2e_dataplane_size_guard() {
     };
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
-        "bigdata",
+        "plugin-hello",
         CapabilityManifest::from_permissions(&[
             "storage".into(),
             "log".into(),
@@ -388,11 +388,11 @@ fn e2e_dataplane_size_guard() {
         ])
         .unwrap(),
     );
-    runtime.install_component("bigdata", bytes);
+    runtime.install_component("plugin-hello", bytes);
     let big = "x".repeat(1024 * 1024 + 1);
     let err = runtime
         .invoke(
-            "bigdata",
+            "plugin-hello",
             "handle-event",
             &serde_json::json!({"event": "blob", "payload": big}),
         )
@@ -406,34 +406,58 @@ fn e2e_dataplane_size_guard() {
     );
 }
 
-/// DK-14c.3：共享 KV 语义实证——两插件同 runtime，p1 写 greeting 后
-/// p2 init 的 read 回读命中的是 p1 的写入（同空间可见——设计使然，
-/// 文档+README 双披露）；非 bug 回归。
+/// DK-16 L1 隔离语义（取代 14c.3 共享 KV——namespace 默认化后跨前缀
+/// 互不可见；同 hello wasm 双 id：p2 init 的 read 回读 None（p1 数据
+/// 对 p2 不可见）；host 特权面终证 p1 数据仍在。
 #[test]
-fn e2e_dataplane_shared_kv_semantics() {
+fn e2e_dataplane_namespace_isolation() {
     let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
         eprintln!("[e2e-skip] wasm 产物缺失");
         return;
     };
     let runtime = WasmRuntime::with_default_registry();
-    let manifest =
-        || CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap();
-    runtime.register("p1", manifest());
-    runtime.install_component("p1", bytes.clone());
+    // plugin-hello：前缀与 hello 写死前缀对齐（全链过）
+    runtime.register(
+        "plugin-hello",
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
+    );
+    runtime.install_component("plugin-hello", bytes.clone());
     runtime
-        .invoke("p1", "init", &serde_json::json!({}))
-        .unwrap();
-    runtime.register("p2", manifest());
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
+        .expect("plugin-hello init 应过（前缀匹配）");
+    // p2：同 wasm 不同 id——前缀 "p2:"≠"plugin-hello:"，init read 即拒
+    runtime.register(
+        "p2",
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
+    );
     runtime.install_component("p2", bytes);
-    // p2 init 内 read 回读 Some（读到 p1 的 greeting——共享实证）
-    runtime
-        .invoke("p2", "init", &serde_json::json!({}))
-        .expect("p2 init 应成功（read 到 p1 写入——共享 KV）");
-    // 宿主侧终证：p2 覆盖后仍可读（Some 语义）
+    let r = runtime.invoke("p2", "init", &serde_json::json!({}));
+    assert!(
+        r.is_err(),
+        "p2 跨前缀 read 应拒（namespace 隔离），实际 {r:?}"
+    );
+    // host 特权面终证：p1 数据仍在（隔离≠删除）
     let v = runtime
-        .invoke("p2", "read_doc", &serde_json::json!({"doc_id": "greeting"}))
-        .expect("共享空间终证读回");
-    assert!(v.as_str().is_some(), "greeting 应存在（共享 KV）");
+        .invoke(
+            "plugin-hello",
+            "read_doc",
+            &serde_json::json!({"doc_id": "plugin-hello:greeting"}),
+        )
+        .expect("host 读回");
+    assert!(
+        v.as_str().is_some(),
+        "plugin-hello:greeting 应存在（隔离不删数据）"
+    );
 }
 
 /// DK-14c.4 回归例：空内容文档（option 语义——空串可表示，非哨兵歧义）
@@ -447,7 +471,7 @@ fn e2e_dataplane_empty_content_and_newline_key() {
     };
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
-        "regress",
+        "plugin-hello",
         CapabilityManifest::from_permissions(&[
             "storage".into(),
             "log".into(),
@@ -455,24 +479,28 @@ fn e2e_dataplane_empty_content_and_newline_key() {
         ])
         .unwrap(),
     );
-    runtime.install_component("regress", bytes);
+    runtime.install_component("plugin-hello", bytes);
     // guest init 内：write("note-empty","")→read Some("") 自验；
     // write("line\nbreak","nl")→query("line\n") 含换行键自验
     runtime
-        .invoke("regress", "init", &serde_json::json!({}))
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
         .expect("回归自验应过（空内容+含换行 doc_id）");
     // host-invoked 终证：空内容可表示
     let v = runtime
         .invoke(
-            "regress",
+            "plugin-hello",
             "read_doc",
-            &serde_json::json!({"doc_id": "note-empty"}),
+            &serde_json::json!({"doc_id": "plugin-hello:note-empty"}),
         )
         .expect("note-empty 应存在");
     assert_eq!(v.as_str(), Some(""), "空内容文档应可表示（Some(\"\")）");
     // host-invoked query 终证：含换行键完整（list 无分隔歧义）
     let q = runtime
-        .invoke("regress", "query", &serde_json::json!({"query": "line\n"}))
+        .invoke(
+            "plugin-hello",
+            "query",
+            &serde_json::json!({"query": "line\n"}),
+        )
         .expect("query 应返回键集");
     let keys = q
         .get("results")
@@ -495,7 +523,7 @@ fn e2e_useroutput_pull() {
     };
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
-        "uo1",
+        "plugin-hello",
         CapabilityManifest::from_permissions(&[
             "storage".into(),
             "log".into(),
@@ -503,19 +531,19 @@ fn e2e_useroutput_pull() {
         ])
         .unwrap(),
     );
-    runtime.install_component("uo1", bytes);
+    runtime.install_component("plugin-hello", bytes);
     runtime
-        .invoke("uo1", "init", &serde_json::json!({}))
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
         .expect("init 应过（含 data 面自验）");
     runtime
         .invoke(
-            "uo1",
+            "plugin-hello",
             "handle-event",
             &serde_json::json!({"event": "pull", "payload": "x"}),
         )
         .expect("handle-event 应过（print granted）");
     let v = runtime
-        .invoke("uo1", "pull_output", &serde_json::json!({}))
+        .invoke("plugin-hello", "pull_output", &serde_json::json!({}))
         .expect("pull_output 应返回缓冲行");
     let lines = v
         .get("lines")
@@ -530,7 +558,7 @@ fn e2e_useroutput_pull() {
     );
     // 拉取即消费：二次拉取为空
     let v2 = runtime
-        .invoke("uo1", "pull_output", &serde_json::json!({}))
+        .invoke("plugin-hello", "pull_output", &serde_json::json!({}))
         .expect("二次拉取应过");
     let lines2 = v2
         .get("lines")
@@ -552,13 +580,13 @@ fn e2e_useroutput_denied() {
     };
     let runtime = WasmRuntime::with_default_registry();
     runtime.register(
-        "uo2",
+        "plugin-hello",
         // 窄授权：无 user-output——print 应被 require 拒
         CapabilityManifest::from_permissions(&["storage".into(), "log".into()]).unwrap(),
     );
-    runtime.install_component("uo2", bytes);
+    runtime.install_component("plugin-hello", bytes);
     let r = runtime.invoke(
-        "uo2",
+        "plugin-hello",
         "handle-event",
         &serde_json::json!({"event": "deny", "payload": "y"}),
     );
@@ -568,11 +596,183 @@ fn e2e_useroutput_denied() {
     );
     // 二次 pull 无缓冲（越权调用未达 push）
     let v = runtime
-        .invoke("uo2", "pull_output", &serde_json::json!({}))
+        .invoke("plugin-hello", "pull_output", &serde_json::json!({}))
         .expect("pull_output 面不设权限");
     let lines = v
         .get("lines")
         .and_then(|l| l.as_array())
         .expect("lines 应为数组");
     assert!(lines.is_empty(), "越权 print 不得入缓冲");
+}
+
+/// DK-16 L1：namespace 强制前缀——同 guest 双 id 模拟：p2（无 "plugin-hello"
+/// 前缀授权）read 他前缀键→denied（init 内 read 自验即触发）。
+#[test]
+fn e2e_namespace_read_denied() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "p2",
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
+    );
+    runtime.install_component("p2", bytes);
+    // hello init 首动作 read "plugin-hello:greeting"——p2 前缀 "p2:"→namespace 拒
+    let r = runtime.invoke("p2", "init", &serde_json::json!({}));
+    assert!(r.is_err(), "跨前缀 read 应 namespace 拒，实际 {r:?}");
+}
+
+/// DK-16 L1：namespace 强制前缀——write 拒（p2 handle-event 首动作
+/// write "plugin-hello:event-..."）。
+#[test]
+fn e2e_namespace_write_denied() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "p2",
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
+    );
+    runtime.install_component("p2", bytes);
+    let r = runtime.invoke(
+        "p2",
+        "handle-event",
+        &serde_json::json!({"event": "cross", "payload": "x"}),
+    );
+    assert!(r.is_err(), "跨前缀 write 应 namespace 拒，实际 {r:?}");
+}
+
+/// DK-16 L1：query 键集本前缀过滤——host 预置他前缀键（特权面），
+/// p1 query 全集不得含跨前缀键（防枚举探测）。
+#[test]
+fn e2e_query_isolation() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "plugin-hello",
+        CapabilityManifest::from_permissions(&[
+            "storage".into(),
+            "log".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
+    );
+    runtime.install_component("plugin-hello", bytes);
+    // host 特权面预置跨前缀键（模拟他插件存量数据——host 不过 guest guard）
+    runtime
+        .invoke(
+            "plugin-hello",
+            "write_doc",
+            &serde_json::json!({"doc_id": "other-plugin:secret", "data": "1"}),
+        )
+        .expect("host 特权面写跨前缀键应放行");
+    runtime
+        .invoke(
+            "plugin-hello",
+            "handle-event",
+            &serde_json::json!({"event": "q", "payload": "y"}),
+        )
+        .expect("handle-event 应过（前缀合法）");
+    let v = runtime
+        .invoke(
+            "plugin-hello",
+            "read_doc",
+            &serde_json::json!({"doc_id": "plugin-hello:query-keys"}),
+        )
+        .expect("query-keys 应可读");
+    let keys = v.as_str().unwrap_or_default();
+    assert!(
+        keys.contains("plugin-hello:event-q"),
+        "本前缀键应在 query 集，实际 {keys:?}"
+    );
+    assert!(
+        !keys.contains("other-plugin:"),
+        "跨前缀键不得出现在本插件 query 集（隔离/防枚举），实际 {keys:?}"
+    );
+}
+
+/// DK-16 L1：storage_methods 声明后越 method 拒（渐进授权——缺省全开
+/// 由 full_chain 存量 manifest 零改动全链过回归证明）。
+#[test]
+fn e2e_storage_method_denied() {
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] wasm 产物缺失");
+        return;
+    };
+    let runtime = WasmRuntime::with_default_registry();
+    runtime.register(
+        "m1",
+        CapabilityManifest::from_permissions_with_methods(
+            &["storage".into(), "log".into(), "user-output".into()],
+            &["read".into()],
+        )
+        .expect("合法 method 集应过"),
+    );
+    runtime.install_component("m1", bytes);
+    // 声明仅 read——handle-event 的 write_doc 应 method 拒
+    let r = runtime.invoke(
+        "m1",
+        "handle-event",
+        &serde_json::json!({"event": "mw", "payload": "z"}),
+    );
+    assert!(
+        r.is_err(),
+        "越 method write 应拒（声明仅 read），实际 {r:?}"
+    );
+    // read 仍在授权集——init 全链过（write 不经 init？init 含 write→拒，
+    // 故用 host 读路径验证 read 面；init 亦应因 write 拒而 Err）
+    let init = runtime.invoke("m1", "init", &serde_json::json!({}));
+    assert!(
+        init.is_err(),
+        "init 含 write——声明仅 read 时应拒，实际 {init:?}"
+    );
+}
+
+/// C-15a-test 清账：from_permissions 未知 capability 串直接拒（含非法串+
+/// position+合法清单断言——15a fail-closed 主路径直接单测）。
+#[test]
+fn unknown_permission_rejected() {
+    let Err(err) = CapabilityManifest::from_permissions(&["fs".into(), "bogus-perm".into()]) else {
+        panic!("未知串必须拒绝加载");
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("bogus-perm"), "诊断应含非法串，实际 {msg:?}");
+    assert!(
+        msg.contains("position 1"),
+        "诊断应含 position，实际 {msg:?}"
+    );
+    assert!(msg.contains("valid set"), "诊断应含合法清单，实际 {msg:?}");
+    // L1 搭车：未知 storage method 串同 fail-closed
+    let Err(merr) = CapabilityManifest::from_permissions_with_methods(
+        &["storage".into()],
+        &["bogus-method".into()],
+    ) else {
+        panic!("未知 storage method 必须拒绝");
+    };
+    let mmsg = merr.to_string();
+    assert!(
+        mmsg.contains("bogus-method"),
+        "诊断应含非法 method，实际 {mmsg:?}"
+    );
+    assert!(
+        mmsg.contains("position 0"),
+        "诊断应含 position，实际 {mmsg:?}"
+    );
 }

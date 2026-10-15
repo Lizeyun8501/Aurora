@@ -75,6 +75,29 @@ impl Capability {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CapabilityManifest {
     pub capabilities: HashSet<Capability>,
+    /// DK-16 L1：None=三方法全开（缺省，存量 manifest 零改动兼容）；
+    /// Some(set)=仅授权集内方法（require 链第三环）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_methods: Option<HashSet<StorageMethod>>,
+}
+
+/// DK-16 L1：storage 方法级授权（可选渐进）——声明后越 method 拒
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StorageMethod {
+    Read,
+    Write,
+    Query,
+}
+
+impl StorageMethod {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "read" => Some(StorageMethod::Read),
+            "write" => Some(StorageMethod::Write),
+            "query" => Some(StorageMethod::Query),
+            _ => None,
+        }
+    }
 }
 
 impl CapabilityManifest {
@@ -101,7 +124,30 @@ impl CapabilityManifest {
                 )));
             }
         }
-        Ok(Self { capabilities: caps })
+        Ok(Self {
+            capabilities: caps,
+            storage_methods: None,
+        })
+    }
+
+    /// DK-16 L1：带 storage 方法级授权的构造（fail-closed：未知 method 串拒）。
+    /// require 链：token → namespace 前缀 → method 授权（仅当本字段声明）。
+    pub fn from_permissions_with_methods(
+        perms: &[String],
+        methods: &[String],
+    ) -> Result<Self, crate::Error> {
+        let mut manifest = Self::from_permissions(perms)?;
+        let mut set = HashSet::new();
+        for (i, m) in methods.iter().enumerate() {
+            let Some(sm) = StorageMethod::parse(m) else {
+                return Err(crate::Error::InvalidInput(format!(
+                    "unknown storage method `{m}` at position {i}; valid set: [read, write, query]"
+                )));
+            };
+            set.insert(sm);
+        }
+        manifest.storage_methods = Some(set);
+        Ok(manifest)
     }
 
     /// 追加一个能力
@@ -997,17 +1043,8 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
         doc_id: String,
     ) -> wasmtime::Result<Option<String>> {
         let plugin_id = self.plugin_id.clone();
-        let granted = self
-            .table
-            .get(&token)
-            .map(|d| d.granted.contains(&Capability::Storage))
-            .unwrap_or(false);
-        if !granted {
-            eprintln!("[audit-host] plugin={plugin_id} event=read-doc result=denied reason=data-denied doc_id={doc_id}");
-            return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
-                Capability::Storage,
-            )));
-        }
+        self.storage_guard(&token, StorageMethod::Read, "read-doc", Some(&doc_id))?;
+        let _ = &plugin_id;
         if !self.read_first_called {
             self.read_first_called = true;
             eprintln!("[audit-host] plugin={plugin_id} event=read-doc result=ok reason=first-call");
@@ -1030,17 +1067,8 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
         data: String,
     ) -> wasmtime::Result<Result<(), String>> {
         let plugin_id = self.plugin_id.clone();
-        let granted = self
-            .table
-            .get(&token)
-            .map(|d| d.granted.contains(&Capability::Storage))
-            .unwrap_or(false);
-        if !granted {
-            eprintln!("[audit-host] plugin={plugin_id} event=write-doc result=denied reason=data-denied size={}", data.len());
-            return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
-                Capability::Storage,
-            )));
-        }
+        self.storage_guard(&token, StorageMethod::Write, "write-doc", Some(&doc_id))?;
+        let _ = &plugin_id;
         // 1 MiB 容量 guard（超限走内层 Err——协议 err 非 trap）
         if data.len() > 1024 * 1024 {
             eprintln!("[audit-host] plugin={plugin_id} event=write-doc result=denied reason=size-exceeded doc_id={doc_id} size={}", data.len());
@@ -1064,17 +1092,9 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
         pattern: String,
     ) -> wasmtime::Result<Vec<String>> {
         let plugin_id = self.plugin_id.clone();
-        let granted = self
-            .table
-            .get(&token)
-            .map(|d| d.granted.contains(&Capability::Storage))
-            .unwrap_or(false);
-        if !granted {
-            eprintln!("[audit-host] plugin={plugin_id} event=query-docs result=denied reason=data-denied pattern={pattern}");
-            return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
-                Capability::Storage,
-            )));
-        }
+        // DK-16 L1：query 无 doc_id——namespace 隔离走键集本前缀过滤（防枚举）
+        self.storage_guard(&token, StorageMethod::Query, "query-docs", None)?;
+        let _ = &plugin_id;
         if !self.query_first_called {
             self.query_first_called = true;
             eprintln!(
@@ -1084,13 +1104,62 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
         let Some(docs) = self.docs.as_ref() else {
             return Ok(Vec::new());
         };
-        // 键检索（contains）→键集 Vec（类型保证，无分隔协议歧义）
+        // 键检索（contains）→键集 Vec（类型保证，无分隔协议歧义）；
+        // L1：键集过滤为仅本插件前缀——跨插件键不可见，隔离在列表面同样成立
+        let prefix = format!("{plugin_id}:");
         Ok(docs
             .read()
             .keys()
-            .filter(|k| k.contains(&pattern))
+            .filter(|k| k.starts_with(&prefix) && k.contains(&pattern))
             .cloned()
             .collect())
+    }
+}
+
+/// DK-16 L1：storage require 链——token → namespace 前缀 → method 授权。
+/// 拒绝语义与越权一致（CapabilityDenied）+差异化审计留痕。
+impl WasmStoreCtx {
+    fn storage_guard(
+        &mut self,
+        token: &wasmtime::component::Resource<CapabilityTokenData>,
+        method: StorageMethod,
+        event: &str,
+        doc_id: Option<&str>,
+    ) -> wasmtime::Result<()> {
+        let plugin_id = self.plugin_id.clone();
+        let granted = self
+            .table
+            .get(token)
+            .map(|d| d.granted.contains(&Capability::Storage))
+            .unwrap_or(false);
+        if !granted {
+            eprintln!(
+                "[audit-host] plugin={plugin_id} event={event} result=denied reason=data-denied"
+            );
+            return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
+                Capability::Storage,
+            )));
+        }
+        // 第二环：namespace 强制前缀（query 无 doc_id——隔离走键集过滤）
+        if let Some(doc_id) = doc_id {
+            let prefix = format!("{plugin_id}:");
+            if !doc_id.starts_with(&prefix) {
+                eprintln!("[audit-host] plugin={plugin_id} event={event} result=denied reason=namespace-denied doc_id={doc_id}");
+                return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
+                    Capability::Storage,
+                )));
+            }
+        }
+        // 第三环：method 授权（仅当 manifest 声明 storage_methods——缺省全开）
+        if let Some(methods) = self.manifest.storage_methods.as_ref() {
+            if !methods.contains(&method) {
+                eprintln!("[audit-host] plugin={plugin_id} event={event} result=denied reason=method-denied method={event}");
+                return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
+                    Capability::Storage,
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
