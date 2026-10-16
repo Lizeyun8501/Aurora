@@ -25,6 +25,7 @@ pub use write_path::{
     NoteKind, TreeNode, DAILY_TEMPLATE_KEY, DEFAULT_DAILY_TEMPLATE,
 };
 pub mod l3_domain;
+pub mod links; // DK-双向链接S1: wiki链接提取+边索引(出链/反链倒排)
 pub mod mcp_registry; // V23-I5: MCP 数据中枢工具契约（稳定层）
 pub mod mirror; // V23-I2: Mirror 单向导出
 pub mod time_machine; // V23-I4: 时间机器快照回溯
