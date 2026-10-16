@@ -331,7 +331,7 @@ pub fn run() {
             // DK-审计面落盘：启动回灌上次快照（损坏 fail-open 返回 0）
             match tauri::async_runtime::block_on(aurora_plugin::audit::restore_audit(
                 &plugin_state.runtime,
-                &booted_arc.core.kv_store,
+                &*booted_arc.core.kv_store,
             )) {
                 Ok(n) if n > 0 => info!(n, "audit chain restored from snapshot"),
                 _ => {}
