@@ -132,6 +132,8 @@ use aurora_plugin::marketplace::Marketplace;
 use aurora_plugin::wasm_runtime::WasmRuntime;
 
 /// 插件运行时状态（setup 时 manage；market 注入 SecurityCryptoProvider）。
+/// Clone：hourly tick 需 clone 进 async spawn（成员均 Arc——浅拷贝共享）。
+#[derive(Clone)]
 pub struct PluginState {
     pub runtime: Arc<WasmRuntime>,
     pub market: Arc<Marketplace>,
