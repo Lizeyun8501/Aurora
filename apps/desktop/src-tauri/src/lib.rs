@@ -25,7 +25,7 @@ use aurora_core::app_core::AppCore;
 use aurora_core::l2_engines::hybrid_search::HybridSearcher;
 use aurora_core::l2_engines::vector_search::{vector_index_for, EmbedProvider, VectorIndex};
 use aurora_security::LocalDekVault;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use aurora_ai::embed::EmbedFromAiProvider;
 
