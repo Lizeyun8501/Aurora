@@ -222,7 +222,7 @@ pub fn cmd_market_list(state: State<'_, PluginState>) -> Vec<aurora_plugin::Plug
 pub async fn cmd_market_install(
     state: State<'_, PluginState>,
     listing_id: String,
-    manifest: PluginManifest,
+    manifest: Option<PluginManifest>,
     require_verified: Option<bool>,
 ) -> Result<PluginManifest, String> {
     let booted = crate::sync_commands::get_booted()?;

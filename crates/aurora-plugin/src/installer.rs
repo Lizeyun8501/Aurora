@@ -121,7 +121,7 @@ pub async fn install_from_market(
     market: &Marketplace,
     fetcher: &dyn crate::fetcher::PluginFetcher,
     listing_id: &str,
-    manifest: PluginManifest,
+    manifest_override: Option<PluginManifest>,
     require_verified: bool,
 ) -> Result<PluginManifest, crate::Error> {
     let listing = market
@@ -136,6 +136,11 @@ pub async fn install_from_market(
             listing.source
         )));
     }
+    // manifest 派生（语义层——UI/调用方不拼 manifest）：override 优先
+    // （未来随包 manifest 卡注入点），缺省走 DK-43 to_manifest 传播
+    // （sandbox 差异化随 listing；permissions 零集=最小暴露面，权限授予链另卡）
+    let manifest = manifest_override
+        .unwrap_or_else(|| listing.to_manifest(String::new(), Vec::new(), Vec::new(), Vec::new()));
     let url = listing.download_url.clone();
     let wasm_bytes = fetcher.fetch(&url).await?;
     install_plugin(runtime, kv, market, listing_id, manifest, &wasm_bytes).await
@@ -352,17 +357,9 @@ pub(crate) mod tests {
         let market = market_listing("hello", &sha256_hex(WASM), PluginSource::Local, false);
         let fetcher = MockFetcher::new();
         fetcher.route("local://test", WASM.to_vec());
-        let m = install_from_market(
-            &runtime,
-            &kv,
-            &market,
-            &fetcher,
-            "hello",
-            manifest("hello"),
-            true,
-        )
-        .await
-        .expect("Local 豁免 verified，全链应过");
+        let m = install_from_market(&runtime, &kv, &market, &fetcher, "hello", None, true)
+            .await
+            .expect("Local 豁免 verified，全链应过");
         assert_eq!(m.id, "hello");
         assert_eq!(
             kv.get("plugins:blob:hello").await.unwrap().as_deref(),
@@ -377,17 +374,9 @@ pub(crate) mod tests {
         let market = market_listing("hello", &sha256_hex(WASM), PluginSource::Official, false);
         let fetcher = MockFetcher::new();
         fetcher.route("local://test", WASM.to_vec());
-        let err = install_from_market(
-            &runtime,
-            &kv,
-            &market,
-            &fetcher,
-            "hello",
-            manifest("hello"),
-            true,
-        )
-        .await
-        .unwrap_err();
+        let err = install_from_market(&runtime, &kv, &market, &fetcher, "hello", None, true)
+            .await
+            .unwrap_err();
         assert!(
             matches!(err, crate::Error::SignatureInvalid(ref m) if m.contains("not verified")),
             "Official 未 verified 应拒装，实际 {err:?}"
@@ -402,17 +391,9 @@ pub(crate) mod tests {
         let market = market_listing("hello", &sha256_hex(WASM), PluginSource::ThirdParty, false);
         let fetcher = MockFetcher::new();
         fetcher.route("local://test", WASM.to_vec());
-        install_from_market(
-            &runtime,
-            &kv,
-            &market,
-            &fetcher,
-            "hello",
-            manifest("hello"),
-            false,
-        )
-        .await
-        .expect("require_verified=false 显式降权应放行");
+        install_from_market(&runtime, &kv, &market, &fetcher, "hello", None, false)
+            .await
+            .expect("require_verified=false 显式降权应放行");
     }
 
     #[tokio::test]
@@ -422,17 +403,9 @@ pub(crate) mod tests {
         let market = market_listing("hello", &sha256_hex(WASM), PluginSource::Official, true);
         let fetcher = MockFetcher::new();
         fetcher.route("local://test", WASM.to_vec());
-        install_from_market(
-            &runtime,
-            &kv,
-            &market,
-            &fetcher,
-            "hello",
-            manifest("hello"),
-            true,
-        )
-        .await
-        .expect("Official verified=true 应过");
+        install_from_market(&runtime, &kv, &market, &fetcher, "hello", None, true)
+            .await
+            .expect("Official verified=true 应过");
     }
 
     #[tokio::test]
@@ -442,17 +415,9 @@ pub(crate) mod tests {
         let market = market_listing("hello", &sha256_hex(WASM), PluginSource::Local, true);
         // Miss：fetcher 无此 url → Network 错误传播（六环不触达）
         let fetcher = MockFetcher::new();
-        let err = install_from_market(
-            &runtime,
-            &kv,
-            &market,
-            &fetcher,
-            "hello",
-            manifest("hello"),
-            true,
-        )
-        .await
-        .unwrap_err();
+        let err = install_from_market(&runtime, &kv, &market, &fetcher, "hello", None, true)
+            .await
+            .unwrap_err();
         assert!(matches!(err, crate::Error::Network(_)));
         assert!(kv.get("plugins:installed:hello").await.unwrap().is_none());
     }
@@ -466,17 +431,9 @@ pub(crate) mod tests {
         let market = market_listing("hello", &sha256_hex(&huge), PluginSource::Local, true);
         let fetcher = MockFetcher::new();
         fetcher.route("local://test", huge);
-        let err = install_from_market(
-            &runtime,
-            &kv,
-            &market,
-            &fetcher,
-            "hello",
-            manifest("hello"),
-            true,
-        )
-        .await
-        .unwrap_err();
+        let err = install_from_market(&runtime, &kv, &market, &fetcher, "hello", None, true)
+            .await
+            .unwrap_err();
         assert!(matches!(err, crate::Error::InvalidInput(_)));
     }
 

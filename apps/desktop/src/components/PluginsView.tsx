@@ -34,21 +34,6 @@ interface MarketListing {
   verified: boolean;
 }
 
-/** 市场安装载荷：listing + manifest（安装六环的 id 一致环对账）。 */
-interface MarketInstallPayload {
-  listingId: string;
-  manifest: {
-    id: string;
-    name: string;
-    version: string;
-    author: string;
-    description: string;
-    permissions: readonly string[];
-    mode: string;
-  };
-  requireVerified: boolean;
-}
-
 interface PluginsViewProps {
   invoke: InvokeFn | null;
 }
@@ -165,29 +150,16 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
     }
   };
 
-  /** 市场安装（listing + 同名 manifest——六环 id 一致环对账）。 */
+  /** 市场安装（语义层 to_manifest 派生——UI 不拼 manifest，DK-43 传播收口）。 */
   const installFromMarket = async (l: MarketListing) => {
     if (!invoke) return;
     setInstalling(l.id);
     setStatus(`正在安装 ${l.id}（${l.source}${l.verified ? ' · verified' : ' · 未 verified'}）…`);
     try {
-      const payload: MarketInstallPayload = {
-        listingId: l.id,
-        manifest: {
-          id: l.id,
-          name: l.name,
-          version: l.version,
-          author: l.author,
-          description: l.description,
-          permissions: [],
-          mode: 'Wasm',
-        },
-        requireVerified: true,
-      };
       const m = (await invoke('cmd_market_install', {
-        listingId: payload.listingId,
-        manifest: payload.manifest,
-        requireVerified: payload.requireVerified,
+        listingId: l.id,
+        manifest: null,
+        requireVerified: true,
       })) as InstalledPlugin;
       setStatus(`已安装 ${m.id} v${m.version}`);
       await refresh();
