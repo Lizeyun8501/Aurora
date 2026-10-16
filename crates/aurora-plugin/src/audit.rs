@@ -40,6 +40,8 @@ pub struct AuditEntry {
 pub struct AuditRing {
     cap: usize,
     inner: Mutex<VecDeque<AuditEntry>>,
+    /// 未落盘计数（push 递增/persist 成功清零——省写：无新行不重写快照）。
+    dirty: std::sync::atomic::AtomicUsize,
 }
 
 impl AuditRing {
@@ -50,7 +52,18 @@ impl AuditRing {
         Self {
             cap: cap.max(1),
             inner: Mutex::new(VecDeque::new()),
+            dirty: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    /// 未落盘行数（0=快照与 ring 一致，persist 可跳写）。
+    pub fn dirty(&self) -> usize {
+        self.dirty.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// persist 成功后清零（audit::persist_audit 语义）。
+    pub fn mark_clean(&self) {
+        self.dirty.store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// 追加一条（满则丢最旧）。
@@ -60,6 +73,8 @@ impl AuditRing {
             q.pop_front();
         }
         q.push_back(entry);
+        self.dirty
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// 按插入序（旧→新）返回最近 `limit` 条；`plugin` 为 Some 时按插件过滤。
@@ -133,12 +148,16 @@ pub async fn persist_audit(
     if snap.len() > SNAPSHOT_CAP {
         snap.drain(..snap.len() - SNAPSHOT_CAP); // 丢最旧，保留最近 SNAPSHOT_CAP 条
     }
+    if runtime.audit_dirty() == 0 {
+        return Ok(0); // 无新行：快照与 ring 一致，跳写（省写优化）
+    }
     let n = snap.len();
     let bytes = bincode::serialize(&snap)
         .map_err(|e| crate::Error::InvalidInput(format!("audit snapshot serialize: {e}")))?;
     kv.set(AUDIT_SNAPSHOT_KEY, &bytes)
         .await
         .map_err(|e| crate::Error::Kv(e.to_string()))?;
+    runtime.audit_mark_clean();
     Ok(n)
 }
 

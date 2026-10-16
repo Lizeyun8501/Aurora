@@ -103,12 +103,16 @@ pub async fn install_plugin(
     // 环 6：KV 持久化（元数据 + blob——启动恢复数据源）
     let meta = serde_json::to_vec(&manifest)
         .map_err(|e| crate::Error::InvalidManifest(format!("manifest serialize: {e}")))?;
-    kv.set(&format!("{INSTALLED_PREFIX}{}", manifest.id), &meta)
-        .await
-        .map_err(kv_err)?;
-    kv.set(&format!("{BLOB_PREFIX}{}", manifest.id), wasm_bytes)
-        .await
-        .map_err(kv_err)?;
+    // 批量落库（meta+blob 单事务——batch_set trait 既有面）
+    kv.batch_set(&[
+        (
+            format!("{INSTALLED_PREFIX}{}", manifest.id).as_str(),
+            meta.as_slice(),
+        ),
+        (format!("{BLOB_PREFIX}{}", manifest.id).as_str(), wasm_bytes),
+    ])
+    .await
+    .map_err(kv_err)?;
     Ok(manifest)
 }
 

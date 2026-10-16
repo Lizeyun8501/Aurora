@@ -610,6 +610,16 @@ impl WasmRuntime {
         self.audit.extend_history(entries);
     }
 
+    /// 未落盘审计行数（0=快照一致，persist 可跳写）。
+    pub fn audit_dirty(&self) -> usize {
+        self.audit.dirty()
+    }
+
+    /// persist 成功后清零 dirty（由 audit::persist_audit 调用）。
+    pub fn audit_mark_clean(&self) {
+        self.audit.mark_clean();
+    }
+
     /// 审计双写便捷入口（产生面调用：eprintln 保留 + ring 可查询）。
     pub(crate) fn audit_log(
         &self,
