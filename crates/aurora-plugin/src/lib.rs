@@ -11,6 +11,7 @@
 //! - [`marketplace`]：去中心化插件市场、Ed25519 签名验证与更新检测。
 //! - [`hot_update`]：后台预加载、确认切换、失败回滚与金丝雀发布。
 
+pub mod audit;
 pub mod fetcher;
 pub mod hot_update;
 pub mod iframe_runtime;

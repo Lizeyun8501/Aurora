@@ -275,3 +275,19 @@ pub async fn cmd_plugin_invoke(
     .await
     .map_err(|e| format!("join: {e}"))?
 }
+
+/// 插件审计链查询（DK-审计面：内存环形缓冲最近 N 条，可按插件过滤——
+/// stderr 双写保留；落盘随同步卡）。
+///
+/// # Errors
+/// 应用未初始化。
+#[tauri::command]
+pub async fn cmd_plugin_audit_logs(
+    state: State<'_, PluginState>,
+    limit: Option<usize>,
+    plugin_id: Option<String>,
+) -> Result<Vec<aurora_plugin::audit::AuditEntry>, String> {
+    Ok(state
+        .runtime
+        .audit_recent(limit.unwrap_or(100).min(1024), plugin_id.as_deref()))
+}

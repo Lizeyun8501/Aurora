@@ -53,6 +53,16 @@ interface PluginsViewProps {
   invoke: InvokeFn | null;
 }
 
+/** 审计行（AuditEntry tauri 投影——字段与 Rust serde Serialize 对齐）。 */
+interface AuditEntry {
+  ts: string;
+  plugin: string;
+  event: string;
+  result: string;
+  reason: string;
+  detail: string;
+}
+
 const S = {
   row: {
     display: 'flex',
@@ -87,6 +97,8 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
   const [listings, setListings] = useState<MarketListing[]>([]);
   const [installing, setInstalling] = useState<string>('');
   const [status, setStatus] = useState<string>('');
+  /** 审计链查看态（DK-审计面：选中插件的最近审计行） */
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
 
   const refresh = useCallback(async () => {
     if (!invoke) return;
@@ -136,6 +148,20 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
       setStatus(`${id} invoke → ${JSON.stringify(out)}`);
     } catch (e) {
       setStatus(`${id} invoke 拒绝/失败: ${String(e)}`);
+    }
+  };
+  /** 审计链查看（DK-审计面：内存环形缓冲最近 50 条，按插件过滤）。 */
+  const showAudit = async (id: string) => {
+    if (!invoke) return;
+    try {
+      const rows = (await invoke('cmd_plugin_audit_logs', {
+        limit: 50,
+        pluginId: id,
+      })) as AuditEntry[];
+      setAudit(rows);
+      setStatus(`审计链 ${id}：${rows.length} 条`);
+    } catch (e) {
+      setStatus(`审计查询失败: ${String(e)}`);
     }
   };
 
@@ -198,6 +224,9 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
               <button style={S.smoke} onClick={() => void smokeInvoke(p.id)}>
                 invoke 冒烟
               </button>
+              <button style={S.smoke} onClick={() => void showAudit(p.id)}>
+                审计
+              </button>
               <button style={S.danger} onClick={() => void uninstall(p.id)}>
                 卸载
               </button>
@@ -233,6 +262,21 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
               >
                 {installing === l.id ? '安装中…' : '安装'}
               </button>
+            </div>
+          ))}
+        </section>
+      )}
+      {audit.length > 0 && (
+        <section aria-label="审计链" style={{ marginTop: 16 }}>
+          <h2 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600 }}>审计链（最近 {audit.length} 条）</h2>
+          {audit.map((a, i) => (
+            <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid #f3f4f6', fontSize: 12 }}>
+              <span style={{ color: '#9ca3af' }}>{a.ts}</span>{' '}
+              <span style={{ color: a.result === 'ok' ? '#16a34a' : '#dc2626' }}>
+                {a.event}/{a.result}
+              </span>{' '}
+              {a.reason !== '-' && <span style={S.meta}>{a.reason}</span>}{' '}
+              {a.detail && <span style={S.meta}>{a.detail}</span>}
             </div>
           ))}
         </section>

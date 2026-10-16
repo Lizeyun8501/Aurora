@@ -970,3 +970,70 @@ fn e2e_share_revoke_blocks_read() {
     );
     assert!(denied.is_err(), "revoke 后 read 应拒，实际 {denied:?}");
 }
+
+/// DK-审计面：结构化审计链落环验证——真实执行（init/handle-event/零权限拒）
+/// 产生 AuditEntry（eprintln 双写保留），audit_recent 可查询。
+/// 产生面纪律：stderr 可观测 + ring 可查询（stderr 不再是唯一出口）。
+#[test]
+fn e2e_structured_audit_ring_records_real_executions() {
+    let runtime = WasmRuntime::with_default_registry();
+
+    // 1) 零权限件 init 拒——denied 审计行入环（零权限件先 register+install
+    //    ——未注册件走 NotFound，不产生审计行，与既有 eprintln 语义一致）
+    let Some(denied_bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm")
+    else {
+        eprintln!("[e2e-skip] hello: wasm 产物缺失");
+        return;
+    };
+    runtime.register("denied", CapabilityManifest::new());
+    runtime.install_component("denied", denied_bytes);
+    runtime
+        .invoke("denied", "init", &serde_json::json!({}))
+        .expect_err("zero-grant init must be denied");
+    let denied_rows = runtime.audit_recent(50, Some("denied"));
+    assert!(
+        denied_rows
+            .iter()
+            .any(|e| e.event == "init" && e.result == "denied" && e.reason == "no-token"),
+        "零权限拒应有结构化 denied 审计行: {:?}",
+        denied_rows
+    );
+
+    // 2) 真件 init/handle-event ok——ok 审计行入环
+    let Some(bytes) = guest_wasm_bytes("plugin-hello-guest", "plugin_hello_guest.wasm") else {
+        eprintln!("[e2e-skip] hello: wasm 产物缺失");
+        return;
+    };
+    runtime.install_component("plugin-hello", bytes);
+    runtime.register(
+        "plugin-hello",
+        CapabilityManifest::from_permissions(&[
+            "fs".into(),
+            "log".into(),
+            "storage".into(),
+            "user-output".into(),
+        ])
+        .unwrap(),
+    );
+    runtime
+        .invoke("plugin-hello", "init", &serde_json::json!({}))
+        .expect("hello init ok");
+    let ok_rows = runtime.audit_recent(50, Some("plugin-hello"));
+    assert!(
+        ok_rows
+            .iter()
+            .any(|e| e.event == "init" && e.result == "ok"),
+        "hello init 应有 ok 审计行: {:?}",
+        ok_rows
+    );
+
+    // 3) 查询面形态：ts 非空 + serde 序列化（tauri DTO 投影前置）
+    let all = runtime.audit_recent(100, None);
+    assert!(all.len() >= 2, "至少两条审计: {:?}", all.len());
+    for e in &all {
+        assert!(!e.ts.is_empty());
+        assert!(serde_json::to_string(e).is_ok());
+    }
+    // 新→旧序（recent 语义）：最后一条比第一条不早（同 ts 秒级可能相等，比 plugin 序）
+    assert_eq!(all.last().expect("non-empty").plugin, "plugin-hello");
+}

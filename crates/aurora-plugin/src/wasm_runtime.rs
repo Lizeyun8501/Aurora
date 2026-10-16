@@ -470,6 +470,10 @@ pub struct WasmRuntime {
     /// A-1：调用方上下文（内控=None 直通；IPC 接线时 Some(session)——
     /// with_ctx 调用期间临时挂载）
     caller_ctx: RwLock<Option<CallerCtx>>,
+    /// DK-审计面：结构化审计环形缓冲（eprintln 双写——stderr 可观测 +
+    /// audit_recent 可查询；定容 1024 满丢最旧防刷爆）。Arc 共享给
+    /// WasmStoreCtx（宿主回调产生面直写，无需回指 runtime）。
+    audit: std::sync::Arc<crate::audit::AuditRing>,
 }
 
 /// DK-14d.2：Store 上下文——宿主函数实现（d3 宿主回调接线）侧读取。
@@ -499,6 +503,9 @@ struct WasmStoreCtx {
     user_output: Option<Arc<RwLock<UserOutputBuf>>>,
     /// DK-17 L2：授权图谱句柄（read 豁免检查——runtime.shares 注入）
     shares: Arc<RwLock<HashMap<(String, String), String>>>,
+    /// DK-审计面：审计环形缓冲句柄（宿主回调产生面双写直写——
+    /// runtime.audit 同一 Arc，audit_recent 经 runtime 查询）
+    audit: std::sync::Arc<crate::audit::AuditRing>,
 }
 
 impl wasmtime_wasi::WasiView for WasmStoreCtx {
@@ -579,7 +586,36 @@ impl WasmRuntime {
             user_outputs: Arc::new(RwLock::new(HashMap::new())),
             shares: Arc::new(RwLock::new(HashMap::new())),
             caller_ctx: RwLock::new(None),
+            audit: std::sync::Arc::new(crate::audit::AuditRing::default()),
         }
+    }
+
+    /// 结构化审计链查询（DK-审计面）：最近 `limit` 条，`plugin` 过滤可选。
+    /// 内存环形缓冲（满丢最旧），stderr 双写保留（产生面纪律）。
+    pub fn audit_recent(
+        &self,
+        limit: usize,
+        plugin: Option<&str>,
+    ) -> Vec<crate::audit::AuditEntry> {
+        self.audit.recent(limit, plugin)
+    }
+
+    /// 审计双写便捷入口（产生面调用：eprintln 保留 + ring 可查询）。
+    pub(crate) fn audit_log(
+        &self,
+        plugin: impl AsRef<str>,
+        event: &str,
+        result: &str,
+        reason: &str,
+        detail: &str,
+    ) {
+        self.audit.push(crate::audit::entry(
+            plugin.as_ref(),
+            event,
+            result,
+            reason,
+            detail,
+        ));
     }
 
     /// 使用默认内存宿主函数构造运行时。
@@ -748,6 +784,7 @@ impl WasmRuntime {
                 read_first_called: false,
                 query_first_called: false,
                 print_first_called: false,
+                audit: self.audit.clone(),
                 docs: self.registry.docs_store(),
                 user_output: {
                     let slots = self.user_outputs.clone();
@@ -843,6 +880,7 @@ impl WasmRuntime {
         // DK-14c.1：token 句柄前置校验（无 token=零权限插件——不发不发调）
         let Some(token) = guard.token else {
             eprintln!("[audit-host] plugin={plugin_id} event=init result=denied reason=no-token");
+            self.audit_log(plugin_id, "init", "denied", "no-token", "");
             return Err(crate::Error::CapabilityDenied(Capability::Storage));
         };
         let PluginInstance {
@@ -865,6 +903,7 @@ impl WasmRuntime {
             crate::Error::WasmRuntime(format!("export `init` post-return failed: {e}"))
         })?;
         eprintln!("[audit-host] plugin={plugin_id} event=init result=ok");
+        self.audit_log(plugin_id, "init", "ok", "-", "");
         Ok(serde_json::json!({
             "ok": true,
             "plugin": plugin_id,
@@ -886,6 +925,7 @@ impl WasmRuntime {
             eprintln!(
                 "[audit-host] plugin={plugin_id} event=handle-event result=denied reason=no-token"
             );
+            self.audit_log(plugin_id, "handle-event", "denied", "no-token", "");
             return Err(crate::Error::CapabilityDenied(Capability::Storage));
         };
         let PluginInstance {
@@ -909,6 +949,13 @@ impl WasmRuntime {
         })?;
         eprintln!(
             "[audit-host] plugin={plugin_id} event=handle-event result=ok event_name={event}"
+        );
+        self.audit_log(
+            plugin_id,
+            "handle-event",
+            "ok",
+            "-",
+            &format!("event_name={event}"),
         );
         Ok(serde_json::json!({
             "ok": true,
@@ -1012,6 +1059,13 @@ impl WasmRuntime {
             eprintln!(
                 "[audit-host] event=share result=ok from={from} doc_id={doc_id} to={to_plugin}"
             );
+            self.audit_log(
+                from,
+                "share",
+                "ok",
+                "opt-in",
+                &format!("doc_id={doc_id} to={to_plugin}"),
+            );
             return Ok(serde_json::json!({"ok": true, "from": from, "to": to_plugin}));
         }
         if function == HostFunction::Revoke {
@@ -1035,6 +1089,13 @@ impl WasmRuntime {
             eprintln!(
                 "[audit-host] event=revoke result={} from={from} doc_id={doc_id} to={to_plugin}",
                 if removed.is_some() { "ok" } else { "noop" }
+            );
+            self.audit_log(
+                from,
+                "revoke",
+                if removed.is_some() { "ok" } else { "noop" },
+                "-",
+                &format!("doc_id={doc_id} to={to_plugin}"),
             );
             return Ok(serde_json::json!({"ok": removed.is_some()}));
         }
@@ -1111,6 +1172,26 @@ impl WasmRuntime {
 /// DK-14c.3：capability 接口宿主实现（bindgen 生成 Host trait）——
 /// 语义自低层 func_wrap 全量迁移（14c.2 log+14c.3 数据面）：
 /// per-method require+差异化审计+1 MiB guard+tracing 转发。
+impl WasmStoreCtx {
+    /// 审计双写便捷入口（宿主回调产生面：eprintln 保留 + ring 直写）。
+    fn audit_log(
+        &self,
+        plugin: impl AsRef<str>,
+        event: &str,
+        result: &str,
+        reason: &str,
+        detail: &str,
+    ) {
+        self.audit.push(crate::audit::entry(
+            plugin.as_ref(),
+            event,
+            result,
+            reason,
+            detail,
+        ));
+    }
+}
+
 impl aurora::plugin::capability::Host for WasmStoreCtx {
     fn print(
         &mut self,
@@ -1128,6 +1209,13 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
             .unwrap_or(false);
         if !granted {
             eprintln!("[audit-host] plugin={plugin_id} event=print result=denied reason=useroutput-denied size={}", text.len());
+            self.audit_log(
+                plugin_id,
+                "print",
+                "denied",
+                "useroutput-denied",
+                &format!("size={}", text.len()),
+            );
             return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
                 Capability::UserOutput,
             )));
@@ -1166,6 +1254,13 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
             .unwrap_or(false);
         if !granted_log {
             eprintln!("[audit-host] plugin={plugin_id} event=log result=denied reason=log-denied level={level}");
+            self.audit_log(
+                plugin_id,
+                "log",
+                "denied",
+                "log-denied",
+                &format!("level={level}"),
+            );
             return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
                 Capability::Log,
             )));
@@ -1173,6 +1268,7 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
         if !self.log_first_called {
             self.log_first_called = true;
             eprintln!("[audit-host] plugin={plugin_id} event=log result=ok reason=first-call");
+            self.audit_log(&plugin_id, "log", "ok", "first-call", "");
         }
         match level.as_str() {
             "debug" => tracing::debug!(plugin = %plugin_id, "plugin log: {msg}"),
@@ -1194,6 +1290,7 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
         if !self.read_first_called {
             self.read_first_called = true;
             eprintln!("[audit-host] plugin={plugin_id} event=read-doc result=ok reason=first-call");
+            self.audit_log(plugin_id, "read-doc", "ok", "first-call", "");
         }
         let Some(docs) = self.docs.as_ref() else {
             return Ok(None);
@@ -1218,6 +1315,13 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
         // 1 MiB 容量 guard（超限走内层 Err——协议 err 非 trap）
         if data.len() > 1024 * 1024 {
             eprintln!("[audit-host] plugin={plugin_id} event=write-doc result=denied reason=size-exceeded doc_id={doc_id} size={}", data.len());
+            self.audit_log(
+                plugin_id,
+                "write-doc",
+                "denied",
+                "size-exceeded",
+                &format!("doc_id={doc_id} size={}", data.len()),
+            );
             return Ok(Err(format!(
                 "write-doc: payload exceeds 1 MiB limit ({} bytes)",
                 data.len()
@@ -1225,6 +1329,13 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
         }
         // 逐条审计（状态变更留痕：doc_id+size）
         eprintln!("[audit-host] plugin={plugin_id} event=write-doc result=ok reason=write doc_id={doc_id} size={}", data.len());
+        self.audit_log(
+            plugin_id,
+            "write-doc",
+            "ok",
+            "write",
+            &format!("doc_id={doc_id} size={}", data.len()),
+        );
         let Some(docs) = self.docs.as_ref() else {
             return Ok(Err("write-doc: no docs store".into()));
         };
@@ -1246,6 +1357,7 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
             eprintln!(
                 "[audit-host] plugin={plugin_id} event=query-docs result=ok reason=first-call"
             );
+            self.audit_log(&plugin_id, "query-docs", "ok", "first-call", "");
         }
         let Some(docs) = self.docs.as_ref() else {
             return Ok(Vec::new());
@@ -1282,6 +1394,7 @@ impl WasmStoreCtx {
             eprintln!(
                 "[audit-host] plugin={plugin_id} event={event} result=denied reason=data-denied"
             );
+            self.audit_log(plugin_id, event, "denied", "data-denied", "");
             return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
                 Capability::Storage,
             )));
@@ -1308,17 +1421,38 @@ impl WasmStoreCtx {
                         .unwrap_or(false);
                 if !shared_in {
                     eprintln!("[audit-host] plugin={plugin_id} event={event} result=denied reason=namespace-denied doc_id={doc_id}");
+                    self.audit_log(
+                        plugin_id,
+                        event,
+                        "denied",
+                        "namespace-denied",
+                        &format!("doc_id={doc_id}"),
+                    );
                     return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
                         Capability::Storage,
                     )));
                 }
                 eprintln!("[audit-host] plugin={plugin_id} event={event} result=ok reason=share-read doc_id={doc_id}");
+                self.audit_log(
+                    &plugin_id,
+                    event,
+                    "ok",
+                    "share-read",
+                    &format!("doc_id={doc_id}"),
+                );
             }
         }
         // 第三环：method 授权（仅当 manifest 声明 storage_methods——缺省全开）
         if let Some(methods) = self.manifest.storage_methods.as_ref() {
             if !methods.contains(&method) {
                 eprintln!("[audit-host] plugin={plugin_id} event={event} result=denied reason=method-denied method={event}");
+                self.audit_log(
+                    plugin_id,
+                    event,
+                    "denied",
+                    "method-denied",
+                    &format!("method={event}"),
+                );
                 return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
                     Capability::Storage,
                 )));
