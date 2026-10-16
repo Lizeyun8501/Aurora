@@ -14,15 +14,16 @@
 |---|---|---|
 | `plugins:installed:` / `plugins:blob:` | 安装面 | 2ca3d8c |
 | `plugins:audit:snapshot` | 审计面 | 494e4a7 |
-| `plugins:modcache:` | 编译缓存 | Bravo 在途 |
+| `plugins:modcache:` | 编译缓存 | DK-模块编译缓存（8c138d8） |
 | `plugins:policy:` | 沙箱策略 | DK-45 |
 | `settings:` | 宿主设置（wifi_only 等） | sync_gate |
 | `attachblob:` / `attach:` | 附件 | DK-09 |
 | `trash:` | 回收站 | DK-02 |
 | `sync:` / 水位类键 | 同步引擎 | DK-08/44 |
 | `backup:` | 备份水位 | DK-03 |
+| `links:` | 双向链接索引（出链/反链倒排） | DK-审阅P0-1 S1 |
 
-**纪律**：新宿主键前缀落地必须同步登记本清单（演进为代码常量 `HOST_RESERVED_PREFIXES`，单一事实源）。
+**纪律**：新宿主键前缀落地必须同步登记本清单（演进为代码常量 `HOST_RESERVED_PREFIXES`，单一事实源）。另：`plugins:modcache:` 行"Bravo 在途"已过时（8c138d8 验收冻结）——登记时顺手修正为卡号。
 
 ## 3. 能力模型：**统一复用 L1 namespace（推荐案）**
 
