@@ -160,6 +160,7 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
         listingId: l.id,
         manifest: null,
         requireVerified: true,
+        reinstall: false,
       })) as InstalledPlugin;
       setStatus(`已安装 ${m.id} v${m.version}`);
       await refresh();

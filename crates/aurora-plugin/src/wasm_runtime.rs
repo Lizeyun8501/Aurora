@@ -600,6 +600,16 @@ impl WasmRuntime {
         self.audit.recent(limit, plugin)
     }
 
+    /// 审计快照导出（落盘用——旧→新全量）。
+    pub fn audit_snapshot(&self) -> Vec<crate::audit::AuditEntry> {
+        self.audit.snapshot()
+    }
+
+    /// 审计历史回灌（启动恢复——append 语义，cap 丢最旧兜底）。
+    pub fn audit_restore(&self, entries: Vec<crate::audit::AuditEntry>) {
+        self.audit.extend_history(entries);
+    }
+
     /// 审计双写便捷入口（产生面调用：eprintln 保留 + ring 可查询）。
     pub(crate) fn audit_log(
         &self,

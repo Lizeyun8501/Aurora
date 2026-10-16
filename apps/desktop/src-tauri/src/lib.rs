@@ -318,10 +318,31 @@ pub fn run() {
                 });
             }
 
+            // DK-市场卡：插件运行时状态（WasmRuntime + Marketplace）挂载
+            // + 已安装件启动恢复（restore 损坏不阻断启动——installer 语义）
+            let plugin_state = plugin_commands::PluginState::new();
+            let restored = tauri::async_runtime::block_on(
+                aurora_plugin::installer::restore_installed(
+                    &plugin_state.runtime,
+                    &booted_arc.core.kv_store,
+                ),
+            );
+            info!(restored, "plugin runtime restored installed plugins");
+            // DK-审计面落盘：启动回灌上次快照（损坏 fail-open 返回 0）
+            match tauri::async_runtime::block_on(aurora_plugin::audit::restore_audit(
+                &plugin_state.runtime,
+                &booted_arc.core.kv_store,
+            )) {
+                Ok(n) if n > 0 => info!(n, "audit chain restored from snapshot"),
+                _ => {}
+            }
+            app.manage(plugin_state);
+
             // DK-17 S2：运行时定时器（S1 挂起项收敛）——每小时 tick 备份水位 +
             // 每周完整性校验（check_and_backup 内含水 位/校验判断，幂等）。
             {
                 let booted_for_tick = booted_arc.clone();
+                let plugin_state_for_tick = plugin_state.clone();
                 tauri::async_runtime::spawn(async move {
                     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(3600));
                     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -339,24 +360,24 @@ pub fn run() {
                             Ok(None) => {}
                             Err(e) => warn!(error = %e, "hourly tick verify errored"),
                         }
+                        // DK-审计面落盘：每小时 flush 审计快照到 KV
+                        // （plugin_state 挂载在 tick spawn 之前——move 捕获）
+                        match aurora_plugin::audit::persist_audit(
+                            &plugin_state_for_tick.runtime,
+                            booted_for_tick.core.kv_store.as_ref(),
+                        )
+                        .await
+                        {
+                            Ok(n) if n > 0 => debug!(n, "hourly audit snapshot flushed"),
+                            Ok(_) => {}
+                            Err(e) => warn!(error = %e, "hourly audit flush errored"),
+                        }
                     }
                 });
             }
 
             // 注册平台能力（托盘/快捷键/剪贴板/通知），供后续 command 使用
             app.manage(TauriDesktopPlatform::new(app.handle().clone()));
-
-            // DK-市场卡：插件运行时状态（WasmRuntime + Marketplace）挂载
-            // + 已安装件启动恢复（restore 损坏不阻断启动——installer 语义）
-            let plugin_state = plugin_commands::PluginState::new();
-            let restored = tauri::async_runtime::block_on(
-                aurora_plugin::installer::restore_installed(
-                    &plugin_state.runtime,
-                    &booted_arc.core.kv_store,
-                ),
-            );
-            info!(restored, "plugin runtime restored installed plugins");
-            app.manage(plugin_state);
 
             info!("Aurora Desktop initialized and ready");
             Ok(())

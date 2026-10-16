@@ -171,6 +171,7 @@ pub async fn cmd_plugin_install(
     listing_id: String,
     manifest: PluginManifest,
     wasm_path: String,
+    reinstall: Option<bool>,
 ) -> Result<PluginManifest, String> {
     let booted = crate::sync_commands::get_booted()?;
     let wasm_bytes = tokio::fs::read(&wasm_path)
@@ -183,6 +184,7 @@ pub async fn cmd_plugin_install(
         &listing_id,
         manifest,
         &wasm_bytes,
+        reinstall.unwrap_or(false),
     )
     .await
     .map_err(|e| e.to_string())
@@ -224,6 +226,7 @@ pub async fn cmd_market_install(
     listing_id: String,
     manifest: Option<PluginManifest>,
     require_verified: Option<bool>,
+    reinstall: Option<bool>,
 ) -> Result<PluginManifest, String> {
     let booted = crate::sync_commands::get_booted()?;
     installer::install_from_market(
@@ -233,7 +236,10 @@ pub async fn cmd_market_install(
         state.fetcher.as_ref(),
         &listing_id,
         manifest,
-        require_verified.unwrap_or(true),
+        aurora_plugin::installer::MarketInstallPolicy {
+            require_verified: require_verified.unwrap_or(true),
+            reinstall: reinstall.unwrap_or(false),
+        },
     )
     .await
     .map_err(|e| e.to_string())

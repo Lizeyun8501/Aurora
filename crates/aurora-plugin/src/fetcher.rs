@@ -82,7 +82,7 @@ impl PluginFetcher for HttpFetcher {
                 )));
             }
         }
-        let mut bytes = resp
+        let bytes = resp
             .bytes()
             .await
             .map_err(|e| crate::Error::Network(format!("read body from {url} failed: {e}")))?;
@@ -93,7 +93,6 @@ impl PluginFetcher for HttpFetcher {
                 self.max_bytes
             )));
         }
-        bytes.truncate(bytes.len());
         Ok(bytes.to_vec())
     }
 }
