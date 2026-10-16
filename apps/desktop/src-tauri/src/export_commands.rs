@@ -82,7 +82,7 @@ pub async fn cmd_export_all_markdown(dest_dir: String) -> Result<Vec<String>, St
         }
     }
     let mut out = Vec::new();
-    for (key, data) in rows {
+    for (_key, data) in rows {
         // 键形态 note:{id}——trash 标记等无 "note:" 前缀干扰（trash:{id} 不匹配）
         let Ok(json) = unwrap_note_bytes(&core, &vault, &data) else {
             continue; // 解密失败项跳过（诚实计数）
