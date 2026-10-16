@@ -44,7 +44,10 @@ pub async fn cmd_export_note_markdown(note_id: String, dest_dir: String) -> Resu
         }
     }
     let base = sanitize_filename(title);
-    let final_name = dedupe_filename(&existing_md_names(existing.iter().cloned().collect::<Vec<_>>().as_slice()), &base);
+    let final_name = dedupe_filename(
+        &existing_md_names(existing.iter().cloned().collect::<Vec<_>>().as_slice()),
+        &base,
+    );
     let path = format!("{}/{}.md", dest_dir.trim_end_matches('/'), final_name);
     tokio::fs::write(&path, content)
         .await
@@ -90,7 +93,10 @@ pub async fn cmd_export_all_markdown(dest_dir: String) -> Result<Vec<String>, St
             .unwrap_or("untitled");
         let content = json.get("content").and_then(|c| c.as_str()).unwrap_or("");
         let base = sanitize_filename(title);
-        let final_name = dedupe_filename(&existing_md_names(existing.iter().cloned().collect::<Vec<_>>().as_slice()), &base);
+        let final_name = dedupe_filename(
+            &existing_md_names(existing.iter().cloned().collect::<Vec<_>>().as_slice()),
+            &base,
+        );
         let path = format!("{}/{}.md", dest_dir.trim_end_matches('/'), final_name);
         if tokio::fs::write(&path, content).await.is_ok() {
             existing.insert(final_name);
