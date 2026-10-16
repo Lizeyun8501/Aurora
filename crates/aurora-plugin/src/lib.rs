@@ -11,6 +11,7 @@
 //! - [`marketplace`]：去中心化插件市场、Ed25519 签名验证与更新检测。
 //! - [`hot_update`]：后台预加载、确认切换、失败回滚与金丝雀发布。
 
+pub mod fetcher;
 pub mod hot_update;
 pub mod iframe_runtime;
 pub mod installer;
@@ -47,6 +48,10 @@ pub enum Error {
     /// KVStore trait 错误域是 aurora_core::Error，安装链统一到本枚举）。
     #[error("KV store error: {0}")]
     Kv(String),
+    /// 网络下载错误（DK-市场下载器：HttpFetcher 传输层失败转接——
+    /// 超时/连接失败/非 2xx 等，安装链统一到本枚举）。
+    #[error("network error: {0}")]
+    Network(String),
     #[error("JSON-RPC error: {0}")]
     JsonRpc(String),
     #[error("Signature verification failed: {0}")]

@@ -1625,9 +1625,18 @@ mod tests {
         }
         rt.unregister("a");
         let s = rt.shares.read();
-        assert!(!s.contains_key(&("a".to_string(), "a:k1".to_string())), "from=a 应清");
-        assert!(!s.contains_key(&("c".to_string(), "c:k1".to_string())), "to=a 应清");
-        assert!(s.contains_key(&("c".to_string(), "c:k2".to_string())), "无关条目应保留");
+        assert!(
+            !s.contains_key(&("a".to_string(), "a:k1".to_string())),
+            "from=a 应清"
+        );
+        assert!(
+            !s.contains_key(&("c".to_string(), "c:k1".to_string())),
+            "to=a 应清"
+        );
+        assert!(
+            s.contains_key(&("c".to_string(), "c:k2".to_string())),
+            "无关条目应保留"
+        );
     }
 
     // ===== DK-14c.1：wat fixture 退役 =====

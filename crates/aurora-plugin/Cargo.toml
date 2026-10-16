@@ -44,6 +44,8 @@ uuid = { workspace = true }
 # Concurrency
 parking_lot = { workspace = true }
 
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
 # Real CryptoProvider implementation for signature verification tests

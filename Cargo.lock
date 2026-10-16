@@ -580,6 +580,7 @@ dependencies = [
  "bincode",
  "chrono",
  "parking_lot 0.12.5",
+ "reqwest 0.12.28",
  "ring",
  "serde",
  "serde_json",

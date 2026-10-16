@@ -97,6 +97,50 @@ pub async fn install_plugin(
     Ok(manifest)
 }
 
+/// 市场安装链（DK-市场下载器）：listing → **下载** → 六环复用。
+///
+/// 与 [`install_plugin`] 的唯一差异是字节来源：`wasm_bytes` 由
+/// [`PluginFetcher`](crate::fetcher::PluginFetcher) 从 listing.download_url
+/// 拉取（大小上限/超时 fail-closed 在 fetcher 层）。
+///
+/// **verified 语义表**（fail-closed）：
+///
+/// | source | listing.verified | require_verified | 结果 |
+/// |---|---|---|---|
+/// | Local | 任意 | 任意 | 放行（本地豁免） |
+/// | Official/ThirdParty | true | 任意 | 放行 |
+/// | Official/ThirdParty | false | true | **拒**（SignatureInvalid） |
+/// | Official/ThirdParty | false | false | 放行（显式降权，调用方自担） |
+///
+/// # Errors
+/// 同 [`install_plugin`] + Network（下载失败）/ InvalidInput（大小超限）/
+/// SignatureInvalid（未 verified 拒装）。
+pub async fn install_from_market(
+    runtime: &Arc<WasmRuntime>,
+    kv: &Arc<dyn KVStore>,
+    market: &Marketplace,
+    fetcher: &dyn crate::fetcher::PluginFetcher,
+    listing_id: &str,
+    manifest: PluginManifest,
+    require_verified: bool,
+) -> Result<PluginManifest, crate::Error> {
+    let listing = market
+        .get(listing_id)
+        .ok_or_else(|| crate::Error::NotFound(format!("listing not found: {listing_id}")))?;
+    // verified 环（市场专属，先于下载——拒装不花网络预算）
+    let requires =
+        require_verified && !matches!(listing.source, crate::marketplace::PluginSource::Local);
+    if requires && !listing.verified {
+        return Err(crate::Error::SignatureInvalid(format!(
+            "listing `{listing_id}` ({:?}) not verified; refuse to install (fail-closed)",
+            listing.source
+        )));
+    }
+    let url = listing.download_url.clone();
+    let wasm_bytes = fetcher.fetch(&url).await?;
+    install_plugin(runtime, kv, market, listing_id, manifest, &wasm_bytes).await
+}
+
 /// 卸载：runtime 反注册（DK-17.1 shares 双向清理自动生效）+ KV 两键清除。
 ///
 /// # Errors
@@ -124,9 +168,7 @@ pub async fn uninstall_plugin(
 ///
 /// # Errors
 /// KV 读失败 / 条目反序列化失败（损坏即报，不静默跳过）。
-pub async fn list_installed(
-    kv: &Arc<dyn KVStore>,
-) -> Result<Vec<PluginManifest>, crate::Error> {
+pub async fn list_installed(kv: &Arc<dyn KVStore>) -> Result<Vec<PluginManifest>, crate::Error> {
     let rows = kv.scan_prefix(INSTALLED_PREFIX).await.map_err(kv_err)?;
     rows.into_iter()
         .map(|(key, bytes)| {
@@ -147,7 +189,10 @@ pub async fn restore_installed(runtime: &Arc<WasmRuntime>, kv: &Arc<dyn KVStore>
         return 0;
     };
     for (key, bytes) in rows {
-        let id = key.strip_prefix(INSTALLED_PREFIX).unwrap_or(&key).to_string();
+        let id = key
+            .strip_prefix(INSTALLED_PREFIX)
+            .unwrap_or(&key)
+            .to_string();
         let manifest = match serde_json::from_slice::<PluginManifest>(&bytes) {
             Ok(m) => m,
             Err(e) => {
@@ -205,10 +250,7 @@ pub(crate) mod tests {
             let m = self.0.lock().unwrap();
             Ok(keys.iter().map(|k| m.get(*k).cloned()).collect())
         }
-        async fn batch_set(
-            &self,
-            items: &[(&str, &[u8])],
-        ) -> Result<(), aurora_core::Error> {
+        async fn batch_set(&self, items: &[(&str, &[u8])]) -> Result<(), aurora_core::Error> {
             let mut m = self.0.lock().unwrap();
             for (k, v) in items {
                 m.insert((*k).to_string(), v.to_vec());
@@ -256,7 +298,9 @@ pub(crate) mod tests {
     }
 
     fn market_with(id: &str, checksum: &str) -> Marketplace {
-        let m = Marketplace::new(Arc::new(aurora_security::crypto_provider_impl::SecurityCryptoProvider::new()));
+        let m = Marketplace::new(Arc::new(
+            aurora_security::crypto_provider_impl::SecurityCryptoProvider::new(),
+        ));
         m.publish(listing(id, checksum));
         m
     }
@@ -281,6 +325,161 @@ pub(crate) mod tests {
         );
     }
 
+    // ---------- DK-市场下载器：install_from_market 全链（MockFetcher） ----------
+
+    use crate::fetcher::MockFetcher;
+
+    fn market_listing(
+        id: &str,
+        checksum: &str,
+        source: PluginSource,
+        verified: bool,
+    ) -> Marketplace {
+        let m = Marketplace::new(Arc::new(
+            aurora_security::crypto_provider_impl::SecurityCryptoProvider::new(),
+        ));
+        let mut l = listing(id, checksum);
+        l.source = source;
+        l.verified = verified;
+        m.publish(l);
+        m
+    }
+
+    #[tokio::test]
+    async fn test_market_install_success_chain() {
+        let runtime = Arc::new(WasmRuntime::with_default_registry());
+        let kv: Arc<dyn KVStore> = Arc::new(MemKv(Mutex::new(HashMap::new())));
+        let market = market_listing("hello", &sha256_hex(WASM), PluginSource::Local, false);
+        let fetcher = MockFetcher::new();
+        fetcher.route("local://test", WASM.to_vec());
+        let m = install_from_market(
+            &runtime,
+            &kv,
+            &market,
+            &fetcher,
+            "hello",
+            manifest("hello"),
+            true,
+        )
+        .await
+        .expect("Local 豁免 verified，全链应过");
+        assert_eq!(m.id, "hello");
+        assert_eq!(
+            kv.get("plugins:blob:hello").await.unwrap().as_deref(),
+            Some(WASM)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_market_install_unverified_official_rejected() {
+        let runtime = Arc::new(WasmRuntime::with_default_registry());
+        let kv: Arc<dyn KVStore> = Arc::new(MemKv(Mutex::new(HashMap::new())));
+        let market = market_listing("hello", &sha256_hex(WASM), PluginSource::Official, false);
+        let fetcher = MockFetcher::new();
+        fetcher.route("local://test", WASM.to_vec());
+        let err = install_from_market(
+            &runtime,
+            &kv,
+            &market,
+            &fetcher,
+            "hello",
+            manifest("hello"),
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, crate::Error::SignatureInvalid(ref m) if m.contains("not verified")),
+            "Official 未 verified 应拒装，实际 {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_market_install_require_verified_false_downgrades() {
+        // 显式降权通道：require_verified=false → 未 verified 放行（调用方自担）
+        let runtime = Arc::new(WasmRuntime::with_default_registry());
+        let kv: Arc<dyn KVStore> = Arc::new(MemKv(Mutex::new(HashMap::new())));
+        let market = market_listing("hello", &sha256_hex(WASM), PluginSource::ThirdParty, false);
+        let fetcher = MockFetcher::new();
+        fetcher.route("local://test", WASM.to_vec());
+        install_from_market(
+            &runtime,
+            &kv,
+            &market,
+            &fetcher,
+            "hello",
+            manifest("hello"),
+            false,
+        )
+        .await
+        .expect("require_verified=false 显式降权应放行");
+    }
+
+    #[tokio::test]
+    async fn test_market_install_verified_official_ok() {
+        let runtime = Arc::new(WasmRuntime::with_default_registry());
+        let kv: Arc<dyn KVStore> = Arc::new(MemKv(Mutex::new(HashMap::new())));
+        let market = market_listing("hello", &sha256_hex(WASM), PluginSource::Official, true);
+        let fetcher = MockFetcher::new();
+        fetcher.route("local://test", WASM.to_vec());
+        install_from_market(
+            &runtime,
+            &kv,
+            &market,
+            &fetcher,
+            "hello",
+            manifest("hello"),
+            true,
+        )
+        .await
+        .expect("Official verified=true 应过");
+    }
+
+    #[tokio::test]
+    async fn test_market_install_download_fail_propagates() {
+        let runtime = Arc::new(WasmRuntime::with_default_registry());
+        let kv: Arc<dyn KVStore> = Arc::new(MemKv(Mutex::new(HashMap::new())));
+        let market = market_listing("hello", &sha256_hex(WASM), PluginSource::Local, true);
+        // Miss：fetcher 无此 url → Network 错误传播（六环不触达）
+        let fetcher = MockFetcher::new();
+        let err = install_from_market(
+            &runtime,
+            &kv,
+            &market,
+            &fetcher,
+            "hello",
+            manifest("hello"),
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, crate::Error::Network(_)));
+        assert!(kv.get("plugins:installed:hello").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_market_install_oversize_rejected_before_checksum() {
+        // 超限字节：fetcher 层 fail-closed（InvalidInput），六环不触达
+        let runtime = Arc::new(WasmRuntime::with_default_registry());
+        let kv: Arc<dyn KVStore> = Arc::new(MemKv(Mutex::new(HashMap::new())));
+        let huge = vec![0u8; crate::fetcher::MAX_PLUGIN_BYTES + 1];
+        let market = market_listing("hello", &sha256_hex(&huge), PluginSource::Local, true);
+        let fetcher = MockFetcher::new();
+        fetcher.route("local://test", huge);
+        let err = install_from_market(
+            &runtime,
+            &kv,
+            &market,
+            &fetcher,
+            "hello",
+            manifest("hello"),
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, crate::Error::InvalidInput(_)));
+    }
+
     #[tokio::test]
     async fn test_install_checksum_mismatch_rejected() {
         let runtime = Arc::new(WasmRuntime::with_default_registry());
@@ -289,7 +488,9 @@ pub(crate) mod tests {
         let err = install_plugin(&runtime, &kv, &market, "hello", manifest("hello"), WASM)
             .await
             .unwrap_err();
-        assert!(matches!(err, crate::Error::InvalidInput(ref m) if m.contains("checksum mismatch")));
+        assert!(
+            matches!(err, crate::Error::InvalidInput(ref m) if m.contains("checksum mismatch"))
+        );
     }
 
     #[tokio::test]
@@ -307,7 +508,9 @@ pub(crate) mod tests {
     async fn test_install_listing_missing_rejected() {
         let runtime = Arc::new(WasmRuntime::with_default_registry());
         let kv: Arc<dyn KVStore> = Arc::new(MemKv(Mutex::new(HashMap::new())));
-        let market = Marketplace::new(Arc::new(aurora_security::crypto_provider_impl::SecurityCryptoProvider::new()));
+        let market = Marketplace::new(Arc::new(
+            aurora_security::crypto_provider_impl::SecurityCryptoProvider::new(),
+        ));
         let err = install_plugin(&runtime, &kv, &market, "ghost", manifest("ghost"), WASM)
             .await
             .unwrap_err();

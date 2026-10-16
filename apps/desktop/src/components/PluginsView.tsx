@@ -7,6 +7,7 @@
  *   UI 安装表单随市场下载器卡（下载源未接线前表单无真实输入来源，不做假入口）
  * - 详情徽章复用 MarketplaceView（15c），本组件不重复实现
  */
+import type React from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
 /** invoke 形状（与 TrashView/SyncStatusBadge 本地惯例一致）。 */
@@ -22,8 +23,34 @@ interface InstalledPlugin {
   permissions: readonly string[];
 }
 
+/** 市场 listing 行（Rust PluginListing 投影——仅 UI 关心的字段子集）。 */
+interface MarketListing {
+  id: string;
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  source: string;
+  verified: boolean;
+}
+
+/** 市场安装载荷：listing + manifest（安装六环的 id 一致环对账）。 */
+interface MarketInstallPayload {
+  listingId: string;
+  manifest: {
+    id: string;
+    name: string;
+    version: string;
+    author: string;
+    description: string;
+    permissions: readonly string[];
+    mode: string;
+  };
+  requireVerified: boolean;
+}
+
 interface PluginsViewProps {
-  invoke: InvokeFn;
+  invoke: InvokeFn | null;
 }
 
 const S = {
@@ -55,11 +82,14 @@ const S = {
   } as const,
 };
 
-export default function PluginsView({ invoke }: PluginsViewProps) {
+export default function PluginsView({ invoke }: PluginsViewProps): React.ReactElement {
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([]);
+  const [listings, setListings] = useState<MarketListing[]>([]);
+  const [installing, setInstalling] = useState<string>('');
   const [status, setStatus] = useState<string>('');
 
   const refresh = useCallback(async () => {
+    if (!invoke) return;
     try {
       const rows = (await invoke('cmd_plugin_list')) as InstalledPlugin[];
       setPlugins(rows);
@@ -69,11 +99,23 @@ export default function PluginsView({ invoke }: PluginsViewProps) {
     }
   }, [invoke]);
 
+  const refreshMarket = useCallback(async () => {
+    if (!invoke) return;
+    try {
+      const rows = (await invoke('cmd_market_list')) as MarketListing[];
+      setListings(rows);
+    } catch (e) {
+      setStatus(`市场列表失败: ${String(e)}`);
+    }
+  }, [invoke]);
+
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    void refreshMarket();
+  }, [refresh, refreshMarket]);
 
   const uninstall = async (id: string) => {
+    if (!invoke) return;
     try {
       await invoke('cmd_plugin_uninstall', { pluginId: id });
       setStatus(`已卸载 ${id}`);
@@ -84,6 +126,7 @@ export default function PluginsView({ invoke }: PluginsViewProps) {
   };
 
   const smokeInvoke = async (id: string) => {
+    if (!invoke) return;
     try {
       const out = await invoke('cmd_plugin_invoke', {
         pluginId: id,
@@ -96,6 +139,40 @@ export default function PluginsView({ invoke }: PluginsViewProps) {
     }
   };
 
+  /** 市场安装（listing + 同名 manifest——六环 id 一致环对账）。 */
+  const installFromMarket = async (l: MarketListing) => {
+    if (!invoke) return;
+    setInstalling(l.id);
+    setStatus(`正在安装 ${l.id}（${l.source}${l.verified ? ' · verified' : ' · 未 verified'}）…`);
+    try {
+      const payload: MarketInstallPayload = {
+        listingId: l.id,
+        manifest: {
+          id: l.id,
+          name: l.name,
+          version: l.version,
+          author: l.author,
+          description: l.description,
+          permissions: [],
+          mode: 'Wasm',
+        },
+        requireVerified: true,
+      };
+      const m = (await invoke('cmd_market_install', {
+        listingId: payload.listingId,
+        manifest: payload.manifest,
+        requireVerified: payload.requireVerified,
+      })) as InstalledPlugin;
+      setStatus(`已安装 ${m.id} v${m.version}`);
+      await refresh();
+    } catch (e) {
+      // 拒装原因透传（未 verified/下载失败/checksum 不匹配等——installer 错误串）
+      setStatus(`安装失败: ${String(e)}`);
+    } finally {
+      setInstalling('');
+    }
+  };
+
   return (
     <main style={{ flex: 1, padding: 24, overflow: 'auto' }}>
       <h1 style={{ margin: '0 0 4px', fontSize: 22 }}>已安装插件</h1>
@@ -104,8 +181,7 @@ export default function PluginsView({ invoke }: PluginsViewProps) {
       </p>
       {plugins.length === 0 ? (
         <p style={{ fontSize: 13, color: '#9ca3af' }}>
-          暂无已安装插件。安装走命令层语义（cmd_plugin_install：listing + manifest + 本地 wasm 路径），
-          UI 安装表单随市场下载器卡。
+          暂无已安装插件。可从下方市场分区安装（listing → 下载 → 签名验证 → 六环安装）。
         </p>
       ) : (
         <section aria-label="已安装插件列表">
@@ -124,6 +200,38 @@ export default function PluginsView({ invoke }: PluginsViewProps) {
               </button>
               <button style={S.danger} onClick={() => void uninstall(p.id)}>
                 卸载
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
+
+      <h2 style={{ margin: '24px 0 8px', fontSize: 16 }}>市场可用件</h2>
+      {listings.length === 0 ? (
+        <p style={{ fontSize: 13, color: '#9ca3af' }}>
+          市场暂无 listing（发布/注册走命令层或后续市场后端卡）。
+        </p>
+      ) : (
+        <section aria-label="市场可用件列表">
+          {listings.map((l) => (
+            <div key={l.id} style={S.row}>
+              <div style={{ flex: 1 }}>
+                <div style={S.name}>
+                  {l.name} <span style={S.meta}>v{l.version} · {l.source}</span>
+                </div>
+                <div style={S.meta}>
+                  {l.verified ? '✓ 已验证' : '未验证'}
+                  {' · '}
+                  {l.description}
+                </div>
+              </div>
+              <button
+                style={S.smoke}
+                disabled={installing === l.id}
+                data-testid={`market-install-${l.id}`}
+                onClick={() => void installFromMarket(l)}
+              >
+                {installing === l.id ? '安装中…' : '安装'}
               </button>
             </div>
           ))}

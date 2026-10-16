@@ -126,6 +126,7 @@ pub async fn cmd_apply_plugin_policy(
 use std::sync::Arc;
 use tauri::State;
 
+use aurora_plugin::fetcher::{HttpFetcher, PluginFetcher};
 use aurora_plugin::installer;
 use aurora_plugin::marketplace::Marketplace;
 use aurora_plugin::wasm_runtime::WasmRuntime;
@@ -134,6 +135,8 @@ use aurora_plugin::wasm_runtime::WasmRuntime;
 pub struct PluginState {
     pub runtime: Arc<WasmRuntime>,
     pub market: Arc<Marketplace>,
+    /// 市场下载通道（DK-市场下载器：桌面默认 Http；测试/离线可注入 Mock）
+    pub fetcher: Arc<dyn PluginFetcher>,
 }
 
 impl PluginState {
@@ -143,6 +146,7 @@ impl PluginState {
             market: Arc::new(Marketplace::new(Arc::new(
                 aurora_security::crypto_provider_impl::SecurityCryptoProvider::new(),
             ))),
+            fetcher: Arc::new(HttpFetcher::default()),
         }
     }
 }
@@ -194,6 +198,45 @@ pub async fn cmd_plugin_list() -> Result<Vec<PluginManifest>, String> {
     installer::list_installed(&booted.core.kv_store)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 市场可用件清单（listing 全量——UI 市场分区数据源）。
+///
+/// # Errors
+/// 应用未初始化（market 状态在 PluginState，无需 boot）。
+#[tauri::command]
+pub fn cmd_market_list(state: State<'_, PluginState>) -> Vec<aurora_plugin::PluginListing> {
+    state.market.list()
+}
+
+/// 市场安装（DK-市场下载器）：fetcher 下载 → 六环复用。
+///
+/// `require_verified=true`（默认）：Official/ThirdParty 未 verified 拒装
+/// fail-closed；Local 豁免。wasm 字节来源=listing.download_url（HttpFetcher
+/// 32MiB/30s fail-closed）。
+///
+/// # Errors
+/// listing 不存在 / 未 verified 拒装 / 下载失败（超限/超时/非 2xx）/
+/// installer 任一环拒绝（错误串透传）。
+#[tauri::command]
+pub async fn cmd_market_install(
+    state: State<'_, PluginState>,
+    listing_id: String,
+    manifest: PluginManifest,
+    require_verified: Option<bool>,
+) -> Result<PluginManifest, String> {
+    let booted = crate::sync_commands::get_booted()?;
+    installer::install_from_market(
+        &state.runtime,
+        &booted.core.kv_store,
+        &state.market,
+        state.fetcher.as_ref(),
+        &listing_id,
+        manifest,
+        require_verified.unwrap_or(true),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 卸载插件（runtime 反注册 + shares 双向清理（DK-17.1）+ KV 两键清除）。

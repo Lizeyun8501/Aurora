@@ -221,6 +221,8 @@ pub fn run() {
             plugin_commands::cmd_apply_plugin_policy,
             plugin_commands::cmd_plugin_install,
             plugin_commands::cmd_plugin_list,
+            plugin_commands::cmd_market_list,
+            plugin_commands::cmd_market_install,
             plugin_commands::cmd_plugin_uninstall,
             plugin_commands::cmd_plugin_invoke,
             import_commands::cmd_plan_import,
