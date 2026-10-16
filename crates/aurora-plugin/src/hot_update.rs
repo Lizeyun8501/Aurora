@@ -8,9 +8,12 @@
 //! 3. `rollback`：恢复旧版本字节码与版本号，状态置为 `RolledBack`。
 //! 4. 金丝雀：`confirm_switch(canary=true)` 标记为灰度发布，可按比例放量。
 
+use crate::installer::{BLOB_PREFIX, INSTALLED_PREFIX};
+use aurora_core::traits::kv_store::KVStore;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use aurora_core::traits::plugin_runtime::PluginManifest;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
@@ -143,6 +146,118 @@ impl HotUpdateManager {
     /// 当前金丝雀比例。
     pub fn canary_percentage(&self) -> u8 {
         *self.canary_percentage.read()
+    }
+
+    // ===== 统一注册表（DK-审阅P0-2：消除 hot_update 内存域与 installer KV 域割裂） =====
+    //
+    // 权威源=installer KV（plugins:installed:/blob:）；内存 installed 表退化为
+    // 热更新状态机的会话缓存（preload_from_registry 首次触碰时自动装载）。
+    // 升级落库（confirm_switch_persist）=环 0 reinstall=true 的正式通道
+    // （不走六环——升级字节信任调用方，verify 接线归市场下载器 S2——v1 边界）。
+
+    /// 从统一注册表（KV）装载桌面安装件进入热更新流。
+    ///
+    /// 内存表已登记（会话内二次操作）→ 直接走既有 preload；未登记 →
+    /// 查 KV installed/blob 域自动装载（manifest.version 为当前版本）。
+    ///
+    /// # Errors
+    /// 两域均无此件 → NotFound；KV 读失败 → Kv。
+    pub async fn preload_from_registry(
+        &self,
+        kv: &dyn KVStore,
+        plugin_id: impl Into<String>,
+        new_version: impl Into<String>,
+        new_blob: Vec<u8>,
+    ) -> Result<UpdateResult, crate::Error> {
+        let id = plugin_id.into();
+        if self.installed.read().get(&id).is_none() {
+            let manifest_key = format!("{INSTALLED_PREFIX}{id}");
+            let meta = kv
+                .get(&manifest_key)
+                .await
+                .map_err(|e| crate::Error::Kv(e.to_string()))?
+                .ok_or_else(|| {
+                    crate::Error::NotFound(format!(
+                        "plugin `{id}` not in registry (installer KV domain)"
+                    ))
+                })?;
+            let blob = kv
+                .get(&format!("{BLOB_PREFIX}{id}"))
+                .await
+                .map_err(|e| crate::Error::Kv(e.to_string()))?
+                .ok_or_else(|| {
+                    crate::Error::NotFound(format!(
+                        "plugin `{id}` blob missing (registry inconsistent)"
+                    ))
+                })?;
+            let manifest: PluginManifest = serde_json::from_slice(&meta).map_err(|e| {
+                crate::Error::InvalidInput(format!("registry manifest corrupt: {e}"))
+            })?;
+            self.installed.write().insert(
+                id.clone(),
+                Installed {
+                    version: manifest.version,
+                    blob,
+                },
+            );
+            info!("hot update: registry-loaded {id} into session cache");
+        }
+        self.preload(id, new_version, new_blob).await
+    }
+
+    /// 确认切换并**落库统一注册表**（KV manifest.version 更新 + blob 覆盖）。
+    ///
+    /// 复用既有 confirm_switch 状态机（Pending→Switching→Switched/RolledBack）；
+    /// 仅 Switched 落库（RolledBack 内存表已由 rollback 恢复，KV 不动）。
+    ///
+    /// # Errors
+    /// 状态机拒绝 / KV 写失败（落库失败=内存已切换而 KV 滞后——下次启动
+    /// 按 KV 旧版本恢复，注记为 v1 最终一致边界）。
+    pub async fn confirm_switch_persist(
+        &self,
+        kv: &dyn KVStore,
+        plugin_id: &str,
+        canary: bool,
+    ) -> Result<UpdateResult, crate::Error> {
+        let result = self.confirm_switch(plugin_id, canary)?;
+        if result.state != UpdateState::Completed {
+            return Ok(result); // RolledBack：KV 不动（回滚语义）
+        }
+        let manifest_key = format!("{INSTALLED_PREFIX}{plugin_id}");
+        let meta = kv
+            .get(&manifest_key)
+            .await
+            .map_err(|e| crate::Error::Kv(e.to_string()))?
+            .ok_or_else(|| {
+                crate::Error::NotFound(format!(
+                    "plugin `{plugin_id}` not in registry (cannot persist upgrade)"
+                ))
+            })?;
+        let mut manifest: serde_json::Value = serde_json::from_slice(&meta)
+            .map_err(|e| crate::Error::InvalidInput(format!("registry manifest corrupt: {e}")))?;
+        manifest["version"] = serde_json::Value::String(result.to_version.clone());
+        let new_meta = serde_json::to_vec(&manifest)
+            .map_err(|e| crate::Error::InvalidInput(format!("manifest reserialize: {e}")))?;
+        let blob = self
+            .installed
+            .read()
+            .get(plugin_id)
+            .map(|i| i.blob.clone())
+            .ok_or_else(|| crate::Error::NotFound(format!("no installed: {plugin_id}")))?;
+        kv.batch_set(&[
+            (manifest_key.as_str(), new_meta.as_slice()),
+            (
+                format!("{BLOB_PREFIX}{plugin_id}").as_str(),
+                blob.as_slice(),
+            ),
+        ])
+        .await
+        .map_err(|e| crate::Error::Kv(e.to_string()))?;
+        info!(
+            "hot update: registry persisted {plugin_id} v{}",
+            result.to_version
+        );
+        Ok(result)
     }
 
     /// 当前已安装版本。
@@ -471,5 +586,135 @@ mod tests {
         assert_eq!(mgr.current_version("p1"), Some("3.1.0".to_string()));
         assert_eq!(mgr.current_blob_len("p1"), Some(3));
         assert_eq!(mgr.current_version("ghost"), None);
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+    use crate::installer::{BLOB_PREFIX, INSTALLED_PREFIX};
+    use aurora_core::traits::kv_store::KVStore;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    struct MemKv(Mutex<HashMap<String, Vec<u8>>>);
+    impl MemKv {
+        fn new() -> Self {
+            Self(Mutex::new(HashMap::new()))
+        }
+    }
+    #[async_trait::async_trait]
+    impl KVStore for MemKv {
+        async fn get(&self, k: &str) -> Result<Option<Vec<u8>>, aurora_core::Error> {
+            Ok(self.0.lock().unwrap().get(k).cloned())
+        }
+        async fn set(&self, k: &str, v: &[u8]) -> Result<(), aurora_core::Error> {
+            self.0.lock().unwrap().insert(k.to_string(), v.to_vec());
+            Ok(())
+        }
+        async fn delete(&self, k: &str) -> Result<(), aurora_core::Error> {
+            self.0.lock().unwrap().remove(k);
+            Ok(())
+        }
+        async fn exists(&self, k: &str) -> Result<bool, aurora_core::Error> {
+            Ok(self.0.lock().unwrap().contains_key(k))
+        }
+        async fn batch_get(&self, ks: &[&str]) -> Result<Vec<Option<Vec<u8>>>, aurora_core::Error> {
+            Ok(ks
+                .iter()
+                .map(|k| self.0.lock().unwrap().get(*k).cloned())
+                .collect())
+        }
+        async fn batch_set(&self, items: &[(&str, &[u8])]) -> Result<(), aurora_core::Error> {
+            for (k, v) in items {
+                self.0.lock().unwrap().insert(k.to_string(), v.to_vec());
+            }
+            Ok(())
+        }
+        async fn scan_prefix(&self, p: &str) -> Result<Vec<(String, Vec<u8>)>, aurora_core::Error> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(k, _)| k.starts_with(p))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect())
+        }
+    }
+
+    fn registry_entry(id: &str, version: &str) -> (Vec<u8>, Vec<u8>) {
+        let manifest = serde_json::json!({
+            "id": id, "name": id, "version": version, "author": "t",
+            "description": "", "runtime": "Wasm", "entry": "",
+            "permissions": [], "hooks": [], "block_types": []
+        });
+        (serde_json::to_vec(&manifest).unwrap(), b"old-blob".to_vec())
+    }
+
+    #[tokio::test]
+    async fn test_preload_from_registry_loads_kv_domain() {
+        let mgr = HotUpdateManager::new();
+        let kv = MemKv::new();
+        let (meta, blob) = registry_entry("hello", "1.0.0");
+        kv.set(&format!("{INSTALLED_PREFIX}hello"), &meta)
+            .await
+            .unwrap();
+        kv.set(&format!("{BLOB_PREFIX}hello"), &blob).await.unwrap();
+        // 注册表件：内存表无 → 自动装载 → preload 成功
+        let r = mgr
+            .preload_from_registry(&kv, "hello", "1.1.0", b"new-blob".to_vec())
+            .await
+            .expect("registry preload ok");
+        assert_eq!(r.from_version, "1.0.0");
+        assert_eq!(r.state, UpdateState::Pending);
+        // 会话缓存已装载（二次操作不查 KV 也通）
+        assert_eq!(mgr.current_version("hello").as_deref(), Some("1.0.0"));
+    }
+
+    #[tokio::test]
+    async fn test_preload_from_registry_not_found() {
+        let mgr = HotUpdateManager::new();
+        let kv = MemKv::new();
+        let err = mgr
+            .preload_from_registry(&kv, "ghost", "2.0.0", b"x".to_vec())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, crate::Error::NotFound(ref m) if m.contains("not in registry")));
+    }
+
+    #[tokio::test]
+    async fn test_confirm_switch_persist_updates_registry() {
+        let mgr = HotUpdateManager::new();
+        let kv = MemKv::new();
+        let (meta, blob) = registry_entry("hello", "1.0.0");
+        kv.set(&format!("{INSTALLED_PREFIX}hello"), &meta)
+            .await
+            .unwrap();
+        kv.set(&format!("{BLOB_PREFIX}hello"), &blob).await.unwrap();
+        mgr.preload_from_registry(&kv, "hello", "1.1.0", b"new-blob".to_vec())
+            .await
+            .unwrap();
+        let r = mgr
+            .confirm_switch_persist(&kv, "hello", false)
+            .await
+            .expect("persist switch ok");
+        assert_eq!(r.state, UpdateState::Completed);
+        // KV 权威域已更新（version+blob）
+        let new_meta = kv
+            .get(&format!("{INSTALLED_PREFIX}hello"))
+            .await
+            .unwrap()
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&new_meta).unwrap();
+        assert_eq!(v["version"], "1.1.0");
+        let new_blob = kv
+            .get(&format!("{BLOB_PREFIX}hello"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(new_blob, b"new-blob".to_vec());
+        // 内存会话缓存同步
+        assert_eq!(mgr.current_version("hello").as_deref(), Some("1.1.0"));
     }
 }
