@@ -259,7 +259,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_persist_restore_kv_roundtrip() {
-        use crate::wasm_runtime::WasmRuntime;
         use std::collections::HashMap;
         use std::sync::Mutex;
 
