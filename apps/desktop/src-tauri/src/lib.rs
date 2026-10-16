@@ -336,7 +336,7 @@ pub fn run() {
                 Ok(n) if n > 0 => info!(n, "audit chain restored from snapshot"),
                 _ => {}
             }
-            app.manage(plugin_state);
+            app.manage(plugin_state.clone());
 
             // DK-17 S2：运行时定时器（S1 挂起项收敛）——每小时 tick 备份水位 +
             // 每周完整性校验（check_and_backup 内含水 位/校验判断，幂等）。
