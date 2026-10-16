@@ -272,6 +272,20 @@ pub async fn cmd_plugin_invoke(
     args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let runtime = state.runtime.clone();
+    let booted = crate::sync_commands::get_booted()?;
+    // DK-模块编译缓存：prime 在 async 面先行（缓存命中→deserialize 路径；
+    // miss→全量编译+懒回写 KV——二次启动起免编译）。fail-open：prime
+    // Err 仅降级为正常 invoke（缓存是优化非正确性依赖）。
+    if let Some(bytes) = runtime.component_bytes(&plugin_id) {
+        let _ = aurora_plugin::cache::load_component_cached(
+            &runtime,
+            &*booted.core.kv_store,
+            &plugin_id,
+            &bytes,
+            "",
+        )
+        .await;
+    }
     // wasmtime 同步执行放 blocking 线程（epoch 中断依赖 ticker 线程，不受影响）
     tokio::task::spawn_blocking(move || {
         runtime

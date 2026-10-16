@@ -455,6 +455,9 @@ pub struct WasmRuntime {
     ticker_handle: Option<std::thread::JoinHandle<()>>,
     /// DK-14d.2：已登记 component 字节（懒实例化源）
     components: Arc<RwLock<HashMap<PluginId, Vec<u8>>>>,
+    /// DK-模块编译缓存：cache.rs prime 命中/编译后登记的反序列化组件
+    /// 槽（get_or_instantiate 慢路径优先消费，取走即清——幂等）
+    cached_components: Arc<RwLock<HashMap<PluginId, wasmtime::component::Component>>>,
     /// DK-14d.2：实例缓存（plugin → Mutex<PluginInstance>；per-plugin
     /// 锁粒度——同插件 invoke 串行，Store &mut 不可重入）
     instances: Arc<RwLock<HashMap<PluginId, std::sync::Arc<parking_lot::Mutex<PluginInstance>>>>>,
@@ -580,6 +583,7 @@ impl WasmRuntime {
             ticker_stop,
             ticker_handle: Some(ticker_handle),
             components: Arc::new(RwLock::new(HashMap::new())),
+            cached_components: Arc::new(RwLock::new(HashMap::new())),
             instances: Arc::new(RwLock::new(HashMap::new())),
             epoch_deadline_ticks: std::sync::atomic::AtomicU64::new(DEFAULT_EPOCH_DEADLINE_TICKS),
             instantiations: std::sync::atomic::AtomicU64::new(0),
@@ -659,6 +663,28 @@ impl WasmRuntime {
     ) -> Result<wasmtime::component::Component, crate::Error> {
         wasmtime::component::Component::new(&self.engine, wasm_bytes)
             .map_err(|e| crate::Error::WasmRuntime(format!("component load failed: {e}")))
+    }
+
+    /// DK-模块编译缓存：登记 prime 产物（deserialize 命中或全量编译）。
+    /// get_or_instantiate 慢路径优先消费本槽，取走即清（幂等）。
+    pub fn stash_cached_component(
+        &self,
+        plugin_id: &str,
+        component: wasmtime::component::Component,
+    ) {
+        self.cached_components
+            .write()
+            .insert(plugin_id.to_string(), component);
+    }
+
+    /// DK-模块编译缓存：取走槽内组件（有则免全量编译）。
+    pub fn take_cached_component(&self, plugin_id: &str) -> Option<wasmtime::component::Component> {
+        self.cached_components.write().remove(plugin_id)
+    }
+
+    /// DK-模块编译缓存：已登记 wasm 字节读取（prime 在 async 面取源）。
+    pub fn component_bytes(&self, plugin_id: &str) -> Option<Vec<u8>> {
+        self.components.read().get(plugin_id).cloned()
     }
 
     /// 注册插件及其能力清单。
@@ -784,7 +810,12 @@ impl WasmRuntime {
         let manifest = self.manifest(plugin_id).ok_or_else(|| {
             crate::Error::NotFound(format!("plugin not registered: {}", plugin_id))
         })?;
-        let component = self.load_component(&bytes)?;
+        // DK-模块编译缓存：槽内组件（deserialize 命中/prime 编译）优先，
+        // 无则全量编译（fail-open 主链不变）
+        let component = match self.take_cached_component(plugin_id) {
+            Some(c) => c,
+            None => self.load_component(&bytes)?,
+        };
         // DK-14c.1：manifest 快照（token 发放源——Store ctx 构造会 move）
         let manifest_before_move = manifest.clone();
         let mut store = wasmtime::Store::new(
