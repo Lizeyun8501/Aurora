@@ -221,6 +221,83 @@ pub async fn reindex_note_links(
     Ok(())
 }
 
+/// 笔记链接索引重建 — **from_index 变体**（S2 复核拍板 1：旧集=KV
+/// `links:out` 权威读，无需 old_content 明文——锁定态/不可读态编排友好）。
+///
+/// 与 [`reindex_note_links`] 唯一差异：旧出链集来源=KV 权威读（缺省空集
+/// =首建语义），而非解析 old_content 明文。save 写路径接入用本变体。
+///
+/// # Errors
+/// KV 读写/序列化失败。
+pub async fn reindex_note_links_from_index(
+    kv: &dyn KVStore,
+    note_id: &str,
+    new_content: &str,
+) -> Result<(), crate::Error> {
+    let old_out = read_out_links(kv, note_id).await.unwrap_or_default();
+    let new_out = extract_wiki_links(new_content);
+    apply_link_diff(kv, note_id, &old_out, &new_out).await
+}
+
+/// 笔记链接索引清除（S2 复核拍板 3：purge_note 物理删级联）。
+///
+/// 出链读 → 逐目标倒排 remove（空集删键）→ 删 `links:out:{note_id}`。
+/// 调用方（purge_note）按附件级联先例编排：失败不阻塞 purge，日志留痕
+/// （最终一致——残余悬挂由 S1 惰性语义兜底）。
+///
+/// # Errors
+/// KV 读写/序列化失败。
+pub async fn purge_note_links(kv: &dyn KVStore, note_id: &str) -> Result<(), crate::Error> {
+    let old_out = read_out_links(kv, note_id).await.unwrap_or_default();
+    for target in old_out {
+        let key = format!("{LINKS_IN_PREFIX}{}", b64url_encode(target.as_bytes()));
+        let mut set = read_in_links(kv, &target).await?;
+        set.remove(note_id);
+        if set.is_empty() {
+            kv.delete(&key).await?;
+        } else {
+            kv.set(&key, serde_json::to_vec(&set)?.as_slice()).await?;
+        }
+    }
+    kv.delete(&format!("{LINKS_OUT_PREFIX}{note_id}")).await?;
+    Ok(())
+}
+
+/// diff 核心（两 reindex 变体共享）：出链覆写 + 倒排增删。
+async fn apply_link_diff(
+    kv: &dyn KVStore,
+    note_id: &str,
+    old_out: &[String],
+    new_out: &[String],
+) -> Result<(), crate::Error> {
+    kv.set(
+        &format!("{LINKS_OUT_PREFIX}{note_id}"),
+        serde_json::to_vec(&new_out.to_vec())?.as_slice(),
+    )
+    .await?;
+
+    let old_set: HashSet<&String> = old_out.iter().collect();
+    let new_set: HashSet<&String> = new_out.iter().collect();
+
+    for target in new_set.difference(&old_set) {
+        let key = format!("{LINKS_IN_PREFIX}{}", b64url_encode(target.as_bytes()));
+        let mut set = read_in_links(kv, target).await?;
+        set.insert(note_id.to_string());
+        kv.set(&key, serde_json::to_vec(&set)?.as_slice()).await?;
+    }
+    for target in old_set.difference(&new_set) {
+        let key = format!("{LINKS_IN_PREFIX}{}", b64url_encode(target.as_bytes()));
+        let mut set = read_in_links(kv, target).await?;
+        set.remove(note_id);
+        if set.is_empty() {
+            kv.delete(&key).await?;
+        } else {
+            kv.set(&key, serde_json::to_vec(&set)?.as_slice()).await?;
+        }
+    }
+    Ok(())
+}
+
 /// 反链查询（S2 查询侧原语——悬挂惰性校验的读入口）。
 ///
 /// 返回指向 `target_title` 的 note_id 集。**悬挂语义**：集内 note_id
@@ -388,6 +465,74 @@ mod tests {
             .is_none(),
             "空集键删除"
         );
+    }
+
+    #[tokio::test]
+    async fn test_reindex_from_index_variant_authoritative_old() {
+        let kv = MemKv(Mutex::new(HashMap::new()));
+        // 预置旧出链（KV 权威——不依赖 old_content 明文）
+        kv.set(
+            &format!("{LINKS_OUT_PREFIX}n1"),
+            serde_json::to_vec(&vec!["Old".to_string(), "Keep".to_string()])
+                .unwrap()
+                .as_slice(),
+        )
+        .await
+        .unwrap();
+        kv.set(
+            &format!("{LINKS_IN_PREFIX}{}", b64url_encode(b"Old")),
+            serde_json::to_vec(&HashSet::from(["n1".to_string()]))
+                .unwrap()
+                .as_slice(),
+        )
+        .await
+        .unwrap();
+        // Keep 旧倒排也预置（一致态——diff 不触应原样保留）
+        kv.set(
+            &format!("{LINKS_IN_PREFIX}{}", b64url_encode(b"Keep")),
+            serde_json::to_vec(&HashSet::from(["n1".to_string()]))
+                .unwrap()
+                .as_slice(),
+        )
+        .await
+        .unwrap();
+        // from_index 变体：new 明文不含 Old（removed）含 Keep/New（Keep 不动/New added）
+        reindex_note_links_from_index(&kv, "n1", "[[Keep]] [[New]]")
+            .await
+            .unwrap();
+        let out = outlinks_of(&kv, "n1").await.unwrap();
+        assert_eq!(out, vec!["Keep".to_string(), "New".to_string()]);
+        assert!(
+            backlinks_of(&kv, "Old").await.unwrap().is_empty(),
+            "removed 出倒排（空集删键语义）"
+        );
+        assert!(backlinks_of(&kv, "Keep").await.unwrap().contains("n1"));
+        assert!(backlinks_of(&kv, "New").await.unwrap().contains("n1"));
+    }
+
+    #[tokio::test]
+    async fn test_purge_note_links_cascades() {
+        let kv = MemKv(Mutex::new(HashMap::new()));
+        // b 出链指向 X/Y；a 也指向 X（倒排残留语义）
+        reindex_note_links(&kv, "b", "", "[[X]] [[Y]]")
+            .await
+            .unwrap();
+        reindex_note_links(&kv, "a", "", "[[X]]").await.unwrap();
+        purge_note_links(&kv, "b").await.unwrap();
+        // b 出链键删除
+        assert!(
+            kv.get(&format!("{LINKS_OUT_PREFIX}b"))
+                .await
+                .unwrap()
+                .is_none(),
+            "out 键物理删"
+        );
+        // 倒排：X 仍含 a（不被误清）、Y 空集删键
+        assert_eq!(
+            backlinks_of(&kv, "X").await.unwrap(),
+            HashSet::from(["a".to_string()])
+        );
+        assert!(backlinks_of(&kv, "Y").await.unwrap().is_empty());
     }
 
     #[tokio::test]

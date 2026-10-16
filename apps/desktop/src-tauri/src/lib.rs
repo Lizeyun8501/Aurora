@@ -34,8 +34,8 @@ use aurora_ai::embed::EmbedFromAiProvider;
 mod ai_commands;
 mod attachment_commands;
 mod backup_commands;
-mod import_commands;
 mod export_commands;
+mod import_commands;
 mod plugin_commands;
 mod sync_commands;
 

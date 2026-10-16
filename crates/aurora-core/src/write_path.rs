@@ -676,6 +676,19 @@ pub async fn save_note_content(
         }
     }
 
+    // 3.5) 链接索引重建（DK-双向链接 S2，复核拍板 1：from_index 变体——
+    //     旧集=KV links:out 权威读，无需 old_content 明文）。锁定态跳过
+    //     （与 blocks 同款纪律：图谱/反链面不消费锁定篇）。失败不阻断
+    //     主流程（notes/快照为权威，链接索引滞后可由后续保存补齐）。
+    if record.encryption != ENC_AES256GCM {
+        if let Err(e) =
+            crate::links::reindex_note_links_from_index(core.kv_store.as_ref(), note_id, content)
+                .await
+        {
+            tracing::warn!(note_id = %note_id, error = %e, "links reindex failed; non-blocking");
+        }
+    }
+
     // 4) 事件：High 实时（UI）+ Medium 持久化（投影重放驱动搜索索引 —
     //    SearchIndexProjection 消费 NoteMetadataChanged 从 KV 重取内容重建）
     core.event_bus
@@ -1072,6 +1085,12 @@ pub async fn purge_note(ctx: &WriteContext, note_id: &str) -> Result<WriteReceip
                 tracing::warn!(note_id, error = %e, "attachment cascade list failed; GC will reclaim")
             }
         }
+    }
+
+    // 链接索引级联（DK-双向链接 S2 复核拍板 3）：清出链键+倒排残留；
+    // 失败不阻塞 purge（最终一致——残余悬挂由 S1 惰性语义兜底）。
+    if let Err(e) = crate::links::purge_note_links(core.kv_store.as_ref(), note_id).await {
+        tracing::warn!(note_id = %note_id, error = %e, "links cascade purge failed; non-blocking");
     }
 
     // NoteDeleted 幂等重发：restore 重放 NoteCreated 后若再 purge，

@@ -14,10 +14,7 @@ use std::collections::HashSet;
 /// # Errors
 /// 应用未初始化 / 笔记不存在 / 目录创建或写盘失败。
 #[tauri::command]
-pub async fn cmd_export_note_markdown(
-    note_id: String,
-    dest_dir: String,
-) -> Result<String, String> {
+pub async fn cmd_export_note_markdown(note_id: String, dest_dir: String) -> Result<String, String> {
     let core = get_core()?;
     let vault = get_vault()?;
     let data = core
@@ -31,10 +28,7 @@ pub async fn cmd_export_note_markdown(
         .get("title")
         .and_then(|t| t.as_str())
         .unwrap_or("untitled");
-    let content = json
-        .get("content")
-        .and_then(|c| c.as_str())
-        .unwrap_or("");
+    let content = json.get("content").and_then(|c| c.as_str()).unwrap_or("");
 
     tokio::fs::create_dir_all(&dest_dir)
         .await
@@ -44,11 +38,7 @@ pub async fn cmd_export_note_markdown(
     let mut rd = tokio::fs::read_dir(&dest_dir)
         .await
         .map_err(|e| format!("read dir: {e}"))?;
-    while let Some(e) = rd
-        .next_entry()
-        .await
-        .map_err(|e| format!("readdir: {e}"))?
-    {
+    while let Some(e) = rd.next_entry().await.map_err(|e| format!("readdir: {e}"))? {
         if let Some(name) = e.file_name().to_str() {
             existing.insert(name.to_string());
         }
@@ -68,9 +58,7 @@ pub async fn cmd_export_note_markdown(
 /// # Errors
 /// 应用未初始化 / 目录创建失败。
 #[tauri::command]
-pub async fn cmd_export_all_markdown(
-    dest_dir: String,
-) -> Result<Vec<String>, String> {
+pub async fn cmd_export_all_markdown(dest_dir: String) -> Result<Vec<String>, String> {
     let core = get_core()?;
     let vault = get_vault()?;
     tokio::fs::create_dir_all(&dest_dir)
@@ -85,11 +73,7 @@ pub async fn cmd_export_all_markdown(
     let mut rd = tokio::fs::read_dir(&dest_dir)
         .await
         .map_err(|e| format!("read dir: {e}"))?;
-    while let Some(e) = rd
-        .next_entry()
-        .await
-        .map_err(|e| format!("readdir: {e}"))?
-    {
+    while let Some(e) = rd.next_entry().await.map_err(|e| format!("readdir: {e}"))? {
         if let Some(name) = e.file_name().to_str() {
             existing.insert(name.to_string());
         }
@@ -104,10 +88,7 @@ pub async fn cmd_export_all_markdown(
             .get("title")
             .and_then(|t| t.as_str())
             .unwrap_or("untitled");
-        let content = json
-            .get("content")
-            .and_then(|c| c.as_str())
-            .unwrap_or("");
+        let content = json.get("content").and_then(|c| c.as_str()).unwrap_or("");
         let base = sanitize_filename(title);
         let final_name = dedupe_filename(&existing_md_names(existing.iter()), &base);
         let path = format!("{}/{}.md", dest_dir.trim_end_matches('/'), final_name);
