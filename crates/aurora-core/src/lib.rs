@@ -14,6 +14,7 @@ pub mod backup;
 pub mod blocks; // V23-I2: 块级存储双轨
 pub mod error_codes;
 pub mod event_bus;
+pub mod export; // DK-审阅P0-3: 导出面原语(文件名安全化+重名去重)
 pub mod l1_infrastructure;
 pub mod l2_engines;
 pub use l2_engines::hybrid_search::{HybridSearcher, RRF_K};

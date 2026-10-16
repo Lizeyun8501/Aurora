@@ -35,6 +35,7 @@ mod ai_commands;
 mod attachment_commands;
 mod backup_commands;
 mod import_commands;
+mod export_commands;
 mod plugin_commands;
 mod sync_commands;
 
@@ -226,6 +227,8 @@ pub fn run() {
             plugin_commands::cmd_plugin_uninstall,
             plugin_commands::cmd_plugin_invoke,
             plugin_commands::cmd_plugin_audit_logs,
+            export_commands::cmd_export_note_markdown,
+            export_commands::cmd_export_all_markdown,
             import_commands::cmd_plan_import,
             import_commands::cmd_import_markdown_dir,
             import_commands::cmd_import_enex,
@@ -390,7 +393,7 @@ pub fn run() {
 
 /// 解密笔记字节：优先按密文（bincode(Ciphertext)）解密；解密失败时兼容
 /// 升级前的明文 JSON（旧版本无加密落库），保证存量数据不丢失。
-fn unwrap_note_bytes(
+pub(crate) fn unwrap_note_bytes(
     core: &AppCore,
     vault: &LocalDekVault,
     data: &[u8],
