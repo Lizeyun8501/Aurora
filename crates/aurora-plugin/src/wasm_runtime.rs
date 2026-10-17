@@ -318,6 +318,21 @@ impl HostFunctionRegistry for DefaultHostFunctions {
                     crate::Error::HostFunction("write_doc requires `doc_id`".into())
                 })?;
                 let data = args.get("data").cloned().unwrap_or(serde_json::Value::Null);
+                // T9：host-invoked 面容量 guard 与 guest 面对齐（1 MiB——
+                // 同源语义：序列化后字节长度；guest 侧 storage trait 先例）。
+                // DefaultHostFunctions 无 plugin/审计上下文——拒绝走
+                // HostFunction Err+stderr 侧通道（审计行缺位=诚实边界注记）
+                let size = serde_json::to_vec(&data)
+                    .map(|v| v.len())
+                    .unwrap_or(usize::MAX);
+                if size > 1024 * 1024 {
+                    eprintln!(
+                        "[audit-host] event=write-doc result=denied reason=size-exceeded doc_id={doc_id} size={size} (host-invoked)"
+                    );
+                    return Err(crate::Error::HostFunction(format!(
+                        "write_doc: payload exceeds 1 MiB limit ({size} bytes)"
+                    )));
+                }
                 self.docs.write().insert(doc_id.to_string(), data);
                 Ok(serde_json::json!({"ok": true}))
             }
