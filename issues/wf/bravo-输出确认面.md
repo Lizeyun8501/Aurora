@@ -16,3 +16,5 @@ MarketplaceView 调用点硬编码 demo（pluginName="demo-plugin" granted=[]，
 | fakepc DESK check | 0 |
 | fmt 实跑+check | 0 |
 | CI | 盯至全绿 |
+
+## CI 终态（2fbe1ee）8/8 全绿 ✓ 2026-10-17
