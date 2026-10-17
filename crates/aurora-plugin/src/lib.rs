@@ -13,6 +13,7 @@
 
 pub mod audit;
 pub mod cache;
+pub mod cache_lock;
 pub mod fetcher;
 pub mod hot_update;
 pub mod iframe_runtime;

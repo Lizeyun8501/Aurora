@@ -42,9 +42,17 @@ pub const MODCACHE_PREFIX: &str = "plugins:modcache:";
 pub const MODCACHE_MAX_ENTRIES: usize = 64;
 /// 值头 magic（"AUMC"——Aurora Module Cache）。
 const MAGIC: &[u8; 4] = b"AUMC";
-/// engine_tag：编译期绑定 aurora-plugin 版本（wasmtime 版本升级必随
-/// crate 版本/代码变更——tag 漂移即 miss，防跨版本 deserialize UB）。
-const ENGINE_TAG: &str = concat!("aurora-plugin/", env!("CARGO_PKG_VERSION"));
+/// engine_tag：编译期绑定 aurora-plugin 版本 + **wasmtime 实锁版本**
+/// （build.rs 从 Cargo.lock 提取导出 `WASMTIME_LOCK_VERSION`——wasmtime
+/// 升级 tag 自动随动，旧缓存 miss fail-open 重编译，零纪律依赖；加固前
+/// 依赖"升级手动 bump"流程保证——2026-10-17 挂起池项收口）。tag 漂移即
+/// miss，防跨版本 deserialize UB。
+const ENGINE_TAG: &str = concat!(
+    "aurora-plugin/",
+    env!("CARGO_PKG_VERSION"),
+    "/wasmtime/",
+    env!("WASMTIME_LOCK_VERSION")
+);
 
 /// 摘要 32B（值头完整性域——非 installer 的 hex 形态）。
 fn sha2_32b(wasm: &[u8]) -> [u8; 32] {
