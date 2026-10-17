@@ -20,3 +20,7 @@ b66b1a2（Alpha DK-链接跟随）write_path.rs `use KVStore` cfg 门误移除�
 | core 455 | 全绿 |
 | clippy --all-targets -D warnings（core+plugin） | 0 |
 | fmt 实跑+check | 0 |
+
+## CI 终态（ac8b77d）8/8 全绿 ✓ 2026-10-17
+
+Test/Clippy/Rustfmt/MSRV/desktop-check/3×guest build 全 success——cfg 门修（帮 Alpha 收口）经 Clippy 面实证。
