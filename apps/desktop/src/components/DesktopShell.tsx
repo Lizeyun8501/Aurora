@@ -1469,6 +1469,23 @@ function EditorPane(props: {
   };
 }) {
   const { note, loading, invoke, persist, onSelect } = props;
+  /* DK-编辑器补全：[[ 触发标题候选（进编辑面后拉一次+切笔记刷新；候选
+     容忍陈旧——新建标题在下次进入编辑面时入池，诚实边界） */
+  const [wikiTitles, setWikiTitles] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    if (!invoke) return;
+    invoke('cmd_wiki_link_titles')
+      .then((rows) => {
+        if (alive) setWikiTitles((rows as string[]) ?? []);
+      })
+      .catch(() => {
+        /* 候选拉取失败非阻断——补全空态由浮层承担 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [invoke, note?.note_id]);
   if (loading) {
     return (
       <main style={{ flex: 1, padding: tokens.spacing.lg, color: tokens.color.textSecondary }}>
@@ -1533,6 +1550,7 @@ function EditorPane(props: {
         noteId={note.note_id}
         content={note.content}
         persist={persist}
+        wikiTitles={wikiTitles}
       />
       {/* DK-09 渲染接线：attachment:// 引用解析（图片内联 / 文件卡） */}
       <AttachmentStrip invoke={invoke} content={note.content} />
@@ -1816,8 +1834,10 @@ function EditAuroraEditor(props: {
     saveSnapshot: (noteId: string, b64: string) => Promise<void>;
     saveContent: (noteId: string, content: string) => Promise<void>;
   };
+  /** DK-编辑器补全：全库标题候选（cmd_wiki_link_titles 聚合，EditorPane 供给） */
+  wikiTitles?: string[];
 }) {
-  const { noteId, content, persist } = props;
+  const { noteId, content, persist, wikiTitles } = props;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [focused, setFocused] = useState(false);
   const [view, setView] = useState<import('prosemirror-view').EditorView | null>(null);
@@ -1825,6 +1845,70 @@ function EditAuroraEditor(props: {
   const [Toolbar, setToolbar] = useState<React.ComponentType<{ view: import('prosemirror-view').EditorView | null; tick: number }> | null>(null);
   const persistRef = useRef(persist);
   persistRef.current = persist;
+  /* ── DK-编辑器补全（[[ 触发 wiki 链接标题补全）────────────────────
+   * 触发：光标前 80 字符窗内最近 `[[` 且其后至光标无 `]]`/换行 → 弹浮层；
+   * 过滤 v1：精确子串（大小写不敏感）——模糊匹配另批；
+   * 键盘：↑↓ 移动 / Enter 插入 [[title]]（替换 [[+已输入前缀）/ Esc 关；
+   * 点击插入同款（onMouseDown preventDefault 保编辑器焦点）；
+   * 失焦/删除 `[[` 即关（浮层不阻塞输入）；alias 编辑态不触发（v1）。 */
+  const [ac, setAc] = useState<{ prefix: string; from: number; items: string[]; sel: number } | null>(null);
+  const acRef = useRef(ac);
+  acRef.current = ac;
+  const titlesRef = useRef(wikiTitles);
+  titlesRef.current = wikiTitles ?? [];
+
+  /** 光标窗扫描 → 浮层态（null=关）。onUpdate/keyup 双路驱动。 */
+  const detectAutocomplete = (v: import('prosemirror-view').EditorView) => {
+    const { from, empty } = v.state.selection;
+    if (!empty) {
+      setAc(null);
+      return;
+    }
+    const text = v.state.doc.textBetween(Math.max(0, from - 80), from, '\n', '\n');
+    const open = text.lastIndexOf('[[');
+    if (open < 0) {
+      setAc(null);
+      return;
+    }
+    const tail = text.slice(open + 2);
+    if (tail.includes(']') || tail.includes('\n')) {
+      setAc(null); // 闭合/换行——编辑既有链接或跨块：不触发（alias v1 边界）
+      return;
+    }
+    const prefix = tail;
+    const q = prefix.toLowerCase();
+    const items = (titlesRef.current ?? []).filter((t) => t.toLowerCase().includes(q)).slice(0, 8);
+    setAc({ prefix, from: from - prefix.length, items, sel: 0 });
+  };
+
+  /** 插入 [[title]]（替换 [[+前缀起点到光标）——键盘 Enter 与点击同款 */
+  const insertCompletion = (title: string) => {
+    const v = view;
+    const cur = acRef.current;
+    if (!v || !cur) return;
+    const pos = cur.from;
+    v.dispatch(v.state.tr.insertText(`[[${title}]]`, pos, v.state.selection.from));
+    v.focus();
+    setAc(null);
+  };
+
+  /** 浮层键盘路由（capture——↑↓/Enter/Esc 在浮层开时优先于编辑器默认） */
+  const onAcKeyDown = (e: React.KeyboardEvent) => {
+    const cur = acRef.current;
+    if (!cur) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const d = e.key === 'ArrowDown' ? 1 : -1;
+      const n = cur.items.length;
+      if (n > 0) setAc({ ...cur, sel: (cur.sel + d + n) % n });
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (cur.items.length > 0) insertCompletion(cur.items[cur.sel]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setAc(null);
+    }
+  };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -1866,7 +1950,11 @@ function EditAuroraEditor(props: {
           );
           persistRef.current.saveContent(noteId, docToMd(handle.view.state.doc));
         },
-        onUpdate: () => setTick((t) => t + 1), // 工具条激活态刷新
+        onUpdate: () => {
+          setTick((t) => t + 1); // 工具条激活态刷新
+          // DK-编辑器补全：文档变更后光标窗重扫（[[ 触发/失配即关）
+          detectAutocomplete(handle!.view);
+        },
       });
       const v = handle.view;
       if (!restored) {
@@ -1911,6 +1999,66 @@ function EditAuroraEditor(props: {
       {/* 块操作工具条（共享层实体）：heading 升降级/列表/task/code_block/undo/redo；
           原生 button — Tab 可达 + Enter/Space 激活（R-04 键盘全操作路径） */}
       {view && Toolbar && <Toolbar view={view} tick={tick} />}
+      {/* DK-编辑器补全浮层：相对宿主定位（coordsAtPos 光标锚 v1=容器顶部
+          定条——不追光标简化，诚实边界）；键盘 capture 路由见 onAcKeyDown */}
+      {ac !== null && (
+        <div
+          role="listbox"
+          aria-label="wiki 链接标题补全"
+          onKeyDownCapture={onAcKeyDown}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 30,
+            border: '1px solid rgba(255,255,255,0.14)',
+            borderRadius: tokens.radius.lg,
+            background: tokens.color.bgElevated,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+            padding: tokens.spacing.sm,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            maxHeight: 240,
+            overflowY: 'auto',
+          }}
+        >
+          <p style={{ margin: `0 0 ${tokens.spacing.xs}px`, fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+            链接到…（↑↓ 选择 · Enter 插入 · Esc 关闭）
+          </p>
+          {ac.items.length === 0 ? (
+            <p style={{ margin: 0, fontSize: tokens.typography.body.size, color: tokens.color.textSecondary }}>
+              无匹配标题
+            </p>
+          ) : (
+            ac.items.map((t, i) => (
+              <button
+                key={t}
+                role="option"
+                aria-selected={i === ac.sel}
+                onMouseDown={(e) => {
+                  e.preventDefault(); // 保编辑器焦点——浮层点击不夺焦
+                  insertCompletion(t);
+                }}
+                style={{
+                  background: i === ac.sel ? tokens.color.bgSurface : 'transparent',
+                  color: tokens.color.textPrimary,
+                  border: 'none',
+                  borderRadius: tokens.radius.md,
+                  padding: `${tokens.spacing.xs}px ${tokens.spacing.sm}px`,
+                  fontSize: tokens.typography.body.size,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  minHeight: tokens.a11y.minTouchTarget,
+                }}
+              >
+                [[{t}]]
+              </button>
+            ))
+          )}
+        </div>
+      )}
       <div
         ref={hostRef}
         role="textbox"
