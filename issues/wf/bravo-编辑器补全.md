@@ -21,3 +21,7 @@
 | fmt 实跑+check | 0 |
 | core clippy all-targets -D warnings（底面回归） | 0 |
 | CI | 盯至全绿 |
+
+## CI 终态（8b2e251）8/8 全绿 ✓ 2026-10-17
+
+rebase 撞车处理：Alpha 在途 push 图谱原型（ece2e30——InfoPanelTabs 反链|图谱 Tab 重构 DesktopShell+lib.rs invoke_handler）——lib.rs invoke_handler 行冲突手解（双 cmd 并存）+DesktopShell auto-merge 后语义复验（tsc 0+fakepc check 0+wikiTitles 接线在位确认）。
