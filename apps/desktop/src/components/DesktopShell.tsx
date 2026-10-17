@@ -2160,6 +2160,8 @@ export default function DesktopShell() {
   const [exportAll, setExportAll] = useState<{ count: number } | null>(null);
   const [exportAllBusy, setExportAllBusy] = useState(false);
   const [exportAllMsg, setExportAllMsg] = useState<string | null>(null);
+  /* DK-2.4：模板列表（palette「从模板创建」动态项——拉一次，容忍陈旧） */
+  const [templates, setTemplates] = useState<{ noteId: string; title: string }[]>([]);
 
   const data = useDataBridge(invoke);
 
@@ -2180,6 +2182,14 @@ export default function DesktopShell() {
     data.listNotes().then(setNotes);
     data.todayStats().then(setStats);
   }, [data]);
+
+  /* DK-2.4：模板列表拉取（invoke 就绪后一次；失败静默——palette 缺项不阻断） */
+  useEffect(() => {
+    if (!invoke) return;
+    invoke('cmd_list_templates')
+      .then((r) => setTemplates((r as { noteId: string; title: string }[]) ?? []))
+      .catch(() => setTemplates([]));
+  }, [invoke]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -2584,10 +2594,26 @@ export default function DesktopShell() {
         title: '待办聚合（全库任务）',
         run: () => setView('tasks'),
       },
+      ...templates.map((t) => ({
+        kind: 'command' as const,
+        id: `tpl-${t.noteId}`,
+        title: `从模板创建：${t.title}`,
+        run: () => {
+          const name = window.prompt(`新笔记标题（模板：${t.title}）`);
+          if (!name || !name.trim() || !invoke) return;
+          invoke('cmd_create_from_template', { templateId: t.noteId, title: name.trim() })
+            .then((id) => {
+              setSelectedId(String(id));
+              setView('notes');
+            })
+            .catch(() => setTemplates(templates));
+        },
+      })),
     ],
     [
       data,
       stats,
+      templates,
       aiDeny,
       toggleAiDeny,
       backupBusy,

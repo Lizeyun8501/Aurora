@@ -39,6 +39,7 @@ mod export_commands;
 mod import_commands;
 mod plugin_commands;
 mod sync_commands;
+mod template_commands;
 mod todo_commands;
 mod wiki_commands;
 
@@ -238,6 +239,8 @@ pub fn run() {
             backlink_commands::cmd_backlinks_of,
             backlink_commands::cmd_links_graph,
             todo_commands::cmd_all_tasks,
+            template_commands::cmd_list_templates,
+            template_commands::cmd_create_from_template,
             wiki_commands::cmd_wiki_link_titles,
             import_commands::cmd_plan_import,
             import_commands::cmd_import_markdown_dir,
