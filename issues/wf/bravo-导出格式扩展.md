@@ -19,3 +19,5 @@ export_html_tests 7 例（escape 全五/& 先转/wikilink span+悬挂/标题段�
 - PDF 路径选择不可编程（v1 webview print 通路——纯 Rust 库不取的代价，注记在案）
 - 转换器嵌套强调/表格等复杂语法透传原文（有限转换器 v1）
 - 本机单测执行受限（CI Test 面真验）
+
+## CI 终态（ce257d6）8/8 全绿 ✓ 2026-10-17（Test 面含转换器 7 例单测真验）
