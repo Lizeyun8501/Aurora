@@ -19,7 +19,7 @@
 | T4 | 桌面单条队列 drain/重试（现仅全量） | DK-48 | 用户反馈驱动 | 无实现痕迹 |
 | T6 | 同步事件实时推送（现 15s 轮询） | DK-48 | EventBus 桥成熟后 | 时机条件未到 |
 | T8 | **bench 基建**（与 RV-01 合流为一项：index-rebuild 基准，DoD 1k 重建<5s，首跑实证 20.4s=20ms/条；bench.yml 周跑或本地 --ignored） | 多卡挂账+DK03S3 | **待 token** | 合流对账完成：T8=RV-01 同源，不再重复挂账 |
-| T9 | host-invoked write-doc 容量 guard 对齐（guest 侧 1 MiB 已落地） | 14c.3 | **✅ 2026-10-17 消化**（7ded281 后续 commit：DefaultHostFunctions::WriteDoc 加 1 MiB 序列化长度 guard——HostFunction Err+stderr 侧通道；DefaultHostFunctions 无 plugin/审计上下文=审计行缺位诚实边界；plugin lib 140+e2e 22 零回归） | XS |
+| T9 | host-invoked write-doc 容量 guard 对齐（guest 侧 1 MiB 已落地） | 14c.3 | **✅ 2026-10-17 消化**（d4666a6：DefaultHostFunctions::WriteDoc 加 1 MiB 序列化长度 guard——HostFunction Err+stderr 侧通道；DefaultHostFunctions 无 plugin/审计上下文=审计行缺位诚实边界；plugin lib 140+e2e 22 零回归） | XS |
 | C-① | CapabilityDenied token-None 占位语义 | 14c.1 | 与错误语义卡合流 | log/数据面路径已语义准确，仅 token-None 路径 |
 | C-ns | per-plugin namespace（L1 数据隔离，doc-id 强制前缀） | 14c.3 设计稿 | L1 权限模型立项时 | 14c 系列收官候选首位 |
 
