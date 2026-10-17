@@ -228,6 +228,7 @@ pub fn run() {
             plugin_commands::cmd_plugin_uninstall,
             plugin_commands::cmd_plugin_invoke,
             plugin_commands::cmd_plugin_audit_logs,
+            plugin_commands::cmd_pull_plugin_output,
             export_commands::cmd_export_note_markdown,
             export_commands::cmd_export_all_markdown,
             backlink_commands::cmd_backlinks_of,

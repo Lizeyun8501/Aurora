@@ -8,7 +8,7 @@
  * - 详情徽章复用 MarketplaceView（15c），本组件不重复实现
  */
 import type React from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /** invoke 形状（与 TrashView/SyncStatusBadge 本地惯例一致）。 */
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -84,6 +84,11 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
   const [status, setStatus] = useState<string>('');
   /** 审计链查看态（DK-审计面：选中插件的最近审计行） */
   const [audit, setAudit] = useState<AuditEntry[]>([]);
+  /** DK-15b 消费侧收口：输出区（选中插件 id=null=面板关；拉取即消费） */
+  const [outputPlugin, setOutputPlugin] = useState<string | null>(null);
+  const [outputLines, setOutputLines] = useState<string[]>([]);
+  const [outputErr, setOutputErr] = useState<string | null>(null);
+  const outputRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!invoke) return;
@@ -150,6 +155,48 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
     }
   };
 
+  /**
+   * DK-15b 输出区（消费侧收口）：cmd_pull_plugin_output 拉取即消费。
+   * 定位：UserOutput=产品向内容（print host API），与 log=诊断流分界
+   * （15b 文档化）。手动刷新 + 15s 轮询 v1（T6 实时推送后可换 event）。
+   * 呈现纪律：原样文本渲染（React 文本节点，零 HTML interpret——插件
+   * 输出=不可信内容，XSS fail-closed）；行集合上限由 core 64KiB FIFO 兜底。
+   */
+  const pullOutput = useCallback(async (id: string) => {
+    if (!invoke) return;
+    try {
+      const lines = (await invoke('cmd_pull_plugin_output', { pluginId: id })) as string[];
+      setOutputErr(null);
+      setOutputLines((prev) => {
+        // 轮询窗内本插件新行 append（拉取即消费——刷新不重复）
+        return [...prev, ...(lines ?? [])].slice(-500);
+      });
+    } catch (e) {
+      setOutputErr(String(e));
+    }
+  }, [invoke]);
+
+  /** 输出面板开启/切换：切插件时清当前流（消费语义——旧流已消费不复显） */
+  const openOutput = (id: string) => {
+    setOutputPlugin((cur) => {
+      const next = cur === id ? null : id;
+      outputRef.current = next;
+      if (next) {
+        setOutputLines([]);
+        setOutputErr(null);
+        void pullOutput(next);
+      }
+      return next;
+    });
+  };
+
+  /** 15s 轮询（outputPlugin 在位时挂 interval；T6 实时推送后换 event） */
+  useEffect(() => {
+    if (!outputPlugin || !invoke) return;
+    const t = setInterval(() => void pullOutput(outputPlugin), 15000);
+    return () => clearInterval(t);
+  }, [outputPlugin, invoke, pullOutput]);
+
   /** 市场安装（语义层 to_manifest 派生——UI 不拼 manifest，DK-43 传播收口）。 */
   const installFromMarket = async (l: MarketListing) => {
     if (!invoke) return;
@@ -196,6 +243,9 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
               </div>
               <button style={S.smoke} onClick={() => void smokeInvoke(p.id)}>
                 invoke 冒烟
+              </button>
+              <button style={S.smoke} onClick={() => openOutput(p.id)}>
+                {outputPlugin === p.id ? '关闭输出' : '输出'}
               </button>
               <button style={S.smoke} onClick={() => void showAudit(p.id)}>
                 审计
@@ -252,6 +302,51 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
               {a.detail && <span style={S.meta}>{a.detail}</span>}
             </div>
           ))}
+        </section>
+      )}
+
+      {outputPlugin !== null && (
+        /* DK-15b 消费侧收口：输出区（UserOutput=产品向内容；log=诊断流
+           分界 15b 文档化）。原样文本渲染（不可信内容 fail-closed）——
+           React 文本节点零 HTML interpret；容器滚动即展开（超长行
+           pre-wrap 换行+maxHeight 截断，v1 无逐行折叠——诚实边界）。 */
+        <section
+          aria-label="插件输出"
+          style={{ marginTop: 16, border: '1px solid #e5e7eb', borderRadius: 8, padding: 12 }}
+        >
+          <h2 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+            插件输出 · {outputPlugin}
+            <span style={S.meta}>（拉取即消费 · 15s 轮询）</span>
+            <button style={S.smoke} onClick={() => void pullOutput(outputPlugin)}>
+              手动刷新
+            </button>
+          </h2>
+          {outputErr !== null && (
+            <p style={{ margin: '0 0 8px', fontSize: 12, color: '#b91c1c' }}>拉取失败：{outputErr}（已降级，不影响插件运行）</p>
+          )}
+          {outputLines.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 13, color: '#9ca3af' }}>
+              插件暂无输出（print 内容经 64KiB FIFO 缓冲，拉取即消费）
+            </p>
+          ) : (
+            <div
+              style={{
+                maxHeight: 320,
+                overflow: 'auto',
+                background: '#f9fafb',
+                borderRadius: 6,
+                padding: 8,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all',
+                fontSize: 12,
+                lineHeight: 1.6,
+              }}
+            >
+              {outputLines.map((l, i) => (
+                <div key={i} style={{ borderBottom: '1px solid #f3f4f6', padding: '2px 0' }}>{l}</div>
+              ))}
+            </div>
+          )}
         </section>
       )}
     </main>

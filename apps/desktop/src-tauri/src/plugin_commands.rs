@@ -313,3 +313,33 @@ pub async fn cmd_plugin_audit_logs(
         .runtime
         .audit_recent(limit.unwrap_or(100).min(1024), plugin_id.as_deref()))
 }
+
+/// DK-15b 消费侧收口：插件输出拉取（拉取即消费——core UserOutputBuf drain
+/// 语义透传）。UserOutput=产品向内容（print host API），与 log 诊断流分界
+/// （15b 文档化）；无人拉取=64KiB FIFO 积压淘汰——本 cmd 是桌面轮询消费点。
+///
+/// # Errors
+/// runtime host_call 失败（插件未注册等——字符串化透传 UI）。
+#[tauri::command]
+pub async fn cmd_pull_plugin_output(
+    state: State<'_, PluginState>,
+    plugin_id: String,
+) -> Result<Vec<String>, String> {
+    let out = state
+        .runtime
+        .call_host_function(
+            &plugin_id,
+            aurora_plugin::wasm_runtime::HostFunction::PullOutput,
+            &serde_json::json!({}),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(out
+        .get("lines")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| l.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default())
+}
