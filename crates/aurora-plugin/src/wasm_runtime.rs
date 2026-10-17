@@ -1425,6 +1425,23 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
     }
 }
 
+/// S1 前缀闸：宿主保留前缀硬清单（单一事实源）。
+///
+/// 源=设计稿 plugin-kv-capability-design §2 表格（键域 re-scan 复核
+/// 2026-10-17：plugins: 全系（installed/blob/modcache/audit/policy）+
+/// settings:（sync_gate）+ links:（S1 倒排）——attachblob:/trash:/sync:/backup:
+/// 等宿主面键当前无插件 KV 通路（16 卡 doc 面+write_path 面），闸登记
+/// 三前缀；新前缀落地必须同步登记（纪律：清单演进随键域扩容）。
+pub(crate) const HOST_RESERVED_PREFIXES: &[&str] = &["plugins:", "settings:", "links:"];
+
+/// 保留前缀命中判定（前缀精确匹配）——命中返回所属清单项。
+pub(crate) fn reserved_prefix_of(key: &str) -> Option<&'static str> {
+    HOST_RESERVED_PREFIXES
+        .iter()
+        .copied()
+        .find(|p| key.starts_with(*p))
+}
+
 /// DK-16 L1：storage require 链——token → namespace 前缀 → method 授权。
 /// 拒绝语义与越权一致（CapabilityDenied）+差异化审计留痕。
 impl WasmStoreCtx {
@@ -1449,6 +1466,30 @@ impl WasmStoreCtx {
             return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
                 Capability::Storage,
             )));
+        }
+        // S1 前缀闸：宿主保留前缀强制拦截（仅写面——v1 拦写不拦读，插件对
+        // 保留前缀的可见性策略另批）。即使键形与 {id}: 相交（插件 id 恰为
+        // `plugins` 等边界形——16.1 禁 `:` 不禁此形）也拒——硬清单兜底
+        // "间接保证"（设计稿 plugin-kv-capability-design §2→§34 强制闸）。
+        // 顺序：先于 namespace 检查——保留前缀 hard deny 优先级最高。
+        if method == StorageMethod::Write {
+            if let Some(doc_id) = doc_id {
+                if let Some(prefix) = reserved_prefix_of(doc_id) {
+                    eprintln!(
+                        "[audit-host] plugin={plugin_id} event={event} result=denied reason=reserved-prefix doc_id={doc_id}"
+                    );
+                    self.audit_log(
+                        plugin_id,
+                        event,
+                        "denied",
+                        "reserved-prefix",
+                        &format!("doc_id={doc_id} prefix={prefix}"),
+                    );
+                    return Err(wasmtime::Error::msg(crate::Error::CapabilityDenied(
+                        Capability::Storage,
+                    )));
+                }
+            }
         }
         // 第二环：namespace 强制前缀（query 无 doc_id——隔离走键集过滤）
         if let Some(doc_id) = doc_id {
@@ -2029,5 +2070,141 @@ mod user_output_tests {
         assert_eq!(d, vec!["a".to_string(), "b".to_string()]);
         assert!(b.is_empty(), "drain 后应清空（拉取即消费）");
         assert_eq!(b.drain(), Vec::<String>::new());
+    }
+}
+
+#[cfg(test)]
+mod reserved_prefix_gate_tests {
+    //! S1 前缀闸单测：四类覆盖——命中拒/审计行/边界形（id=`plugins`）/
+    //! doc 键不误伤；read 面 v1 放行口径。
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    /// 最小 ctx（storage_guard 单测面——不需要真 guest/引擎）。
+    fn make_ctx(plugin_id: &str) -> WasmStoreCtx {
+        WasmStoreCtx {
+            plugin_id: plugin_id.to_string(),
+            manifest: CapabilityManifest::default(),
+            wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
+            table: wasmtime_wasi::ResourceTable::new(),
+            log_first_called: false,
+            read_first_called: false,
+            query_first_called: false,
+            print_first_called: false,
+            audit: Arc::new(crate::audit::AuditRing::new(8)),
+            docs: Some(Arc::new(RwLock::new(HashMap::new()))),
+            user_output: None,
+            shares: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    fn storage_token(ctx: &mut WasmStoreCtx) -> wasmtime::component::Resource<CapabilityTokenData> {
+        ctx.table
+            .push(CapabilityTokenData {
+                granted: [Capability::Storage].into_iter().collect(),
+            })
+            .expect("token push")
+    }
+
+    fn denied_storage(err: &wasmtime::Error) -> bool {
+        err.downcast_ref::<crate::Error>()
+            .is_some_and(|e| matches!(e, crate::Error::CapabilityDenied(Capability::Storage)))
+    }
+
+    #[test]
+    fn test_reserved_prefix_of_hit_and_miss() {
+        // 命中：三清单前缀（含全系子键）
+        assert_eq!(
+            reserved_prefix_of("plugins:installed:abc"),
+            Some("plugins:")
+        );
+        assert_eq!(reserved_prefix_of("plugins:modcache:x"), Some("plugins:"));
+        assert_eq!(reserved_prefix_of("settings:sync_gate"), Some("settings:"));
+        assert_eq!(reserved_prefix_of("links:out:note1"), Some("links:"));
+        // 不误伤：doc 键（插件 namespace）+形近非前缀
+        assert_eq!(reserved_prefix_of("noteapp:doc1"), None);
+        assert_eq!(reserved_prefix_of("pluginske"), None, "无冒号非前缀");
+        assert_eq!(reserved_prefix_of("links"), None);
+    }
+
+    #[test]
+    fn test_guard_reserved_prefix_denies_write_with_audit() {
+        // 命中拒+审计行（reason=reserved-prefix）
+        let mut ctx = make_ctx("evilplug");
+        let token = storage_token(&mut ctx);
+        let err = ctx
+            .storage_guard(
+                &token,
+                StorageMethod::Write,
+                "write-doc",
+                Some("plugins:installed:abc"),
+            )
+            .expect_err("保留前缀写应拒");
+        assert!(denied_storage(&err), "应 CapabilityDenied(Storage): {err}");
+        let ring = ctx.audit.snapshot();
+        let hit = ring
+            .iter()
+            .find(|e| e.reason == "reserved-prefix")
+            .expect("审计行");
+        assert_eq!(hit.plugin, "evilplug");
+        assert_eq!(hit.event, "write-doc");
+        assert_eq!(hit.result, "denied");
+        assert!(hit.detail.contains("doc_id=plugins:installed:abc"));
+        assert!(hit.detail.contains("prefix=plugins:"));
+    }
+
+    #[test]
+    fn test_guard_boundary_shape_plugins_id_still_denied() {
+        // 边界形：插件 id 恰为 `plugins`——键形与 {id}: 相交（namespace 检查
+        // 本可过），硬清单兜底强制拒（闸先于 namespace）
+        let mut ctx = make_ctx("plugins");
+        let token = storage_token(&mut ctx);
+        let err = ctx
+            .storage_guard(
+                &token,
+                StorageMethod::Write,
+                "write-doc",
+                Some("plugins:mine"),
+            )
+            .expect_err("边界形应拒");
+        assert!(denied_storage(&err), "{err}");
+        assert!(
+            ctx.audit
+                .snapshot()
+                .iter()
+                .any(|e| e.reason == "reserved-prefix"),
+            "边界形拒也应留审计行"
+        );
+    }
+
+    #[test]
+    fn test_guard_doc_key_write_passes_through() {
+        // doc 键不误伤：{id}: 正常路径零回归（闸过+namespace 过→Ok）
+        let mut ctx = make_ctx("noteapp");
+        let token = storage_token(&mut ctx);
+        ctx.storage_guard(
+            &token,
+            StorageMethod::Write,
+            "write-doc",
+            Some("noteapp:doc1"),
+        )
+        .expect("doc 键写应放行");
+        assert!(ctx.audit.snapshot().is_empty(), "放行不留审计行");
+    }
+
+    #[test]
+    fn test_guard_read_reserved_prefix_passes_v1() {
+        // v1 拦写不拦读：read 命中保留前缀键由 namespace 裁决（id=plugins
+        // 时 {id}: 恰好也命中前缀形——双过=放行），闸不额外拦
+        let mut ctx = make_ctx("plugins");
+        let token = storage_token(&mut ctx);
+        ctx.storage_guard(
+            &token,
+            StorageMethod::Read,
+            "read-doc",
+            Some("plugins:mine"),
+        )
+        .expect("v1 read 面不应被前缀闸拦");
     }
 }

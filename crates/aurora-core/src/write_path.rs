@@ -31,9 +31,11 @@ use std::collections::HashSet;
 use crate::app_core::{self, AppCore};
 use crate::blocks::BlockStore;
 use crate::error_codes::ErrorCode;
-// KVStore 原仅 loro-crdt 面消费（曾 cfg 门防 iroh-transport 面 unused，
-// run 37564438794）；2026-10-17 起 rename 链接跟随（follow_links_on_rename）
-// 恒编译消费 → cfg 门移除。
+// KVStore 仅 loro-crdt 面消费（updatelog 系全 cfg 门）——cfg 门复归
+// （b66b1a2 误判移除：follow_links_on_rename 经 WriteContext.core 具体
+// 类型间接消费 KV，不引 trait use——default 面 unused 实证，S1 前缀闸
+// CI 兜底收口）。
+#[cfg(feature = "loro-crdt")]
 use crate::traits::kv_store::KVStore;
 use crate::Error;
 use serde::{Deserialize, Serialize};

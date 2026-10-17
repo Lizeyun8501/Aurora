@@ -25,6 +25,8 @@
 
 **纪律**：新宿主键前缀落地必须同步登记本清单（演进为代码常量 `HOST_RESERVED_PREFIXES`，单一事实源）。另：`plugins:modcache:` 行"Bravo 在途"已过时（8c138d8 验收冻结）——登记时顺手修正为卡号。
 
+> **闸状态注记（2026-10-17，S1 落地）**：`HOST_RESERVED_PREFIXES` 已落为代码常量（`wasm_runtime.rs`）——**"间接保证"→"强制闸落地"**。登记清单=`plugins:`/`settings:`/`links:`（键域 re-scan 复核：attachblob:/trash:/sync:/backup: 等宿主面键当前无插件 KV 通路——16 卡 doc 面+write_path 面，闸随通路扩容同步登记）。语义：**v1 拦写不拦读**（read/query 命中保留前缀=插件可见性策略，另批）；先于 namespace 检查——`{id}:` 键形相交（id=`plugins` 边界形）也拒。单测 5 例（命中拒+审计行/边界形/doc 键不误伤/纯函数命中判定/read v1 放行口径）。
+
 ## 3. 能力模型：**统一复用 L1 namespace（推荐案）**
 
 **不引入新概念**——插件 KV 能力 = 自己 L1 namespace `{id}:` 下的键域：
