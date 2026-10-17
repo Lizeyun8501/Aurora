@@ -22,6 +22,7 @@ import ImportWizard from './ImportWizard';
 import CanvasView from './CanvasView';
 import TrashView from './TrashView';
 import SmartFolderView from './SmartFolderView';
+import GraphPanel from './GraphPanel';
 import TodayDailyNote from './TodayDailyNote';
 import LiquifyReview from './LiquifyReview';
 // DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
@@ -1535,14 +1536,54 @@ function EditorPane(props: {
       />
       {/* DK-09 渲染接线：attachment:// 引用解析（图片内联 / 文件卡） */}
       <AttachmentStrip invoke={invoke} content={note.content} />
-      {/* DK-UI-S2：反链面板（backlinks_of 消费方，底部面板位） */}
-      <BacklinksPanel noteId={note.note_id} invoke={invoke} onSelect={onSelect} />
+      {/* DK-UI-S2 + 图谱原型：底部信息面板 Tab（反链 | 图谱） */}
+      <InfoPanelTabs invoke={invoke} noteId={note.note_id} onSelect={onSelect} />
       {/* DK-UI-S2 导出确认门 + 单篇入口（aab8997 v1 欠账：明文出库确认门归 UI 层） */}
       <ExportMarkdownGate invoke={invoke} note={note} />
     </main>
   );
 }
 
+
+/** DK-UI-S2+图谱原型：底部信息面板 Tab 容器（反链 | 图谱）。
+ * 状态提升到此——BacklinksPanel/GraphPanel 各自无 Tab 感知。 */
+function InfoPanelTabs(props: {
+  invoke: InvokeFn | null;
+  noteId: string;
+  onSelect: (id: string) => void;
+}): React.ReactElement {
+  const { invoke, noteId, onSelect } = props;
+  const [tab, setTab] = useState<'backlinks' | 'graph'>('backlinks');
+  const tabBtn = (key: 'backlinks' | 'graph', label: string): React.ReactElement => (
+    <button
+      style={{
+        padding: '4px 12px',
+        fontSize: 12,
+        borderRadius: tokens.radius.sm,
+        border: `1px solid ${tab === key ? tokens.color.primaryBright : 'rgba(255,255,255,0.12)'}`,
+        background: tab === key ? tokens.color.primary : 'transparent',
+        color: tab === key ? '#fff' : tokens.color.textSecondary,
+        cursor: 'pointer',
+      }}
+      onClick={() => setTab(key)}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <section>
+      <div style={{ display: 'flex', gap: 6, margin: '12px 0 0' }}>
+        {tabBtn('backlinks', '反向链接')}
+        {tabBtn('graph', '链接图谱')}
+      </div>
+      {tab === 'backlinks' ? (
+        <BacklinksPanel noteId={noteId} invoke={invoke} onSelect={onSelect} />
+      ) : (
+        <GraphPanel invoke={invoke} onSelect={onSelect} />
+      )}
+    </section>
+  );
+}
 
 /** DK-UI-S2 反链面板 — S1 backlinks_of 读取侧首个消费方。
  *

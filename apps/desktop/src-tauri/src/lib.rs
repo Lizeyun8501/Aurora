@@ -232,6 +232,7 @@ pub fn run() {
             export_commands::cmd_export_note_markdown,
             export_commands::cmd_export_all_markdown,
             backlink_commands::cmd_backlinks_of,
+            backlink_commands::cmd_links_graph,
             import_commands::cmd_plan_import,
             import_commands::cmd_import_markdown_dir,
             import_commands::cmd_import_enex,
