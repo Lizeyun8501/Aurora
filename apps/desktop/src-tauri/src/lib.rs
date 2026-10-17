@@ -233,6 +233,8 @@ pub fn run() {
             plugin_commands::cmd_pull_plugin_output,
             export_commands::cmd_export_note_markdown,
             export_commands::cmd_export_all_markdown,
+            export_commands::cmd_export_note_html,
+            export_commands::cmd_export_note_pdf,
             backlink_commands::cmd_backlinks_of,
             backlink_commands::cmd_links_graph,
             todo_commands::cmd_all_tasks,

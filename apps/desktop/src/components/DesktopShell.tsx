@@ -1694,35 +1694,55 @@ function BacklinksPanel(props: {
 }
 
 
-/** DK-UI-S2 导出确认门（单篇）— aab8997 v1 欠账：明文出库确认门归 UI 层。
+/** DK-UI-S2 导出确认门（单篇）— aab8997 v1 欠账 + DK-导出格式扩展（2.3）。
  *
- * - 入口：EditorPane 标题行「导出 Markdown」按钮（仅选中笔记时渲染）；
- * - 确认卡只拦明文出库语义（不含附件/路径选择不拦）；v1 路径=prompt 预填
+ * - 入口：EditorPane 标题行三格式按钮（Markdown/HTML/PDF——仅选中笔记）；
+ * - 确认卡只拦明文出库语义（文案按格式变）；v1 路径=prompt 预填
  *   默认目录（dialog 插件另批，诚实边界）；
+ * - PDF=webview 打印通路（cmd_export_note_pdf 打开系统打印对话框，
+ *   用户侧"另存为 PDF"——路径不可编程指定，平台能力占位例外，诚实注记）；
  * - 结果：成功显示落盘路径 / 失败显示错误（非阻断，不崩编辑视图）。
  */
+type ExportFormat = 'md' | 'html' | 'pdf';
+const EXPORT_LABEL: Record<ExportFormat, string> = {
+  md: '明文 Markdown（不含附件）',
+  html: '明文 HTML（不含附件；MD 有限转换，[[ 透传）',
+  pdf: 'PDF（经系统打印对话框——路径由对话框选择）',
+};
 function ExportMarkdownGate(props: {
   invoke: InvokeFn | null;
   note: NoteContent;
 }): React.ReactElement {
   const { invoke, note } = props;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState<ExportFormat | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
-  const doExport = async () => {
+  const doExport = async (fmt: ExportFormat) => {
     if (!invoke) {
       setResult('browser-mock 模式不可用（仅 tauri 模式可导出）');
       return;
     }
-    const dir = window.prompt('导出目录', '~/Downloads/aurora-export');
-    if (!dir) return;
+    let destDir = '';
+    if (fmt !== 'pdf') {
+      const dir = window.prompt('导出目录', '~/Downloads/aurora-export');
+      if (!dir) return;
+      destDir = dir;
+    }
     setBusy(true);
     setResult(null);
     try {
-      const path = (await invoke('cmd_export_note_markdown', { noteId: note.note_id, destDir: dir })) as string;
-      setResult(`已导出：${path}`);
-      setOpen(false);
+      if (fmt === 'md') {
+        const path = (await invoke('cmd_export_note_markdown', { noteId: note.note_id, destDir })) as string;
+        setResult(`已导出：${path}`);
+      } else if (fmt === 'html') {
+        const path = (await invoke('cmd_export_note_html', { noteId: note.note_id, destDir })) as string;
+        setResult(`已导出：${path}`);
+      } else {
+        const msg = (await invoke('cmd_export_note_pdf')) as string;
+        setResult(msg);
+      }
+      setOpen(null);
     } catch (e) {
       setResult(`导出失败：${String(e)}`);
     } finally {
@@ -1732,24 +1752,33 @@ function ExportMarkdownGate(props: {
 
   return (
     <section style={{ marginTop: tokens.spacing.md }} aria-label="导出 Markdown">
-      <button
-        onClick={() => {
-          setResult(null);
-          setOpen(true);
-        }}
-        style={{
-          background: 'transparent',
-          color: tokens.color.textSecondary,
-          border: '1px solid rgba(255,255,255,0.12)',
-          borderRadius: tokens.radius.md,
-          padding: `${tokens.spacing.xs}px ${tokens.spacing.sm}px`,
-          fontSize: tokens.typography.caption.size,
-          cursor: 'pointer',
-          minHeight: tokens.a11y.minTouchTarget,
-        }}
-      >
-        ⤴ 导出 Markdown
-      </button>
+      <div style={{ display: 'flex', gap: tokens.spacing.xs }}>
+        {([
+          ['md', '⤴ 导出 Markdown'],
+          ['html', '导出 HTML'],
+          ['pdf', '导出 PDF'],
+        ] as const).map(([fmt, label]) => (
+          <button
+            key={fmt}
+            onClick={() => {
+              setResult(null);
+              setOpen(fmt);
+            }}
+            style={{
+              background: 'transparent',
+              color: tokens.color.textSecondary,
+              border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: tokens.radius.md,
+              padding: `${tokens.spacing.xs}px ${tokens.spacing.sm}px`,
+              fontSize: tokens.typography.caption.size,
+              cursor: 'pointer',
+              minHeight: tokens.a11y.minTouchTarget,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       {result !== null && (
         <p style={{ margin: `${tokens.spacing.xs}px 0 0`, fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
           {result}
@@ -1771,14 +1800,14 @@ function ExportMarkdownGate(props: {
           }}
         >
           <p style={{ margin: 0, fontSize: tokens.typography.body.size, color: tokens.color.textPrimary }}>
-            将导出《{note.title || '未命名'}》为明文 Markdown（不含附件）
+            将导出《{note.title || '未命名'}》为{open !== null ? EXPORT_LABEL[open] : ''}
           </p>
           <p style={{ margin: 0, fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
             明文出库=用户显式行为；导出目录下重名自动去重（-2/-3 序列）
           </p>
           <div style={{ display: 'flex', gap: tokens.spacing.sm }}>
             <button
-              onClick={doExport}
+              onClick={() => open !== null && void doExport(open)}
               disabled={busy}
               style={{
                 background: tokens.color.primary,
@@ -1794,7 +1823,7 @@ function ExportMarkdownGate(props: {
               {busy ? '导出中…' : '确认导出'}
             </button>
             <button
-              onClick={() => setOpen(false)}
+              onClick={() => setOpen(null)}
               style={{
                 background: 'transparent',
                 color: tokens.color.textSecondary,
