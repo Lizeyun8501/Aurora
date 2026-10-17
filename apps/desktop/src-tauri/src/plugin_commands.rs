@@ -159,9 +159,27 @@ impl Default for PluginState {
     }
 }
 
+/// 审计即时 flush（审计 flush 定量——挂起池项）：
+/// 安装面变更（install/uninstall 成功或六环拒绝）后立即落盘审计快照——
+/// 这些事件低频高价值（安全审计主对象），不等 hourly tick（丢失窗口
+/// 从 1h 收紧到即时）。失败不阻断主流程（warn——hourly tick 兜底重试）。
+async fn flush_audit_after(
+    runtime: &aurora_plugin::wasm_runtime::WasmRuntime,
+    kv: &dyn aurora_core::traits::kv_store::KVStore,
+    op: &str,
+) {
+    match aurora_plugin::audit::persist_audit(runtime, kv).await {
+        Ok(n) if n > 0 => tracing::debug!(n, op, "audit flushed after {op}"),
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, op, "audit flush after {op} failed; hourly tick will retry")
+        }
+    }
+}
+
 /// 安装插件（市场 listing + manifest + 本地 wasm 文件路径）。
 ///
-/// fail-closed 链在 installer（listing 存在性/id 一致/checksum/Plugin::new
+/// 本地开发安装（六环 fail-closed 链在 installer（listing 存在性/id 一致/checksum/Plugin::new
 /// 强签名/register/KV 持久化）；wasm 字节从 `wasm_path` 读入（市场下载器
 /// 另卡——当前本地开发安装语义）。
 ///
@@ -179,7 +197,7 @@ pub async fn cmd_plugin_install(
     let wasm_bytes = tokio::fs::read(&wasm_path)
         .await
         .map_err(|e| format!("read wasm `{wasm_path}`: {e}"))?;
-    installer::install_plugin(
+    let result = installer::install_plugin(
         &state.runtime,
         &booted.core.kv_store,
         &state.market,
@@ -188,8 +206,15 @@ pub async fn cmd_plugin_install(
         &wasm_bytes,
         reinstall.unwrap_or(false),
     )
-    .await
-    .map_err(|e| e.to_string())
+    .await;
+    // 成功与六环拒绝（denied 审计行）都即时落盘
+    flush_audit_after(
+        &state.runtime,
+        booted.core.kv_store.as_ref(),
+        "plugin_install",
+    )
+    .await;
+    result.map_err(|e| e.to_string())
 }
 
 /// 已安装插件清单（KV 前缀扫描；损坏条目上抛不静默）。
@@ -231,7 +256,7 @@ pub async fn cmd_market_install(
     reinstall: Option<bool>,
 ) -> Result<PluginManifest, String> {
     let booted = crate::sync_commands::get_booted()?;
-    installer::install_from_market(
+    let result = installer::install_from_market(
         &state.runtime,
         &booted.core.kv_store,
         &state.market,
@@ -243,8 +268,15 @@ pub async fn cmd_market_install(
             reinstall: reinstall.unwrap_or(false),
         },
     )
-    .await
-    .map_err(|e| e.to_string())
+    .await;
+    // 成功与六环拒绝（denied 审计行）都即时落盘
+    flush_audit_after(
+        &state.runtime,
+        booted.core.kv_store.as_ref(),
+        "market_install",
+    )
+    .await;
+    result.map_err(|e| e.to_string())
 }
 
 /// 卸载插件（runtime 反注册 + shares 双向清理（DK-17.1）+ KV 两键清除）。
@@ -257,9 +289,15 @@ pub async fn cmd_plugin_uninstall(
     plugin_id: String,
 ) -> Result<(), String> {
     let booted = crate::sync_commands::get_booted()?;
-    installer::uninstall_plugin(&state.runtime, &booted.core.kv_store, &plugin_id)
-        .await
-        .map_err(|e| e.to_string())
+    let result =
+        installer::uninstall_plugin(&state.runtime, &booted.core.kv_store, &plugin_id).await;
+    flush_audit_after(
+        &state.runtime,
+        booted.core.kv_store.as_ref(),
+        "plugin_uninstall",
+    )
+    .await;
+    result.map_err(|e| e.to_string())
 }
 
 /// 插件方法调用（宿主函数面 or guest 导出面——runtime 既有语义透传）。
