@@ -150,6 +150,104 @@ fn extract_line_links(line: &str, out: &mut Vec<String>) {
     }
 }
 
+// ---------- wiki 链接改写（rename 跟随 — 拍板 2 A 方案） ----------
+
+/// 正文 wiki 链接改写：target 段精确等于 `old` 的 `[[old]]`/`[[old|alias]]`
+/// → `[[new]]`/`[[new|alias]]`（alias 保留）。
+///
+/// 语法面与 [`extract_wiki_links`] 同款状态机（围栏/行内码内不改写），
+/// 逐行重写、非命中行原样返回（零拷贝语义：无命中返回 None）。
+///
+/// 返回 `(改写后正文, 命中数)`；`None` = 无命中（调用方跳过保存）。
+pub fn rewrite_wiki_links(content: &str, old: &str, new: &str) -> Option<(String, usize)> {
+    let mut buf = String::with_capacity(content.len() + new.len());
+    let mut in_fence = false;
+    let mut hits = 0usize;
+    let mut changed = false;
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            buf.push_str(line);
+            buf.push('\n');
+            continue;
+        }
+        if in_fence {
+            buf.push_str(line);
+            buf.push('\n');
+            continue;
+        }
+        let (newline, line_hits) = rewrite_line_links(line, old, new);
+        hits += line_hits;
+        if line_hits > 0 {
+            changed = true;
+        }
+        buf.push_str(&newline);
+        buf.push('\n');
+    }
+    // 与 content.lines() 对齐：末尾无换行的原文不补 \n（去掉最后多加的）
+    if !content.ends_with('\n') {
+        buf.truncate(buf.trim_end_matches('\n').len());
+    }
+    if changed {
+        Some((buf, hits))
+    } else {
+        None
+    }
+}
+
+/// 单行改写：target 段精确匹配 `old` 才替换（alias 段原样保留）。
+/// 返回 `(改写后行, 命中数)`。
+fn rewrite_line_links(line: &str, old: &str, new: &str) -> (String, usize) {
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    let mut hits = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'`' => match line[i + 1..].find('`') {
+                Some(end) => {
+                    let stop = i + 1 + end + 1;
+                    out.push_str(&line[i..stop.min(line.len())]);
+                    i = stop;
+                }
+                None => {
+                    out.push_str(&line[i..]);
+                    i = line.len();
+                }
+            },
+            b'[' if bytes.get(i + 1) == Some(&b'[') => match line[i + 2..].find("]]") {
+                Some(end) => {
+                    let inner = &line[i + 2..i + 2 + end];
+                    let target = inner.split('|').next().unwrap_or("").trim();
+                    if target == old {
+                        let alias = inner
+                            .split_once('|')
+                            .map(|(_, a)| format!("|{a}"))
+                            .unwrap_or_default();
+                        out.push_str(&format!("[[{new}{alias}]]"));
+                        hits += 1;
+                    } else {
+                        out.push_str(&line[i..i + 2 + end + 2]);
+                    }
+                    i += 2 + end + 2;
+                }
+                None => {
+                    out.push_str(&line[i..i + 2]);
+                    i += 2;
+                }
+            },
+            _ => {
+                // UTF-8 安全步进：按字符边界推进
+                let ch_len = line[i..].chars().next().map_or(1, char::len_utf8);
+                out.push_str(&line[i..i + ch_len]);
+                i += ch_len;
+            }
+        }
+    }
+    (out, hits)
+}
+
 // ---------- 索引原语 ----------
 
 /// 出链集读取（键缺失 = 空集）。
@@ -396,6 +494,88 @@ mod tests {
     fn test_extract_empty_and_unclosed_skipped() {
         let c = "[[]] [[ ]] [[|alias]] [[unclosed";
         assert!(extract_wiki_links(c).is_empty());
+    }
+
+    // ---------- rewrite_wiki_links（rename 跟随 — 拍板 2 A 方案） ----------
+
+    #[test]
+    fn test_rewrite_basic_and_no_hit() {
+        // 命中改写；无命中返回 None（调用方跳过保存——幂等基础）
+        let (r, n) =
+            rewrite_wiki_links("见 [[旧标题]] 和 [[其他]]", "旧标题", "新标题").expect("应命中");
+        assert_eq!(n, 1);
+        assert_eq!(r, "见 [[新标题]] 和 [[其他]]");
+        assert!(rewrite_wiki_links("见 [[其他]]", "旧标题", "新标题").is_none());
+    }
+
+    #[test]
+    fn test_rewrite_alias_preserved() {
+        let (r, n) = rewrite_wiki_links("[[旧标题|我的别名]]", "旧标题", "新标题").expect("应命中");
+        assert_eq!(n, 1);
+        assert_eq!(r, "[[新标题|我的别名]]", "alias 段保留");
+    }
+
+    #[test]
+    fn test_rewrite_exact_match_only() {
+        // 前缀相似/含子串不改（精确匹配语义）
+        let c = "[[旧标题续集]] [[前缀旧标题]] [[旧标题x]] [[旧标题]]";
+        let (r, n) = rewrite_wiki_links(c, "旧标题", "新标题").expect("应命中 1");
+        assert_eq!(n, 1, "仅精确命中一处");
+        assert!(r.contains("[[旧标题续集]]"));
+        assert!(r.contains("[[前缀旧标题]]"));
+        assert!(r.contains("[[新标题]]"));
+    }
+
+    #[test]
+    fn test_rewrite_fence_and_inline_code_immune() {
+        // 围栏与行内码内不改写（与 extract 同款状态机）
+        let c = "```\n[[旧标题]]\n```\n正文 [[旧标题]]\n`[[旧标题]]` 码内";
+        let (r, n) = rewrite_wiki_links(c, "旧标题", "新标题").expect("应命中 1");
+        assert_eq!(n, 1);
+        assert!(r.contains("```\n[[旧标题]]\n```"), "围栏内原样");
+        assert!(r.contains("`[[旧标题]]`"), "行内码内原样");
+        assert!(r.contains("正文 [[新标题]]"));
+    }
+
+    #[test]
+    fn test_rewrite_idempotent() {
+        // 幂等：改写后再跑同参数 → None（follow 重跑安全基础）
+        let once = rewrite_wiki_links("a [[旧标题]] b", "旧标题", "新标题")
+            .expect("首次应命中")
+            .0;
+        assert!(
+            rewrite_wiki_links(&once, "旧标题", "新标题").is_none(),
+            "重跑无命中"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_utf8_and_unclosed() {
+        // UTF-8 边界步进安全
+        let c = "中文正文 [[旧标题]] 尾";
+        let (r, _) = rewrite_wiki_links(c, "旧标题", "新标题").expect("应命中");
+        assert_eq!(r, "中文正文 [[新标题]] 尾");
+        // 未闭合嵌套：extract 同款贪婪语义——首 [[ 到首 ]] 全段一个 target
+        // （"旧标题 未闭合 [[旧标题" ≠ old）→ 无命中原样（与提取面一致）
+        let c2 = "[[旧标题 未闭合 [[旧标题]] 正常";
+        assert!(rewrite_wiki_links(c2, "旧标题", "新标题").is_none());
+        // 未闭合=行内无 ]]（跨行重扫）：下一行独立命中
+        let c3 = "[[unclosed 行内无闭合\n下一行 [[旧标题]] 正常";
+        let (r3, n3) = rewrite_wiki_links(c3, "旧标题", "新标题").expect("应命中 1");
+        assert_eq!(n3, 1);
+        assert!(r3.contains("[[新标题]] 正常"));
+        assert!(r3.contains("[[unclosed 行内无闭合"));
+    }
+
+    #[test]
+    fn test_rewrite_trailing_newline_preserved() {
+        // 末尾换行保真（lines() 重建不吞尾巴）
+        let with_nl = "a [[旧标题]]\n";
+        let (r, _) = rewrite_wiki_links(with_nl, "旧标题", "新标题").unwrap();
+        assert_eq!(r, "a [[新标题]]\n");
+        let no_nl = "a [[旧标题]]";
+        let (r2, _) = rewrite_wiki_links(no_nl, "旧标题", "新标题").unwrap();
+        assert_eq!(r2, "a [[新标题]]");
     }
 
     #[test]

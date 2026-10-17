@@ -31,13 +31,13 @@ use std::collections::HashSet;
 use crate::app_core::{self, AppCore};
 use crate::blocks::BlockStore;
 use crate::error_codes::ErrorCode;
-// DK-40a 修复：KVStore 仅 loro-crdt 面（update log 系）消费；
-// iroh-transport 单独解析面下未激活 → unused import + -D warnings 编译失败（run 37564438794）。
-#[cfg(feature = "loro-crdt")]
+// KVStore 原仅 loro-crdt 面消费（曾 cfg 门防 iroh-transport 面 unused，
+// run 37564438794）；2026-10-17 起 rename 链接跟随（follow_links_on_rename）
+// 恒编译消费 → cfg 门移除。
 use crate::traits::kv_store::KVStore;
 use crate::Error;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 
 #[cfg(feature = "loro-crdt")]
 use crate::l1_infrastructure::note_doc::NoteDoc;
@@ -899,11 +899,102 @@ pub async fn rename_note(
             },
         });
     info!(note_id, old_title, new_title, "note renamed via WritePath");
+
+    // 拍板 2 A 方案：rename 链接跟随（内容级改写传播）。非阻断——
+    // rename 本体已提交，跟随失败仅 warn（悬挂惰性 S1 兜底+重跑幂等）。
+    // 边界：仅笔记 kind 触发——rename_folder 复用本函数，文件夹标题
+    // 不在 wiki 链接域（链接指向笔记标题），跟随会误改（语义污染）。
+    if record.kind == NoteKind::Note {
+        match follow_links_on_rename(ctx, &old_title, new_title).await {
+            Ok(followed) if followed > 0 => {
+                info!(note_id, followed, "wiki links followed on rename");
+            }
+            Ok(_) => {}
+            Err(e) => {
+                warn!(note_id, error = %e, "wiki link follow failed; non-blocking (S1 lazy fallback)");
+            }
+        }
+    }
+
     Ok(WriteReceipt {
         seq: core.event_bus.last_seq(),
         aggregate_id: note_id.to_string(),
         committed_at: now_ms,
     })
+}
+
+/// rename 链接跟随（拍板 2 A 方案）：全库扫描出链含旧标题的笔记，
+/// 逐篇改写 `[[旧标题]]` → `[[新标题]]` 并走 save_note_content 全纪律
+/// 保存（blocks 派生+links reindex 继承）。
+///
+/// 纪律：
+/// - 范围 = `links:out:*` 扫描（索引驱动，不扫全库正文）；
+/// - 锁定/解封失败篇 → warn 跳过（悬挂惰性 S1 兜底，诚实边界注记）；
+/// - 逐篇非原子，中断可重跑（幂等：已改写篇不再含旧标题 → 跳过保存）；
+/// - 失败不阻断 rename 本体（调用方 warn）。
+///
+/// # Errors
+/// KV 扫描失败（逐篇错误内部消化为 warn）。
+async fn follow_links_on_rename(
+    ctx: &WriteContext,
+    old_title: &str,
+    new_title: &str,
+) -> Result<usize, Error> {
+    let core = ctx.core.as_ref();
+    let pairs = core
+        .kv_store
+        .scan_prefix(crate::links::LINKS_OUT_PREFIX)
+        .await?;
+    let mut followed = 0usize;
+
+    for (key, bytes) in &pairs {
+        let Some(src_id) = key.strip_prefix(crate::links::LINKS_OUT_PREFIX) else {
+            continue;
+        };
+        let Ok(outs) = serde_json::from_slice::<Vec<String>>(bytes) else {
+            warn!(src = %src_id, "follow scan deserialize failed; skip");
+            continue;
+        };
+        if !outs.iter().any(|t| t == old_title) {
+            continue; // 不引用旧标题：跳过（索引驱动省正文读）
+        }
+
+        // 读明文（seal 端解封 / 明文端直读）；失败篇跳过（悬挂惰性兜底）
+        let Some(raw) = core.kv_store.get(&format!("note:{src_id}")).await? else {
+            continue;
+        };
+        let plain = match ctx.seal.as_ref() {
+            Some(seal) => match (seal.unseal)(&raw) {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!(src = %src_id, error = %e, "follow unseal failed; skip (S1 lazy fallback)");
+                    continue;
+                }
+            },
+            None => raw.clone(),
+        };
+        let Ok(record) = serde_json::from_slice::<NoteRecord>(&plain) else {
+            warn!(src = %src_id, "follow deserialize failed; skip");
+            continue;
+        };
+
+        // 语法面改写（围栏/行内码保护；alias 保留）；无命中跳过保存
+        let Some((rewritten, _hits)) =
+            crate::links::rewrite_wiki_links(&record.content, old_title, new_title)
+        else {
+            continue;
+        };
+
+        // 走 save_note_content 全纪律（blocks 派生+links reindex 同款）；
+        // 单篇失败 warn 继续（最终一致+幂等重跑）
+        match save_note_content(ctx, src_id, &rewritten).await {
+            Ok(_) => followed += 1,
+            Err(e) => {
+                warn!(src = %src_id, error = %e, "follow rewrite save failed; skip (idempotent rerun)");
+            }
+        }
+    }
+    Ok(followed)
 }
 
 /// 回收站标记条目（DK-02 S1 — `trash:{note_id}` 的值结构）。
