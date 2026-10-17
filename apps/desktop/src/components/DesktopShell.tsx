@@ -23,6 +23,7 @@ import CanvasView from './CanvasView';
 import TrashView from './TrashView';
 import SmartFolderView from './SmartFolderView';
 import GraphPanel from './GraphPanel';
+import TodoView from './TodoView';
 import TodayDailyNote from './TodayDailyNote';
 import LiquifyReview from './LiquifyReview';
 // DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
@@ -158,7 +159,8 @@ export type MainView =
   | 'agent'
   | 'smartfolder'
   | 'marketplace'
-  | 'plugins';
+  | 'plugins'
+  | 'tasks';
 
 /** browser-mock 演示数据 — 形状与内核 NoteSummary/NoteContent 对齐 */
 const MOCK_NOTES: NoteSummary[] = [
@@ -1025,7 +1027,7 @@ function Sidebar(props: {
         ⤴ 导出全部 Markdown
       </button>
       <nav style={{ display: 'flex', gap: tokens.spacing.xs }} aria-label="主导航">
-        {(['notes', 'today', 'canvas', 'trash', 'liquify', 'agent', 'marketplace', 'plugins'] as const).map((v) => (
+        {(['notes', 'today', 'tasks', 'canvas', 'trash', 'liquify', 'agent', 'marketplace', 'plugins'] as const).map((v) => (
           <button
             key={v}
             onClick={() => onView(v)}
@@ -1042,7 +1044,7 @@ function Sidebar(props: {
               minHeight: 36,
             }}
           >
-            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : v === 'liquify' ? 'AI 提案' : v === 'agent' ? 'Agent' : '今日视图'}
+            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : v === 'liquify' ? 'AI 提案' : v === 'agent' ? 'Agent' : v === 'marketplace' ? '市场' : v === 'plugins' ? '插件' : v === 'tasks' ? '待办' : '今日视图'}
           </button>
         ))}
       </nav>
@@ -2547,6 +2549,12 @@ export default function DesktopShell() {
         title: `今日视图${stats ? `（进行中 ${stats.active} · 今日到期 ${stats.due_today}）` : ''}`,
         run: () => setView('today'),
       },
+      {
+        kind: 'command',
+        id: 'tasks',
+        title: '待办聚合（全库任务）',
+        run: () => setView('tasks'),
+      },
     ],
     [
       data,
@@ -2747,6 +2755,15 @@ export default function DesktopShell() {
             invoke={invoke ?? mockSmartFolderInvoke}
             folderId={selectedId}
             folderTitle={notes.find((n) => n.note_id === selectedId)?.title || '智能文件夹'}
+            onOpenNote={(nid) => {
+              setSelectedId(nid);
+              setView('notes');
+            }}
+          />
+        ) : view === 'tasks' ? (
+          /* DK-2.2 待办聚合 v1（只读——checkbox 回写延后 v2） */
+          <TodoView
+            invoke={invoke}
             onOpenNote={(nid) => {
               setSelectedId(nid);
               setView('notes');

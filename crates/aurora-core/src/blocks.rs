@@ -219,6 +219,43 @@ impl BlockStore {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| crate::Error::Database(e.to_string()))
     }
+
+    /// 跨笔记按块类型查询（2.2 待办聚合地基——task 块遍历单条 SQL）。
+    /// 返回 (note_id, BlockRecord)——note_id 供上层回查笔记标题/跳转。
+    /// is_deleted=0 过滤同款。
+    pub fn list_blocks_by_type(
+        &self,
+        block_type: &str,
+    ) -> Result<Vec<(String, BlockRecord)>, crate::Error> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| crate::Error::Internal(format!("blocks mutex: {e}")))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, note_id, block_type, content_json, position, is_deleted
+                 FROM blocks WHERE block_type = ?1 AND is_deleted = 0 ORDER BY note_id, position ASC",
+            )
+            .map_err(|e| crate::Error::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([block_type], |r| {
+                let content_json: String = r.get(3)?;
+                Ok((
+                    r.get::<_, String>(1)?,
+                    BlockRecord {
+                        id: r.get(0)?,
+                        note_id: r.get(1)?,
+                        block_type: r.get(2)?,
+                        content: serde_json::from_str(&content_json).unwrap_or_default(),
+                        position: r.get(4)?,
+                        is_deleted: r.get::<_, i64>(5)? != 0,
+                    },
+                ))
+            })
+            .map_err(|e| crate::Error::Database(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| crate::Error::Database(e.to_string()))
+    }
 }
 
 /// 块 ID 稳定短哈希（同 note+content → 同 id；重写内容变化则自然换 id）。
@@ -273,5 +310,32 @@ mod tests {
         let blocks = store.list_note_blocks("n1").unwrap();
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].content, "# B");
+    }
+
+    #[test]
+    fn list_blocks_by_type_cross_note() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::app_core::apply_blocks_schema_for_tests(&conn);
+        let store = BlockStore::new(conn);
+        store
+            .sync_note_blocks("n1", Some("ws"), "- [ ] t1\n- [x] t2")
+            .unwrap();
+        store
+            .sync_note_blocks("n2", Some("ws"), "正文\n- [X] t3")
+            .unwrap();
+
+        let tasks = store.list_blocks_by_type("task").unwrap();
+        assert_eq!(tasks.len(), 3, "跨笔记 3 个 task 块");
+        assert_eq!(tasks[0].0, "n1", "按 note_id 排序");
+        assert!(tasks.iter().all(|(_, b)| b.block_type == "task"));
+
+        // 按 note_id 过滤面（调用方语义）——n2 只取到自己的
+        let n2_tasks: Vec<_> = tasks.iter().filter(|(id, _)| id == "n2").collect();
+        assert_eq!(n2_tasks.len(), 1);
+        assert!(n2_tasks[0].1.content.contains("t3"));
+
+        // 误删保护：软删块不回流
+        store.sync_note_blocks("n2", Some("ws"), "正文改").unwrap();
+        assert_eq!(store.list_blocks_by_type("task").unwrap().len(), 2);
     }
 }

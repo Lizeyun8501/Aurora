@@ -39,6 +39,7 @@ mod export_commands;
 mod import_commands;
 mod plugin_commands;
 mod sync_commands;
+mod todo_commands;
 mod wiki_commands;
 
 /// 桌面端默认数据目录名。
@@ -234,6 +235,7 @@ pub fn run() {
             export_commands::cmd_export_all_markdown,
             backlink_commands::cmd_backlinks_of,
             backlink_commands::cmd_links_graph,
+            todo_commands::cmd_all_tasks,
             wiki_commands::cmd_wiki_link_titles,
             import_commands::cmd_plan_import,
             import_commands::cmd_import_markdown_dir,
