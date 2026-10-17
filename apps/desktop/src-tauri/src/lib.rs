@@ -33,6 +33,7 @@ use aurora_ai::embed::EmbedFromAiProvider;
 
 mod ai_commands;
 mod attachment_commands;
+mod backlink_commands;
 mod backup_commands;
 mod export_commands;
 mod import_commands;
@@ -229,6 +230,7 @@ pub fn run() {
             plugin_commands::cmd_plugin_audit_logs,
             export_commands::cmd_export_note_markdown,
             export_commands::cmd_export_all_markdown,
+            backlink_commands::cmd_backlinks_of,
             import_commands::cmd_plan_import,
             import_commands::cmd_import_markdown_dir,
             import_commands::cmd_import_enex,

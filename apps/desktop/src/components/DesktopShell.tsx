@@ -953,10 +953,12 @@ function Sidebar(props: {
   onCreate: () => void;
   /** DK-09：打开迁移向导（ImportWizard 挂载入口）。 */
   onImport: () => void;
+  /** DK-UI-S2：打开全量导出确认（N=notes.length）。 */
+  onExportAll: (count: number) => void;
   /** DK-02 S2：数据门面（树形侧栏四命令）。 */
   bridge: ReturnType<typeof useDataBridge>;
 }) {
-  const { notes, selectedId, view, onView, onSelect, onCreate, onImport, bridge } = props;
+  const { notes, selectedId, view, onView, onSelect, onCreate, onImport, onExportAll, bridge } = props;
   return (
     <aside
       style={{
@@ -1003,6 +1005,23 @@ function Sidebar(props: {
         }}
       >
         ⤓ 导入笔记
+      </button>
+      {/* DK-UI-S2 导出确认门（全量入口）——N=UI 列表准确计数 */}
+      <button
+        onClick={() => onExportAll(notes.length)}
+        style={{
+          background: 'transparent',
+          color: tokens.color.textSecondary,
+          border: 'none',
+          borderRadius: tokens.radius.md,
+          padding: `${tokens.spacing.sm}px ${tokens.spacing.md}px`,
+          fontSize: tokens.typography.body.size,
+          cursor: 'pointer',
+          minHeight: tokens.a11y.minTouchTarget,
+          textAlign: 'left',
+        }}
+      >
+        ⤴ 导出全部 Markdown
       </button>
       <nav style={{ display: 'flex', gap: tokens.spacing.xs }} aria-label="主导航">
         {(['notes', 'today', 'canvas', 'trash', 'liquify', 'agent', 'marketplace', 'plugins'] as const).map((v) => (
@@ -1439,6 +1458,8 @@ function EditorPane(props: {
   note: NoteContent | null;
   loading: boolean;
   invoke: InvokeFn | null;
+  /** DK-UI-S2：反链面板点击跳转（主组件 setSelectedId+setView 链）。 */
+  onSelect: (id: string) => void;
   /** S3 持久化面（useDataBridge 三方法，主组件桥接） */
   persist: {
     loadSnapshot: (noteId: string) => Promise<string | null>;
@@ -1446,7 +1467,7 @@ function EditorPane(props: {
     saveContent: (noteId: string, content: string) => Promise<void>;
   };
 }) {
-  const { note, loading, invoke, persist } = props;
+  const { note, loading, invoke, persist, onSelect } = props;
   if (loading) {
     return (
       <main style={{ flex: 1, padding: tokens.spacing.lg, color: tokens.color.textSecondary }}>
@@ -1514,7 +1535,222 @@ function EditorPane(props: {
       />
       {/* DK-09 渲染接线：attachment:// 引用解析（图片内联 / 文件卡） */}
       <AttachmentStrip invoke={invoke} content={note.content} />
+      {/* DK-UI-S2：反链面板（backlinks_of 消费方，底部面板位） */}
+      <BacklinksPanel noteId={note.note_id} invoke={invoke} onSelect={onSelect} />
+      {/* DK-UI-S2 导出确认门 + 单篇入口（aab8997 v1 欠账：明文出库确认门归 UI 层） */}
+      <ExportMarkdownGate invoke={invoke} note={note} />
     </main>
+  );
+}
+
+
+/** DK-UI-S2 反链面板 — S1 backlinks_of 读取侧首个消费方。
+ *
+ * - 数据：cmd_backlinks_of(note_id) → [{noteId, title|null}]（锁定引用方
+ *   title=null → 显示 note_id，不触碰内容）；invoke=null（browser-mock）
+ *   或加载失败 → 空态降级（非阻断，不崩编辑视图）；
+ * - 空态占位保留（无反链不隐藏面板——布局稳定）；
+ * - 点击项 → onSelect(id) 跳转打开（路由已有：主组件 setSelectedId+setView）。
+ */
+function BacklinksPanel(props: {
+  noteId: string;
+  invoke: InvokeFn | null;
+  onSelect: (id: string) => void;
+}): React.ReactElement {
+  const { noteId, invoke, onSelect } = props;
+  const [items, setItems] = useState<{ noteId: string; title: string | null }[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    if (!invoke) {
+      setItems([]);
+      return;
+    }
+    setItems(null);
+    setFailed(false);
+    invoke('cmd_backlinks_of', { noteId })
+      .then((rows) => {
+        const list = rows as { noteId: string; title: string | null }[];
+        if (alive) setItems(list ?? []);
+      })
+      .catch(() => {
+        if (alive) {
+          setItems([]);
+          setFailed(true);
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [invoke, noteId]);
+
+  return (
+    <section
+      style={{
+        marginTop: tokens.spacing.md,
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: tokens.radius.lg,
+        background: tokens.color.bgSurface,
+        padding: tokens.spacing.md,
+      }}
+      aria-label="反向链接面板"
+    >
+      <p style={{ margin: `0 0 ${tokens.spacing.sm}px`, fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+        反向链接 · {items === null ? '…' : items.length}{failed ? ' · 加载失败（已降级）' : ''}
+      </p>
+      {items === null ? (
+        <p style={{ margin: 0, fontSize: tokens.typography.body.size, color: tokens.color.textSecondary }}>加载中…</p>
+      ) : items.length === 0 ? (
+        <p style={{ margin: 0, fontSize: tokens.typography.body.size, color: tokens.color.textSecondary }}>
+          暂无反向链接 —— 其他笔记中用 [[标题]] 引用本篇后在此汇聚
+        </p>
+      ) : (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
+          {items.map((it) => (
+            <li key={it.noteId}>
+              <button
+                onClick={() => onSelect(it.noteId)}
+                style={{
+                  background: 'transparent',
+                  color: tokens.color.primaryBright,
+                  border: 'none',
+                  padding: `${tokens.spacing.xs}px 0`,
+                  fontSize: tokens.typography.body.size,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  minHeight: tokens.a11y.minTouchTarget,
+                }}
+              >
+                ↩ {it.title ?? `（锁定）${it.noteId.slice(0, 8)}…`}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+
+/** DK-UI-S2 导出确认门（单篇）— aab8997 v1 欠账：明文出库确认门归 UI 层。
+ *
+ * - 入口：EditorPane 标题行「导出 Markdown」按钮（仅选中笔记时渲染）；
+ * - 确认卡只拦明文出库语义（不含附件/路径选择不拦）；v1 路径=prompt 预填
+ *   默认目录（dialog 插件另批，诚实边界）；
+ * - 结果：成功显示落盘路径 / 失败显示错误（非阻断，不崩编辑视图）。
+ */
+function ExportMarkdownGate(props: {
+  invoke: InvokeFn | null;
+  note: NoteContent;
+}): React.ReactElement {
+  const { invoke, note } = props;
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const doExport = async () => {
+    if (!invoke) {
+      setResult('browser-mock 模式不可用（仅 tauri 模式可导出）');
+      return;
+    }
+    const dir = window.prompt('导出目录', '~/Downloads/aurora-export');
+    if (!dir) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const path = (await invoke('cmd_export_note_markdown', { noteId: note.note_id, destDir: dir })) as string;
+      setResult(`已导出：${path}`);
+      setOpen(false);
+    } catch (e) {
+      setResult(`导出失败：${String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section style={{ marginTop: tokens.spacing.md }} aria-label="导出 Markdown">
+      <button
+        onClick={() => {
+          setResult(null);
+          setOpen(true);
+        }}
+        style={{
+          background: 'transparent',
+          color: tokens.color.textSecondary,
+          border: '1px solid rgba(255,255,255,0.12)',
+          borderRadius: tokens.radius.md,
+          padding: `${tokens.spacing.xs}px ${tokens.spacing.sm}px`,
+          fontSize: tokens.typography.caption.size,
+          cursor: 'pointer',
+          minHeight: tokens.a11y.minTouchTarget,
+        }}
+      >
+        ⤴ 导出 Markdown
+      </button>
+      {result !== null && (
+        <p style={{ margin: `${tokens.spacing.xs}px 0 0`, fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+          {result}
+        </p>
+      )}
+      {open && (
+        <div
+          role="dialog"
+          aria-label="导出确认"
+          style={{
+            marginTop: tokens.spacing.sm,
+            border: '1px solid rgba(255,255,255,0.14)',
+            borderRadius: tokens.radius.lg,
+            background: tokens.color.bgElevated,
+            padding: tokens.spacing.md,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: tokens.spacing.sm,
+          }}
+        >
+          <p style={{ margin: 0, fontSize: tokens.typography.body.size, color: tokens.color.textPrimary }}>
+            将导出《{note.title || '未命名'}》为明文 Markdown（不含附件）
+          </p>
+          <p style={{ margin: 0, fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+            明文出库=用户显式行为；导出目录下重名自动去重（-2/-3 序列）
+          </p>
+          <div style={{ display: 'flex', gap: tokens.spacing.sm }}>
+            <button
+              onClick={doExport}
+              disabled={busy}
+              style={{
+                background: tokens.color.primary,
+                color: '#FFFFFF',
+                border: 'none',
+                borderRadius: tokens.radius.md,
+                padding: `${tokens.spacing.xs}px ${tokens.spacing.md}px`,
+                fontSize: tokens.typography.caption.size,
+                cursor: busy ? 'wait' : 'pointer',
+                minHeight: tokens.a11y.minTouchTarget,
+              }}
+            >
+              {busy ? '导出中…' : '确认导出'}
+            </button>
+            <button
+              onClick={() => setOpen(false)}
+              style={{
+                background: 'transparent',
+                color: tokens.color.textSecondary,
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: tokens.radius.md,
+                padding: `${tokens.spacing.xs}px ${tokens.spacing.md}px`,
+                fontSize: tokens.typography.caption.size,
+                cursor: 'pointer',
+                minHeight: tokens.a11y.minTouchTarget,
+              }}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1700,6 +1936,10 @@ export default function DesktopShell() {
   const [results, setResults] = useState<PaletteItem[]>([]);
   /** DK-09：迁移向导开关（内容区条件渲染，不动 MainView 类型面）。 */
   const [wizardOpen, setWizardOpen] = useState(false);
+  /* DK-UI-S2 全量导出确认门（aab8997 v1 欠账——明文出库确认归 UI 层） */
+  const [exportAll, setExportAll] = useState<{ count: number } | null>(null);
+  const [exportAllBusy, setExportAllBusy] = useState(false);
+  const [exportAllMsg, setExportAllMsg] = useState<string | null>(null);
 
   const data = useDataBridge(invoke);
 
@@ -2206,8 +2446,104 @@ export default function DesktopShell() {
           }}
           onCreate={() => data.createNote('未命名')}
           onImport={() => setWizardOpen(true)}
+          onExportAll={(count) => {
+            setExportAllMsg(null);
+            setExportAll({ count });
+          }}
           bridge={data}
         />
+        {exportAll !== null && (
+          /* DK-UI-S2 全量导出确认门（明文出库知情同意——不拦路径/普通交互） */
+          <div
+            role="dialog"
+            aria-label="全量导出确认"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.45)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 60,
+            }}
+          >
+            <div
+              style={{
+                background: tokens.color.bgElevated,
+                border: '1px solid rgba(255,255,255,0.14)',
+                borderRadius: tokens.radius.lg,
+                padding: tokens.spacing.lg,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: tokens.spacing.sm,
+                minWidth: 320,
+              }}
+            >
+              <p style={{ margin: 0, fontSize: tokens.typography.heading.size, color: tokens.color.textPrimary }}>
+                将导出 {exportAll.count} 篇为明文 Markdown（不含附件/trash 排除）
+              </p>
+              <p style={{ margin: 0, fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+                明文出库=用户显式行为；重名自动去重；锁定篇解密失败项跳过（诚实计数）
+              </p>
+              {exportAllMsg !== null && (
+                <p style={{ margin: 0, fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+                  {exportAllMsg}
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: tokens.spacing.sm }}>
+                <button
+                  disabled={exportAllBusy}
+                  onClick={async () => {
+                    if (!invoke) {
+                      setExportAllMsg('browser-mock 模式不可用（仅 tauri 模式可导出）');
+                      return;
+                    }
+                    const dir = window.prompt('导出目录', '~/Downloads/aurora-export');
+                    if (!dir) return;
+                    setExportAllBusy(true);
+                    setExportAllMsg(null);
+                    try {
+                      const paths = (await invoke('cmd_export_all_markdown', { destDir: dir })) as string[];
+                      setExportAllMsg(`已导出 ${paths.length} 篇 → ${dir}`);
+                      setExportAll(null);
+                    } catch (e) {
+                      setExportAllMsg(`导出失败：${String(e)}`);
+                    } finally {
+                      setExportAllBusy(false);
+                    }
+                  }}
+                  style={{
+                    background: tokens.color.primary,
+                    color: '#FFFFFF',
+                    border: 'none',
+                    borderRadius: tokens.radius.md,
+                    padding: `${tokens.spacing.xs}px ${tokens.spacing.md}px`,
+                    fontSize: tokens.typography.caption.size,
+                    cursor: exportAllBusy ? 'wait' : 'pointer',
+                    minHeight: tokens.a11y.minTouchTarget,
+                  }}
+                >
+                  {exportAllBusy ? '导出中…' : '确认导出全部'}
+                </button>
+                <button
+                  onClick={() => setExportAll(null)}
+                  style={{
+                    background: 'transparent',
+                    color: tokens.color.textSecondary,
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    borderRadius: tokens.radius.md,
+                    padding: `${tokens.spacing.xs}px ${tokens.spacing.md}px`,
+                    fontSize: tokens.typography.caption.size,
+                    cursor: 'pointer',
+                    minHeight: tokens.a11y.minTouchTarget,
+                  }}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {wizardOpen ? (
           /* DK-09 迁移向导（Bravo 授权切片：仅挂载调用，组件自包含） */
           <main style={{ flex: 1, padding: tokens.spacing.lg, overflowY: 'auto' }}>
@@ -2292,6 +2628,10 @@ export default function DesktopShell() {
           note={content}
           loading={loading}
           invoke={invoke}
+          onSelect={(id) => {
+            setSelectedId(id);
+            setView('notes');
+          }}
           persist={{
             loadSnapshot: data.getSnapshot,
             saveSnapshot: data.saveSnapshot,
