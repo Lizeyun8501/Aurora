@@ -231,6 +231,123 @@ function insertTableCmd(
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// DK-2.7 切片三：表格行列手术（零 prosemirror-tables——Transaction 手术四命令）
+// ---------------------------------------------------------------------------
+
+/** 光标是否在 table 内（doc>table>row>cell>para 链——depth 5）。 */
+export function inTable(state: EditorState): boolean {
+  const { $from } = state.selection;
+  let depth = $from.depth;
+  while (depth > 0) {
+    if ($from.node(depth).type.name === 'table') return true;
+    depth -= 1;
+  }
+  return false;
+}
+
+/** 光标定位三元组：table 节点+row 序号+cell 序号（不在表内返回 null）。 */
+export function tableCtx(state: EditorState): {
+  table: import('prosemirror-model').Node;
+  tablePos: number;
+  rowIdx: number;
+  cellIdx: number;
+} | null {
+  const { $from } = state.selection;
+  let depth = $from.depth;
+  while (depth > 0 && $from.node(depth).type.name !== 'table') depth -= 1;
+  if (depth === 0) return null;
+  const table = $from.node(depth);
+  // row/cell 序号：相对 table 层的 index 链（node(depth+1)=row, node(depth+2)=cell）
+  const rowIdx = $from.index(depth); // table 下第几个 row
+  const cellIdx = $from.index(depth + 1); // row 下第几个 cell
+  return { table, tablePos: $from.before(depth), rowIdx, cellIdx };
+}
+
+export function addRowBelowCmd(state: EditorState, dispatch?: (tr: import('prosemirror-state').Transaction) => void): boolean {
+  const ctx = tableCtx(state);
+  if (!ctx) return false;
+  const row = ctx.table.content.content[ctx.rowIdx];
+  // 克隆行结构、清空 cell 内容（新行=空段落 cell）
+  const cells = row.content.content.map(() =>
+    auroraSchema.nodes.table_cell.create(null, auroraSchema.nodes.paragraph.create()),
+  );
+  const newRow = auroraSchema.nodes.table_row.create(null, cells);
+  if (dispatch) {
+    const rowPos = ctx.tablePos + 1; // table 内容起点
+    let insertAt = rowPos;
+    for (let i = 0; i <= ctx.rowIdx; i++) insertAt += ctx.table.content.content[i].nodeSize;
+    dispatch(state.tr.insert(insertAt, newRow));
+  }
+  return true;
+}
+
+export function deleteRowCmd(state: EditorState, dispatch?: (tr: import('prosemirror-state').Transaction) => void): boolean {
+  const ctx = tableCtx(state);
+  if (!ctx || ctx.table.content.content.length <= 1) return false; // 保至少 1 行
+  if (dispatch) {
+    const row = ctx.table.content.content[ctx.rowIdx];
+    const rowPos = ctx.tablePos + 1 + ctx.table.content.content
+      .slice(0, ctx.rowIdx)
+      .reduce((s, n) => s + n.nodeSize, 0);
+    dispatch(state.tr.delete(rowPos, rowPos + row.nodeSize));
+  }
+  return true;
+}
+
+export function addColRightCmd(state: EditorState, dispatch?: (tr: import('prosemirror-state').Transaction) => void): boolean {
+  const ctx = tableCtx(state);
+  if (!ctx) return false;
+  if (dispatch) {
+    const tr = state.tr;
+    // 逐行倒序插入（位置不因前插偏移）
+    const rows = ctx.table.content.content;
+    for (let r = rows.length - 1; r >= 0; r--) {
+      const row = rows[r];
+      const cells = row.content.content;
+      const cell = cells[Math.min(ctx.cellIdx, cells.length - 1)];
+      const cellStart =
+        ctx.tablePos + 1 + rows.slice(0, r).reduce((s, n) => s + n.nodeSize, 0) + 1
+        + cells.slice(0, Math.min(ctx.cellIdx, cells.length - 1)).reduce((s, n) => s + n.nodeSize, 0)
+        + cell.nodeSize;
+      tr.insert(
+        cellStart,
+        auroraSchema.nodes.table_cell.create(null, auroraSchema.nodes.paragraph.create()),
+      );
+    }
+    dispatch(tr);
+  }
+  return true;
+}
+
+export function deleteColCmd(state: EditorState, dispatch?: (tr: import('prosemirror-state').Transaction) => void): boolean {
+  const ctx = tableCtx(state);
+  if (!ctx) return false;
+  const rows = ctx.table.content.content;
+  if (rows[0].content.content.length <= 1) return false; // 保至少 1 列
+  if (dispatch) {
+    const tr = state.tr;
+    for (let r = rows.length - 1; r >= 0; r--) {
+      const cells = rows[r].content.content;
+      if (ctx.cellIdx >= cells.length) continue; // 短行容错
+      const cell = cells[ctx.cellIdx];
+      const cellStart =
+        ctx.tablePos + 1 + rows.slice(0, r).reduce((s, n) => s + n.nodeSize, 0) + 1
+        + cells.slice(0, ctx.cellIdx).reduce((s, n) => s + n.nodeSize, 0);
+      tr.delete(cellStart, cellStart + cell.nodeSize);
+    }
+    dispatch(tr);
+  }
+  return true;
+}
+
+const TABLE_BTNS: Array<{ label: string; title: string; cmd: TBCmd }> = [
+  { label: '＋行', title: '下方插入行', cmd: addRowBelowCmd },
+  { label: '－行', title: '删除当前行', cmd: deleteRowCmd },
+  { label: '＋列', title: '右侧插入列', cmd: addColRightCmd },
+  { label: '－列', title: '删除当前列', cmd: deleteColCmd },
+];
+
 const BLOCK_BTNS: Array<{ key: string; label: string; title: string; cmd: TBCmd }> = [
   { key: 'heading-1', label: 'H1', title: '标题 1', cmd: blockCmd('heading', { level: 1 }) },
   { key: 'heading-2', label: 'H2', title: '标题 2', cmd: blockCmd('heading', { level: 2 }) },
@@ -378,6 +495,13 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
       {btn('↷', '重做', canRedo, () => runCmd(view, redo))}
       <span className="tb-sep" />
       {BLOCK_BTNS.map((b) => btn(b.label, b.title, blocks.has(b.key), () => runCmd(view, b.cmd)))}
+      {/* DK-2.7 切片三：表格上下文组——光标在 table 内才渲染 */}
+      {view && inTable(view.state) && (
+        <>
+          <span className="tb-sep" />
+          {TABLE_BTNS.map((b) => btn(b.label, b.title, false, () => runCmd(view, b.cmd)))}
+        </>
+      )}
       <span className="tb-sep" />
       {MARK_BTNS.map((b) =>
         btn(
