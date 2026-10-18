@@ -2816,7 +2816,7 @@ export default function DesktopShell() {
             }}
           />
         ) : view === 'tasks' ? (
-          /* DK-2.2 待办聚合 v1（只读——checkbox 回写延后 v2） */
+          /* DK-2.2 待办聚合 v2（checkbox 回写——cmd_toggle_task 双条件块定位） */
           <TodoView
             invoke={invoke}
             onOpenNote={(nid) => {

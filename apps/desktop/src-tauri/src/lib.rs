@@ -239,6 +239,7 @@ pub fn run() {
             backlink_commands::cmd_backlinks_of,
             backlink_commands::cmd_links_graph,
             todo_commands::cmd_all_tasks,
+            todo_commands::cmd_toggle_task,
             template_commands::cmd_list_templates,
             template_commands::cmd_create_from_template,
             wiki_commands::cmd_wiki_link_titles,
