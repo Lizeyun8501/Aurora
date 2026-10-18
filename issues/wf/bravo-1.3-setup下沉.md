@@ -29,3 +29,7 @@ todo_commands.rs:327 E0716（toggle 临时值语句尾释放——clippy --all-t
 
 本机: check 两面 0 / clippy --all-targets 两面 -D warnings 0 / fmt 实跑 0 / tsc 0
 本机受限（CI 兜底）: bootstrap --lib test 链 iroh 全家桶+desktop lib test 链 webkit——本机空间/链接环境不可行（磁盘两度 os error 28 实证）——Test 面走 CI
+
+## CI 终态（2026-10-18 补记）
+
+fa8f6ad **8/8 全绿**（Clippy/Rustfmt/MSRV/desktop-check/Test stable/三 guest build）——Test stable 真验兜底兑现（bootstrap 链接面 CI 通过=本机空间受限面无损）。审阅 1.3 setup 巨石下沉**收官**。
