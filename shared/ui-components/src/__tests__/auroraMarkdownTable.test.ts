@@ -38,4 +38,22 @@ describe('GFM 表格往返（DK-2.7 切片二）', () => {
     const nodes = mdToNodes(auroraSchema, '| a | b |（无分隔行）');
     expect(nodes.find((n) => n.type.name === 'table')).toBeUndefined();
   });
+
+  it('切片四：header 作 table_header 首行+存量全 table_row 兼容', () => {
+    // 新文档：首行 table_header（rowish group）
+    const doc = mdToDoc(auroraSchema, '| a | b |\n| --- | --- |\n| 1 | 2 |');
+    const table = doc.content.content.find((n) => n.type.name === 'table')!;
+    expect(table.content.content[0].type.name).toBe('table_header');
+    expect(table.content.content[1].type.name).toBe('table_row');
+    // 存量兼容：手构全 table_row 表（旧文档形态）content 校验通过
+    const legacyRow = auroraSchema.nodes.table_row.create(null, [
+      auroraSchema.nodes.table_cell.create(null, [
+        auroraSchema.nodes.paragraph.create(null, [auroraSchema.text('旧')]),
+      ]),
+    ]);
+    const legacy = auroraSchema.nodes.table.create(null, [legacyRow]);
+    expect(legacy.check()).toBeUndefined(); // schema 校验不抛
+    // 序列化混排（header+row）恒等
+    expect(docToMd(doc)).toContain('| a | b |');
+  });
 });

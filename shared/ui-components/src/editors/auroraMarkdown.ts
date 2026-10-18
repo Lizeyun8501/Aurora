@@ -139,9 +139,17 @@ export function mdToNodes(schema: AnySchema, text: string): ProseNode[] {
       if (rows.length) {
         const cell = (t: string) =>
           schema.nodes.table_cell.create(null, [para(t)]);
-        const row = (cells: string[]) =>
-          schema.nodes.table_row.create(null, cells.map(cell));
-        nodes.push(schema.nodes.table.create(null, rows.map(row)));
+        const mkRow = (cells: string[], header: boolean) => {
+          const NodeType = header ? schema.nodes.table_header : schema.nodes.table_row;
+          return NodeType.create(null, cells.map(cell));
+        };
+        // 切片四：首行=table_header（th 语义），余行 table_row
+        nodes.push(
+          schema.nodes.table.create(null, [
+            mkRow(rows[0], true),
+            ...rows.slice(1).map((r) => mkRow(r, false)),
+          ]),
+        );
       }
       continue;
     }

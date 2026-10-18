@@ -160,17 +160,29 @@ const baseNodes: Record<string, NodeSpec> = {
   },
 
   // ── 表格节点（共享层增量，DK-05 后续切片接入编辑 UI） ──
+  // DK-2.7 切片四：table.content 改 group 表达（rowish+）——存量文档全
+  // table_row 依然合法（零破坏），新文档首行可 table_header（th 语义）。
   table: {
     group: 'block',
-    content: 'table_row+',
+    content: 'rowish+',
     toDOM: () => ['table', ['tbody', 0]],
     parseDOM: [{ tag: 'table' }],
   },
 
   table_row: {
+    group: 'rowish',
     content: 'table_cell+',
     toDOM: () => ['tr', 0],
     parseDOM: [{ tag: 'tr' }],
+  },
+
+  // 表头行（v1 语义：GFM 首行——th DOM 浏览器默认粗体零 CSS；与
+  // table_row 同 group 可混排/互换——mdToNodes 首行产出本类型）
+  table_header: {
+    group: 'rowish',
+    content: 'table_cell+',
+    toDOM: () => ['thead', ['tr', 0]],
+    parseDOM: [{ tag: 'thead' }, { tag: 'tr', getAttrs: () => ({}) }],
   },
 
   table_cell: {
