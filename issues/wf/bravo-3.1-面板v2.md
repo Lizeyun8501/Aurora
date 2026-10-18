@@ -28,3 +28,7 @@
 ## 验证矩阵
 
 tsc 0 / vite build 0（纯前端壳层——Rust 面零触碰，check/clippy 不适用）/ 接线 rg 复核 10 处全中 / push 前 rebase 三件套：pull --rebase 前置✓+单职责小块 commit✓+零冲突✓
+
+## CI 终态（2026-10-18 补记）
+
+16bab6e **8/8 全绿**（含 desktop-check/Test stable）——拖拽+持久化 v2 收官。
