@@ -69,6 +69,11 @@ pub enum Error {
     Bincode(#[from] bincode::Error),
     #[error("Internal error: {0}")]
     Internal(String),
+    /// DK-1.2 错误域统一（增量收敛）：core 错误域直通变体——Kv/Network
+    /// String 手工转接的规范升级路径（#[from] 自动转换，历史变体保留
+    /// 兼容——调用点渐进收敛，禁止一次性全量改写）。
+    #[error("core error: {0}")]
+    Core(#[from] aurora_core::Error),
 }
 
 impl From<Error> for aurora_core::Error {
