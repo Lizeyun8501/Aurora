@@ -181,7 +181,10 @@ mod tag_tests {
             vec!["a".to_string(), "a/b".to_string()]
         );
         assert_eq!(tags_of(&serde_json::json!({})), Vec::<String>::new());
-        assert_eq!(tags_of(&serde_json::json!({"tags": "脏数据"})), Vec::<String>::new());
+        assert_eq!(
+            tags_of(&serde_json::json!({"tags": "脏数据"})),
+            Vec::<String>::new()
+        );
         assert_eq!(
             tags_of(&serde_json::json!({"tags": [1, "ok", null]})),
             vec!["ok".to_string()]
