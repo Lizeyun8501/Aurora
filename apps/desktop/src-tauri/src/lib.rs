@@ -37,6 +37,7 @@ mod export_commands;
 mod history_commands;
 mod import_commands;
 mod plugin_commands;
+mod share_commands;
 mod shortcut_commands;
 mod sync_commands;
 mod tag_commands;
@@ -187,6 +188,8 @@ pub fn run() {
             cmd_purge_note,
             cmd_purge_expired_trash,
             cmd_search_notes,
+            share_commands::cmd_create_share,
+            share_commands::cmd_import_share,
             shortcut_commands::cmd_get_shortcuts,
             shortcut_commands::cmd_set_shortcuts,
             cmd_app_status,

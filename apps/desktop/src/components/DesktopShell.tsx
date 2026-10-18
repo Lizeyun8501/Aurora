@@ -1572,6 +1572,8 @@ function EditorPane(props: {
           内嵌原位移除，避免双拉取；反链/图谱/待办三 tab 常驻可关 */}
       {/* DK-UI-S2 导出确认门 + 单篇入口（aab8997 v1 欠账：明文出库确认门归 UI 层） */}
       <ExportMarkdownGate invoke={invoke} note={note} />
+      {/* DK-2.8 v1：分享码面（发布确认门→剪贴板；导入走 palette 入口） */}
+      <ShareRow note={note} invoke={invoke} />
     </main>
   );
 }
@@ -1631,6 +1633,53 @@ function TagsRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.R
       >
         +
       </button>
+    </div>
+  );
+}
+
+/** DK-2.8 v1 分享行：发布确认门（明文出库——ExportMarkdownGate 先例同款
+ * 语义）→ cmd_create_share → 剪贴板复制；分享码即明文（b64 非加密）——
+ * 接收端为副本，改动不回传（分享即断链）；导入走 palette「从分享码导入」。
+ * v1 边界：无 iroh 直传（v2 单列）/无水印溯源。 */
+function ShareRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.ReactElement {
+  const { note, invoke } = props;
+  const [msg, setMsg] = useState<string | null>(null);
+  const share = (): void => {
+    if (!invoke) return;
+    const ok = window.confirm(
+      '将生成本笔记的明文分享码（b64 非加密）并复制到剪贴板——接收端获得完整副本。继续？',
+    );
+    if (!ok) return;
+    invoke('cmd_create_share', { noteId: note.note_id })
+      .then((code) => {
+        navigator.clipboard
+          ?.writeText(String(code))
+          .catch(() => {});
+        setMsg(`分享码已复制（${String(code).length} 字符）——粘贴给接收方导入`);
+      })
+      .catch((e) => setMsg(`发布失败：${String(e)}`));
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacing.sm, marginTop: tokens.spacing.sm }}>
+      <button
+        onClick={share}
+        style={{
+          border: '1px solid rgba(255,255,255,0.12)',
+          background: 'transparent',
+          color: tokens.color.textSecondary,
+          borderRadius: tokens.radius.sm,
+          fontSize: 12,
+          padding: '4px 12px',
+          cursor: 'pointer',
+        }}
+      >
+        分享（生成分享码）
+      </button>
+      {msg && (
+        <span style={{ fontSize: 11, color: tokens.color.textSecondary }} aria-live="polite">
+          {msg}
+        </span>
+      )}
     </div>
   );
 }
@@ -2598,6 +2647,24 @@ export default function DesktopShell() {
         id: 'shortcut-settings',
         title: '快捷键设置（DK-2.10）',
         run: () => setShortcutSettingsOpen(true),
+      },
+      {
+        kind: 'command' as const,
+        id: 'import-share',
+        title: '从分享码导入（DK-2.8）',
+        run: () => {
+          const code = window.prompt('粘贴分享码（发布方「分享」生成的字符串）');
+          if (!code || !code.trim()) return;
+          invoke?.('cmd_import_share', { code: code.trim() })
+            .then((r) => {
+              const nid = (r as { note_id?: string }).note_id;
+              if (nid) {
+                setSelectedId(nid);
+                setView('notes');
+              }
+            })
+            .catch((e) => window.alert(`导入失败：${String(e)}`));
+        },
       },
       ...(wifiOnly !== null
         ? [
