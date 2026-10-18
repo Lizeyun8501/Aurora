@@ -2234,12 +2234,24 @@ export default function DesktopShell() {
   const [exportAllMsg, setExportAllMsg] = useState<string | null>(null);
   /* DK-2.4：模板列表（palette「从模板创建」动态项——拉一次，容忍陈旧） */
   const [templates, setTemplates] = useState<{ noteId: string; title: string }[]>([]);
-  /* DK-3.1：右侧常驻信息面板开关（sessionStorage 记忆；默认开） */
+  /* DK-3.1：右侧常驻信息面板开关（DK-3.1v2：localStorage 优先+sessionStorage
+     兜底迁移读；无值默认开——browser-mock 无存储守卫 try/catch 沿用） */
   const [sidePanelOpen, setSidePanelOpen] = useState<boolean>(() => {
     try {
+      const ls = localStorage.getItem('aurora.sidePanel');
+      if (ls !== null) return ls !== '0';
       return sessionStorage.getItem('aurora.sidePanel') !== '0';
     } catch {
       return true;
+    }
+  });
+  /* DK-3.1v2：面板宽度（钳制 [220,480] 防挤垮编辑主区；localStorage 持久化） */
+  const [sidePanelWidth, setSidePanelWidth] = useState<number>(() => {
+    try {
+      const n = Number(localStorage.getItem('aurora.sidePanelWidth'));
+      return Number.isFinite(n) && n >= 220 && n <= 480 ? n : 300;
+    } catch {
+      return 300;
     }
   });
 
@@ -2992,9 +3004,43 @@ export default function DesktopShell() {
               }}
             />
             {selectedId && sidePanelOpen && (
+              <>
+              {/* DK-3.1v2：拖拽热区（4px，钳制 [220,480]）——document 级监听
+                  防 mousemove 漏事件；拖动中 userSelect:none 防编辑态选中干扰；
+                  mouseup 落 localStorage（双写面同开关——迁移期兜底） */}
+              <div
+                aria-hidden="true"
+                style={{
+                  width: 4,
+                  flexShrink: 0,
+                  cursor: 'col-resize',
+                  background: 'transparent',
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  const startX = e.clientX;
+                  const startW = sidePanelWidth;
+                  let lastW = startW;
+                  const onMove = (ev: MouseEvent) => {
+                    lastW = Math.min(480, Math.max(220, startW + (startX - ev.clientX)));
+                    setSidePanelWidth(lastW);
+                  };
+                  const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    document.body.style.userSelect = '';
+                    try {
+                      localStorage.setItem('aurora.sidePanelWidth', String(lastW));
+                    } catch { /* 存储不可用忽略 */ }
+                  };
+                  document.addEventListener('mousemove', onMove);
+                  document.addEventListener('mouseup', onUp);
+                  document.body.style.userSelect = 'none';
+                }}
+              />
               <aside
                 style={{
-                  width: 300,
+                  width: sidePanelWidth,
                   flexShrink: 0,
                   borderLeft: '1px solid rgba(255,255,255,0.08)',
                   padding: tokens.spacing.sm,
@@ -3011,6 +3057,7 @@ export default function DesktopShell() {
                     onClick={() => {
                       setSidePanelOpen(false);
                       try {
+                        localStorage.setItem('aurora.sidePanel', '0');
                         sessionStorage.setItem('aurora.sidePanel', '0');
                       } catch { /* 存储不可用忽略 */ }
                     }}
@@ -3035,6 +3082,7 @@ export default function DesktopShell() {
                   }}
                 />
               </aside>
+              </>
             )}
           </div>
         )}
