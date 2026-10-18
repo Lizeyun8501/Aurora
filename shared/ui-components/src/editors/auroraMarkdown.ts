@@ -117,6 +117,35 @@ export function mdToNodes(schema: AnySchema, text: string): ProseNode[] {
       continue;
     }
 
+    // DK-2.7 切片二：GFM 表格（| a | b | 行 + |---|---| 分隔行确认——
+    // 连续 | 行整块收集；cell 纯文本段落（inline 富文本 v1 简化——诚实边界）
+    if (/^\|.+\|\s*$/.test(line.trim()) && i + 1 < lines.length && /^\|[\s:|-]+\|\s*$/.test(lines[i + 1].trim())) {
+      const rows: string[][] = [];
+      const cellsOf = (l: string) =>
+        l
+          .trim()
+          .replace(/^\|/, '')
+          .replace(/\|$/, '')
+          .split('|')
+          .map((c) => c.trim());
+      // v1 约定：header 行作为数据首行保留（schema 无 table_header 节点——
+      // 表头样式区分延后）；分隔行仅作 GFM 确认不进表
+      rows.push(cellsOf(line));
+      i += 2; // 跳过 header+分隔行
+      while (i < lines.length && /^\|.+\|\s*$/.test(lines[i].trim())) {
+        rows.push(cellsOf(lines[i]));
+        i++;
+      }
+      if (rows.length) {
+        const cell = (t: string) =>
+          schema.nodes.table_cell.create(null, [para(t)]);
+        const row = (cells: string[]) =>
+          schema.nodes.table_row.create(null, cells.map(cell));
+        nodes.push(schema.nodes.table.create(null, rows.map(row)));
+      }
+      continue;
+    }
+
     // 水平线
     if (/^-{3,}$/.test(line.trim())) { nodes.push(schema.nodes.horizontal_rule.create()); i++; continue; }
 
@@ -155,7 +184,22 @@ function nodeToMd(node: ProseNode, orderedIdx: { n: number }): string[] {
     // S2 工具条外类型：占位行保底（内容不丢，往返可再扩）
     case 'embed': return [`[embed:${node.attrs.url || node.attrs.embed_type}]`];
     case 'ai_suggestion': return [`[ai:${node.attrs.suggestionType}] ${t}`];
-    case 'table': return ['[table]'];
+    case 'table': {
+      // DK-2.7 切片二：GFM 序列化——首行+分隔行补齐（schema 无 table_header
+      // 节点——首行按普通行输出+分隔行使 GFM 合法）；cell 取 textContent
+      const rows = node.content.content as ProseNode[];
+      const cells = (r: ProseNode) =>
+        (r.content.content as ProseNode[]).map((c) => c.textContent.trim());
+      const lines: string[] = [];
+      rows.forEach((r, idx) => {
+        const row = cells(r);
+        lines.push(`| ${row.join(' | ')} |`);
+        if (idx === 0) {
+          lines.push(`| ${row.map(() => '---').join(' | ')} |`);
+        }
+      });
+      return lines;
+    }
     default: return [t];
   }
 }

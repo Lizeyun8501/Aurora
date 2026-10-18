@@ -212,12 +212,32 @@ function blockCmd(type: string, attrs?: Record<string, unknown>): TBCmd {
   };
 }
 
+/** DK-2.7 切片二：插入 3×3 表格（光标所在块后插入——table 子树手工构建，
+ * 不依赖 prosemirror-tables——零依赖纪律；行列手术 v2 派单）。 */
+function insertTableCmd(
+  state: EditorState,
+  dispatch?: (tr: import('prosemirror-state').Transaction) => void,
+): boolean {
+  const schema = auroraSchema;
+  const cell = () => schema.nodes.table_cell.create(null, schema.nodes.paragraph.create());
+  const row = () => schema.nodes.table_row.create(null, Array.from({ length: 3 }, cell));
+  const table = schema.nodes.table.create(null, Array.from({ length: 3 }, row));
+  if (dispatch) {
+    const { $from } = state.selection;
+    const blockDepth = $from.depth - 1; // 当前块（paragraph 等）上方
+    const blockPos = $from.before(blockDepth + 1);
+    dispatch(state.tr.insert(blockPos + state.doc.resolve(blockPos).node().nodeSize, table));
+  }
+  return true;
+}
+
 const BLOCK_BTNS: Array<{ key: string; label: string; title: string; cmd: TBCmd }> = [
   { key: 'heading-1', label: 'H1', title: '标题 1', cmd: blockCmd('heading', { level: 1 }) },
   { key: 'heading-2', label: 'H2', title: '标题 2', cmd: blockCmd('heading', { level: 2 }) },
   { key: 'heading-3', label: 'H3', title: '标题 3', cmd: blockCmd('heading', { level: 3 }) },
   { key: 'code_block', label: '{ }', title: '代码块', cmd: blockCmd('code_block') },
   { key: 'task_block', label: '☑', title: '任务', cmd: blockCmd('task_block') },
+  { key: 'table', label: '▦', title: '表格（3×3）', cmd: insertTableCmd },
 ];
 
 const LIST_BTNS: Array<{ key: string; label: string; title: string; cmd: TBCmd }> = [
