@@ -25,6 +25,8 @@ import SmartFolderView from './SmartFolderView';
 import GraphPanel from './GraphPanel';
 import TodoView from './TodoView';
 import TagView from './TagView';
+import ShortcutSettings from './ShortcutSettings';
+import { DEFAULT_SHORTCUTS, comboMatches, type ShortcutTable } from '../shortcuts';
 import VersionHistoryPanel from './VersionHistoryPanel';
 import TodayDailyNote from './TodayDailyNote';
 import LiquifyReview from './LiquifyReview';
@@ -2240,6 +2242,9 @@ export default function DesktopShell() {
   const [exportAllMsg, setExportAllMsg] = useState<string | null>(null);
   /* DK-2.4：模板列表（palette「从模板创建」动态项——拉一次，容忍陈旧） */
   const [templates, setTemplates] = useState<{ noteId: string; title: string }[]>([]);
+  /* DK-2.10：键位表（默认基线+用户覆盖合并——即时生效）；设置面板开关 */
+  const [shortcuts, setShortcuts] = useState<ShortcutTable>(DEFAULT_SHORTCUTS);
+  const [shortcutSettingsOpen, setShortcutSettingsOpen] = useState(false);
   /* DK-3.1：右侧常驻信息面板开关（DK-3.1v2：localStorage 优先+sessionStorage
      兜底迁移读；无值默认开——browser-mock 无存储守卫 try/catch 沿用） */
   const [sidePanelOpen, setSidePanelOpen] = useState<boolean>(() => {
@@ -2301,17 +2306,36 @@ export default function DesktopShell() {
     });
   }, [selectedId, data]);
 
+  /* DK-2.10：键位覆盖表加载（读失败走默认——设置面非关键路径） */
+  useEffect(() => {
+    if (!invoke) return;
+    invoke('cmd_get_shortcuts')
+      .then((v) => {
+        if (v && typeof v === 'object') setShortcuts({ ...DEFAULT_SHORTCUTS, ...(v as ShortcutTable) });
+      })
+      .catch(() => {});
+  }, [invoke]);
+
+  /* DK-2.10：键位消费（表驱动——palette/newNote/today；录入态 modal 自捕获不冲突——其监听在 capture 阶段 stopPropagation） */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if (comboMatches(shortcuts.palette ?? 'Mod+K', e)) {
         e.preventDefault();
         setPaletteOpen((v) => !v);
+      }
+      if (comboMatches(shortcuts.newNote ?? 'Mod+N', e)) {
+        e.preventDefault();
+        data.createNote('未命名');
+      }
+      if (comboMatches(shortcuts.today ?? 'Mod+J', e)) {
+        e.preventDefault();
+        setView('today');
       }
       if (e.key === 'Escape') setPaletteOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [shortcuts, data]);
 
   /** 原始行形状（CommandPalette 契约: note_id/title/snippet/score + S3 source） */
   type RawHit = { note_id: string; title: string; snippet: string; score: number; source?: string };
@@ -2568,6 +2592,12 @@ export default function DesktopShell() {
         id: 'new-note',
         title: '新建笔记',
         run: () => data.createNote('未命名'),
+      },
+      {
+        kind: 'command' as const,
+        id: 'shortcut-settings',
+        title: '快捷键设置（DK-2.10）',
+        run: () => setShortcutSettingsOpen(true),
       },
       ...(wifiOnly !== null
         ? [
@@ -3094,6 +3124,9 @@ export default function DesktopShell() {
           </div>
         )}
       </div>
+      {shortcutSettingsOpen && (
+        <ShortcutSettings invoke={invoke} onClose={() => setShortcutSettingsOpen(false)} />
+      )}
       <StatusBar mode={mode} stats={stats} />
       <CommandPalette
         open={paletteOpen}

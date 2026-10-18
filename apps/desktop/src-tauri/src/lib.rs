@@ -37,6 +37,7 @@ mod export_commands;
 mod history_commands;
 mod import_commands;
 mod plugin_commands;
+mod shortcut_commands;
 mod sync_commands;
 mod tag_commands;
 mod template_commands;
@@ -186,6 +187,8 @@ pub fn run() {
             cmd_purge_note,
             cmd_purge_expired_trash,
             cmd_search_notes,
+            shortcut_commands::cmd_get_shortcuts,
+            shortcut_commands::cmd_set_shortcuts,
             cmd_app_status,
             cmd_today_view_stats,
             cmd_set_task_dependency,
