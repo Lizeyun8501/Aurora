@@ -2650,6 +2650,39 @@ export default function DesktopShell() {
       },
       {
         kind: 'command' as const,
+        id: 'capture-clipboard',
+        title: '从剪贴板捕获笔记（DK-2.9）',
+        run: () => {
+          navigator.clipboard
+            ?.readText()
+            .then((text) => {
+              const t = text.trim();
+              if (!t) {
+                window.alert('剪贴板为空——无内容可捕获');
+                return;
+              }
+              const firstLine = t.split('\n')[0].trim().slice(0, 60) || '剪贴板捕获';
+              // DK-2.9 v1：捕获=SharePack 复用（cmd_import_share 全纪律建笔记）
+              return invoke
+                ?.('cmd_import_share', {
+                  code: btoa(unescape(encodeURIComponent(JSON.stringify({ title: firstLine, content: t, createdAt: new Date().toISOString() })))),
+                })
+                .then((r) => {
+                  const nid = (r as { note_id?: string }).note_id;
+                  if (nid) {
+                    // #clipper 标签（追加语义——读旧改新失败静默）
+                    invoke?.('cmd_set_note_tags', { noteId: nid, tags: ['clipper'] }).catch(() => {});
+                    setSelectedId(nid);
+                    setView('notes');
+                  }
+                })
+                .catch((e) => window.alert(`捕获失败：${String(e)}`));
+            })
+            .catch(() => window.alert('剪贴板不可读（权限或非安全上下文）'));
+        },
+      },
+      {
+        kind: 'command' as const,
         id: 'import-share',
         title: '从分享码导入（DK-2.8）',
         run: () => {
