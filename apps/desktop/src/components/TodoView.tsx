@@ -26,8 +26,10 @@ type TaskItem = {
 export default function TodoView(props: {
   invoke: InvokeFn | null;
   onOpenNote: (id: string) => void;
+  /** DK-3.1：右侧常驻形态——缩 padding/去大标题/限高滚动。 */
+  compact?: boolean;
 }): React.ReactElement {
-  const { invoke, onOpenNote } = props;
+  const { invoke, onOpenNote, compact = false } = props;
   const [items, setItems] = useState<TaskItem[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -151,10 +153,19 @@ export default function TodoView(props: {
   };
 
   return (
-    <main style={{ flex: 1, padding: tokens.spacing.lg, overflowY: 'auto' }}>
-      <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size }}>
-        待办聚合
-      </h1>
+    <main
+      style={{
+        flex: 1,
+        padding: compact ? tokens.spacing.sm : tokens.spacing.lg,
+        overflowY: 'auto',
+        maxHeight: compact ? 320 : undefined,
+      }}
+    >
+      {!compact && (
+        <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size }}>
+          待办聚合
+        </h1>
+      )}
       <p style={{ margin: `0 0 ${tokens.spacing.md}px`, color: tokens.color.textSecondary, fontSize: 12 }}>
         {failed
           ? '加载失败（已降级）'

@@ -1461,8 +1461,9 @@ function EditorPane(props: {
   note: NoteContent | null;
   loading: boolean;
   invoke: InvokeFn | null;
-  /** DK-UI-S2：反链面板点击跳转（主组件 setSelectedId+setView 链）。 */
-  onSelect: (id: string) => void;
+  /** DK-UI-S2：反链点击跳转（3.1 起由右侧常驻面板承接——本组件内已无
+      直接消费方，prop 保留向后兼容防调用点漂移；TS 前缀下划线规避 6133）。 */
+  onSelect?: (id: string) => void;
   /** S3 持久化面（useDataBridge 三方法，主组件桥接） */
   persist: {
     loadSnapshot: (noteId: string) => Promise<string | null>;
@@ -1470,7 +1471,7 @@ function EditorPane(props: {
     saveContent: (noteId: string, content: string) => Promise<void>;
   };
 }) {
-  const { note, loading, invoke, persist, onSelect } = props;
+  const { note, loading, invoke, persist, onSelect: _onSelect } = props;
   /* DK-编辑器补全：[[ 触发标题候选（进编辑面后拉一次+切笔记刷新；候选
      容忍陈旧——新建标题在下次进入编辑面时入池，诚实边界） */
   const [wikiTitles, setWikiTitles] = useState<string[]>([]);
@@ -1556,8 +1557,8 @@ function EditorPane(props: {
       />
       {/* DK-09 渲染接线：attachment:// 引用解析（图片内联 / 文件卡） */}
       <AttachmentStrip invoke={invoke} content={note.content} />
-      {/* DK-UI-S2 + 图谱原型：底部信息面板 Tab（反链 | 图谱） */}
-      <InfoPanelTabs invoke={invoke} noteId={note.note_id} onSelect={onSelect} />
+      {/* DK-3.1：信息面板提为右侧常驻 aside（DesktopShell notes 分支）——
+          内嵌原位移除，避免双拉取；反链/图谱/待办三 tab 常驻可关 */}
       {/* DK-UI-S2 导出确认门 + 单篇入口（aab8997 v1 欠账：明文出库确认门归 UI 层） */}
       <ExportMarkdownGate invoke={invoke} note={note} />
     </main>
@@ -1565,16 +1566,18 @@ function EditorPane(props: {
 }
 
 
-/** DK-UI-S2+图谱原型：底部信息面板 Tab 容器（反链 | 图谱）。
- * 状态提升到此——BacklinksPanel/GraphPanel 各自无 Tab 感知。 */
+/** DK-UI-S2+图谱原型+DK-3.1：信息面板 Tab 容器（反链 | 图谱 | 待办）。
+ * 状态提升到此——BacklinksPanel/GraphPanel/TodoView 各自无 Tab 感知。
+ * 3.1 常驻化：EditorPane 内嵌原位与右侧常驻 aside 共用本组件。
+ */
 function InfoPanelTabs(props: {
   invoke: InvokeFn | null;
   noteId: string;
   onSelect: (id: string) => void;
 }): React.ReactElement {
   const { invoke, noteId, onSelect } = props;
-  const [tab, setTab] = useState<'backlinks' | 'graph'>('backlinks');
-  const tabBtn = (key: 'backlinks' | 'graph', label: string): React.ReactElement => (
+  const [tab, setTab] = useState<'backlinks' | 'graph' | 'todos'>('backlinks');
+  const tabBtn = (key: 'backlinks' | 'graph' | 'todos', label: string): React.ReactElement => (
     <button
       style={{
         padding: '4px 12px',
@@ -1595,11 +1598,14 @@ function InfoPanelTabs(props: {
       <div style={{ display: 'flex', gap: 6, margin: '12px 0 0' }}>
         {tabBtn('backlinks', '反向链接')}
         {tabBtn('graph', '链接图谱')}
+        {tabBtn('todos', '待办聚合')}
       </div>
       {tab === 'backlinks' ? (
         <BacklinksPanel noteId={noteId} invoke={invoke} onSelect={onSelect} />
-      ) : (
+      ) : tab === 'graph' ? (
         <GraphPanel invoke={invoke} onSelect={onSelect} />
+      ) : (
+        <TodoView invoke={invoke} onOpenNote={onSelect} compact />
       )}
     </section>
   );
@@ -2162,6 +2168,14 @@ export default function DesktopShell() {
   const [exportAllMsg, setExportAllMsg] = useState<string | null>(null);
   /* DK-2.4：模板列表（palette「从模板创建」动态项——拉一次，容忍陈旧） */
   const [templates, setTemplates] = useState<{ noteId: string; title: string }[]>([]);
+  /* DK-3.1：右侧常驻信息面板开关（sessionStorage 记忆；默认开） */
+  const [sidePanelOpen, setSidePanelOpen] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('aurora.sidePanel') !== '0';
+    } catch {
+      return true;
+    }
+  });
 
   const data = useDataBridge(invoke);
 
@@ -2885,20 +2899,69 @@ export default function DesktopShell() {
             <WeeklyReview invoke={invoke} />
           </main>
         ) : (
-          <EditorPane
-          note={content}
-          loading={loading}
-          invoke={invoke}
-          onSelect={(id) => {
-            setSelectedId(id);
-            setView('notes');
-          }}
-          persist={{
-            loadSnapshot: data.getSnapshot,
-            saveSnapshot: data.saveSnapshot,
-            saveContent: data.saveContent,
-          }}
-        />
+          /* DK-3.1：编辑器 + 右侧常驻信息面板（反链/图谱/待办——可关，
+             selectedId 变化联动；面板开关状态 sessionStorage 记忆） */
+          <div style={{ flex: 1, display: 'flex', minWidth: 0 }}>
+            <EditorPane
+              note={content}
+              loading={loading}
+              invoke={invoke}
+              onSelect={(id) => {
+                setSelectedId(id);
+                setView('notes');
+              }}
+              persist={{
+                loadSnapshot: data.getSnapshot,
+                saveSnapshot: data.saveSnapshot,
+                saveContent: data.saveContent,
+              }}
+            />
+            {selectedId && sidePanelOpen && (
+              <aside
+                style={{
+                  width: 300,
+                  flexShrink: 0,
+                  borderLeft: '1px solid rgba(255,255,255,0.08)',
+                  padding: tokens.spacing.sm,
+                  minHeight: 0,
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    aria-label="关闭信息面板"
+                    title="关闭信息面板"
+                    onClick={() => {
+                      setSidePanelOpen(false);
+                      try {
+                        sessionStorage.setItem('aurora.sidePanel', '0');
+                      } catch { /* 存储不可用忽略 */ }
+                    }}
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      color: tokens.color.textSecondary,
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      padding: '2px 6px',
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <InfoPanelTabs
+                  invoke={invoke}
+                  noteId={selectedId}
+                  onSelect={(id) => {
+                    setSelectedId(id);
+                    setView('notes');
+                  }}
+                />
+              </aside>
+            )}
+          </div>
         )}
       </div>
       <StatusBar mode={mode} stats={stats} />
