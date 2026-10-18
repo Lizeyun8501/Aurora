@@ -404,6 +404,7 @@ dependencies = [
  "aurora-ai",
  "aurora-core",
  "aurora-migration",
+ "aurora-plugin",
  "aurora-security",
  "aurora-sync",
  "chrono",

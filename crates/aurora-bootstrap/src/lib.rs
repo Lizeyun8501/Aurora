@@ -904,6 +904,91 @@ fn build_app_core(
         .build())
 }
 
+// ── DK-1.3 setup 巨石下沉（Alpha 批复 2026-10-18：跨 crate 签名预批授权）──
+// 装配逻辑下沉本 crate（desktop 侧只留壳）——批复三块中可独立子段：
+// ①混合检索装配（类型全 core/ai 自有面）②插件启动恢复（组合两个 restore）
+// ③每小时 tick 定时器（BootedApp 自有方法+审计 flush）。
+
+/// 混合检索装配（DK-03 S3b——向量路 768 = nomic-embed-text 本地口径）。
+/// 返回三件套由 desktop 侧挂 static 锁（manage/挂载留壳语义——批复③）。
+/// 诚实标注（原文照搬）：维度按配置口径冻结，AIProvider 实际模型维度
+/// 不符时 index_note 维度守卫报错 → 索引管线 log warn 静默失效，BM25 兜底。
+pub fn build_hybrid_searcher(
+    core: &aurora_core::app_core::AppCore,
+    model: &str,
+    dim: u32,
+) -> (
+    std::sync::Arc<aurora_core::l2_engines::vector_search::VectorIndex>,
+    std::sync::Arc<dyn aurora_core::l2_engines::vector_search::EmbedProvider>,
+    std::sync::Arc<aurora_core::l2_engines::hybrid_search::HybridSearcher>,
+) {
+    let vec_idx = std::sync::Arc::new(aurora_core::l2_engines::vector_search::vector_index_for(
+        core, model, dim,
+    ));
+    let embed: std::sync::Arc<dyn aurora_core::l2_engines::vector_search::EmbedProvider> =
+        std::sync::Arc::new(aurora_ai::embed::EmbedFromAiProvider::new(
+            core.ai.clone(),
+            model,
+            dim,
+        ));
+    let hybrid = std::sync::Arc::new(aurora_core::l2_engines::hybrid_search::HybridSearcher::new(
+        core.search.clone(),
+        vec_idx.clone(),
+        embed.clone(),
+    ));
+    (vec_idx, embed, hybrid)
+}
+
+/// 插件启动恢复组合面：restore_installed + restore_audit（损坏不阻断启动
+/// ——installer 语义；审计快照损坏 fail-open 返回 0）。
+/// 返回 (已恢复安装件数, 已回灌审计条数)——desktop 侧负责 block_on+日志。
+pub async fn restore_plugin_runtime(
+    runtime: &std::sync::Arc<aurora_plugin::wasm_runtime::WasmRuntime>,
+    kv: &std::sync::Arc<dyn aurora_core::traits::kv_store::KVStore>,
+) -> (usize, usize) {
+    let restored = aurora_plugin::installer::restore_installed(runtime, kv).await;
+    let audit_restored = aurora_plugin::audit::restore_audit(runtime, kv.as_ref())
+        .await
+        .unwrap_or(0);
+    (restored, audit_restored)
+}
+
+/// 每小时 tick 定时器（DK-17 S2——备份水位+每周完整性校验+审计 flush，
+/// check_and_backup 内含水位/校验判断，幂等）。
+/// 首跳立即返回跳过（boot 已做过水位备份/校验）——语义与原 desktop 内联
+/// 实现逐行等价；tokio::spawn 等价 tauri::async_runtime::spawn（批复确认）。
+pub fn spawn_hourly_ticker(
+    booted: std::sync::Arc<BootedApp>,
+    runtime: std::sync::Arc<aurora_plugin::wasm_runtime::WasmRuntime>,
+) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(3600));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await; // 首跳立即返回——boot 已做过水位备份/校验，跳过
+        loop {
+            ticker.tick().await;
+            match booted.maybe_backup_on_boot() {
+                Ok(Some(r)) => tracing::info!(path = ?r.path, "hourly tick backup created"),
+                Ok(None) => {}
+                Err(e) => tracing::warn!(error = %e, "hourly tick backup failed"),
+            }
+            match booted.verify_backups_if_due() {
+                Ok(Some(true)) => tracing::info!("hourly tick weekly verify passed"),
+                Ok(Some(false)) => tracing::warn!("hourly tick weekly verify FAILED"),
+                Ok(None) => {}
+                Err(e) => tracing::warn!(error = %e, "hourly tick verify errored"),
+            }
+            // DK-审计面落盘：每小时 flush 审计快照到 KV
+            match aurora_plugin::audit::persist_audit(&runtime, booted.core.kv_store.as_ref()).await
+            {
+                Ok(n) if n > 0 => tracing::debug!(n, "hourly audit snapshot flushed"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "hourly audit flush errored"),
+            }
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

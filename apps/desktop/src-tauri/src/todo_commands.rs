@@ -324,7 +324,8 @@ mod todo_tests {
         // 尾换行保留语义：回拼不丢
         let (n, l) = locate_task_line(c, "- [x] 复盘", 100.0).unwrap();
         let mut lines: Vec<&str> = c.lines().collect();
-        lines[n] = toggle_task_line(&l).unwrap().as_str();
+        let toggled = toggle_task_line(&l).unwrap();
+        lines[n] = toggled.as_str();
         let out = rejoin_lines(c, &lines);
         assert!(out.ends_with('\n') && out.contains("- [ ] 复盘"));
     }
