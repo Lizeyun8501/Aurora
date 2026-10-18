@@ -24,6 +24,7 @@ import TrashView from './TrashView';
 import SmartFolderView from './SmartFolderView';
 import GraphPanel from './GraphPanel';
 import TodoView from './TodoView';
+import TagView from './TagView';
 import TodayDailyNote from './TodayDailyNote';
 import LiquifyReview from './LiquifyReview';
 // DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
@@ -48,6 +49,8 @@ export interface NoteContent {
   title: string;
   content: string;
   updated_at: string;
+  /** DK-2.5：标签集（NoteRecord.tags 透传；存量可能缺省——可选）。 */
+  tags?: string[];
 }
 
 /** DK-02 S2 树形侧栏：cmd_list_tree 扁平节点 DTO（与 write_path::TreeNode 对齐）。 */
@@ -155,6 +158,7 @@ export type MainView =
   | 'today'
   | 'canvas'
   | 'trash'
+  | 'tags'
   | 'liquify'
   | 'agent'
   | 'smartfolder'
@@ -1027,7 +1031,7 @@ function Sidebar(props: {
         ⤴ 导出全部 Markdown
       </button>
       <nav style={{ display: 'flex', gap: tokens.spacing.xs }} aria-label="主导航">
-        {(['notes', 'today', 'tasks', 'canvas', 'trash', 'liquify', 'agent', 'marketplace', 'plugins'] as const).map((v) => (
+        {(['notes', 'today', 'tasks', 'tags', 'canvas', 'trash', 'liquify', 'agent', 'marketplace', 'plugins'] as const).map((v) => (
           <button
             key={v}
             onClick={() => onView(v)}
@@ -1044,7 +1048,7 @@ function Sidebar(props: {
               minHeight: 36,
             }}
           >
-            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : v === 'liquify' ? 'AI 提案' : v === 'agent' ? 'Agent' : v === 'marketplace' ? '市场' : v === 'plugins' ? '插件' : v === 'tasks' ? '待办' : '今日视图'}
+            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : v === 'liquify' ? 'AI 提案' : v === 'agent' ? 'Agent' : v === 'marketplace' ? '市场' : v === 'plugins' ? '插件' : v === 'tasks' ? '待办' : v === 'tags' ? '标签' : '今日视图'}
           </button>
         ))}
       </nav>
@@ -1547,6 +1551,10 @@ function EditorPane(props: {
       >
         更新于 {note.updated_at} · DK-05 S3 · 编辑态（快照恢复 / 防抖双写落库）
       </p>
+      {/* DK-2.5 标签行：只读 chips + 「+」编辑（prompt 逗号分隔——
+          cmd_set_note_tags 全量覆盖语义；失败静默降级不阻断编辑） */}
+      <TagsRow note={note} invoke={invoke} />
+      <div style={{ height: tokens.spacing.sm }} />
       {/* DK-05 S3: 可编辑态挂载（快照主链路恢复 + 块操作工具条 +
           onSave 防抖双写：cmd_save_note_snapshot 快照 / cmd_update_note content） */}
       <EditAuroraEditor
@@ -1565,6 +1573,64 @@ function EditorPane(props: {
   );
 }
 
+
+/** DK-2.5 标签行：当前笔记 tags 只读 chips + 「+」编辑（prompt 逗号
+ * 分隔全量覆盖——cmd_set_note_tags；失败静默不阻断编辑主链）。
+ * v1 边界：无自动补全/无颜色区分/重命名合并延后。 */
+function TagsRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.ReactElement {
+  const { note, invoke } = props;
+  const tags = note.tags ?? [];
+  const chip = (t: string): React.ReactElement => (
+    <span
+      key={t}
+      style={{
+        fontSize: 11,
+        padding: '2px 8px',
+        borderRadius: tokens.radius.sm,
+        border: '1px solid rgba(255,255,255,0.12)',
+        background: tokens.color.bgSurface,
+        color: tokens.color.textSecondary,
+      }}
+    >
+      #{t}
+    </span>
+  );
+  const edit = (): void => {
+    if (!invoke) return;
+    const raw = window.prompt('标签（逗号分隔，清空=移除全部）', tags.join(', '));
+    if (raw === null) return; // 取消不动
+    const next = raw
+      .split(/[,，]/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    invoke('cmd_set_note_tags', { noteId: note.note_id, tags: next }).catch(() => {
+      /* 失败静默——标签非关键路径，编辑主链不阻断 */
+    });
+  };
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: tokens.spacing.xs }}>
+      {tags.length > 0 ? tags.map(chip) : (
+        <span style={{ fontSize: 11, color: tokens.color.textDisabled }}>无标签</span>
+      )}
+      <button
+        aria-label="编辑标签"
+        title="编辑标签"
+        onClick={edit}
+        style={{
+          border: '1px dashed rgba(255,255,255,0.2)',
+          background: 'transparent',
+          color: tokens.color.textSecondary,
+          borderRadius: tokens.radius.sm,
+          fontSize: 11,
+          padding: '1px 7px',
+          cursor: 'pointer',
+        }}
+      >
+        +
+      </button>
+    </div>
+  );
+}
 
 /** DK-UI-S2+图谱原型+DK-3.1：信息面板 Tab 容器（反链 | 图谱 | 待办）。
  * 状态提升到此——BacklinksPanel/GraphPanel/TodoView 各自无 Tab 感知。
@@ -2832,6 +2898,15 @@ export default function DesktopShell() {
         ) : view === 'tasks' ? (
           /* DK-2.2 待办聚合 v2（checkbox 回写——cmd_toggle_task 双条件块定位） */
           <TodoView
+            invoke={invoke}
+            onOpenNote={(nid) => {
+              setSelectedId(nid);
+              setView('notes');
+            }}
+          />
+        ) : view === 'tags' ? (
+          /* DK-2.5 标签面板 v1（聚合+AND/NOT 组合过滤——写通路复用 set_note_tags） */
+          <TagView
             invoke={invoke}
             onOpenNote={(nid) => {
               setSelectedId(nid);

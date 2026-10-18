@@ -37,6 +37,7 @@ mod export_commands;
 mod import_commands;
 mod plugin_commands;
 mod sync_commands;
+mod tag_commands;
 mod template_commands;
 mod todo_commands;
 mod wiki_commands;
@@ -175,6 +176,8 @@ pub fn run() {
             cmd_smartfolder_set_rule,
             cmd_smartfolder_get_rule,
             cmd_set_note_tags,
+            tag_commands::cmd_list_tags,
+            tag_commands::cmd_notes_by_tags,
             cmd_smartfolder_list_items,
             cmd_restore_note,
             cmd_purge_note,
