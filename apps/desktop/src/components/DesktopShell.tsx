@@ -25,6 +25,7 @@ import SmartFolderView from './SmartFolderView';
 import GraphPanel from './GraphPanel';
 import TodoView from './TodoView';
 import TagView from './TagView';
+import VersionHistoryPanel from './VersionHistoryPanel';
 import TodayDailyNote from './TodayDailyNote';
 import LiquifyReview from './LiquifyReview';
 // DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
@@ -1640,10 +1641,12 @@ function InfoPanelTabs(props: {
   invoke: InvokeFn | null;
   noteId: string;
   onSelect: (id: string) => void;
+  /** DK-2.6：历史 tab 对比基准（当前编辑内容）。 */
+  currentContent?: string;
 }): React.ReactElement {
-  const { invoke, noteId, onSelect } = props;
-  const [tab, setTab] = useState<'backlinks' | 'graph' | 'todos'>('backlinks');
-  const tabBtn = (key: 'backlinks' | 'graph' | 'todos', label: string): React.ReactElement => (
+  const { invoke, noteId, onSelect, currentContent = '' } = props;
+  const [tab, setTab] = useState<'backlinks' | 'graph' | 'todos' | 'history'>('backlinks');
+  const tabBtn = (key: 'backlinks' | 'graph' | 'todos' | 'history', label: string): React.ReactElement => (
     <button
       style={{
         padding: '4px 12px',
@@ -1665,13 +1668,16 @@ function InfoPanelTabs(props: {
         {tabBtn('backlinks', '反向链接')}
         {tabBtn('graph', '链接图谱')}
         {tabBtn('todos', '待办聚合')}
+        {tabBtn('history', '历史版本')}
       </div>
       {tab === 'backlinks' ? (
         <BacklinksPanel noteId={noteId} invoke={invoke} onSelect={onSelect} />
       ) : tab === 'graph' ? (
         <GraphPanel invoke={invoke} onSelect={onSelect} />
-      ) : (
+      ) : tab === 'todos' ? (
         <TodoView invoke={invoke} onOpenNote={onSelect} compact />
+      ) : (
+        <VersionHistoryPanel invoke={invoke} noteId={noteId} currentContent={currentContent} />
       )}
     </section>
   );
@@ -3076,6 +3082,7 @@ export default function DesktopShell() {
                 <InfoPanelTabs
                   invoke={invoke}
                   noteId={selectedId}
+                  currentContent={content?.content ?? ''}
                   onSelect={(id) => {
                     setSelectedId(id);
                     setView('notes');

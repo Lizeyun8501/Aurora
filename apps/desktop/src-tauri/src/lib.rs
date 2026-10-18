@@ -34,6 +34,7 @@ mod attachment_commands;
 mod backlink_commands;
 mod backup_commands;
 mod export_commands;
+mod history_commands;
 mod import_commands;
 mod plugin_commands;
 mod sync_commands;
@@ -176,6 +177,8 @@ pub fn run() {
             cmd_smartfolder_set_rule,
             cmd_smartfolder_get_rule,
             cmd_set_note_tags,
+            history_commands::cmd_list_note_histories,
+            history_commands::cmd_get_note_history,
             tag_commands::cmd_list_tags,
             tag_commands::cmd_notes_by_tags,
             cmd_smartfolder_list_items,
@@ -573,6 +576,21 @@ async fn cmd_update_note(
         aurora_core::write_path::save_note_content(&ctx, &note_id, c)
             .await
             .map_err(|e| e.to_string())?;
+        // DK-2.6 v1：内容历史链追加（fire-and-forget——非关键路径，
+        // 同内容去抖+20 版上限；失败 warn 不阻断保存主链）
+        {
+            let core2 = core.clone();
+            let vault2 = vault.clone();
+            let nid = note_id.clone();
+            let content2 = c.to_string();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) =
+                    history_commands::push_note_history(&core2, &vault2, &nid, &content2).await
+                {
+                    warn!(note_id = %nid, error = %e, "note history push failed");
+                }
+            });
+        }
         // DK-03 S3b：向量索引管线（fire-and-forget——Ollama 缺席时静默失效，
         // BM25 兜底；hash 去重由 index_note 内建，重复保存不重嵌）。
         if !c.is_empty() {
