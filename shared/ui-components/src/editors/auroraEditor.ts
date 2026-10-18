@@ -11,10 +11,14 @@
 
 import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import { Plugin, PluginKey } from 'prosemirror-state';
+import { Decoration, DecorationSet } from 'prosemirror-view';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap } from 'prosemirror-commands';
 import { splitListItem } from 'prosemirror-schema-list';
 import { LoroDoc } from 'loro-crdt';
+import { tokenizeCode } from './codeHighlight';
+import { injectHighlightStyle } from './editorHighlightStyle';
 import {
   LoroSyncPlugin,
   LoroUndoPlugin,
@@ -66,11 +70,53 @@ export interface CreateAuroraEditorOptions {
  * - LoroUndoPlugin: 基于 Loro UndoManager 的协同安全撤销
  * - keymap: Mod-z / Mod-y / Mod-Shift-z
  */
+/** DK-2.7 切片一：code_block 语法着色装饰插件——doc 全量重建 Decorations
+ * （正则级 tokenizeCode 纯函数驱动；v1 不做增量映射——编辑时重建，
+ * 块级文档量级可接受）。token class 映射见 editor-highlight.css。 */
+const highlightPlugin = new Plugin({
+  key: new PluginKey('code-highlight'),
+  state: {
+    init: (_cfg, state): DecorationSet => buildHighlightDeco(state.doc),
+    apply: (_tr, _old, _oldState, newState): DecorationSet =>
+      buildHighlightDeco(newState.doc),
+  },
+  props: {
+    decorations(state: EditorState): DecorationSet {
+      return highlightPlugin.getState(state) ?? DecorationSet.empty;
+    },
+  },
+});
+
+const TOKEN_CLASS: Record<string, string> = {
+  comment: 'tok-comment',
+  string: 'tok-string',
+  number: 'tok-number',
+  keyword: 'tok-keyword',
+};
+
+function buildHighlightDeco(doc: import('prosemirror-model').Node): DecorationSet {
+  const decos: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    if (node.type.name !== 'code_block') return;
+    const lang = String(node.attrs.language ?? 'plaintext');
+    const tokens = tokenizeCode(lang, node.textContent);
+    for (const t of tokens) {
+      const cls = TOKEN_CLASS[t.kind];
+      if (cls) {
+        decos.push(Decoration.inline(pos + 1 + t.start, pos + 1 + t.end, { class: cls }));
+      }
+    }
+  });
+  return DecorationSet.create(doc, decos);
+}
+
 export function createAuroraEditor(
   dom: HTMLElement,
   options: CreateAuroraEditorOptions,
 ): AuroraEditorHandle {
   const { loroDoc, onSave, exportSnapshot, onUpdate } = options;
+
+  injectHighlightStyle(); // DK-2.7：token 着色样式幂等注入
 
   // 初始内容: loro-prosemirror 的 view 钩子（setTimeout 0）会做初始同步 —
   // map.size>0 时自动 createNodeFromLoroObj 转换；空文档走 delete 分支。
@@ -91,6 +137,7 @@ export function createAuroraEditor(
         Enter: splitListItem(auroraSchema.nodes.list_item),
       }),
       keymap(baseKeymap), // Enter/Backspace/方向键等基础编辑行为
+      highlightPlugin, // DK-2.7 切片一：code_block 语法着色
     ],
   });
 
