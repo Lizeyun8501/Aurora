@@ -93,20 +93,20 @@ describe('auroraSchema', () => {
   it('table_cell supports colspan and rowspan', () => {
     const cell = auroraSchema.nodes.table_cell;
     expect(cell).toBeDefined();
-    expect(cell?.attrs).toHaveProperty('colspan');
-    expect(cell?.attrs).toHaveProperty('rowspan');
+    expect(cell?.spec.attrs).toHaveProperty('colspan');
+    expect(cell?.spec.attrs).toHaveProperty('rowspan');
   });
 
   it('highlight mark supports custom color', () => {
     const highlight = auroraSchema.marks.highlight;
     expect(highlight).toBeDefined();
-    expect(highlight?.attrs).toHaveProperty('color');
+    expect(highlight?.spec.attrs).toHaveProperty('color');
   });
 
   it('code_block carries language attr (dk05mv 数据链)', () => {
     const codeBlock = auroraSchema.nodes.code_block;
     expect(codeBlock).toBeDefined();
-    expect(codeBlock?.attrs).toHaveProperty('language');
+    expect(codeBlock?.spec.attrs).toHaveProperty('language');
     expect(codeBlock?.spec.code).toBe(true);
   });
 });

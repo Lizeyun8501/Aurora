@@ -18,7 +18,9 @@ import { baseKeymap } from 'prosemirror-commands';
 import { splitListItem } from 'prosemirror-schema-list';
 import { LoroDoc } from 'loro-crdt';
 import { mathNodeViews } from './mathNodeView';
+import { mermaidNodeViews } from './mermaidNodeView';
 import { injectMathStyle } from './mathStyle';
+import { injectMermaidStyle } from './mermaidStyle';
 import { tokenizeCode } from './codeHighlight';
 import { injectHighlightStyle } from './editorHighlightStyle';
 import {
@@ -120,6 +122,7 @@ export function createAuroraEditor(
 
   injectHighlightStyle(); // DK-2.7：token 着色样式幂等注入
   injectMathStyle(); // DK-2.7 切片五：公式渲染/编辑样式幂等注入
+  injectMermaidStyle(); // DK-2.7 切片六：mermaid 渲染/编辑样式幂等注入
 
   // 初始内容: loro-prosemirror 的 view 钩子（setTimeout 0）会做初始同步 —
   // map.size>0 时自动 createNodeFromLoroObj 转换；空文档走 delete 分支。
@@ -166,7 +169,11 @@ export function createAuroraEditor(
   const view = new EditorView(dom, {
     state,
     // DK-2.7 切片五：公式 NodeView（KaTeX 渲染态+聚焦编辑态）
-    nodeViews: mathNodeViews() as EditorProps['nodeViews'],
+    // DK-2.7 切片六：mermaid NodeView（code_block language=mermaid 渲染态）
+    nodeViews: {
+      ...mathNodeViews(),
+      ...mermaidNodeViews(),
+    } as EditorProps['nodeViews'],
     dispatchTransaction(tx) {
       view.updateState(view.state.apply(tx));
       // debounce 保存
