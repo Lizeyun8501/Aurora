@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { width: 320px; font: 13px/1.5 system-ui, sans-serif; margin: 12px; }
+    h1 { font-size: 14px; margin: 0 0 8px; }
+    label { display: block; font-size: 11px; color: #666; margin: 8px 0 2px; }
+    input, textarea { width: 100%; box-sizing: border-box; font-size: 12px; padding: 4px; }
+    textarea { height: 90px; resize: vertical; }
+    button { margin-top: 10px; padding: 6px 14px; cursor: pointer; }
+    #status { margin-top: 8px; font-size: 12px; min-height: 16px; }
+    #status.ok { color: #1a7f37; }
+    #status.err { color: #c62828; }
+  </style>
+</head>
+<body>
+  <h1>Aurora Web Clipper</h1>
+  <label>Aurora 桥 Token（桌面 palette「Web Clipper 配置」查看）</label>
+  <input id="token" placeholder="64 位 hex" />
+  <label>桥端口（默认 17633——多实例顺延时以桌面显示为准）</label>
+  <input id="port" type="number" value="17633" min="1024" max="65535" />
+  <label>笔记标题（自动取页面标题，可改）</label>
+  <input id="title" />
+  <label>捕获内容（选区优先，否则全文——可编辑）</label>
+  <textarea id="content"></textarea>
+  <button id="send">捕获到 Aurora</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

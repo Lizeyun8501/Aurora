@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Aurora Web Clipper",
+  "version": "0.1.0",
+  "description": "捕获网页到 Aurora 笔记（localhost 桥——token 鉴权只写面）",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "icons": {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "捕获到 Aurora"
+  }
+}

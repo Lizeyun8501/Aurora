@@ -2762,6 +2762,24 @@ export default function DesktopShell() {
             .catch((e) => window.alert(`收件箱查询失败：${String(e)}`));
         },
       },
+      {
+        kind: 'command' as const,
+        id: 'webclipper-config',
+        title: 'Web Clipper 配置（DK-2.9）',
+        run: () => {
+          invoke
+            ?.('cmd_capture_bridge_status', {})
+            .then((st) => {
+              const s = st as { token?: string; running?: boolean; port?: number | null };
+              // prompt 选中态文本=token 可直接 Ctrl+C 复制（剪贴板权限面省略）
+              window.prompt(
+                `Web Clipper 桥（${s.running ? `运行中 · 端口 ${s.port ?? '?'}` : '未运行——重启应用自动拉起'}）\nToken（复制到浏览器扩展）：`,
+                s.token ?? '',
+              );
+            })
+            .catch((e) => window.alert(`查询失败：${String(e)}`));
+        },
+      },
       ...(wifiOnly !== null
         ? [
             {
