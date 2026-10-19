@@ -21,6 +21,7 @@ import { mathNodeViews } from './mathNodeView';
 import { mermaidNodeViews } from './mermaidNodeView';
 import { injectMathStyle } from './mathStyle';
 import { injectMermaidStyle } from './mermaidStyle';
+import { mathInputRules } from './mathInputRules';
 import { tokenizeCode } from './codeHighlight';
 import { injectHighlightStyle } from './editorHighlightStyle';
 import {
@@ -144,6 +145,7 @@ export function createAuroraEditor(
       }),
       keymap(baseKeymap), // Enter/Backspace/方向键等基础编辑行为
       highlightPlugin, // DK-2.7 切片一：code_block 语法着色
+      mathInputRules(), // DK-2.7 切片七：$..$ / $$ live 转换
     ],
   });
 

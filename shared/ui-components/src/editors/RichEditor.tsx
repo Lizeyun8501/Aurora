@@ -29,6 +29,7 @@ import {
   redo,
   AuroraEditorHandle,
 } from './auroraEditor';
+import { insertMathBlock, insertMermaidBlock } from './mathInputRules';
 import { auroraSchema } from '../schema/auroraSchema';
 
 export type EditorStatus = 'loading' | 'rich' | 'fallback';
@@ -524,6 +525,14 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
       {LIST_BTNS.map((b) => btn(b.label, b.title, blocks.has(b.key), () => runCmd(view, b.cmd)))}
       <span className="tb-sep" />
       {btn('—', '分割线', false, () => insertHorizontalRule(view))}
+      {btn('ƒx', '插入公式', false, () => {
+        if (!view) return false;
+        return insertMathBlock(view);
+      })}
+      {btn('❋', '插入流程图', false, () => {
+        if (!view) return false;
+        return insertMermaidBlock(view);
+      })}
     </div>
   );
 }
