@@ -280,7 +280,7 @@ mod tests {
         let q = OfflineQueue::new();
         let k1 = QueueItem::new("doc-a", vec![1], Priority::High);
         let k2 = QueueItem::new("doc-a", vec![2], Priority::Low);
-        let kb = QueueItem::new("doc-b", vec![3], Priority::Normal);
+        let kb = QueueItem::new("doc-b", vec![3], Priority::Medium);
         let (key1, key2, keyb) = (
             k1.idempotency_key.clone(),
             k2.idempotency_key.clone(),
