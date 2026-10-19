@@ -10,7 +10,8 @@
  * - 空态引导：内置命令 + 口语化提示
  * - 口语化查询透传（「本周未完成的任务」→ NL 解析 → 投影聚合）
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { fuzzySort } from './fuzzy';
 import tokens from '../design/tokens';
 
 export interface PaletteItem {
@@ -46,6 +47,11 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
   const [cursor, setCursor] = useState(0);
   const [semantic, setSemantic] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // DK-3.2 切片一：模糊匹配过滤+排序（title 双路——命令与笔记统一打分；
+  // 空 query 原样——内置命令全量展示）。语义/全文检索面不经此处
+  // （results 由 cmd_search_notes 召回——模糊只作用于标题面，双路互补）。
+  const shown = useMemo(() => fuzzySort(items, query, (i) => i.title), [items, query]);
 
   // 唤起时聚焦 + 重置游标
   useEffect(() => {
@@ -159,12 +165,12 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
           语义检索（本地向量 · Ollama 未运行时自动退回全文）
         </label>
         <div style={{ maxHeight: 380, overflowY: 'auto' }}>
-          {items.length === 0 && (
+          {shown.length === 0 && (
             <div style={{ padding: tokens.spacing.lg, color: tokens.color.textDisabled, textAlign: 'center' }}>
               无匹配 — 支持口语化：「本周未完成的任务」「关于 某主题」
             </div>
           )}
-          {items.map((r, i) => (
+          {shown.map((r, i) => (
             <div
               key={`${r.kind}:${r.id}`}
               onClick={() => run(r)}

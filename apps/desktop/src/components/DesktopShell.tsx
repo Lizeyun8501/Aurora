@@ -2292,6 +2292,22 @@ export default function DesktopShell() {
   const [invoke, setInvoke] = useState<InvokeFn | null>(null);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // DK-3.2 切片二：最近打开（localStorage 持久化——打开笔记即记录，FIFO
+  // 去重上限 8；palette 空查询态「最近打开」组数据源）。
+  const [recentIds, setRecentIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('aurora.recentNotes');
+      return raw ? (JSON.parse(raw) as string[]).slice(0, 8) : [];
+    } catch { return []; }
+  });
+  const openNoteId = useCallback((id: string) => {
+    setSelectedId(id);
+    setRecentIds((prev) => {
+      const next = [id, ...prev.filter((x) => x !== id)].slice(0, 8);
+      try { localStorage.setItem('aurora.recentNotes', JSON.stringify(next)); } catch { /* 配额满静默——最近列表非关键面 */ }
+      return next;
+    });
+  }, []);
   const [content, setContent] = useState<NoteContent | null>(null);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<MainView>('notes');
@@ -2435,11 +2451,11 @@ export default function DesktopShell() {
           title: r.title,
           snippet: r.snippet,
           source: r.source as 'Bm25' | 'Vector' | 'Both' | undefined,
-          run: () => setSelectedId(r.note_id),
+          run: () => openNoteId(r.note_id), // DK-3.2：经 openNoteId 记录最近
         })),
       );
     },
-    [searchNotes],
+    [searchNotes, openNoteId],
   );
 
   // DK-08 §7.3：仅 Wi-Fi 同步开关（tauri 模式可用；mock 模式隐藏）
@@ -2649,6 +2665,25 @@ export default function DesktopShell() {
       .catch((e) => window.alert(`查询失败：${String(e)}`));
   }, [invoke]);
 
+  // DK-3.2 切片二：palette「最近打开」组——recentIds→标题映射（笔记被删
+  // 则跳过——标题清单 notes 里找不到即不展示）。
+  const recentItems: PaletteItem[] = useMemo(() => {
+    if (recentIds.length === 0) return [];
+    const byId = new Map(notes.map((n) => [n.note_id, n]));
+    const out: PaletteItem[] = [];
+    for (const id of recentIds) {
+      const n = byId.get(id);
+      if (!n) continue;
+      out.push({
+        kind: 'note',
+        id: `recent:${id}`,
+        title: `最近：${n.title || '未命名'}`,
+        run: () => openNoteId(id),
+      });
+    }
+    return out;
+  }, [recentIds, notes, openNoteId]);
+
   const builtins: PaletteItem[] = useMemo(
     () => [
       {
@@ -2656,6 +2691,12 @@ export default function DesktopShell() {
         id: 'new-note',
         title: '新建笔记',
         run: () => data.createNote('未命名'),
+      },
+      {
+        kind: 'command' as const,
+        id: 'ai-liquify-review',
+        title: 'AI 液化审查（liquify 两段式提交）',
+        run: () => setView('liquify'),
       },
       {
         kind: 'command' as const,
@@ -3314,8 +3355,8 @@ export default function DesktopShell() {
         onClose={() => setPaletteOpen(false)}
         searchNotes={searchNotes}
         onQuery={runSearch}
-        openNote={(id) => setSelectedId(id)}
-        items={[...builtins, ...results]}
+        openNote={openNoteId}
+        items={[...builtins, ...recentItems, ...results]}
       />
       {/* DK-48：同步两面板（独立浮层组件；onChanged 联动 badge 刷新） */}
       {queuePanelOpen && invoke && (
