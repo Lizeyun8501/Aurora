@@ -15,7 +15,8 @@ quick-xml = "0.41"
 # 会话清单内容指纹 — 0.10 与依赖树既有节点对齐
 sha2 = "0.10"
 # 进度推送 UnboundedSender（仅 sync 模块；runtime 由使用方提供）
-tokio = { version = "1", default-features = false, features = ["sync"] }
+# DK-2.9v2-a: capture bridge 需 TcpListener（net feature——零额外依赖，tokio 既有）
+tokio = { version = "1", default-features = false, features = ["sync", "net", "io-util"] }
 # manifest.json 读写 — 依赖树既有节点
 serde_json = "1"
 # 资源（resource data）base64 解码 — 0.22 与依赖树既有节点对齐

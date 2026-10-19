@@ -33,6 +33,7 @@ mod ai_commands;
 mod attachment_commands;
 mod backlink_commands;
 mod backup_commands;
+mod capture_server;
 mod export_commands;
 mod history_commands;
 mod import_commands;
@@ -193,6 +194,9 @@ pub fn run() {
             share_commands::cmd_share_send,
             share_commands::cmd_inbox_list,
             share_commands::cmd_inbox_import,
+            capture_server::cmd_capture_bridge_start,
+            capture_server::cmd_capture_bridge_stop,
+            capture_server::cmd_capture_bridge_status,
             shortcut_commands::cmd_get_shortcuts,
             shortcut_commands::cmd_set_shortcuts,
             cmd_app_status,
@@ -290,6 +294,8 @@ pub fn run() {
             // DK-2.8v2: 分享收件循环接线（transport 就绪即 spawn；未配对
             // 则 info 跳过——配对面落地后重启生效，零改动）
             share_commands::setup_share_accept(booted_arc.clone());
+            // DK-2.9v2-a: Web Clipper localhost 桥（token 鉴权只写面）——自动启动
+            capture_server::setup_capture_bridge();
             info!("AppCore startup complete");
 
             // DK-03 S3b：混合检索装配（向量路 768 = nomic-embed-text 本地口径）。

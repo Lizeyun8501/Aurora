@@ -92,7 +92,7 @@ pub async fn cmd_import_share(code: String) -> Result<serde_json::Value, String>
 ///
 /// # Errors
 /// 解码失败 / 分享包格式无效 / 空包 / write_path 建笔记失败。
-async fn import_share_code(code: &str) -> Result<serde_json::Value, String> {
+pub(crate) async fn import_share_code(code: &str) -> Result<serde_json::Value, String> {
     let plain = b64_decode(code)?;
     let pack: SharePack =
         serde_json::from_slice(&plain).map_err(|e| format!("分享包格式无效: {e}"))?;
