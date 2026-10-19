@@ -12,5 +12,10 @@
 `POST http://127.0.0.1:{port}/capture` + `Authorization: Bearer {token}`
 载荷 `{"title","url","content"}` camelCase → 201 建 / 401 token 错 / 413 >1MB
 
+## 正文提取（Rv2）
+- `vendor/readability.js`（@mozilla/readability 0.6.0，Apache-2.0——LICENSE 同仓）两段 executeScript 注入解析
+- 解析失败/空正文自动回退 v1 路径（选区优先→innerText 全文）
+- 烟测：`cd apps/desktop && node ../../scripts/rv2-smoke.mjs`（jsdom fixture 对拍 6 例——噪声剔除实证）
+
 ## 测试
-`node scripts/dk29b-smoke.mjs`（载荷构造对拍 4 例）
+`node scripts/dk29b-smoke.mjs`（载荷构造对拍 4 例）+ 上行 Rv2 烟测

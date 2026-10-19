@@ -12,10 +12,39 @@ function buildCapturePayload(page, overrides) {
   };
 }
 
-/** 页面抓取（executeScript 注入——选区优先，全文兜底）。 */
+/** 页面抓取（executeScript 注入——DK-2.9v2 Rv2：Readability 正文提取优先，
+ * 解析失败/无正文回退 innerText 全文（v1 路径保留为兜底））。
+ * 两段注入：vendor/readability.js 定义全局 Readability（ISOLATED world
+ * window 共享），第二段 clone document 解析（不污染页面态）。 */
 async function grabActivePage() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const [res] = await chrome.scripting.executeScript({
+  // 第一段：注入 Readability 库（0.6.0——vendor/readability-LICENSE.md）
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ['vendor/readability.js'],
+  });
+  // 第二段：解析（失败返回 null 由调用方兜底）
+  const [readable] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => {
+      try {
+        const parsed = new Readability(document.cloneNode(true)).parse();
+        if (parsed && parsed.textContent && parsed.textContent.trim().length > 0) {
+          return {
+            title: parsed.title || document.title || '',
+            url: location.href || '',
+            content: parsed.textContent,
+          };
+        }
+      } catch (e) {
+        // fallthrough to innerText fallback
+      }
+      return null;
+    },
+  });
+  if (readable && readable.result) return readable.result;
+  // v1 兜底：选区优先，全文 innerText
+  const [legacy] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: () => ({
       title: document.title || '',
@@ -24,7 +53,7 @@ async function grabActivePage() {
         (document.body ? document.body.innerText : ''),
     }),
   });
-  return res.result;
+  return legacy.result;
 }
 
 function setStatus(text, cls) {
