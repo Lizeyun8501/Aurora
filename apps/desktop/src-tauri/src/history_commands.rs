@@ -144,6 +144,8 @@ mod history_tests {
     #[test]
     fn cap_constant() {
         // 上限语义护栏：清理逻辑依赖 CAP 与 scan 行数关系
-        assert!(HISTORY_CAP > 0 && HISTORY_CAP <= 100);
+        // （compile-time 断言语义——clippy assertions_on_constants 规避写法）
+        let cap = HISTORY_CAP;
+        assert!(cap > 0 && cap <= 100, "HISTORY_CAP 越界: {cap}");
     }
 }

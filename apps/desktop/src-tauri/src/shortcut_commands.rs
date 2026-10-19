@@ -58,10 +58,8 @@ pub async fn cmd_set_shortcuts(table: serde_json::Value) -> Result<(), String> {
 
 #[cfg(test)]
 mod shortcut_tests {
-    use super::*;
-
-    /// 覆盖表契约护栏：键位串格式（录入端规范化后落库——后端仅透传，
-    /// 此测试固化格式期望防两端漂移）。
+    // 覆盖表契约护栏：键位串格式（录入端规范化后落库——后端仅透传，
+    // 此测试固化格式期望防两端漂移）。
     #[test]
     fn combo_format_contract() {
         let table = serde_json::json!({ "palette": "Mod+K", "newNote": "Mod+Shift+N" });

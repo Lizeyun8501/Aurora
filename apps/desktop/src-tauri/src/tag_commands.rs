@@ -194,11 +194,19 @@ mod tag_tests {
     #[test]
     fn match_combinations() {
         let tags = vec!["wip".to_string(), "a/b".to_string()];
-        assert!(tags_match(&tags, &["wip"], &[]));
-        assert!(tags_match(&tags, &["wip", "a/b"], &[])); // AND
-        assert!(!tags_match(&tags, &["wip", "其他"], &[]));
-        assert!(tags_match(&tags, &[], &["不存在"])); // NOT
-        assert!(!tags_match(&tags, &[], &["a/b"]));
+        assert!(tags_match(&tags, &["wip".to_string()], &[]));
+        assert!(tags_match(
+            &tags,
+            &["wip".to_string(), "a/b".to_string()],
+            &[]
+        )); // AND
+        assert!(!tags_match(
+            &tags,
+            &["wip".to_string(), "其他".to_string()],
+            &[]
+        ));
+        assert!(tags_match(&tags, &[], &["不存在".to_string()])); // NOT
+        assert!(!tags_match(&tags, &[], &["a/b".to_string()]));
         assert!(tags_match(&tags, &[], &[])); // 全空=恒真
     }
 

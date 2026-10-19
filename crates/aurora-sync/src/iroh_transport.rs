@@ -60,6 +60,10 @@ fn linger_conn(conn: &iroh::endpoint::Connection) {
 /// iroh ALPN 协议标识（V19 §31.2: `aurora-note/1`）。
 pub const AURORA_ALPN: &[u8] = b"aurora-note/1";
 
+/// DK-2.8v2: 直传分享独立 ALPN（与 CRDT 同步面协议隔离——accept 侧按
+/// ALPN 分流，sync 连接不冒收分享包，分享连接不进 CRDT 握手）。
+pub const SHARE_ALPN: &[u8] = b"aurora-share/1";
+
 /// 同步消息最大大小（10 MB，对应 V19 §31.2 `read_to_end` 限制）。
 pub const MAX_SYNC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
@@ -168,7 +172,7 @@ impl IrohTransport {
         // Minimal 预设 = Empty + rustls ring provider（tls-ring 默认 feature）。
         // Empty 预设不设 crypto provider，bind 必失败（iroh 1.0.3 语义）。
         let endpoint = Endpoint::builder(Minimal)
-            .alpns(vec![AURORA_ALPN.to_vec()])
+            .alpns(vec![AURORA_ALPN.to_vec(), SHARE_ALPN.to_vec()])
             .bind()
             .await
             .map_err(|e| {
@@ -221,7 +225,7 @@ impl IrohTransport {
     ) -> Result<Self, String> {
         let mode = iroh::RelayMode::Custom(relay_map);
         let mut builder = Endpoint::builder(Minimal)
-            .alpns(vec![AURORA_ALPN.to_vec()])
+            .alpns(vec![AURORA_ALPN.to_vec(), SHARE_ALPN.to_vec()])
             .relay_mode(mode)
             // 强 relay 端点：禁直连 transport（官方 relay e2e 同款——
             // addr 天然仅含 relay 候选，会合路径可证）
@@ -256,7 +260,7 @@ impl IrohTransport {
     ) -> Result<Self, String> {
         let mode = relay_mode.to_iroh_relay_mode()?;
         let mut builder = Endpoint::builder(Minimal)
-            .alpns(vec![AURORA_ALPN.to_vec()])
+            .alpns(vec![AURORA_ALPN.to_vec(), SHARE_ALPN.to_vec()])
             .relay_mode(mode);
         if let Some(roots) = custom_relay_roots {
             builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::custom_roots(roots));
@@ -603,6 +607,175 @@ impl IrohTransport {
     pub async fn close(&self) {
         self.endpoint.close().await;
     }
+
+    // ========================================================================
+    // DK-2.8v2: iroh 直传分享——单向推送 SharePack（只读副本语义延续 v1 断链）
+    // ========================================================================
+
+    /// 直传分享：连接对端（SHARE_ALPN），单向推送 `pack`（SharePack JSON
+    /// 字节），等对端落收件箱后回写 ack 才返回——发布方拿到 Ok 即知对端
+    /// 已收妥（对端离线/未运行 accept 循环时连接失败显式报错）。
+    ///
+    /// 门禁在宿主层（sync_gate.evaluate()，DK-51 案二同款）——transport
+    /// 层不做网络策略判定。
+    ///
+    /// # Errors
+    /// 连接失败 / 开流失败 / 写帧失败 / ack 等待失败。
+    pub async fn send_share(
+        &self,
+        peer_addr: EndpointAddr,
+        pack: &[u8],
+    ) -> Result<SyncReport, String> {
+        if pack.is_empty() {
+            return Err("分享包为空——拒绝直传".into());
+        }
+        if pack.len() > MAX_SYNC_MESSAGE_SIZE {
+            return Err(format!("分享包超限: {} bytes", pack.len()));
+        }
+        debug!("send_share: connecting to {:?} (SHARE_ALPN)", peer_addr.id);
+        let conn = self
+            .endpoint
+            .connect(peer_addr.clone(), SHARE_ALPN)
+            .await
+            .map_err(|e| format!("iroh connect failed: {}", e))?;
+        let (mut send, mut recv) = conn
+            .open_bi()
+            .await
+            .map_err(|e| format!("open_bi failed: {}", e))?;
+        let frame = encode_frame(pack);
+        send.write_all(&frame)
+            .await
+            .map_err(|e| format!("write share pack failed: {}", e))?;
+        send.finish()
+            .map_err(|e| format!("finish send failed: {}", e))?;
+        // 等对端收件确认（b"k" = 已落 inbox）
+        let ack = recv
+            .read_to_end(16)
+            .await
+            .map_err(|e| format!("wait share ack failed: {}", e))?;
+        linger_conn(&conn);
+        info!(
+            "send_share completed: sent={} bytes, ack={} bytes, peer={:?}",
+            pack.len(),
+            ack.len(),
+            peer_addr.id
+        );
+        Ok(SyncReport {
+            sent_bytes: pack.len(),
+            received_bytes: ack.len(),
+            remote_peer: format!("{:?}", peer_addr.id),
+            success: true,
+            error: None,
+        })
+    }
+
+    /// 收件侧单连接处理：读长度前缀帧取 pack 字节，落箱前回写 `b"k"` 确认。
+    ///
+    /// peer 标识 v1 缺省为常量（配对面落地后可带上真实 EndpointId——诚实
+    /// 边界：收件方知道"配对设备发来的"，暂不知具体哪台）。
+    ///
+    /// # Errors
+    /// 开流失败 / 帧长超限 / 读帧失败 / ack 回写失败。
+    pub async fn handle_share_conn(
+        conn: iroh::endpoint::Connection,
+    ) -> Result<(Vec<u8>, String), String> {
+        let (_send, mut recv) = conn
+            .accept_bi()
+            .await
+            .map_err(|e| format!("accept_bi failed: {}", e))?;
+        let mut len_buf = [0u8; 4];
+        recv.read_exact(&mut len_buf)
+            .await
+            .map_err(|e| format!("read share frame len failed: {}", e))?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+        if len > MAX_SYNC_MESSAGE_SIZE {
+            return Err(format!("share pack too large: {len}"));
+        }
+        let mut pack = vec![0u8; len];
+        recv.read_exact(&mut pack)
+            .await
+            .map_err(|e| format!("read share pack failed: {}", e))?;
+        // 落箱确认：对端 send_share 收到 ack 才返回成功
+        let (mut ack_send, _ack_recv) = conn
+            .open_bi()
+            .await
+            .map_err(|e| format!("open ack stream failed: {}", e))?;
+        ack_send
+            .write_all(b"k")
+            .await
+            .map_err(|e| format!("write ack failed: {}", e))?;
+        ack_send
+            .finish()
+            .map_err(|e| format!("finish ack failed: {}", e))?;
+        linger_conn(&conn);
+        Ok((pack, "paired-device".to_string()))
+    }
+}
+
+/// DK-2.8v2: 收件箱落盘回调（宿主注入——desktop 侧写 `share:inbox:{ts}` KV）。
+pub type ShareInboxSink = Arc<dyn Fn(Vec<u8>, String) + Send + Sync>;
+
+/// 分享收件循环：持续 accept 入站连接，按 ALPN 分流——SHARE_ALPN 走
+/// 收件处理（落 sink），其他 ALPN（含 CRDT 同步）立即丢弃连接。
+///
+/// **丢弃语义（诚实边界）**：desktop 无全量 doc accept 面（drain 为主动
+/// 拉模式，当前本就无入站 sync accept 能力），丢弃不改变现状；未来若
+/// desktop 间 CRDT 直同步落地，应扩展本循环分流处理而非复用。
+///
+/// 独立于 [`run_accept_loop`]（mobile 单 doc accept_sync 循环）——本循环
+/// 不触碰 CRDT 文档，桌面宿主以空 shutdown 信号常驻即可。
+pub async fn run_share_accept_loop(
+    transport: Arc<IrohTransport>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+    sink: ShareInboxSink,
+) {
+    info!("share accept loop started (ALPN {:?})", SHARE_ALPN);
+    loop {
+        if *shutdown.borrow() {
+            info!("share accept loop shutting down");
+            break;
+        }
+        let Some(incoming) = transport.endpoint.accept().await else {
+            info!("share accept loop: endpoint closed");
+            break;
+        };
+        let mut connecting = match incoming.accept() {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("share accept: incoming reject failed: {}", e);
+                continue;
+            }
+        };
+        // ALPN 分流：非分享协议连接立即丢弃（不冒收——同步面独立演进）
+        let alpn = match connecting.alpn().await {
+            Ok(a) => a,
+            Err(e) => {
+                warn!("share accept: alpn query failed: {}", e);
+                continue;
+            }
+        };
+        if alpn != SHARE_ALPN {
+            debug!(
+                "share accept: non-share connection dropped (alpn={:?})",
+                alpn
+            );
+            continue;
+        }
+        let conn = match connecting.await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("share accept: connect failed: {}", e);
+                continue;
+            }
+        };
+        match IrohTransport::handle_share_conn(conn).await {
+            Ok((pack, peer)) => {
+                info!("share received: {} bytes from {}", pack.len(), peer);
+                sink(pack, peer);
+            }
+            Err(e) => warn!("share conn handling failed: {}", e),
+        }
+    }
 }
 
 /// 后台同步循环：在独立 tokio 任务中持续接受入站同步。
@@ -732,7 +905,7 @@ mod tests {
         // Minimal 补 crypto provider；TestTransport 预设挂内存传输 + 网内地址查找
         let endpoint = Endpoint::builder(Minimal)
             .secret_key(secret)
-            .alpns(vec![AURORA_ALPN.to_vec()])
+            .alpns(vec![AURORA_ALPN.to_vec(), SHARE_ALPN.to_vec()])
             .clear_ip_transports()
             .preset(transport)
             .bind()

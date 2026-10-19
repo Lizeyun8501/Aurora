@@ -110,6 +110,8 @@ pub use incremental::{BlockDelta, BlockSignature, IncrementalSync, RollingHash};
 pub use iroh_transport::{
     run_accept_loop, IrohTransport, SyncReport, AURORA_ALPN, MAX_SYNC_MESSAGE_SIZE,
 };
+#[cfg(feature = "iroh-transport")]
+pub use iroh_transport::{run_share_accept_loop, ShareInboxSink, SHARE_ALPN};
 pub use lan::{LanPeer, LanSyncEngine, MdnsDiscovery, SyncRoute};
 pub use offline_queue::{OfflineQueue, Priority, QueueItem};
 pub use p2p::{P2pSyncEngine, PeerId, SyncMessage, VersionVector};

@@ -190,6 +190,9 @@ pub fn run() {
             cmd_search_notes,
             share_commands::cmd_create_share,
             share_commands::cmd_import_share,
+            share_commands::cmd_share_send,
+            share_commands::cmd_inbox_list,
+            share_commands::cmd_inbox_import,
             shortcut_commands::cmd_get_shortcuts,
             shortcut_commands::cmd_set_shortcuts,
             cmd_app_status,
@@ -284,6 +287,9 @@ pub fn run() {
             *sync_commands::BOOTED_STATE
                 .lock()
                 .expect("BOOTED_STATE mutex poisoned") = Some(booted_arc.clone());
+            // DK-2.8v2: 分享收件循环接线（transport 就绪即 spawn；未配对
+            // 则 info 跳过——配对面落地后重启生效，零改动）
+            share_commands::setup_share_accept(booted_arc.clone());
             info!("AppCore startup complete");
 
             // DK-03 S3b：混合检索装配（向量路 768 = nomic-embed-text 本地口径）。

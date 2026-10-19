@@ -1640,7 +1640,8 @@ function TagsRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.R
 /** DK-2.8 v1 分享行：发布确认门（明文出库——ExportMarkdownGate 先例同款
  * 语义）→ cmd_create_share → 剪贴板复制；分享码即明文（b64 非加密）——
  * 接收端为副本，改动不回传（分享即断链）；导入走 palette「从分享码导入」。
- * v1 边界：无 iroh 直传（v2 单列）/无水印溯源。 */
+ * DK-2.8v2 增「直传」：iroh 推送到配对设备（门禁+对端在线要求在 cmd 层）。
+ * v1 边界：无水印溯源/收件箱走 palette 入口。 */
 function ShareRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.ReactElement {
   const { note, invoke } = props;
   const [msg, setMsg] = useState<string | null>(null);
@@ -1659,21 +1660,35 @@ function ShareRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.
       })
       .catch((e) => setMsg(`发布失败：${String(e)}`));
   };
+  const sendDirect = (): void => {
+    if (!invoke) return;
+    const ok = window.confirm(
+      '将本笔记直传给配对设备（iroh 需对端在线）——对端收到的是独立只读副本（改动不回传）。继续？',
+    );
+    if (!ok) return;
+    invoke('cmd_share_send', { noteId: note.note_id })
+      .then((r) => {
+        const sent = (r as { sent?: number }).sent ?? 0;
+        setMsg(`直传完成（${sent} 字节）——对端已收妥，其收件箱可见`);
+      })
+      .catch((e) => setMsg(`直传失败：${String(e)}`));
+  };
+  const btn = {
+    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'transparent',
+    color: tokens.color.textSecondary,
+    borderRadius: tokens.radius.sm,
+    fontSize: 12,
+    padding: '4px 12px',
+    cursor: 'pointer',
+  };
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacing.sm, marginTop: tokens.spacing.sm }}>
-      <button
-        onClick={share}
-        style={{
-          border: '1px solid rgba(255,255,255,0.12)',
-          background: 'transparent',
-          color: tokens.color.textSecondary,
-          borderRadius: tokens.radius.sm,
-          fontSize: 12,
-          padding: '4px 12px',
-          cursor: 'pointer',
-        }}
-      >
+      <button onClick={share} style={btn}>
         分享（生成分享码）
+      </button>
+      <button onClick={sendDirect} style={btn}>
+        直传给配对设备
       </button>
       {msg && (
         <span style={{ fontSize: 11, color: tokens.color.textSecondary }} aria-live="polite">
@@ -2697,6 +2712,54 @@ export default function DesktopShell() {
               }
             })
             .catch((e) => window.alert(`导入失败：${String(e)}`));
+        },
+      },
+      {
+        kind: 'command' as const,
+        id: 'share-inbox',
+        title: '直传收件箱（DK-2.8v2）',
+        run: () => {
+          invoke
+            ?.('cmd_inbox_list', {})
+            .then((items) => {
+              const list = (items ?? []) as Array<{
+                id: string;
+                title: string;
+                receivedAt: string;
+                contentLen: number;
+              }>;
+              if (list.length === 0) {
+                window.alert('收件箱为空——配对设备直传的笔记会出现在这里');
+                return;
+              }
+              const lines = list.map(
+                (it, i) =>
+                  `${i + 1}. ${it.title}（${it.contentLen} 字 · ${it.receivedAt
+                    .slice(0, 19)
+                    .replace('T', ' ')}）`,
+              );
+              const pick = window.prompt(
+                `收件箱（输入序号导入，取消关闭）：\n${lines.join('\n')}`,
+                '1',
+              );
+              if (!pick) return;
+              const item = list[Number(pick.trim()) - 1];
+              if (!item) {
+                window.alert('序号无效');
+                return;
+              }
+              invoke
+                ?.('cmd_inbox_import', { id: item.id })
+                .then((r) => {
+                  const nid = (r as { note_id?: string }).note_id;
+                  if (nid) {
+                    setSelectedId(nid);
+                    setView('notes');
+                  }
+                })
+                .catch((e) => window.alert(`导入失败：${String(e)}`));
+            })
+            .catch((e) => window.alert(`收件箱查询失败：${String(e)}`));
         },
       },
       ...(wifiOnly !== null
