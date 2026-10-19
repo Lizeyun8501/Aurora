@@ -1,7 +1,10 @@
 // DK-2.9v2 Rv2 烟测：Readability 正文提取对拍（vendor/readability.js 0.6.0 同源面）。
 // 运行：cd apps/desktop && node ../../scripts/rv2-smoke.mjs（jsdom --no-save）
 import { createRequire } from 'module';
-const req = createRequire('/home/z/my-project/Aurora/apps/desktop/package.json');
+import { fileURLToPath } from 'url';
+// 相对定位（不硬编码绝对仓路径——跨机器可跑）：仓根/apps/desktop/package.json
+const deskPkg = fileURLToPath(new URL('../apps/desktop/package.json', import.meta.url));
+const req = createRequire(deskPkg);
 const { JSDOM } = req('jsdom');
 const { Readability } = req('@mozilla/readability');
 
