@@ -126,16 +126,20 @@ pub struct DrainReportDto {
     pub acked_items: usize,
 }
 
-/// 手动触发离线队列补发（DK-41 桥接后即真实同步）。
-///
-/// P2P 未启用（`enable_p2p` 未调用/失败）时返回明确错误——
-/// 前端据此提示用户先完成 P2P 配对。
+/// drain 前置守卫（T4 抽取：drain/retry 共用）——门禁（DK-51 案二）+ P2P
+/// transport + 配对地址三连检查。
 ///
 /// # Errors
-/// 应用未初始化 / P2P 未启用 / 对端地址未配置。
-#[tauri::command]
-pub async fn cmd_queue_drain() -> Result<DrainReportDto, String> {
-    let booted = get_booted()?;
+/// 门禁推迟 / P2P 未启用 / 对端地址未配置。
+async fn drain_guard(
+    booted: &BootedApp,
+) -> Result<
+    (
+        std::sync::Arc<aurora_sync::iroh_transport::IrohTransport>,
+        aurora_sync::iroh_transport::PublicEndpointAddr,
+    ),
+    String,
+> {
     // DK-51 案二：drain 过门——网络策略拒绝不进入补发（Defer 不是错误，
     // 不入重试/熔断统计；错误信息携带 decision+reason，前端直接展示）。
     let decision = booted.sync_gate.evaluate();
@@ -158,13 +162,59 @@ pub async fn cmd_queue_drain() -> Result<DrainReportDto, String> {
         .ok_or_else(|| "尚未配置同步对端".to_string())?;
     let addr: aurora_sync::iroh_transport::PublicEndpointAddr =
         serde_json::from_slice(&addr_b64).map_err(|e| format!("对端地址解析失败: {e}"))?;
+    Ok((transport, addr))
+}
 
-    // doc 解析（40a 打开链语义，公开面拼装——write_path 禁触）：
-    // drain 前先在 async 上下文把队列涉及的 doc 全部预解析（快照+updatelog 重放），
-    // resolver 闭包只查内存 map（tauri command 要求 Send+Sync 捕获）。
+/// 单 doc 解析（T4 抽取：快照+updatelog 重放——40a 打开链语义，公开面拼装，
+/// write_path 禁触）。解析失败返回 None（调用方决定回队/报错语义）。
+async fn resolve_doc(booted: &BootedApp, doc_id: &str) -> Option<std::sync::Arc<loro::LoroDoc>> {
+    let kv = booted.core.kv_store.clone();
+    // DK-47：快照读走惰性迁移 helper（legacy 单用户 key 命中搬迁）——
+    // user 段取 AppCore 上下文（不立账号，缺省 default）
+    let snap = aurora_core::app_core::get_notesnap_with_migration(
+        kv.as_ref(),
+        &booted.core.user_id,
+        doc_id,
+    )
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default();
+    let inner = if snap.is_empty() {
+        loro::LoroDoc::new()
+    } else {
+        aurora_core::l1_infrastructure::note_doc::NoteDoc::from_snapshot(&snap)
+            .ok()?
+            .inner()
+            .clone()
+    };
+    let updates = aurora_core::write_path::read_update_log(kv.as_ref(), doc_id)
+        .await
+        .ok()?;
+    for upd in updates {
+        if inner.import(&upd).is_err() {
+            return None;
+        }
+    }
+    Some(std::sync::Arc::new(inner))
+}
+
+/// 手动触发离线队列补发（DK-41 桥接后即真实同步）。
+///
+/// P2P 未启用（`enable_p2p` 未调用/失败）时返回明确错误——
+/// 前端据此提示用户先完成 P2P 配对。
+///
+/// # Errors
+/// 应用未初始化 / P2P 未启用 / 对端地址未配置。
+#[tauri::command]
+pub async fn cmd_queue_drain() -> Result<DrainReportDto, String> {
+    let booted = get_booted()?;
+    let (transport, addr) = drain_guard(&booted).await?;
+
+    // doc 解析：drain 前先在 async 上下文把队列涉及的 doc 全部预解析
+    // （resolver 闭包只查内存 map——tauri command 要求 Send+Sync 捕获）。
     use std::collections::HashMap as StdHashMap;
     use std::sync::Arc as StdArc;
-    let kv = booted.core.kv_store.clone();
     let doc_ids: Vec<String> = booted
         .offline_queue
         .items()
@@ -175,38 +225,8 @@ pub async fn cmd_queue_drain() -> Result<DrainReportDto, String> {
         .collect();
     let mut pre: StdHashMap<String, StdArc<loro::LoroDoc>> = StdHashMap::new();
     for doc_id in &doc_ids {
-        // DK-47：快照读走惰性迁移 helper（legacy 单用户 key 命中搬迁）——
-        // user 段取 AppCore 上下文（不立账号，缺省 default）
-        let snap = aurora_core::app_core::get_notesnap_with_migration(
-            kv.as_ref(),
-            &booted.core.user_id,
-            doc_id,
-        )
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-        let inner = if snap.is_empty() {
-            loro::LoroDoc::new()
-        } else {
-            match aurora_core::l1_infrastructure::note_doc::NoteDoc::from_snapshot(&snap) {
-                Ok(d) => d.inner().clone(),
-                Err(_) => continue,
-            }
-        };
-        let updates = match aurora_core::write_path::read_update_log(kv.as_ref(), doc_id).await {
-            Ok(u) => u,
-            Err(_) => continue,
-        };
-        let mut ok = true;
-        for upd in updates {
-            if inner.import(&upd).is_err() {
-                ok = false;
-                break;
-            }
-        }
-        if ok {
-            pre.insert(doc_id.clone(), StdArc::new(inner));
+        if let Some(doc) = resolve_doc(&booted, doc_id).await {
+            pre.insert(doc_id.clone(), doc);
         }
     }
     let resolver =
@@ -225,6 +245,48 @@ pub async fn cmd_queue_drain() -> Result<DrainReportDto, String> {
         failed_docs: report.failed_docs,
         acked_items: report.acked_items,
     })
+}
+
+// ===========================================================================
+// DK-T4: 单条队列 drain/重试（2026-10-19 台账 T4 消化——验收回执建议序首位）
+//
+// 场景：队列堆积时选择性补发某 doc（重要笔记优先/反复失败单独试）——
+// peek+ack 语义（失败路径队列原样，零数据丢失面）；清单走既有 cmd_queue_list
+// （palette 列表选行）。
+// ===========================================================================
+
+/// 单条重试：指定 doc 选择性补发（peek+ack——失败路径队列原样零丢失）。
+///
+/// 与全量 drain 的差异：只动目标 doc；成功即 ack 该 doc 全部积压项；
+/// 失败/解析未命中/无积压项均显式报错，队列无副作用。
+///
+/// # Errors
+/// 应用未初始化 / 门禁推迟 / P2P 未启用 / 对端未配置 / 无该 doc 积压项 /
+/// doc 解析失败（快照+updatelog 重放）/ 传输失败。
+#[tauri::command]
+pub async fn cmd_queue_retry(doc_id: String) -> Result<serde_json::Value, String> {
+    let booted = get_booted()?;
+    let (transport, addr) = drain_guard(&booted).await?;
+    // 预检：无积压项先报（避免无谓 doc 解析）
+    if aurora_sync::drain::select_queue_items(&booted.offline_queue, &doc_id).is_empty() {
+        return Err(format!("队列中无 doc_id={doc_id} 的待补发项"));
+    }
+    let doc = resolve_doc(&booted, &doc_id)
+        .await
+        .ok_or_else(|| format!("doc={doc_id} 解析失败（快照+updatelog 重放）"))?;
+    let report = aurora_sync::drain::drain_one_doc_sync(
+        &booted.offline_queue,
+        &transport,
+        &addr,
+        &doc_id,
+        doc,
+    )
+    .await?;
+    Ok(serde_json::json!({
+        "synced_docs": report.synced_docs,
+        "acked_items": report.acked_items,
+        "doc_id": doc_id,
+    }))
 }
 
 /// 冲突 DTO（真冲突副本 + 语义冲突统一列表行）。

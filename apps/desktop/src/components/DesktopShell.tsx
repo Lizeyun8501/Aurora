@@ -2821,6 +2821,52 @@ export default function DesktopShell() {
             .catch((e) => window.alert(`查询失败：${String(e)}`));
         },
       },
+      {
+        kind: 'command' as const,
+        id: 'queue-retry',
+        title: '同步队列·单条重试（DK-T4）',
+        run: () => {
+          invoke
+            ?.('cmd_queue_list', {})
+            .then((items) => {
+              const list = (items ?? []) as Array<{
+                id: string;
+                docId: string;
+                priority: number;
+                attempts: number;
+                createdAt: string;
+              }>;
+              if (list.length === 0) {
+                window.alert('离线队列为空——无需补发');
+                return;
+              }
+              const lines = list.map(
+                (it, i) =>
+                  `${i + 1}. ${it.docId.slice(0, 8)}…（${it.attempts} 次尝试 · 优先级 ${it.priority} · ${it.createdAt
+                    .slice(0, 19)
+                    .replace('T', ' ')}）`,
+              );
+              const pick = window.prompt(
+                `离线队列（输入序号重试该条所属笔记的补发，取消关闭）：\n${lines.join('\n')}`,
+                '1',
+              );
+              if (!pick) return;
+              const item = list[Number(pick.trim()) - 1];
+              if (!item) {
+                window.alert('序号无效');
+                return;
+              }
+              invoke
+                ?.('cmd_queue_retry', { docId: item.docId })
+                .then((r) => {
+                  const acked = (r as { acked_items?: number }).acked_items ?? 0;
+                  window.alert(`补发成功——清理 ${acked} 条积压项`);
+                })
+                .catch((e) => window.alert(`重试失败：${String(e)}`));
+            })
+            .catch((e) => window.alert(`队列查询失败：${String(e)}`));
+        },
+      },
       ...(wifiOnly !== null
         ? [
             {

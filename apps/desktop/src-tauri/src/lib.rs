@@ -235,6 +235,7 @@ pub fn run() {
             sync_commands::cmd_sync_status,
             sync_commands::cmd_queue_list,
             sync_commands::cmd_queue_drain,
+            sync_commands::cmd_queue_retry,
             sync_commands::cmd_conflict_list,
             sync_commands::cmd_conflict_resolve,
             sync_commands::cmd_conflict_resolve_semantic,

@@ -191,6 +191,64 @@ where
     report
 }
 
+// ============================================================================
+// DK-T4: 单 doc 选择性补发（2026-10-19 台账 T4 消化——回执建议序首位）
+// ============================================================================
+
+/// 选出某 doc 的全部积压项（**peek 语义**——不出队不 ack，失败路径队列原样）。
+pub fn select_queue_items(queue: &OfflineQueue, doc_id: &str) -> Vec<QueueItem> {
+    queue
+        .items()
+        .into_iter()
+        .filter(|item| item.doc_id == doc_id)
+        .collect()
+}
+
+/// ack 指定积压项（按幂等键清理——成功路径收尾；ack 幂等，重复调用安全）。
+pub fn ack_queue_items(queue: &OfflineQueue, items: &[QueueItem]) {
+    for item in items {
+        queue
+            .ack(&item.idempotency_key)
+            .expect("ack 清理幂等索引不应失败");
+    }
+}
+
+/// 单 doc 选择性补发（T4）：解析与门禁由宿主完成，本函数只做
+/// 「peek 目标 doc 项 → `sync_with_peer` → 成功才 ack」编排。
+///
+/// **失败路径队列原样**（items 不动——与全量 drain 的 dequeue/requeue 不同，
+/// peek+ack 语义下无需回队），显式错误返回由宿主提示。
+///
+/// # Errors
+/// 队列中无该 doc 项 / 传输错误 / `SyncReport.success == false`。
+pub async fn drain_one_doc_sync(
+    queue: &OfflineQueue,
+    transport: &IrohTransport,
+    peer_addr: &EndpointAddr,
+    doc_id: &str,
+    doc: Arc<LoroDoc>,
+) -> Result<DrainReport, String> {
+    let items = select_queue_items(queue, doc_id);
+    if items.is_empty() {
+        return Err(format!("队列中无 doc_id={doc_id} 的待补发项"));
+    }
+    let sync: SyncReport = transport
+        .sync_with_peer(peer_addr.clone(), &doc)
+        .await
+        .map_err(|e| format!("doc={doc_id} 传输错误: {e}"))?;
+    if !sync.success {
+        return Err(format!("doc={doc_id} 补发失败: {:?}", sync.error));
+    }
+    let mut report = DrainReport {
+        synced_docs: 1,
+        ..Default::default()
+    };
+    ack_queue_items(queue, &items);
+    report.acked_items = items.len();
+    info!("drain_one_doc: doc={} 成功 ack {} 项", doc_id, items.len());
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,5 +271,37 @@ mod tests {
         // 回队项仍可再次出队（attempts 继续递增）。
         let again = q.dequeue().unwrap();
         assert_eq!(again.attempts, 2);
+    }
+
+    /// DK-T4: select/ack 语义——peek 只筛目标 doc 不动队列；ack 后幂等键
+    /// 清理、他 doc 项不受影响。
+    #[test]
+    fn test_t4_select_and_ack_semantics() {
+        let q = OfflineQueue::new();
+        let k1 = QueueItem::new("doc-a", vec![1], Priority::High);
+        let k2 = QueueItem::new("doc-a", vec![2], Priority::Low);
+        let kb = QueueItem::new("doc-b", vec![3], Priority::Normal);
+        let (key1, key2, keyb) = (
+            k1.idempotency_key.clone(),
+            k2.idempotency_key.clone(),
+            kb.idempotency_key.clone(),
+        );
+        for item in [k1, k2, kb] {
+            q.enqueue(item).unwrap();
+        }
+
+        // peek：只选 doc-a 两项（不出队——len 不变）
+        let picked = select_queue_items(&q, "doc-a");
+        assert_eq!(picked.len(), 2, "doc-a 两项须全被选中");
+        assert_eq!(q.len(), 3, "peek 不得出队");
+        assert!(select_queue_items(&q, "doc-absent").is_empty());
+
+        // 空项错误路径语义（drain_one_doc 前置）由宿主判——此处验 ack 面：
+        ack_queue_items(&q, &picked);
+        assert!(q.contains_key(&keyb), "他 doc 项不受影响");
+        assert!(!q.contains_key(&key1), "doc-a 项一幂等键已清理");
+        assert!(!q.contains_key(&key2), "doc-a 项二幂等键已清理");
+        // 队列本体仍含 doc-b（ack 只清幂等索引——dequeue 面由既有语义管）
+        assert_eq!(select_queue_items(&q, "doc-a").len(), 0, "ack 后不再被选中");
     }
 }
