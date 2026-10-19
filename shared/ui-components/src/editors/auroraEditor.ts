@@ -10,13 +10,15 @@
 // 经 getNoteSnapshot 快照恢复（拉取 Rust 侧合并结果）。
 
 import { EditorState } from 'prosemirror-state';
-import { EditorView } from 'prosemirror-view';
+import { EditorView, type EditorProps } from 'prosemirror-view';
 import { Plugin, PluginKey } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap } from 'prosemirror-commands';
 import { splitListItem } from 'prosemirror-schema-list';
 import { LoroDoc } from 'loro-crdt';
+import { mathNodeViews } from './mathNodeView';
+import { injectMathStyle } from './mathStyle';
 import { tokenizeCode } from './codeHighlight';
 import { injectHighlightStyle } from './editorHighlightStyle';
 import {
@@ -117,6 +119,7 @@ export function createAuroraEditor(
   const { loroDoc, onSave, exportSnapshot, onUpdate } = options;
 
   injectHighlightStyle(); // DK-2.7：token 着色样式幂等注入
+  injectMathStyle(); // DK-2.7 切片五：公式渲染/编辑样式幂等注入
 
   // 初始内容: loro-prosemirror 的 view 钩子（setTimeout 0）会做初始同步 —
   // map.size>0 时自动 createNodeFromLoroObj 转换；空文档走 delete 分支。
@@ -162,6 +165,8 @@ export function createAuroraEditor(
 
   const view = new EditorView(dom, {
     state,
+    // DK-2.7 切片五：公式 NodeView（KaTeX 渲染态+聚焦编辑态）
+    nodeViews: mathNodeViews() as EditorProps['nodeViews'],
     dispatchTransaction(tx) {
       view.updateState(view.state.apply(tx));
       // debounce 保存

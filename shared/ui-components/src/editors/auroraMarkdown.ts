@@ -23,6 +23,41 @@ const ORDERED_RE = /^\d+[.)] (.*)$/;
 type AnySchema = Schema<string, any>;
 
 /**
+ * DK-2.7 切片五：行内公式解析——段落行文本 → inline 节点数组。
+ * v1 规则（Typora 同款启发式）：`$` 后与闭 `$` 前均非空白才成公式
+ * （货币 "$5 and $6" 不误判）；`\$` 转义为字面 $。
+ */
+function inlineNodes(schema: AnySchema, t: string): ProseNode[] {
+  const out: ProseNode[] = [];
+  let buf = '';
+  let i = 0;
+  while (i < t.length) {
+    if (t[i] === '\\' && t[i + 1] === '$') { buf += '$'; i += 2; continue; }
+    if (t[i] === '$') {
+      let j = i + 1;
+      let inner = '';
+      while (j < t.length && t[j] !== '$') {
+        if (t[j] === '\\' && t[j + 1] === '$') { inner += '\\$'; j += 2; continue; }
+        inner += t[j]; j++;
+      }
+      if (t[j] === '$' && inner.trim() && !/^\s|\s$/.test(inner)) {
+        if (buf) { out.push(schema.text(buf)); buf = ''; }
+        out.push(schema.nodes.math_inline.create({ latex: inner }));
+        i = j + 1; continue;
+      }
+    }
+    buf += t[i]; i++;
+  }
+  if (buf) out.push(schema.text(buf));
+  return out;
+}
+
+/** 段落行构造（切片五：经 inlineNodes 支持行内公式） */
+function paraOf(schema: AnySchema, t: string): ProseNode {
+  return schema.nodes.paragraph.create(null, t ? inlineNodes(schema, t) : null);
+}
+
+/**
  * markdown-ish 文本 → ProseMirror doc 节点数组。
  * 相邻同类列表行合并进同一 list 节点（list_item 内 paragraph）。
  */
@@ -30,13 +65,28 @@ export function mdToNodes(schema: AnySchema, text: string): ProseNode[] {
   const lines = text.split('\n');
   const nodes: ProseNode[] = [];
   let i = 0;
-  const para = (t: string) =>
-    schema.nodes.paragraph.create(null, t ? [schema.text(t)] : null);
+  const para = (t: string) => paraOf(schema, t);
   const listItem = (t: string) =>
     schema.nodes.list_item.create(null, para(t));
 
   while (i < lines.length) {
     const line = lines[i];
+
+    // 切片五：块级公式——`$$` 单独行开/闭（多行）或单行 `$$...$$`
+    if (line.trim() === '$$') {
+      const body: string[] = [];
+      i++;
+      while (i < lines.length && lines[i].trim() !== '$$') { body.push(lines[i]); i++; }
+      i++; // 跳过闭 $$（无闭合则到尾）
+      nodes.push(schema.nodes.math_block.create({ latex: body.join('\n') }));
+      continue;
+    }
+    const oneLineMath = /^\$\$(.+)\$\$\s*$/.exec(line);
+    if (oneLineMath) {
+      nodes.push(schema.nodes.math_block.create({ latex: oneLineMath[1].trim() }));
+      i++;
+      continue;
+    }
 
     // 空行跳过
     if (!line.trim()) { i++; continue; }
@@ -170,9 +220,21 @@ export function mdToDoc(schema: AnySchema, text: string): ProseNode {
 }
 
 /** 单块节点 → markdown 行（docToMd 递归用） */
+/** 切片五：inline 序列化——math_inline 还原 `$latex$`（其余 textContent） */
+function inlineText(node: ProseNode): string {
+  if (!node.content) return node.textContent;
+  let s = '';
+  node.content.content.forEach((c: ProseNode) => {
+    if (c.type.name === 'math_inline') s += `$${c.attrs.latex}$`;
+    else s += c.textContent;
+  });
+  return s;
+}
+
 function nodeToMd(node: ProseNode, orderedIdx: { n: number }): string[] {
-  const t = node.textContent;
+  const t = inlineText(node);
   switch (node.type.name) {
+    case 'math_block': return ['$$', node.attrs.latex, '$$'];
     case 'heading': return [`${'#'.repeat(node.attrs.level)} ${t}`.trimEnd()];
     case 'code_block': {
       const lang = node.attrs.language && node.attrs.language !== 'plaintext' ? node.attrs.language : '';
@@ -184,9 +246,9 @@ function nodeToMd(node: ProseNode, orderedIdx: { n: number }): string[] {
     }
     case 'task_block': return [`- [${node.attrs.checked ? 'x' : ' '}] ${t}`.trimEnd()];
     case 'bullet_list':
-      return node.content.content.flatMap((li: ProseNode) => [`- ${li.textContent}`]);
+      return node.content.content.flatMap((li: ProseNode) => [`- ${inlineText(li)}`]);
     case 'ordered_list':
-      return node.content.content.flatMap((li: ProseNode) => [`${orderedIdx.n++}. ${li.textContent}`]);
+      return node.content.content.flatMap((li: ProseNode) => [`${orderedIdx.n++}. ${inlineText(li)}`]);
     case 'horizontal_rule': return ['---'];
     case 'paragraph': return [t];
     // S2 工具条外类型：占位行保底（内容不丢，往返可再扩）

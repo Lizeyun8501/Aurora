@@ -238,6 +238,37 @@ const baseNodes: Record<string, NodeSpec> = {
   },
 
   text: { group: 'inline', inline: true },
+
+  // ── DK-2.7 切片五：公式（KaTeX WYSIWYG 面板渲染，光标进入显源码） ──
+  // 行内公式（$...$）——atom 铁原子：源码作 textContent，渲染由 NodeView
+  // 接管（typora 式：非聚焦渲染、聚焦编辑）。Loro 同步只看 attrs/textContent。
+  math_inline: {
+    group: 'inline',
+    inline: true,
+    atom: true,
+    attrs: { latex: { default: '' } },
+    toDOM: (n) => ['span', { class: 'aurora-math-inline', 'data-latex': n.attrs.latex }],
+    parseDOM: [
+      {
+        tag: 'span.aurora-math-inline',
+        getAttrs: (d) => ({ latex: (d as HTMLElement).dataset.latex ?? '' }),
+      },
+    ],
+  },
+
+  // 块级公式（$$...$$）——block atom，同渲染策略。
+  math_block: {
+    group: 'block',
+    atom: true,
+    attrs: { latex: { default: '' } },
+    toDOM: (n) => ['div', { class: 'aurora-math-block', 'data-latex': n.attrs.latex }],
+    parseDOM: [
+      {
+        tag: 'div.aurora-math-block',
+        getAttrs: (d) => ({ latex: (d as HTMLElement).dataset.latex ?? '' }),
+      },
+    ],
+  },
 };
 
 const baseMarks: Record<string, MarkSpec> = {
