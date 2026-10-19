@@ -300,6 +300,179 @@ pub struct ConflictDto {
     pub created_at: String,
 }
 
+// ===========================================================================
+// DK-44：P2P 设备配对（手动配对码模型——DK-40b 带外交换语义的 UI 接线）。
+//
+// 流程：双方各自「启用 P2P」（bind+导出本机地址 base64=配对码）→ 带外互发
+// （剪贴板/IM）→ 粘贴导入对端码 → KV 写 `sync.peer.addr` → drain/直传/
+// 收件循环立即可用（收件循环经 setup_share_accept 现场重接线，无需重启）。
+// ===========================================================================
+
+const PEER_ID_KV_KEY: &str = "settings:peer_id";
+const PEER_ADDR_KV_KEY: &str = "sync.peer.addr";
+/// 导出配对码时等待 home relay 连接的封顶（超时不阻塞配对——
+/// 返回 addr 附 relay_ready:false 诚实提示，局域网直连面仍可用）。
+const PAIR_RELAY_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 配对状态 DTO（PairDialog 数据源）。
+#[derive(Debug, Serialize)]
+pub struct PairStatusDto {
+    /// 本机 P2P transport 是否已启用（bind 完成）。
+    pub p2p_enabled: bool,
+    /// 本机 peer 标识（未生成时为空串——enable 时落 KV）。
+    pub peer_id: String,
+    /// 是否已导入对端地址（sync.peer.addr 存在）。
+    pub paired: bool,
+    /// 本机配对码（addr JSON 的 base64——未启用为空）。
+    pub local_code: String,
+    /// home relay 是否已连接（导出的码含 relay 可达面）。
+    pub relay_ready: bool,
+}
+
+fn b64(data: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(data)
+}
+
+/// 查询配对状态（只读——PairDialog 打开时刷新）。
+///
+/// # Errors
+/// 应用未初始化。
+#[tauri::command]
+pub async fn cmd_pair_status() -> Result<PairStatusDto, String> {
+    let booted = get_booted()?;
+    let transport = booted.p2p();
+    let peer_id = booted
+        .core
+        .kv_store
+        .get(PEER_ID_KV_KEY)
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|v| String::from_utf8_lossy(&v).into_owned())
+        .unwrap_or_default();
+    let paired = booted
+        .core
+        .kv_store
+        .get(PEER_ADDR_KV_KEY)
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some();
+    let mut relay_ready = false;
+    let local_code = match &transport {
+        Some(t) => {
+            if t.wait_home_relay_url(PAIR_RELAY_WAIT).await.is_ok() {
+                relay_ready = true;
+            }
+            b64(t.export_addr_json()?.as_bytes())
+        }
+        None => String::new(),
+    };
+    Ok(PairStatusDto {
+        p2p_enabled: transport.is_some(),
+        peer_id,
+        paired,
+        local_code,
+        relay_ready,
+    })
+}
+
+/// 启用本机 P2P 传输（幂等）——bind+peer_id 落 KV+**收件循环现场重接线**
+/// （setup_share_accept 重新调用即生效，v1 语义无需重启）+导出本机配对码。
+///
+/// # Errors
+/// peer_id 生成/KV 写失败 / iroh bind 失败 / addr 导出失败。
+#[tauri::command]
+pub async fn cmd_pair_enable() -> Result<PairStatusDto, String> {
+    let booted = get_booted()?;
+    // peer_id：KV 缺省生成（随机 UUID——PeerId 语义即本机标识，非密码学身份）
+    let peer_id = match booted
+        .core
+        .kv_store
+        .get(PEER_ID_KV_KEY)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        Some(v) => String::from_utf8_lossy(&v).into_owned(),
+        None => {
+            let id = uuid::Uuid::new_v4().to_string();
+            booted
+                .core
+                .kv_store
+                .set(PEER_ID_KV_KEY, id.as_bytes())
+                .await
+                .map_err(|e| format!("peer_id 写入失败: {e}"))?;
+            id
+        }
+    };
+    booted
+        .enable_p2p(&peer_id)
+        .await
+        .map_err(|e| format!("P2P 启用失败: {e}"))?;
+    // DK-2.8v2 语义兑现：transport 就绪后重新接线收件循环（现场生效）
+    let booted2 = get_booted()?;
+    crate::share_commands::setup_share_accept(booted2);
+    let booted = get_booted()?;
+    let transport = booted
+        .p2p()
+        .ok_or_else(|| "P2P 启用后句柄仍缺失（异常态）".to_string())?;
+    let relay_ready = transport.wait_home_relay_url(PAIR_RELAY_WAIT).await.is_ok();
+    let local_code = b64(transport.export_addr_json()?.as_bytes());
+    Ok(PairStatusDto {
+        p2p_enabled: true,
+        peer_id,
+        paired: booted
+            .core
+            .kv_store
+            .get(PEER_ADDR_KV_KEY)
+            .await
+            .map_err(|e| e.to_string())?
+            .is_some(),
+        local_code,
+        relay_ready,
+    })
+}
+
+/// 导入对端配对码（base64(addr JSON)）——KV 写 `sync.peer.addr`，
+/// drain/直传发送立即可用。幂等（重复导入覆盖）。
+///
+/// # Errors
+/// base64 解码 / addr JSON 解析失败（码损坏或非同版本导出面）。
+#[tauri::command]
+pub async fn cmd_pair_import(code: String) -> Result<(), String> {
+    let booted = get_booted()?;
+    let raw = {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(code.trim())
+            .map_err(|e| format!("配对码 base64 解码失败: {e}"))?
+    };
+    let json = String::from_utf8(raw).map_err(|_| "配对码不是合法 UTF-8".to_string())?;
+    // 解析校验先行（坏码不落 KV）
+    let _addr: aurora_sync::iroh_transport::PublicEndpointAddr =
+        aurora_sync::iroh_transport::IrohTransport::import_addr_json(&json)?;
+    booted
+        .core
+        .kv_store
+        .set(PEER_ADDR_KV_KEY, json.as_bytes())
+        .await
+        .map_err(|e| format!("对端地址写入失败: {e}"))
+}
+
+/// 解除配对（删 sync.peer.addr——transport 保持启用；对端可重新导入）。
+///
+/// # Errors
+/// 应用未初始化 / KV 删除失败。
+#[tauri::command]
+pub async fn cmd_pair_unpair() -> Result<(), String> {
+    let booted = get_booted()?;
+    booted
+        .core
+        .kv_store
+        .delete(PEER_ADDR_KV_KEY)
+        .await
+        .map_err(|e| format!("解除配对失败: {e}"))
+}
+
 /// 列出待处理冲突（真冲突副本 + 语义冲突合并视图）。
 ///
 /// # Errors

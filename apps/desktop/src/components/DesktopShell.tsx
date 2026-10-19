@@ -30,6 +30,7 @@ import { DEFAULT_SHORTCUTS, comboMatches, type ShortcutTable } from '../shortcut
 import VersionHistoryPanel from './VersionHistoryPanel';
 import TodayDailyNote from './TodayDailyNote';
 import LiquifyReview from './LiquifyReview';
+import PairDialog from './PairDialog';
 // DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
 import SyncStatusBadge from './SyncStatusBadge';
 import QueuePanel from './QueuePanel';
@@ -2325,6 +2326,8 @@ export default function DesktopShell() {
   /* DK-2.10：键位表（默认基线+用户覆盖合并——即时生效）；设置面板开关 */
   const [shortcuts, setShortcuts] = useState<ShortcutTable>(DEFAULT_SHORTCUTS);
   const [shortcutSettingsOpen, setShortcutSettingsOpen] = useState(false);
+  // DK-44：P2P 配对浮层开关（palette 入口）
+  const [pairOpen, setPairOpen] = useState(false);
   /* DK-3.1：右侧常驻信息面板开关（DK-3.1v2：localStorage 优先+sessionStorage
      兜底迁移读；无值默认开——browser-mock 无存储守卫 try/catch 沿用） */
   const [sidePanelOpen, setSidePanelOpen] = useState<boolean>(() => {
@@ -2697,6 +2700,12 @@ export default function DesktopShell() {
         id: 'ai-liquify-review',
         title: 'AI 液化审查（liquify 两段式提交）',
         run: () => setView('liquify'),
+      },
+      {
+        kind: 'command' as const,
+        id: 'p2p-pair',
+        title: 'P2P 设备配对（直传/补发前置）',
+        run: () => setPairOpen(true),
       },
       {
         kind: 'command' as const,
@@ -3394,6 +3403,9 @@ export default function DesktopShell() {
       </div>
       {shortcutSettingsOpen && (
         <ShortcutSettings invoke={invoke} onClose={() => setShortcutSettingsOpen(false)} />
+      )}
+      {pairOpen && invoke && (
+        <PairDialog invoke={invoke} onClose={() => setPairOpen(false)} />
       )}
       <StatusBar mode={mode} stats={stats} />
       <CommandPalette
