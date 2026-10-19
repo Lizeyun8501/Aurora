@@ -1,7 +1,8 @@
 # bravo-note：2.9v2-b 浏览器扩展预研——a 桥已交付（c087ec7），协议面冻结
 
 > Bravo ｜ 2026-10-19 ｜ 对象: alpha-approval-2.8v2-2.9v2.md ②b 卡
-> **状态：预研落盘——a CI 绿+回执后即可开工（协议面已从 a 实际形态抄死）**
+> **状态：✅ 已消化——dce0d42（2026-10-19）——a 验收（c087ec7 CI 八检查全绿）后按本卡直落**
+> 实施与本卡预案差异：无 background service worker（popup 直发——context menu 延后）；正文提取 v1 innerText（Readability v2 单列）；验收=node 烟测 4/4（载荷构造对拍）+CI 8/8（dce0d42）——浏览器内安装走通=用户手动验收项（README 四步）
 
 ## a 实际协议面（c087ec7 冻结——b 按此写死，零再确认）
 
