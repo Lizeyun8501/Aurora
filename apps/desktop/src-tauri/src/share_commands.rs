@@ -210,10 +210,10 @@ pub(crate) async fn import_share_code(code: &str) -> Result<serde_json::Value, S
 // cmd_inbox_list 扫前缀列条目 / cmd_inbox_import 取件即建笔记+删条目。
 //
 // 语义边界（诚实化）：
-// - 收件循环接线依赖 P2P 配对面（enable_p2p——DK-44 句柄已备、配对 UI 未落）
-//   ——transport 就绪即生效（setup_share_accept 挂钩），配对面落地零改动；
+// - 收件循环接线：P2P 配对面已落（06b7cf9 DK-44 cmd_pair_enable 现场重接线
+//   setup_share_accept——无需重启；未配对时 transport None 仍跳过）
 // - 只读副本语义延续 v1：收到的即独立副本，改动不回传；
-// - peer 标识 v1 缺省常量（配对面落地后带真实 EndpointId）。
+// - peer 标识仍缺省常量（配对模型是手动配对码，无对端身份面——改进候真实 EndpointId 透传）。
 // ===========================================================================
 
 use crate::sync_commands::get_booted;
@@ -359,8 +359,8 @@ pub async fn cmd_inbox_import(id: String) -> Result<serde_json::Value, String> {
 /// setup 接线：P2P transport 就绪时 spawn 分享收件循环（收件落
 /// `share:inbox:{received_at}` KV——async 写经 tauri runtime spawn）。
 ///
-/// transport 未就绪（配对面未接线）时跳过并 info——配对面落地后
-/// 重新调用本函数即可生效（v1 无需热加载：重启应用即重试）。
+/// transport 未就绪（用户未配对）时跳过并 info；06b7cf9 DK-44 起配对启用
+/// 时由 cmd_pair_enable 现场重调本函数（无需重启应用）。
 pub(crate) fn setup_share_accept(booted: std::sync::Arc<aurora_bootstrap::BootedApp>) {
     let Some(transport) = booted.p2p() else {
         tracing::info!("share accept loop skipped: P2P transport not enabled yet");
