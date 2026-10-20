@@ -139,6 +139,9 @@ pub struct PluginState {
     pub market: Arc<Marketplace>,
     /// 市场下载通道（DK-市场下载器：桌面默认 Http；测试/离线可注入 Mock）
     pub fetcher: Arc<dyn PluginFetcher>,
+    /// DK-1.1 接线：热更新状态机（统一注册表语义——内存表退化为会话缓存，
+    /// 权威源=installer KV。桌面安装件升级流入口）
+    pub hot: Arc<aurora_plugin::hot_update::HotUpdateManager>,
 }
 
 impl PluginState {
@@ -149,6 +152,7 @@ impl PluginState {
                 aurora_security::crypto_provider_impl::SecurityCryptoProvider::new(),
             ))),
             fetcher: Arc::new(HttpFetcher::default()),
+            hot: Arc::new(aurora_plugin::hot_update::HotUpdateManager::new()),
         }
     }
 }
@@ -380,4 +384,116 @@ pub async fn cmd_pull_plugin_output(
                 .collect()
         })
         .unwrap_or_default())
+}
+
+// ===========================================================================
+// DK-1.1 接线：桌面热升级命令面（统一注册表语义消费方——f84ba27 P0-2 的
+// 命令层补全）。两段式对齐 liquify 先例：start（预装载→Pending 确认门）
+// → confirm（落 KV+runtime 重载）。
+//
+// v1 边界（诚实化）：
+// - blob 来源=wasm_path 文件（与 cmd_plugin_install 同模式——市场下载器
+//   S2 落地后换字节流通道）；
+// - runtime 重载=install_component 换字节+踢实例（下次 invoke 慢路径重
+//   实例化）；capabilities 变更的重注册（L2 授权图谱连带）=升级卡 v2
+//   边界——v1 manifest 不动（普通升级 capabilities 未变的常规路径安全）；
+// - 落库失败=内存已切换 KV 滞后（f84ba27 最终一致边界延续）。
+// ===========================================================================
+
+use aurora_plugin::hot_update::{UpdateResult, UpdateState};
+
+/// 热升级预装载（两段式第一段——统一注册表自动装载会话缓存→Pending）。
+///
+/// # Errors
+/// 应用未初始化 / wasm 文件读失败 / 两域均无此件（NotFound）/ KV 失败。
+#[tauri::command]
+pub async fn cmd_plugin_hot_update_start(
+    state: State<'_, PluginState>,
+    plugin_id: String,
+    new_version: String,
+    wasm_path: String,
+) -> Result<UpdateResult, String> {
+    let booted = crate::sync_commands::get_booted()?;
+    let new_blob = tokio::fs::read(&wasm_path)
+        .await
+        .map_err(|e| format!("read wasm `{wasm_path}`: {e}"))?;
+    state
+        .hot
+        .preload_from_registry(
+            booted.core.kv_store.as_ref(),
+            plugin_id,
+            new_version,
+            new_blob,
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 热升级状态查询（确认门前刷新——Pending 才允许 confirm）。
+///
+/// # Errors
+/// 应用未初始化。
+#[tauri::command]
+pub async fn cmd_plugin_hot_update_status(
+    state: State<'_, PluginState>,
+    plugin_id: String,
+) -> Result<Option<UpdateState>, String> {
+    Ok(state.hot.state(&plugin_id))
+}
+
+/// 热升级确认（两段式第二段——落 KV 统一注册表+runtime 重载换字节踢实例）。
+///
+/// # Errors
+/// 应用未初始化 / 状态机拒绝（非 Switched）/ KV 失败 / blob 读失败。
+#[tauri::command]
+pub async fn cmd_plugin_hot_update_confirm(
+    state: State<'_, PluginState>,
+    plugin_id: String,
+) -> Result<UpdateResult, String> {
+    let booted = crate::sync_commands::get_booted()?;
+    let result = state
+        .hot
+        .confirm_switch_persist(booted.core.kv_store.as_ref(), &plugin_id, false)
+        .await
+        .map_err(|e| e.to_string())?;
+    // runtime 重载：新 blob 已落 KV（blob: 前缀）——读回换字节+踢实例
+    //（下次 invoke 慢路径重新实例化；cached_components 同步踢除防旧
+    // 编译件复用）。
+    let new_bytes = booted
+        .core
+        .kv_store
+        .get(&format!("{}{plugin_id}", installer::BLOB_PREFIX))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("blob missing after persist: {plugin_id}"))?;
+    state.runtime.install_component(&plugin_id, new_bytes);
+    state.runtime.take_cached_component(&plugin_id);
+    Ok(result)
+}
+
+/// 热升级回滚（Switched 后发现新版本问题——退回旧版本字节并落库）。
+///
+/// Pending 态放弃无需命令：不 confirm 即滞留 Pending（无副作用，下一次
+/// preload 覆盖）。
+///
+/// # Errors
+/// 应用未初始化 / 状态机拒绝（非 Switched）/ KV 失败。
+#[tauri::command]
+pub async fn cmd_plugin_hot_update_rollback(
+    state: State<'_, PluginState>,
+    plugin_id: String,
+) -> Result<UpdateResult, String> {
+    let booted = crate::sync_commands::get_booted()?;
+    let result = state.hot.rollback(&plugin_id).map_err(|e| e.to_string())?;
+    // 回滚后 runtime 同步换回旧字节（旧 blob=确认前落库值已还原）
+    let old_bytes = booted
+        .core
+        .kv_store
+        .get(&format!("{}{plugin_id}", installer::BLOB_PREFIX))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("blob missing after rollback: {plugin_id}"))?;
+    state.runtime.install_component(&plugin_id, old_bytes);
+    state.runtime.take_cached_component(&plugin_id);
+    Ok(result)
 }
