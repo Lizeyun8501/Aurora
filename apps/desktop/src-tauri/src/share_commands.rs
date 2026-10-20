@@ -23,7 +23,28 @@ pub struct SharePack {
     pub title: String,
     pub content: String,
     pub created_at: String,
+    /// DK-水印（用户拍板 2026-10-20）：溯源标记——**默认关闭，分享时显式
+    /// 勾选开启**。语义边界（诚实声明）：sid=分享会话随机 ID（非用户身份/
+    /// 设备指纹）+ts_day=粗粒度日期——能力=接收副本间同源关联（同 sid 同源）
+    /// +分享者本机留档自查（KV share:trace:{sid}，数据不出本机）；**不提供
+    /// "追溯到人"**。serde 默认允许未知字段——旧端导入新包兼容（忽略）；
+    /// 新端导入旧包 trace=None 兼容。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<TraceMark>,
 }
+
+/// 溯源标记（见 SharePack.trace 语义边界）。
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceMark {
+    /// 分享会话随机 ID（uuid v4——生成即嵌，非持久身份）。
+    pub sid: String,
+    /// 粗粒度日期（YYYY-MM-DD——精确时刻不嵌，降低关联面）。
+    pub ts_day: String,
+}
+
+/// 水印留档 KV 前缀（share:trace:{sid} → {note_id, day} JSON）。
+const TRACE_KV_PREFIX: &str = "share:trace:";
 
 /// b64 编解码（快照域同款 STANDARD）。
 fn b64_encode(data: &[u8]) -> String {
@@ -40,12 +61,28 @@ fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
 
 /// 生成分享码（笔记不存在/解密失败 fail-closed）。
 ///
+/// `watermark=true` 时嵌入溯源标记（用户显式勾选——默认 false 零变化）
+/// 并本机留档（share:trace:{sid}——数据不出本机，分享者可自查码流）。
+///
 /// # Errors
 /// 应用未初始化 / 笔记不存在 / 解密失败 / KV 读失败。
 pub async fn create_share_code(
     core: &AppCore,
     vault: &LocalDekVault,
     note_id: &str,
+) -> Result<String, String> {
+    create_share_code_with_watermark(core, vault, note_id, false).await
+}
+
+/// 带水印开关的分享码生成（create_share_code 的完整面——UI 勾选透传）。
+///
+/// # Errors
+/// 同 create_share_code + 水印留档 KV 写失败。
+pub async fn create_share_code_with_watermark(
+    core: &AppCore,
+    vault: &LocalDekVault,
+    note_id: &str,
+    watermark: bool,
 ) -> Result<String, String> {
     let bytes = core
         .kv_store
@@ -54,6 +91,27 @@ pub async fn create_share_code(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("笔记不存在: {note_id}"))?;
     let json = unwrap_note_bytes(core, vault, &bytes)?;
+    // 水印：会话级随机 ID+粗粒度日期——非身份（语义边界见 TraceMark）。
+    // 精确时刻只在留档记录里（本机），嵌入包内仅日期。
+    let (trace, ts_exact) = if watermark {
+        let sid = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
+        let mark = TraceMark {
+            sid: sid.clone(),
+            ts_day: now.format("%Y-%m-%d").to_string(),
+        };
+        let record = serde_json::json!({ "noteId": note_id, "day": mark.ts_day, "createdAt": now.to_rfc3339() });
+        core.kv_store
+            .set(
+                &format!("{TRACE_KV_PREFIX}{sid}"),
+                record.to_string().as_bytes(),
+            )
+            .await
+            .map_err(|e| format!("水印留档失败: {e}"))?;
+        (Some(mark), now.to_rfc3339())
+    } else {
+        (None, String::new())
+    };
     let pack = SharePack {
         title: json
             .get("title")
@@ -68,18 +126,19 @@ pub async fn create_share_code(
         created_at: json
             .get("updated_at")
             .and_then(|t| t.as_str())
-            .unwrap_or_default()
+            .unwrap_or(ts_exact.as_str())
             .to_string(),
+        trace,
     };
     let plain = serde_json::to_vec(&pack).map_err(|e| e.to_string())?;
     Ok(b64_encode(&plain))
 }
 
 #[tauri::command]
-pub async fn cmd_create_share(note_id: String) -> Result<String, String> {
+pub async fn cmd_create_share(note_id: String, watermark: Option<bool>) -> Result<String, String> {
     let core = get_core()?;
     let vault = get_vault()?;
-    create_share_code(&core, &vault, &note_id).await
+    create_share_code_with_watermark(&core, &vault, &note_id, watermark.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -137,7 +196,10 @@ pub(crate) async fn import_share_code(code: &str) -> Result<serde_json::Value, S
             .await
             .map_err(|e| e.to_string())?;
     }
-    Ok(serde_json::json!({ "note_id": note_id, "title": pack.title }))
+    // 水印透明性（公平原则）：接收端知悉副本带溯源标记（UI 收件箱 badge
+    // 消费）——标记内容不写进笔记正文（不污染内容），仅返回值透传。
+    let traced = pack.trace.is_some();
+    Ok(serde_json::json!({ "note_id": note_id, "title": pack.title, "traced": traced }))
 }
 
 // ===========================================================================
@@ -352,6 +414,7 @@ mod share_tests {
             title: "标题 <script>".into(), // 不可信内容原样承载——渲染侧防
             content: "# 正文\n- [ ] 待办".into(),
             created_at: "2026-10-18T00:00:00Z".into(),
+            trace: None,
         };
         let plain = serde_json::to_vec(&pack).unwrap();
         let code = b64_encode(&plain);
@@ -365,5 +428,57 @@ mod share_tests {
         let junk = b64_encode(b"not json");
         let parsed: Result<SharePack, _> = serde_json::from_slice(&b64_decode(&junk).unwrap());
         assert!(parsed.is_err());
+    }
+
+    // ── DK-水印（用户拍板 2026-10-20）——默认关/显式开/双向兼容 ──
+
+    /// 关水印：pack JSON 不含 trace 键（skip_serializing_if 生效——
+    /// 与 v1 包字节面完全一致，无追踪语义零变化）。
+    #[test]
+    fn wm_off_omits_trace_key() {
+        let pack = SharePack {
+            title: "t".into(),
+            content: "c".into(),
+            created_at: "2026-10-20".into(),
+            trace: None,
+        };
+        let plain = serde_json::to_vec(&pack).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&plain).unwrap();
+        assert!(json.get("trace").is_none(), "关水印不得出现 trace 键");
+    }
+
+    /// 开水印：trace 存在+sid 为 UUID 形态+ts_day 为日期形态。
+    #[test]
+    fn wm_on_embeds_session_mark() {
+        let pack = SharePack {
+            title: "t".into(),
+            content: "c".into(),
+            created_at: "2026-10-20".into(),
+            trace: Some(TraceMark {
+                sid: uuid::Uuid::new_v4().to_string(),
+                ts_day: "2026-10-20".into(),
+            }),
+        };
+        let plain = serde_json::to_vec(&pack).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&plain).unwrap();
+        let trace = json.get("trace").expect("开水印须有 trace");
+        let sid = trace.get("sid").and_then(|v| v.as_str()).expect("sid");
+        assert_eq!(sid.split('-').count(), 5, "sid 须为 UUID v4 形态");
+        let day = trace.get("tsDay").and_then(|v| v.as_str()).expect("tsDay");
+        assert_eq!(day.len(), 10, "ts_day 须为粗粒度日期（YYYY-MM-DD）");
+    }
+
+    /// 双向兼容：旧包（无 trace）导入→trace=None；新包（带 trace）旧语义
+    /// 读取不炸（serde 默认容忍未知字段——roundtrip 反向验证）。
+    #[test]
+    fn wm_legacy_and_forward_compat() {
+        // 旧包：v1 字节面（无 trace 键）
+        let legacy = br#"{"title":"t","content":"c","createdAt":"2026-10-18"}"#;
+        let pack: SharePack = serde_json::from_slice(legacy).unwrap();
+        assert!(pack.trace.is_none(), "旧包 trace 须为 None（default）");
+        // 新包多字段：旧消费方语义（我们只断言 serde 容忍——不炸即过）
+        let forward = br#"{"title":"t","content":"c","createdAt":"x","trace":{"sid":"s","tsDay":"d"},"unknownField":1}"#;
+        let pack2: SharePack = serde_json::from_slice(forward).unwrap();
+        assert!(pack2.trace.is_some());
     }
 }

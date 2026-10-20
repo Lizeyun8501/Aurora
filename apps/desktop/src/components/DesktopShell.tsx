@@ -1642,22 +1642,31 @@ function TagsRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.R
  * 语义）→ cmd_create_share → 剪贴板复制；分享码即明文（b64 非加密）——
  * 接收端为副本，改动不回传（分享即断链）；导入走 palette「从分享码导入」。
  * DK-2.8v2 增「直传」：iroh 推送到配对设备（门禁+对端在线要求在 cmd 层）。
- * v1 边界：无水印溯源/收件箱走 palette 入口。 */
+ * DK-水印（用户拍板 2026-10-20）：勾选式嵌入溯源标记（默认关——sid 随机
+ * 会话 ID 非身份，本机留档可自查；语义边界见 TraceMark）。 */
 function ShareRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.ReactElement {
   const { note, invoke } = props;
   const [msg, setMsg] = useState<string | null>(null);
+  // 水印勾选（默认关——显式开启才嵌入溯源标记）
+  const [wm, setWm] = useState(false);
   const share = (): void => {
     if (!invoke) return;
     const ok = window.confirm(
-      '将生成本笔记的明文分享码（b64 非加密）并复制到剪贴板——接收端获得完整副本。继续？',
+      wm
+        ? '将生成带溯源水印的明文分享码并复制——嵌入随机会话 ID（非身份，本机留档可自查）。继续？'
+        : '将生成本笔记的明文分享码（b64 非加密）并复制到剪贴板——接收端获得完整副本。继续？',
     );
     if (!ok) return;
-    invoke('cmd_create_share', { noteId: note.note_id })
+    invoke('cmd_create_share', { noteId: note.note_id, watermark: wm })
       .then((code) => {
         navigator.clipboard
           ?.writeText(String(code))
           .catch(() => {});
-        setMsg(`分享码已复制（${String(code).length} 字符）——粘贴给接收方导入`);
+        setMsg(
+          wm
+            ? `带水印分享码已复制（${String(code).length} 字符）——留档见本机`
+            : `分享码已复制（${String(code).length} 字符）——粘贴给接收方导入`,
+        );
       })
       .catch((e) => setMsg(`发布失败：${String(e)}`));
   };
@@ -1685,6 +1694,11 @@ function ShareRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.
   };
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacing.sm, marginTop: tokens.spacing.sm }}>
+      {/* DK-水印：默认关——显式勾选才嵌入溯源标记（语义边界见 TraceMark） */}
+      <label title="嵌入随机会话 ID（非身份）+本机留档——接收副本间可证同源；默认关闭" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: tokens.color.textSecondary, cursor: 'pointer' }}>
+        <input type="checkbox" checked={wm} onChange={(e) => setWm(e.target.checked)} />
+        溯源水印
+      </label>
       <button onClick={share} style={btn}>
         分享（生成分享码）
       </button>
@@ -2777,16 +2791,18 @@ export default function DesktopShell() {
                 title: string;
                 receivedAt: string;
                 contentLen: number;
+                traced?: boolean;
               }>;
               if (list.length === 0) {
                 window.alert('收件箱为空——配对设备直传的笔记会出现在这里');
                 return;
               }
+              // 水印透明性：带溯源标记的条目列表即标注（公平原则——接收端知悉）
               const lines = list.map(
                 (it, i) =>
                   `${i + 1}. ${it.title}（${it.contentLen} 字 · ${it.receivedAt
                     .slice(0, 19)
-                    .replace('T', ' ')}）`,
+                    .replace('T', ' ')}）${it.traced ? '〔溯源水印〕' : ''}`,
               );
               const pick = window.prompt(
                 `收件箱（输入序号导入，取消关闭）：\n${lines.join('\n')}`,
@@ -2802,9 +2818,17 @@ export default function DesktopShell() {
                 ?.('cmd_inbox_import', { id: item.id })
                 .then((r) => {
                   const nid = (r as { note_id?: string }).note_id;
+                  const traced = (r as { traced?: boolean }).traced;
                   if (nid) {
                     setSelectedId(nid);
                     setView('notes');
+                    if (traced) {
+                      // 不阻断——导入完成提示补充水印知悉（内容未嵌标记）
+                      window.setTimeout(
+                        () => window.alert('该副本带溯源水印（随机会话 ID，非身份）——导入已完成'),
+                        100,
+                      );
+                    }
                   }
                 })
                 .catch((e) => window.alert(`导入失败：${String(e)}`));
