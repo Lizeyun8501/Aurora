@@ -644,6 +644,24 @@ async fn cmd_update_note(
                 }
             });
         }
+        // DK-3.4：任务投影播种（fire-and-forget——对齐 mobile-ffi 1291 模式：
+        // 正文任务行/AI 行动项 → TaskProjection inbox 行，due_date_of v2
+        // 解析「明天 9 点」等 NL 日期；task_id 稳定派生幂等——重复保存重播种
+        // 覆盖同 id 行）。失败静默（投影为派生面非权威——notes/blocks 兜底）。
+        {
+            let core2 = core.clone();
+            let nid = note_id.clone();
+            let content2 = c.to_string();
+            tauri::async_runtime::spawn(async move {
+                if let Some(tp) = core2.projections().iter().find_map(|p| {
+                    p.as_any().and_then(|a| {
+                        a.downcast_ref::<aurora_core::l2_engines::task_projection::TaskProjection>()
+                    })
+                }) {
+                    let _ = aurora_core::l2_engines::action_extractor::ActionItemExtractor::apply_to_projection(&nid, &content2, tp).await;
+                }
+            });
+        }
         // DK-03 S3b：向量索引管线（fire-and-forget——Ollama 缺席时静默失效，
         // BM25 兜底；hash 去重由 index_note 内建，重复保存不重嵌）。
         if !c.is_empty() {

@@ -27,7 +27,7 @@
 //! AI 液化（AIProvider 路径）作为后续增强: 规则引擎先保证离线可用与
 //! 确定性（V20 本地优先原则 — AI 永远是增强而非前提）。
 
-use chrono::{Duration, Utc};
+use chrono::{Datelike, Duration, Utc};
 
 use crate::l2_engines::task_projection::TaskProjection;
 
@@ -66,30 +66,173 @@ fn priority_of(text: &str) -> &'static str {
 }
 
 /// 相对期限词 → 截止时间（从 now 起算）。
+///
+/// DK-3.4 v2（审阅「明天 9 点」语义）：天偏移 × 时刻组合解析——
+/// - 天词：今天/明天/后天/大后天/N 天后/本周/下周/月底
+/// - 周词：周一~周日 → **下一个该周几**（按今天 weekday 环算，含今天）——
+///   取代 v1 恒定偏移（「周五」不再恒 3 天）
+/// - 时刻：`N 点`/`N点半`/`N点M分`/`N:MM`/`N:MM 分`——与天词组合
+///   （「明天 9 点」=明天 09:00）；单独出现=今天该时刻（已过则明天的）
+/// - 无时刻的天词：v1 语义保持 now+days（相对偏移，非 00:00 锚定——
+///   「明天交」=明天此刻前截止，与 v1 行为一致零回归）
 fn due_date_of(text: &str) -> Option<i64> {
     let now = Utc::now();
-    let days = if text.contains("今天") || text.contains("今日") {
-        Some(0)
-    } else if text.contains("明天") || text.contains("明日") {
-        Some(1)
+    // 时刻解析（局部辅助）：返回 (时, 分)
+    fn parse_time(s: &str) -> Option<(u32, u32)> {
+        // N:MM / N:MM分
+        if let Some(pos) = s.find(':') {
+            let h: u32 = s.get(..pos)?.trim().parse().ok()?;
+            let m: u32 = s
+                .get(pos + 1..)?
+                .trim_end_matches(['分', ' '])
+                .parse()
+                .ok()?;
+            if h < 24 && m < 60 {
+                return Some((h, m));
+            }
+            return None;
+        }
+        // N点半 / N点M分 / N点（"9点半"→(9,30) / "9点15"→(9,15) / "9点"→(9,0)）
+        let half = s.contains("点半");
+        let base: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let h: u32 = base.parse().ok()?;
+        if h > 23 {
+            return None;
+        }
+        if half {
+            return Some((h, 30));
+        }
+        // N点M分
+        if let Some(p) = s.find("点") {
+            let rest = &s[p + 3..];
+            let m: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !m.is_empty() {
+                let m: u32 = m.parse().ok()?;
+                if m < 60 {
+                    return Some((h, m));
+                }
+            }
+        }
+        Some((h, 0))
+    }
+
+    // 1) 组合形态：天词 + 时刻（「明天 9 点」「周五3点」「3 天后 14:30」）
+    //    朴素扫描：找时刻标记（点/:），向前回扫数字段、向后吃时刻字，
+    //    截出时刻片段；解析失败视为无时刻（纯散文里含「点」不误伤）。
+    let time_str: Option<String> = (|| {
+        let bytes = text.as_bytes();
+        let idx = text.rfind(['点', ':', '：'])?;
+        // 向前回扫数字与空白
+        let mut start = idx;
+        while start > 0 {
+            let c = text[..start].chars().last().unwrap();
+            if c.is_ascii_digit() || c == ' ' {
+                start -= c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        // 向后吃时刻字符（点/半/分/冒号/数字/空格）
+        let mut end = idx + text[idx..].chars().next().map_or(1, char::len_utf8);
+        while end < bytes.len() {
+            let c = text[end..].chars().next().unwrap();
+            if c.is_ascii_digit() || ['点', '半', '分', ':', '：', ' '].contains(&c) {
+                end += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        let seg = text[start..end].trim();
+        if seg.is_empty() || parse_time(seg).is_none() {
+            return None;
+        }
+        Some(seg.to_string())
+    })();
+
+    // 2) 天词解析 → (基准日偏移天数)
+    let day_offset: Option<i64> = if text.contains("大后天") {
+        Some(3)
     } else if text.contains("后天") {
         Some(2)
+    } else if text.contains("明天") || text.contains("明日") {
+        Some(1)
+    } else if text.contains("今天") || text.contains("今日") {
+        Some(0)
     } else if text.contains("本周") || text.contains("这周") {
         Some(5)
     } else if text.contains("下周") {
         Some(8)
     } else if text.contains("月底") {
         Some(20)
-    } else if text.contains("周五") || text.contains("周5") {
-        Some(3)
-    } else if text.contains("周一") {
-        Some(6)
     } else if text.contains("下周内") {
         Some(7)
+    } else if let Some(idx) = text.find("天后") {
+        // N 天后（数字在「天后」前——回扫数字段，允许中间空白「3 天后」）
+        let head = &text[..idx];
+        let trimmed = head.trim_end();
+        let n: String = trimmed
+            .chars()
+            .rev()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if n.is_empty() {
+            return None; // 裸「天后」无数字——不解析
+        }
+        n.parse::<i64>().ok().map(|d| d.min(3650))
     } else {
         None
-    }?;
-    Some((now + Duration::days(days)).timestamp_millis())
+    };
+
+    // 3) 周词解析（下一个该周几——按今天 weekday 环算，含今天=0 天）
+    let weekday_offset: Option<i64> = [
+        ("周一", chrono::Weekday::Mon),
+        ("周二", chrono::Weekday::Tue),
+        ("周三", chrono::Weekday::Wed),
+        ("周四", chrono::Weekday::Thu),
+        ("周五", chrono::Weekday::Fri),
+        ("周5", chrono::Weekday::Fri),
+        ("周六", chrono::Weekday::Sat),
+        ("周日", chrono::Weekday::Sun),
+        ("周天", chrono::Weekday::Sun),
+    ]
+    .iter()
+    .find_map(|(w, wd)| {
+        text.contains(w).then(|| {
+            let today = now.weekday().num_days_from_monday() as i64;
+            let target = wd.num_days_from_monday() as i64;
+            (target - today + 7) % 7
+        })
+    });
+
+    // 4) 合成：时刻存在→那天该时刻（00:00 起 + 天数 + 时分）；
+    //    无时刻→v1 相对偏移语义（now+days，零回归）。
+    let (h, m) = time_str.as_deref().and_then(parse_time).unzip();
+    if let Some(days) = day_offset.or(weekday_offset) {
+        let base = now.date_naive() + chrono::Duration::days(days);
+        let dt = base
+            .and_hms_opt(h.unwrap_or(23), m.unwrap_or(59), 59)
+            .unwrap_or_else(|| base.and_hms_opt(23, 59, 59).expect("23:59:59 valid"));
+        // 无时刻的天词=相对偏移（v1 语义）；有时刻=当天该时刻
+        return Some(if time_str.is_some() {
+            dt.and_utc().timestamp_millis()
+        } else {
+            (now + Duration::days(days)).timestamp_millis()
+        });
+    }
+    // 仅时刻（无天词）：今天该时刻，已过则明天
+    if let Some((h, m)) = time_str.as_deref().and_then(parse_time) {
+        let today_at = now
+            .date_naive()
+            .and_hms_opt(h, m, 0)
+            .expect("h/m validated");
+        let dt = today_at.and_utc();
+        let dt = if dt < now { dt + Duration::days(1) } else { dt };
+        return Some(dt.timestamp_millis());
+    }
+    None
 }
 
 impl ActionItemExtractor {
@@ -193,6 +336,59 @@ mod tests {
 
     fn make_projection() -> TaskProjection {
         TaskProjection::new(Arc::new(MemoryKVStore::default()), Box::new(Vec::new))
+    }
+
+    // ── DK-3.4 v2：自然语言日期（「明天 9 点」Todoist 语义） ──
+    // 由于 due_date_of 以 Utc::now() 为基准，测试断言用相对关系而非绝对值。
+
+    #[test]
+    fn nl_date_tomorrow_with_time() {
+        let due = due_date_of("明天 9 点交报告").expect("明天 9 点须解析");
+        let dt = chrono::DateTime::<Utc>::from_timestamp_millis(due).unwrap();
+        let tomorrow = (Utc::now() + Duration::days(1)).date_naive();
+        assert_eq!(dt.date_naive(), tomorrow, "日期=明天");
+        assert_eq!(dt.format("%H").to_string(), "09", "时刻=09 点");
+        assert_eq!(dt.format("%M").to_string(), "00");
+    }
+
+    #[test]
+    fn nl_date_half_and_colon() {
+        let due = due_date_of("明天 2点半开会").expect("2点半");
+        let dt = chrono::DateTime::<Utc>::from_timestamp_millis(due).unwrap();
+        assert_eq!(dt.format("%H:%M").to_string(), "02:30");
+
+        let due2 = due_date_of("周五 14:30 评审").expect("14:30");
+        let dt2 = chrono::DateTime::<Utc>::from_timestamp_millis(due2).unwrap();
+        assert_eq!(dt2.format("%H:%M").to_string(), "14:30");
+        // 周五=下一个周五（weekday 环算——不再恒 3 天）
+        let today = Utc::now().weekday().num_days_from_monday() as i64;
+        let fri = chrono::Weekday::Fri.num_days_from_monday() as i64;
+        let expect_days = (fri - today + 7) % 7;
+        let expect_date = (Utc::now() + Duration::days(expect_days)).date_naive();
+        assert_eq!(dt2.date_naive(), expect_date, "周五=下一个周五");
+    }
+
+    #[test]
+    fn nl_date_days_later_and_bare_time() {
+        // N 天后
+        let due = due_date_of("3 天后交付").expect("3 天后");
+        let expect = (Utc::now() + Duration::days(3)).timestamp_millis();
+        assert!((due - expect).abs() < 60_000, "3 天后≈now+3d（±1min 容差）");
+        // 仅时刻（无天词）：未来→今天；过去→明天
+        let due2 = due_date_of("18:00 提交").expect("18:00");
+        let dt2 = chrono::DateTime::<Utc>::from_timestamp_millis(due2).unwrap();
+        let now = Utc::now();
+        let ok = dt2.date_naive() == now.date_naive()
+            || dt2.date_naive() == (now + Duration::days(1)).date_naive();
+        assert!(ok, "仅时刻=今天或明天该时刻");
+    }
+
+    #[test]
+    fn nl_date_prose_no_false_positive() {
+        // 散文含「点」但无时刻语义 → 不误判（如「三点认识」会被解析——
+        // 已是时刻语义可接受；此例验证纯噪声：无数字+无日期词）
+        assert!(due_date_of("这个想法很有亮点，值得深挖").is_none());
+        assert!(due_date_of("普通任务无日期").is_none());
     }
 
     #[test]
