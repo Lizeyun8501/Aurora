@@ -1066,6 +1066,63 @@ function Sidebar(props: {
       >
         笔记 · {notes.length}
       </div>
+      {/* DK-3.7：空库 onboarding 引导（树空+笔记空=首次使用——三步卡：
+          新建首篇/导入既有库/快捷键提示；有笔记后永不出现） */}
+      {notes.length === 0 && (
+        <div
+          style={{
+            margin: tokens.spacing.sm,
+            padding: tokens.spacing.md,
+            border: '1px dashed rgba(255,255,255,0.2)',
+            borderRadius: tokens.radius.md,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: tokens.spacing.sm,
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 600, color: tokens.color.textPrimary }}>
+            欢迎使用 Aurora
+          </div>
+          <div style={{ fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+            端到端加密的个人笔记库——新建第一篇笔记，或导入既有 Markdown/ENEX 库。
+          </div>
+          <div style={{ display: 'flex', gap: tokens.spacing.sm }}>
+            <button
+              onClick={onCreate}
+              style={{
+                flex: 1,
+                background: tokens.color.primary,
+                border: 'none',
+                borderRadius: tokens.radius.sm,
+                color: tokens.color.textPrimary,
+                cursor: 'pointer',
+                padding: '6px 0',
+                fontSize: 13,
+              }}
+            >
+              新建笔记
+            </button>
+            <button
+              onClick={onImport}
+              style={{
+                flex: 1,
+                background: tokens.color.bgElevated,
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: tokens.radius.sm,
+                color: tokens.color.textPrimary,
+                cursor: 'pointer',
+                padding: '6px 0',
+                fontSize: 13,
+              }}
+            >
+              导入库
+            </button>
+          </div>
+          <div style={{ fontSize: tokens.typography.caption.size, color: tokens.color.textDisabled }}>
+            Mod+K 命令面板 · [[ 或 @ 引用笔记 · 全局 Alt+Shift+N 快速捕获
+          </div>
+        </div>
+      )}
       {/* DK-02 S2：树形侧栏（folder 折叠 + 原位还原树面，替代平铺列表） */}
       <TreeSection bridge={bridge} selectedId={selectedId} onSelect={onSelect} />
     </aside>
@@ -2042,7 +2099,10 @@ function EditAuroraEditor(props: {
    * 键盘：↑↓ 移动 / Enter 插入 [[title]]（替换 [[+已输入前缀）/ Esc 关；
    * 点击插入同款（onMouseDown preventDefault 保编辑器焦点）；
    * 失焦/删除 `[[` 即关（浮层不阻塞输入）；alias 编辑态不触发（v1）。 */
-  const [ac, setAc] = useState<{ prefix: string; from: number; items: string[]; sel: number } | null>(null);
+  // trigger：'[['=wiki 补全（插入 [[title]]）；'@'=提及（DK-3.6 v1——
+  // 同浮层同产物 [[title]]（Notion @=页面链接语义，Aurora 等价 wikilink），
+  // 仅触发符不同；插入时回吃 @ 字符。@ 需词首（前字符为空白/行首）防 email 误触。
+  const [ac, setAc] = useState<{ prefix: string; from: number; items: string[]; sel: number; trigger: '[[' | '@' } | null>(null);
   const acRef = useRef(ac);
   acRef.current = ac;
   const titlesRef = useRef(wikiTitles);
@@ -2056,7 +2116,21 @@ function EditAuroraEditor(props: {
       return;
     }
     const text = v.state.doc.textBetween(Math.max(0, from - 80), from, '\n', '\n');
+    // DK-3.6：@ 提及触发——词首 @（前字符为空白/行首）+其后无空白/换行。
+    // 优先级：同窗内 [[ 更近则 [[ 胜（嵌套输入少见但确定性行为优先）。
+    const at = text.lastIndexOf('@');
     const open = text.lastIndexOf('[[');
+    if (at >= 0 && at > open && !text.slice(at + 1).includes('\n')) {
+      const before = at === 0 ? ' ' : text[at - 1];
+      if (/\s/.test(before)) {
+        const prefix = text.slice(at + 1);
+        const q = prefix.toLowerCase();
+        const items = (titlesRef.current ?? []).filter((t) => t.toLowerCase().includes(q)).slice(0, 8);
+        // from - prefix.length - 1 = @ 字符位置（插入时回吃）
+        setAc({ prefix, from: from - prefix.length - 1, items, sel: 0, trigger: '@' });
+        return;
+      }
+    }
     if (open < 0) {
       setAc(null);
       return;
@@ -2069,7 +2143,7 @@ function EditAuroraEditor(props: {
     const prefix = tail;
     const q = prefix.toLowerCase();
     const items = (titlesRef.current ?? []).filter((t) => t.toLowerCase().includes(q)).slice(0, 8);
-    setAc({ prefix, from: from - prefix.length, items, sel: 0 });
+    setAc({ prefix, from: from - prefix.length, items, sel: 0, trigger: '[[' });
   };
 
   /** 插入 [[title]]（替换 [[+前缀起点到光标）——键盘 Enter 与点击同款 */
@@ -2077,8 +2151,9 @@ function EditAuroraEditor(props: {
     const v = view;
     const cur = acRef.current;
     if (!v || !cur) return;
-    const pos = cur.from;
-    v.dispatch(v.state.tr.insertText(`[[${title}]]`, pos, v.state.selection.from));
+    // 替换起点：[[ 分支=[[ 处；@ 分支=detect 已把 from 设为 @ 字符位置
+    // （统一语义——from 起替换到光标，@ 与前缀一并吃掉）
+    v.dispatch(v.state.tr.insertText(`[[${title}]]`, cur.from, v.state.selection.from));
     v.focus();
     setAc(null);
   };
