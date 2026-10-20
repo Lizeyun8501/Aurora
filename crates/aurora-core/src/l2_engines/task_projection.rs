@@ -153,6 +153,26 @@ impl TaskProjection {
             .collect()
     }
 
+    /// R2-0 修复配套：某笔记的全部投影行（ai:* 播种域同步用）。
+    pub fn rows_for_note(&self, note_id: &str) -> Vec<TaskViewRow> {
+        self.rows
+            .read()
+            .unwrap()
+            .values()
+            .filter(|r| r.note_id == note_id && r.task_id.starts_with("ai:"))
+            .cloned()
+            .collect()
+    }
+
+    /// R2-0 修复配套：删除某笔记全部 ai:* 播种行（重建前清场）。
+    /// 返回删除数。非 ai:* 行（cmd_toggle_task 等显式任务域）不受影响。
+    pub fn remove_rows_for_note(&self, note_id: &str) -> usize {
+        let mut rows = self.rows.write().unwrap();
+        let before = rows.len();
+        rows.retain(|_, r| !(r.note_id == note_id && r.task_id.starts_with("ai:")));
+        before - rows.len()
+    }
+
     /// 今日视图: 未完成 + due <= 给定时刻（含逾期）。
     pub fn today(&self, now_ms: i64) -> Vec<TaskViewRow> {
         self.rows

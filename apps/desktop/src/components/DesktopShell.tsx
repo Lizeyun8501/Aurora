@@ -2117,10 +2117,12 @@ function EditAuroraEditor(props: {
     }
     const text = v.state.doc.textBetween(Math.max(0, from - 80), from, '\n', '\n');
     // DK-3.6：@ 提及触发——词首 @（前字符为空白/行首）+其后无空白/换行。
-    // 优先级：同窗内 [[ 更近则 [[ 胜（嵌套输入少见但确定性行为优先）。
+    // 优先级：R2-0 修复——@ 仅在 [[ 不存在或已闭合时触发；未闭合 [[
+    // 存续期间 @ 让位（否则「[[未闭合 @提」内插入 [[title]] 产生嵌套损坏）。
     const at = text.lastIndexOf('@');
     const open = text.lastIndexOf('[[');
-    if (at >= 0 && at > open && !text.slice(at + 1).includes('\n')) {
+    const openClosed = open < 0 || text.slice(open + 2).includes(']');
+    if (at >= 0 && at > open && openClosed && !text.slice(at + 1).includes('\n')) {
       const before = at === 0 ? ' ' : text[at - 1];
       if (/\s/.test(before)) {
         const prefix = text.slice(at + 1);

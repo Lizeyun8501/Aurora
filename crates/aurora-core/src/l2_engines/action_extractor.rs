@@ -300,22 +300,49 @@ impl ActionItemExtractor {
         items
     }
 
-    /// 提取并应用到任务投影（发 TaskStatusChanged 前置: 直接播种行,
-    /// 幂等 — task_id 稳定派生自 note_id + 行号）。
+    /// 提取并应用到任务投影（**note 级重建同步** — R2-0 修复）。
+    ///
+    /// v1 缺陷三重（行号派生 task_id 的结构性问题）：
+    /// 1. 删行残留 — 笔记里删掉任务行后投影旧行永存；
+    /// 2. 行号漂移 — 任务行前插入文本使 idx 全体 +1，同一任务
+    ///    以新旧两个 id 双生（旧内容残行+新行）；
+    /// 3. 勾选重置 — TodoView 勾完成（status=done）不回写文本，
+    ///    下次保存重播种 status=inbox 静默撤销用户操作。
+    ///
+    /// v2 语义（**以笔记文本为权威的 title 键 diff 同步**）：
+    /// 快照旧 ai:* 行 → 清场 → 按 title 匹配保留终态（done 优先 —
+    /// 用户显式完成不因编辑器文本未同步而丢失）→ 重播种。
+    /// 同笔记同 title 多行=各占独立行（idx 后缀仍保稳定（同步轮内），
+    /// 匹配仅用于终态保留）。
     pub async fn apply_to_projection(
         note_id: &str,
         text: &str,
         projection: &TaskProjection,
     ) -> Result<usize, crate::Error> {
+        // 1) 快照旧 ai:* 行的完整状态（title → status 映射）——
+        //    忠实保留用户在 TodoView 的最近显式操作（勾完成=done 保留，
+        //    取消勾=inbox 保留不被文本 `- [ ]` 重播回 done）。
+        //    冲突策略：UI 交互态优先于文本标记（勾选是更近的显式操作）。
+        let mut prev_status: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for r in projection.rows_for_note(note_id) {
+            prev_status.entry(r.title).or_insert_with(|| r.status);
+        }
+        // 2) 清场（删行残留/行号漂移一并消除）
+        projection.remove_rows_for_note(note_id);
+        // 3) 重播种（终态保留：旧 done + 同 title → 播 done）
         let items = Self::extract(text);
         let n = items.len();
         for (idx, item) in items.into_iter().enumerate() {
-            // 稳定 task_id（幂等重放）
+            let status = prev_status
+                .get(&item.title)
+                .cloned()
+                .unwrap_or_else(|| item.status.to_string());
             projection.seed_row(
                 &format!("ai:{note_id}:{idx}"),
                 note_id,
                 &item.title,
-                item.status,
+                status.as_str(),
                 item.priority,
                 item.due_date,
             );
@@ -389,6 +416,47 @@ mod tests {
         // 已是时刻语义可接受；此例验证纯噪声：无数字+无日期词）
         assert!(due_date_of("这个想法很有亮点，值得深挖").is_none());
         assert!(due_date_of("普通任务无日期").is_none());
+    }
+
+    // ── R2-0 修复回归：note 级重建同步（删行残留/行号漂移/勾选保留） ──
+
+    #[tokio::test]
+    async fn sync_rebuild_removes_stale_rows() {
+        let proj = make_projection();
+        // v1: 两行 → v2: 删一行+改一行 → 旧行不得残留
+        ActionItemExtractor::apply_to_projection("n1", "- [ ] 任务甲\n- [ ] 任务乙", &proj)
+            .await
+            .unwrap();
+        assert_eq!(proj.rows_for_note("n1").len(), 2);
+        ActionItemExtractor::apply_to_projection("n1", "- [ ] 任务甲改", &proj)
+            .await
+            .unwrap();
+        let rows = proj.rows_for_note("n1");
+        assert_eq!(rows.len(), 1, "旧 idx 行清场——删行/漂移不残留");
+        assert_eq!(rows[0].title, "任务甲改");
+    }
+
+    #[tokio::test]
+    async fn sync_preserves_toggle_status_both_ways() {
+        let proj = make_projection();
+        ActionItemExtractor::apply_to_projection("n2", "- [ ] 写周报", &proj)
+            .await
+            .unwrap();
+        // 用户在 TodoView 勾完成（toggle 面——直接改投影行模拟）
+        let tid = proj.rows_for_note("n2")[0].task_id.clone();
+        proj.seed_row(&tid, "n2", "写周报", "done", "medium", None);
+        // 文本仍是 `- [ ]`（UI 勾选不回写）——重建必须保 done
+        ActionItemExtractor::apply_to_projection("n2", "- [ ] 写周报", &proj)
+            .await
+            .unwrap();
+        assert_eq!(proj.rows_for_note("n2")[0].status, "done", "勾完成不因保存重置");
+        // 反向：用户取消勾（done→inbox）——重建不得重播回 done
+        let tid2 = proj.rows_for_note("n2")[0].task_id.clone();
+        proj.seed_row(&tid2, "n2", "写周报", "inbox", "medium", None);
+        ActionItemExtractor::apply_to_projection("n2", "- [ ] 写周报", &proj)
+            .await
+            .unwrap();
+        assert_eq!(proj.rows_for_note("n2")[0].status, "inbox", "取消勾不被文本重播");
     }
 
     #[test]
