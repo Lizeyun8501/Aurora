@@ -31,6 +31,7 @@ import VersionHistoryPanel from './VersionHistoryPanel';
 import TodayDailyNote from './TodayDailyNote';
 import LiquifyReview from './LiquifyReview';
 import PairDialog from './PairDialog';
+import QuickCapture, { useQuickCaptureEvent } from './QuickCapture';
 // DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
 import SyncStatusBadge from './SyncStatusBadge';
 import QueuePanel from './QueuePanel';
@@ -2342,6 +2343,9 @@ export default function DesktopShell() {
   const [shortcutSettingsOpen, setShortcutSettingsOpen] = useState(false);
   // DK-44：P2P 配对浮层开关（palette 入口）
   const [pairOpen, setPairOpen] = useState(false);
+  // DK-3.3：全局快速捕获浮层开关（系统快捷键 Alt+Shift+N / palette 入口双通道）
+  const [quickCapOpen, setQuickCapOpen] = useState(false);
+  useQuickCaptureEvent(invoke, () => setQuickCapOpen(true));
   /* DK-3.1：右侧常驻信息面板开关（DK-3.1v2：localStorage 优先+sessionStorage
      兜底迁移读；无值默认开——browser-mock 无存储守卫 try/catch 沿用） */
   const [sidePanelOpen, setSidePanelOpen] = useState<boolean>(() => {
@@ -2720,6 +2724,12 @@ export default function DesktopShell() {
         id: 'p2p-pair',
         title: 'P2P 设备配对（直传/补发前置）',
         run: () => setPairOpen(true),
+      },
+      {
+        kind: 'command' as const,
+        id: 'quick-capture',
+        title: '快速捕获（速记落 #capture）',
+        run: () => setQuickCapOpen(true),
       },
       {
         kind: 'command' as const,
@@ -3430,6 +3440,9 @@ export default function DesktopShell() {
       )}
       {pairOpen && invoke && (
         <PairDialog invoke={invoke} onClose={() => setPairOpen(false)} />
+      )}
+      {quickCapOpen && invoke && (
+        <QuickCapture invoke={invoke} onClose={() => setQuickCapOpen(false)} />
       )}
       <StatusBar mode={mode} stats={stats} />
       <CommandPalette

@@ -159,6 +159,9 @@ fn box_err(e: impl std::fmt::Display) -> Box<dyn std::error::Error> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        // DK-3.3：全局快捷键插件（register_shortcut 真实现底座——
+        // Rust 侧注册+emit 事件，前端权限面不经）
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             cmd_create_note,
             cmd_get_note_snapshot,
@@ -389,6 +392,29 @@ pub fn run() {
 
             // 注册平台能力（托盘/快捷键/剪贴板/通知），供后续 command 使用
             app.manage(TauriDesktopPlatform::new(app.handle().clone()));
+
+            // DK-3.3：全局快速捕获默认键（Alt+Shift+N）——触发即 emit
+            // `quick-capture` 事件，前端浮层接手（v1 固定键；键位自定义=
+            // 快捷键表 v2 扩展——系统级键与应用内表域不同，v1 不打通）。
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                let ok = app
+                    .global_shortcut()
+                    .on_shortcut("Alt+Shift+N", |app, _shortcut, event| {
+                        if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                            let _ = tauri::Emitter::emit(app, "quick-capture", ());
+                        }
+                    })
+                    .is_ok();
+                if ok {
+                    info!("global quick-capture shortcut registered (Alt+Shift+N)");
+                } else {
+                    // 注册失败不阻断启动（无桌面环境/键被占——前端 palette
+                    // 内快速捕获仍可用）
+                    info!("global quick-capture shortcut register failed (degrade)");
+                }
+            }
 
             info!("Aurora Desktop initialized and ready");
             Ok(())
