@@ -134,6 +134,49 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
     [invoke, selected],
   );
 
+  /* R5-1：schema 编辑——加列（名称+类型 prompt 两段）+删列（列头 ×）。
+     set_schema=全量覆盖语义（对齐 cmd_set_note_tags 惯例）。 */
+  const addColumn = useCallback(async () => {
+    if (!invoke || !meta) return;
+    const name = window.prompt('列名：');
+    if (!name?.trim()) return;
+    const types = ['文本', '数字', '日期', '勾选', '单选', '多选'];
+    const ti = window.prompt(`类型（1-6）：\n${types.map((t, i) => `${i + 1}. ${t}`).join('\n')}`);
+    const idx = Number(ti) - 1;
+    if (!idx || idx < 0 || idx >= 6) return;
+    const typeNames = ['Text', 'Number', 'Date', 'Checkbox', 'Select', 'MultiSelect'];
+    const prop_type = idx >= 4 ? `${typeNames[idx]}([])` : typeNames[idx];
+    const def = {
+      id: `pd:${Date.now()}`,
+      name: name.trim(),
+      prop_type,
+      required: false,
+    };
+    const next = [...meta.prop_defs, def];
+    try {
+      await invoke('cmd_collection_set_schema', { id: meta.id, propDefs: next });
+      setMeta({ ...meta, prop_defs: next });
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, [invoke, meta]);
+
+  const removeColumn = useCallback(
+    async (defId: string) => {
+      if (!invoke || !meta) return;
+      const next = meta.prop_defs.filter((d) => d.id !== defId);
+      try {
+        await invoke('cmd_collection_set_schema', { id: meta.id, propDefs: next });
+        setMeta({ ...meta, prop_defs: next });
+        setErr(null);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [invoke, meta],
+  );
+
   return (
     <main style={{ flex: 1, padding: `${tokens.spacing.lg}px ${tokens.spacing.xl}px`, overflowY: 'auto', minWidth: 0 }}>
       <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size, display: 'flex', alignItems: 'center', gap: tokens.spacing.sm }}>
@@ -180,8 +223,23 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
       {meta && (
         <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <span style={{ fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
-              {rows.length} 行 · {meta.prop_defs.length} 列（schema 编辑 v2）
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+              {rows.length} 行 · {meta.prop_defs.length} 列
+              <button
+                onClick={() => void addColumn()}
+                style={{
+                  fontSize: 11,
+                  padding: '1px 10px',
+                  borderRadius: 999,
+                  border: '1px solid rgba(163,113,247,0.4)',
+                  background: 'rgba(163,113,247,0.14)',
+                  color: '#c9a9ff',
+                  cursor: 'pointer',
+                }}
+                title="加列（名称+类型）"
+              >
+                ＋ 加列
+              </button>
             </span>
             <button
               onClick={() => void addRow()}
@@ -206,6 +264,22 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                   <th key={d.id} style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.14)', color: tokens.color.textSecondary }}>
                     {d.name}
                     <span style={{ fontSize: 10, marginLeft: 4, opacity: 0.7 }}>[{TYPE_LABEL[typeKey(d.prop_type)] ?? '?'}]</span>
+                    <button
+                      onClick={() => void removeColumn(d.id)}
+                      aria-label={`删除列 ${d.name}`}
+                      style={{
+                        marginLeft: 4,
+                        fontSize: 10,
+                        border: 'none',
+                        background: 'transparent',
+                        color: tokens.color.textDisabled,
+                        cursor: 'pointer',
+                        padding: '0 2px',
+                      }}
+                      title="删除该列（schema 全量覆盖）"
+                    >
+                      ×
+                    </button>
                   </th>
                 ))}
               </tr>

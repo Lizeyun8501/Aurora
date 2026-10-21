@@ -53,6 +53,23 @@ export default function KanbanBoard(props: {
     reload();
   }, [reload]);
 
+  /* R5-2：done 列拖拽回写源笔记文本（checkbox 双向闭环）——投影行无
+     block 定位，经 cmd_all_tasks 交叉查该笔记同名任务块（text==title）
+     取 blockId/position → cmd_toggle_task；非 done 列仅投影态（GTD 态
+     无 Markdown 前缀表达——文本回写语义边界，注记于模块头）。 */
+  const toggleSourceText = (t: BoardTask, done: boolean): void => {
+    if (!invoke) return;
+    invoke('cmd_all_tasks')
+      .then((all) => {
+        const hit = (all as Array<{ noteId: string; blockId: string; blockPosition: number; text: string }>).find(
+          (x) => x.noteId === t.note_id && x.text.trim() === t.title.trim(),
+        );
+        if (!hit) return; // 源块已被改名/删除——仅投影态
+        return invoke('cmd_toggle_task', { noteId: hit.noteId, blockId: hit.blockId, done });
+      })
+      .catch(() => {});
+  };
+
   const drop = (colKey: string): void => {
     const id = dragId;
     setDragId(null);
@@ -65,7 +82,11 @@ export default function KanbanBoard(props: {
     setTasks((prev) =>
       prev.map((x) => (x.task_id === id ? { ...x, status: target.statuses[0] } : x)),
     );
+    const doneCol = target.key === 'done';
+    const wasDone = t.status === 'done' || t.status === 'cancelled';
     invoke('cmd_set_task_status', { taskId: id, status: target.statuses[0] }).catch(() => reload());
+    // R5-2：进出完成列同步回写源文本 checkbox
+    if (doneCol !== wasDone) toggleSourceText(t, doneCol);
   };
 
   if (!invoke) {
@@ -119,6 +140,30 @@ export default function KanbanBoard(props: {
                   key={t.task_id}
                   draggable
                   onDragStart={() => setDragId(t.task_id)}
+                  /* R5-2：触屏 fallback——双击循环下一状态（inbox→next→
+                     waiting→done→inbox）；done 往复同步回写源文本。 */
+                  onDoubleClick={() => {
+                    if (!invoke) return;
+                    const cycle: Record<string, string> = {
+                      inbox: 'next',
+                      next: 'waiting',
+                      waiting: 'done',
+                      scheduled: 'done',
+                      someday: 'done',
+                      done: 'inbox',
+                      cancelled: 'inbox',
+                    };
+                    const nextStatus = cycle[t.status] ?? 'next';
+                    const nextCol = COLUMNS.find((c) => c.statuses.includes(nextStatus));
+                    if (!nextCol) return;
+                    setTasks((prev) =>
+                      prev.map((x) => (x.task_id === t.task_id ? { ...x, status: nextStatus } : x)),
+                    );
+                    const doneCol = nextCol.key === 'done';
+                    const wasDone = t.status === 'done' || t.status === 'cancelled';
+                    invoke('cmd_set_task_status', { taskId: t.task_id, status: nextStatus }).catch(() => reload());
+                    if (doneCol !== wasDone) toggleSourceText(t, doneCol);
+                  }}
                   onDragEnd={() => {
                     setDragId(null);
                     setDragOver(null);
