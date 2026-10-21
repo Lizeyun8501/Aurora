@@ -47,6 +47,8 @@ pub struct AppCore {
     projections: Vec<Arc<dyn crate::event_bus::projection::Projection>>,
     /// FSRS 复习队列（V20 Phase 3 Distill — 今日页「复习」分区）。
     pub review_queue: Arc<crate::l3_domain::fsrs::ReviewQueue>,
+    /// G1-S1：Collection 数据域（数据库视图——属性 schema 容器+行绑定）。
+    pub collections: Arc<crate::l2_engines::collection::CollectionStore>,
     /// DK-19：每日笔记创建互斥（进程内串行化 check-create-put，防并发双建）。
     pub daily_note_lock: tokio::sync::Mutex<()>,
     /// DK-47：多用户上下文段（per-user KV key 前缀段——不立账号仅存储隔离；
@@ -191,19 +193,24 @@ impl AppCoreBuilder {
         let event_bus = Arc::new(LayeredEventBus::new(self.event_bus_store));
         let projections = std::mem::take(&mut self.projections);
         let review_queue = Arc::new(crate::l3_domain::fsrs::ReviewQueue::new());
+        let kv_store = self.kv_store.expect("KVStore must be provided");
+        let collections = Arc::new(crate::l2_engines::collection::CollectionStore::new(
+            kv_store.clone(),
+        ));
 
         AppCore {
             daily_note_lock: tokio::sync::Mutex::new(()),
             sync_target: self.sync_target.expect("SyncTarget must be provided"),
             crypto: self.crypto.expect("CryptoProvider must be provided"),
             ai: self.ai.expect("AIProvider must be provided"),
-            kv_store: self.kv_store.expect("KVStore must be provided"),
+            kv_store,
             search: self.search.expect("SearchBackend must be provided"),
             ocr: self.ocr.expect("OcrProvider must be provided"),
             plugin: self.plugin.expect("PluginRuntime must be provided"),
             event_bus,
             projections,
             review_queue,
+            collections,
             user_id: self.user_id,
         }
     }

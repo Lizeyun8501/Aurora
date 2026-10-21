@@ -34,6 +34,7 @@ import PairDialog from './PairDialog';
 import QuickCapture, { useQuickCaptureEvent } from './QuickCapture';
 import ReviewPanel from './ReviewPanel';
 import CoverHeader from './CoverHeader';
+import CollectionView from './CollectionView';
 // DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
 import SyncStatusBadge from './SyncStatusBadge';
 import QueuePanel from './QueuePanel';
@@ -171,6 +172,7 @@ export type MainView =
   | 'smartfolder'
   | 'marketplace'
   | 'plugins'
+  | 'collections'
   | 'tasks';
 
 /** browser-mock 演示数据 — 形状与内核 NoteSummary/NoteContent 对齐 */
@@ -1123,7 +1125,7 @@ function Sidebar(props: {
         ⤴ 导出全部 Markdown
       </button>
       <nav style={{ display: 'flex', gap: tokens.spacing.xs }} aria-label="主导航">
-        {(['notes', 'today', 'tasks', 'tags', 'canvas', 'trash', 'liquify', 'agent', 'marketplace', 'plugins'] as const).map((v) => (
+        {(['notes', 'today', 'tasks', 'tags', 'canvas', 'trash', 'liquify', 'agent', 'marketplace', 'plugins', 'collections'] as const).map((v) => (
           <button
             key={v}
             onClick={() => onView(v)}
@@ -1140,7 +1142,7 @@ function Sidebar(props: {
               minHeight: 36,
             }}
           >
-            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : v === 'liquify' ? 'AI 提案' : v === 'agent' ? 'Agent' : v === 'marketplace' ? '市场' : v === 'plugins' ? '插件' : v === 'tasks' ? '待办' : v === 'tags' ? '标签' : '今日视图'}
+            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : v === 'liquify' ? 'AI 提案' : v === 'agent' ? 'Agent' : v === 'marketplace' ? '市场' : v === 'plugins' ? '插件' : v === 'collections' ? '数据库' : v === 'tasks' ? '待办' : v === 'tags' ? '标签' : '今日视图'}
           </button>
         ))}
       </nav>
@@ -3667,6 +3669,9 @@ export default function DesktopShell() {
         ) : view === 'plugins' ? (
           /* DK-市场卡：已安装插件管理（列表/卸载/invoke 冒烟——安装表单随市场下载器卡） */
           <PluginsView invoke={invoke} />
+        ) : view === 'collections' ? (
+          /* G1-S3：数据库视图（表格 v1——集合 CRUD+行绑定+单元格编辑） */
+          <CollectionView invoke={invoke} onOpenNote={(id) => { setSelectedId(id); setView('notes'); }} />
         ) : view === 'agent' ? (
           /* DK-10 Agent 会话面板（15min 限时 + Kill-Switch + 审计链查看） */
           <AgentPanel invoke={invoke} />

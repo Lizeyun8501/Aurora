@@ -43,6 +43,7 @@ mod shortcut_commands;
 mod sync_commands;
 mod tag_commands;
 mod template_commands;
+mod collection_commands;
 mod due_preview_commands;
 mod todo_commands;
 mod wiki_commands;
@@ -272,6 +273,15 @@ pub fn run() {
             export_commands::cmd_export_note_pdf,
             backlink_commands::cmd_backlinks_of,
             backlink_commands::cmd_links_graph,
+            collection_commands::cmd_collection_create,
+            collection_commands::cmd_collection_list,
+            collection_commands::cmd_collection_get,
+            collection_commands::cmd_collection_delete,
+            collection_commands::cmd_collection_set_schema,
+            collection_commands::cmd_collection_add_row,
+            collection_commands::cmd_collection_remove_row,
+            collection_commands::cmd_collection_set_cell,
+            collection_commands::cmd_collection_rows,
             due_preview_commands::cmd_preview_due,
             todo_commands::cmd_all_tasks,
             todo_commands::cmd_toggle_task,
