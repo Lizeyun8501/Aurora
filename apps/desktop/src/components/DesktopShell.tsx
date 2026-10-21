@@ -32,6 +32,7 @@ import TodayDailyNote from './TodayDailyNote';
 import LiquifyReview from './LiquifyReview';
 import PairDialog from './PairDialog';
 import QuickCapture, { useQuickCaptureEvent } from './QuickCapture';
+import ReviewPanel from './ReviewPanel';
 // DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
 import SyncStatusBadge from './SyncStatusBadge';
 import QueuePanel from './QueuePanel';
@@ -1792,10 +1793,53 @@ function EditorPane(props: {
       <ExportMarkdownGate invoke={invoke} note={note} />
       {/* DK-2.8 v1：分享码面（发布确认门→剪贴板；导入走 palette 入口） */}
       <ShareRow note={note} invoke={invoke} />
+      {/* G3：建卡行——整笔记一张 FSRS 卡入队（幂等，card:note:{id}） */}
+      <FlashcardRow note={note} invoke={invoke} />
     </main>
   );
 }
 
+
+/** G3：建卡行——一键把当前笔记注册进 FSRS 复习队列（幂等重排）。 */
+function FlashcardRow({ note, invoke }: { note: NoteContent; invoke: InvokeFn | null }): React.ReactElement {
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const add = useCallback(async () => {
+    if (!invoke || busy) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = (await invoke('cmd_add_review_card', { noteId: note.note_id })) as {
+        due_at: string;
+      };
+      setMsg(`📇 已入复习队列 · 首次到期 ${new Date(r.due_at).toLocaleDateString()}`);
+    } catch {
+      setMsg(null); // 建卡失败静默（非关键路径）
+    }
+    setBusy(false);
+  }, [invoke, note.note_id, busy]);
+  return (
+    <div style={{ margin: `${tokens.spacing.sm}px 0 0`, display: 'flex', alignItems: 'center', gap: tokens.spacing.sm }}>
+      <button
+        onClick={() => void add()}
+        disabled={busy}
+        style={{
+          background: 'rgba(163,113,247,0.16)',
+          border: '1px solid rgba(163,113,247,0.4)',
+          borderRadius: tokens.radius.sm,
+          color: '#c9a9ff',
+          padding: '4px 12px',
+          cursor: busy ? 'wait' : 'pointer',
+          fontSize: 13,
+        }}
+        title="注册为 FSRS 闪卡（笔记级 v1）"
+      >
+        {busy ? '…' : '📇 建复习卡'}
+      </button>
+      {msg && <span style={{ color: '#c9a9ff', fontSize: 12 }}>{msg}</span>}
+    </div>
+  );
+}
 
 /** DK-2.5 标签行：当前笔记 tags 只读 chips + 「+」编辑（prompt 逗号
  * 分隔全量覆盖——cmd_set_note_tags；失败静默不阻断编辑主链）。
@@ -2581,6 +2625,7 @@ export default function DesktopShell() {
   const [pairOpen, setPairOpen] = useState(false);
   // DK-3.3：全局快速捕获浮层开关（系统快捷键 Alt+Shift+N / palette 入口双通道）
   const [quickCapOpen, setQuickCapOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   useQuickCaptureEvent(invoke, () => setQuickCapOpen(true));
   /* DK-3.1：右侧常驻信息面板开关（DK-3.1v2：localStorage 优先+sessionStorage
      兜底迁移读；无值默认开——browser-mock 无存储守卫 try/catch 沿用） */
@@ -2960,6 +3005,12 @@ export default function DesktopShell() {
         id: 'p2p-pair',
         title: 'P2P 设备配对（直传/补发前置）',
         run: () => setPairOpen(true),
+      },
+      {
+        kind: 'command' as const,
+        id: 'fsrs-review',
+        title: '开始复习（FSRS 闪卡）',
+        run: () => setReviewOpen(true),
       },
       {
         kind: 'command' as const,
@@ -3680,6 +3731,9 @@ export default function DesktopShell() {
       )}
       {pairOpen && invoke && (
         <PairDialog invoke={invoke} onClose={() => setPairOpen(false)} />
+      )}
+      {reviewOpen && invoke && (
+        <ReviewPanel invoke={invoke} onClose={() => setReviewOpen(false)} />
       )}
       {quickCapOpen && invoke && (
         <QuickCapture invoke={invoke} onClose={() => setQuickCapOpen(false)} />

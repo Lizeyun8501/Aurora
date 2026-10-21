@@ -219,6 +219,7 @@ pub fn run() {
             cmd_pomodoro_sync,
             cmd_weekly_review,
             cmd_get_backlinks,
+            cmd_add_review_card,
             cmd_due_review_cards,
             cmd_review_card,
             attachment_commands::cmd_read_attachment,
@@ -990,20 +991,41 @@ async fn cmd_due_review_cards() -> Result<Vec<serde_json::Value>, String> {
     let now = chrono::Utc::now();
     let items = core.review_queue.due_items(now);
     let scheduler = aurora_core::l3_domain::fsrs::FsrsScheduler::new();
-    Ok(items
-        .into_iter()
-        .map(|it| {
-            let r = scheduler.retrievability(&it.state, now);
-            serde_json::json!({
-                "card_id": it.card_id,
-                "note_id": it.note_id,
-                "due_at": it.due.to_rfc3339(),
-                "retrievability": r,
-                "reps": it.state.reps,
-                "lapses": it.state.lapses,
-            })
-        })
-        .collect())
+    let vault = get_vault()?;
+    let mut out = Vec::with_capacity(items.len());
+    for it in items {
+        let r = scheduler.retrievability(&it.state, now);
+        // G3：卡面字段（title 恒明文+首行摘要）——到期队列小（几~几十）逐条读可接受
+        let (title, summary) = match core.kv_store.get(&format!("note:{}", it.note_id)).await {
+            Ok(Some(bytes)) => match unwrap_note_bytes(&core, &vault, &bytes) {
+                Ok(json) => (
+                    json.get("title").and_then(|t| t.as_str()).unwrap_or("未命名").to_string(),
+                    json.get("content")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .lines()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or("")
+                        .chars()
+                        .take(80)
+                        .collect::<String>(),
+                ),
+                Err(_) => ("未命名".to_string(), String::new()),
+            },
+            _ => ("未命名".to_string(), String::new()),
+        };
+        out.push(serde_json::json!({
+            "card_id": it.card_id,
+            "note_id": it.note_id,
+            "due_at": it.due.to_rfc3339(),
+            "retrievability": r,
+            "reps": it.state.reps,
+            "lapses": it.state.lapses,
+            "title": title,
+            "summary": summary,
+        }));
+    }
+    Ok(out)
 }
 
 /// FSRS 评分复习（移动端 review_card 同源 — 1 Again / 2 Hard / 3 Good / 4 Easy）。
@@ -1022,6 +1044,50 @@ async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, String>
         .review_card(&card_id, rating)
         .ok_or_else(|| format!("card not found: {}", card_id))?;
     Ok(out.due.to_rfc3339())
+}
+
+/// G3：笔记级建卡（笔记 Distill 的 v1 形态——整笔记一张卡）。
+/// card_id=`card:note:{id}` 幂等（重注册=覆盖重排——ReviewQueue 语义）；
+/// 卡面=笔记 title（恒明文通路）+正文首行摘要（≤80 char）。
+#[tauri::command]
+async fn cmd_add_review_card(note_id: String) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let key = format!("note:{}", note_id);
+    let data = core
+        .kv_store
+        .get(&key)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("note not found: {}", note_id))?;
+    let json = unwrap_note_bytes(&core, &vault, &data)?;
+    let title = json
+        .get("title")
+        .and_then(|t| t.as_str())
+        .unwrap_or("未命名")
+        .to_string();
+    let summary: String = json
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .chars()
+        .take(80)
+        .collect();
+    let scheduled = core.review_queue.add_card(
+        &format!("card:note:{}", note_id),
+        &note_id,
+        aurora_core::l3_domain::fsrs::Rating::Good,
+    );
+    Ok(serde_json::json!({
+        "card_id": format!("card:note:{}", note_id),
+        "note_id": note_id,
+        "title": title,
+        "summary": summary,
+        "due_at": scheduled.due.to_rfc3339(),
+    }))
 }
 
 /// 删除笔记（含搜索索引）。
