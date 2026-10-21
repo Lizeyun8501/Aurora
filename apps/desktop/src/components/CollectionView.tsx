@@ -19,7 +19,8 @@ type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown
 interface PropDef {
   id: string;
   name: string;
-  prop_type: string;
+  // R-β2：serde 外部标签——单元变体为字符串，Select/MultiSelect 为对象
+  prop_type: unknown;
   required: boolean;
 }
 interface CollectionMeta {
@@ -46,10 +47,15 @@ const TYPE_LABEL: Record<string, string> = {
 
 function typeKey(t: unknown): string {
   if (typeof t === 'string') return t;
-  if (t && typeof t === 'object' && 'select' in (t as Record<string, unknown>)) return 'Select';
-  if (t && typeof t === 'object' && 'multiSelect' in (t as Record<string, unknown>)) return 'MultiSelect';
-  if (t && typeof t === 'object' && 'relation' in (t as Record<string, unknown>)) return 'Relation';
-  if (t && typeof t === 'object' && 'formula' in (t as Record<string, unknown>)) return 'Formula';
+  // R-β2（self-caught）：serde 外部标签变体键为大写原名（{"Select":[...]}）——
+  // 旧版 'select' in t 小写检查是死代码
+  if (t && typeof t === 'object') {
+    const o = t as Record<string, unknown>;
+    if ('Select' in o) return 'Select';
+    if ('MultiSelect' in o) return 'MultiSelect';
+    if ('Relation' in o) return 'Relation';
+    if ('Formula' in o) return 'Formula';
+  }
   return 'Text';
 }
 
@@ -59,6 +65,9 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
   const [meta, setMeta] = useState<CollectionMeta | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  // G1-v3：内联单元格编辑位 + 视图形态（表格 | 看板）
+  const [editing, setEditing] = useState<{ noteId: string; defId: string } | null>(null);
+  const [viewMode, setViewMode] = useState<'table' | 'board'>('table');
 
   const refreshCols = useCallback(async () => {
     if (!invoke) return;
@@ -114,26 +123,6 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
     }
   }, [invoke, selected]);
 
-  const editCell = useCallback(
-    async (noteId: string, def: PropDef, current: unknown) => {
-      if (!invoke) return;
-      const input = window.prompt(`编辑 ${def.name}（${TYPE_LABEL[typeKey(def.prop_type)] ?? ''}）：`, current == null ? '' : String(current));
-      if (input === null) return;
-      // v1 类型粗判：数字/布尔自动转，其余字符串
-      let value: unknown = input;
-      if (typeKey(def.prop_type) === 'Number') value = Number(input);
-      if (typeKey(def.prop_type) === 'Checkbox') value = input === 'true' || input === '是';
-      try {
-        await invoke('cmd_collection_set_cell', { noteId, defId: def.id, value });
-        setRows((await invoke('cmd_collection_rows', { id: selected })) as Row[]);
-        setErr(null);
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : String(e));
-      }
-    },
-    [invoke, selected],
-  );
-
   /* R5-1：schema 编辑——加列（名称+类型 prompt 两段）+删列（列头 ×）。
      set_schema=全量覆盖语义（对齐 cmd_set_note_tags 惯例）。 */
   const addColumn = useCallback(async () => {
@@ -142,12 +131,26 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
     if (!name?.trim()) return;
     const types = ['文本', '数字', '日期', '勾选', '单选', '多选'];
     const ti = window.prompt(`类型（1-6）：\n${types.map((t, i) => `${i + 1}. ${t}`).join('\n')}`);
+    if (ti == null) return;
     const idx = Number(ti) - 1;
-    if (!idx || idx < 0 || idx >= 6) return;
+    // R-β1（Bravo 复核）：不得用 !idx——会误杀合法 idx=0（文本列）
+    if (Number.isNaN(idx) || idx < 0 || idx >= 6) return;
     const typeNames = ['Text', 'Number', 'Date', 'Checkbox', 'Select', 'MultiSelect'];
-    const prop_type = idx >= 4 ? `${typeNames[idx]}([])` : typeNames[idx];
+    // R-β2：serde 外部标签——单元变体传字符串，参数变体传 {Select:[{value,color}]}
+    let prop_type: unknown = typeNames[idx];
+    if (idx >= 4) {
+      const raw = window.prompt('选项（逗号分隔，如：待办,进行中,完成）：', '待办,进行中,完成');
+      if (raw == null) return;
+      const opts = raw
+        .split(/[,，]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((v) => ({ value: v, color: null }));
+      if (opts.length === 0) return;
+      prop_type = idx === 4 ? { Select: opts } : { MultiSelect: opts };
+    }
     const def = {
-      id: `pd:${Date.now()}`,
+      id: `pd:${crypto.randomUUID?.() ?? Date.now()}`,
       name: name.trim(),
       prop_type,
       required: false,
@@ -175,6 +178,65 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
       }
     },
     [invoke, meta],
+  );
+
+  /* G1-v3 内联单元格：双击进入 contentEditable，blur/Enter 提交，
+     Esc 还原取消——contentEditable 期间 React 不 patch 用户脏改，
+     还原/失败路径均手动回写 textContent 防 DOM 残留。 */
+  const submitInline = useCallback(
+    async (noteId: string, d: PropDef, el: HTMLElement): Promise<boolean> => {
+      if (!invoke) return false;
+      const input = el.textContent?.trim() ?? '';
+      let value: unknown = input;
+      if (typeKey(d.prop_type) === 'Number') value = input === '' ? null : Number(input);
+      if (typeKey(d.prop_type) === 'Checkbox') value = input === 'true' || input === '是';
+      if (typeKey(d.prop_type) === 'MultiSelect') {
+        value = input === '' ? [] : input.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+      }
+      try {
+        await invoke('cmd_collection_set_cell', { noteId, defId: d.id, value });
+        setRows((await invoke('cmd_collection_rows', { id: selected })) as Row[]);
+        setErr(null);
+        return true;
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+        return false;
+      }
+    },
+    [invoke, selected],
+  );
+
+  const selectOptions = useCallback((d: PropDef): string[] => {
+    if (d.prop_type && typeof d.prop_type === 'object' && 'Select' in (d.prop_type as Record<string, unknown>)) {
+      const opts = (d.prop_type as { Select: Array<{ value: string }> }).Select ?? [];
+      return opts.map((o) => o.value);
+    }
+    return [];
+  }, []);
+
+  /* G1-v3 看板视图：按第一个单选列分组；拖卡换组=set_cell（Select 值）。
+     「未分组」列对应 null 值（PropertyEngine 对 Select null 放行）。 */
+  const [boardDrag, setBoardDrag] = useState<string | null>(null);
+  const [boardOver, setBoardOver] = useState<string | null>(null);
+
+  const dropBoard = useCallback(
+    async (groupKey: string) => {
+      setBoardOver(null);
+      const id = boardDrag;
+      setBoardDrag(null);
+      if (!invoke || !id || !meta) return;
+      const selDef = meta.prop_defs.find((d) => typeKey(d.prop_type) === 'Select');
+      if (!selDef) return;
+      const value = groupKey === '__none' ? null : groupKey;
+      try {
+        await invoke('cmd_collection_set_cell', { noteId: id, defId: selDef.id, value });
+        setRows((await invoke('cmd_collection_rows', { id: selected })) as Row[]);
+        setErr(null);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [boardDrag, invoke, meta, selected],
   );
 
   return (
@@ -240,6 +302,24 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
               >
                 ＋ 加列
               </button>
+              <span style={{ display: 'inline-flex', borderRadius: 999, border: '1px solid rgba(255,255,255,0.14)', overflow: 'hidden' }}>
+                {(['table', 'board'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setViewMode(m)}
+                    style={{
+                      fontSize: 11,
+                      padding: '1px 10px',
+                      border: 'none',
+                      background: viewMode === m ? 'rgba(88,166,255,0.2)' : 'transparent',
+                      color: viewMode === m ? tokens.color.primaryBright : tokens.color.textSecondary,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {m === 'table' ? '表格' : '看板'}
+                  </button>
+                ))}
+              </span>
             </span>
             <button
               onClick={() => void addRow()}
@@ -256,6 +336,7 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
               ＋ 加行
             </button>
           </div>
+          {viewMode === 'table' && (
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
             <thead>
               <tr>
@@ -296,12 +377,46 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                   </td>
                   {meta.prop_defs.map((d) => {
                     const cell = r.values[d.id];
+                    const isEditing = editing?.noteId === r.note_id && editing.defId === d.id;
+                    const restoreText = cell ? String(cell.value) : '';
                     return (
                       <td
                         key={d.id}
-                        onClick={() => void editCell(r.note_id, d, cell?.value)}
-                        style={{ padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.06)', cursor: 'text' }}
-                        title="点击编辑"
+                        contentEditable={isEditing}
+                        suppressContentEditableWarning
+                        onDoubleClick={(e) => {
+                          if (!invoke) return;
+                          setEditing({ noteId: r.note_id, defId: d.id });
+                          setTimeout(() => (e.currentTarget as HTMLElement).focus(), 0);
+                        }}
+                        onBlur={(e) => {
+                          if (!isEditing) return;
+                          const el = e.currentTarget as HTMLElement;
+                          setEditing(null);
+                          void submitInline(r.note_id, d, el).then((ok) => {
+                            if (!ok) el.textContent = restoreText; // 失败还原防 DOM 残留
+                          });
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            (e.currentTarget as HTMLElement).blur();
+                          }
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            e.currentTarget.textContent = restoreText;
+                            setEditing(null);
+                          }
+                        }}
+                        style={{
+                          padding: '6px 8px',
+                          borderBottom: '1px solid rgba(255,255,255,0.06)',
+                          cursor: isEditing ? 'text' : 'cell',
+                          outline: isEditing ? '1px solid rgba(88,166,255,0.6)' : 'none',
+                          borderRadius: 4,
+                          minWidth: 72,
+                        }}
+                        title="双击编辑 · Enter 提交 · Esc 取消"
                       >
                         {cell ? String(cell.value) : <span style={{ color: tokens.color.textDisabled }}>—</span>}
                       </td>
@@ -318,6 +433,77 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
               )}
             </tbody>
           </table>
+          )}
+          {viewMode === 'board' && (() => {
+            const selDef = meta.prop_defs.find((d) => typeKey(d.prop_type) === 'Select');
+            if (!selDef) {
+              return (
+                <p style={{ color: tokens.color.textSecondary }}>
+                  看板视图需要一个「单选」列——「＋ 加列」选类型 5（单选）后按选项分组
+                </p>
+              );
+            }
+            const groups: Array<{ key: string; label: string }> = [
+              ...selectOptions(selDef).map((v) => ({ key: v, label: v })),
+              { key: '__none', label: '未分组' },
+            ];
+            return (
+              <div style={{ display: 'flex', gap: tokens.spacing.sm, alignItems: 'flex-start', overflowX: 'auto', paddingBottom: 8 }}>
+                {groups.map((g) => {
+                  const cards = rows.filter((r) => {
+                    const v = r.values[selDef.id]?.value;
+                    return g.key === '__none' ? v == null || v === '' : v === g.key;
+                  });
+                  return (
+                    <div
+                      key={g.key}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setBoardOver(g.key);
+                      }}
+                      onDrop={() => void dropBoard(g.key)}
+                      style={{
+                        flex: '0 0 200px',
+                        background: boardOver === g.key ? 'rgba(88,166,255,0.08)' : tokens.color.bgSurface,
+                        border: `1px solid ${boardOver === g.key ? 'rgba(88,166,255,0.45)' : 'rgba(255,255,255,0.07)'}`,
+                        borderRadius: tokens.radius.md,
+                        padding: tokens.spacing.sm,
+                        minHeight: 160,
+                      }}
+                    >
+                      <p style={{ margin: `0 0 ${tokens.spacing.xs}px`, fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+                        {g.label} · {cards.length}
+                      </p>
+                      {cards.map((c) => (
+                        <div
+                          key={c.note_id}
+                          draggable
+                          onDragStart={() => setBoardDrag(c.note_id)}
+                          onDragEnd={() => setBoardDrag(null)}
+                          onClick={() => onOpenNote(c.note_id)}
+                          style={{
+                            padding: `${tokens.spacing.xs}px ${tokens.spacing.sm}px`,
+                            marginBottom: 6,
+                            background: 'rgba(255,255,255,0.05)',
+                            border: '1px solid rgba(255,255,255,0.09)',
+                            borderRadius: tokens.radius.sm,
+                            fontSize: 13,
+                            cursor: 'grab',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                          title="拖到其他分组换状态 · 点击打开笔记"
+                        >
+                          {c.title}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </>
       )}
       {!meta && cols.length === 0 && !err && (

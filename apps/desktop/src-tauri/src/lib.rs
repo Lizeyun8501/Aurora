@@ -1841,7 +1841,54 @@ async fn cmd_search_notes(
         }));
     }
     let _ = total; // RRF 截断后 total 无分页语义（hybrid）；BM25 分页留后续卡
+
+    // ── DK-3.3 拼音首字母召回：query 为纯 ASCII 字母（≥2）时，按标题折叠
+    //    首字母串子序列比对补召回（Tantivy/jieba 不懂数拼音——索引期拼音化
+    //    为 v2 单列；此处运行时折叠，万级标题亚毫秒级）。
+    let q_trim = query.trim();
+    let is_pinyin_q =
+        !q_trim.is_empty() && q_trim.len() >= 2 && q_trim.chars().all(|c| c.is_ascii_alphabetic());
+    if is_pinyin_q {
+        let ql = q_trim.to_ascii_lowercase();
+        if let Ok(pairs) = core.kv_store.scan_prefix("note:").await {
+            for (k, bytes) in pairs {
+                let Some(id) = k.strip_prefix("note:").map(String::from) else {
+                    continue;
+                };
+                if results
+                    .iter()
+                    .any(|r| r.get("note_id").and_then(|v| v.as_str()) == Some(id.as_str()))
+                {
+                    continue; // 已被 BM25/向量召回——去重
+                }
+                let title = unwrap_note_bytes(&core, &vault, &bytes)
+                    .ok()
+                    .and_then(|v| v.get("title").and_then(|t| t.as_str().map(String::from)))
+                    .unwrap_or_default();
+                if title.is_empty() {
+                    continue;
+                }
+                let folded = aurora_core::pinyin::pinyin_initials(&title);
+                if is_subsequence(&ql, &folded) {
+                    results.push(serde_json::json!({
+                        "note_id": id.clone(),
+                        "doc_id": id, // 契约同上：note_id 主、doc_id 兼容
+                        "title": title,
+                        "score": 1.0,
+                        "snippet": String::new(),
+                        "source": "Pinyin",
+                    }));
+                }
+            }
+        }
+    }
     Ok(results)
+}
+
+/// DK-3.3：ASCII 子序列判定（与前端 fuzzyMatch 的子序列语义一致）。
+fn is_subsequence(pattern: &str, target: &str) -> bool {
+    let mut it = target.chars();
+    pattern.chars().all(|pc| it.any(|tc| tc == pc))
 }
 
 /// 获取应用状态摘要（健康检查）。

@@ -29,6 +29,7 @@ pub mod l3_domain;
 pub mod links; // DK-双向链接S1: wiki链接提取+边索引(出链/反链倒排)
 pub mod mcp_registry; // V23-I5: MCP 数据中枢工具契约（稳定层）
 pub mod mirror; // V23-I2: Mirror 单向导出
+pub mod pinyin; // DK-3.3: 拼音首字母折叠（中文标题模糊召回）
 pub mod time_machine; // V23-I4: 时间机器快照回溯
 pub mod traits;
 pub mod write_path; // V26 I2/DK-01W: 唯一写入入口（load→apply→原子保存→派生→发事件）

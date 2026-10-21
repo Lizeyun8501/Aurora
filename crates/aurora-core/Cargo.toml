@@ -15,6 +15,7 @@ loro = { workspace = true, optional = true }
 
 # Full-text search
 tantivy = { workspace = true }
+pinyin = "0.10"
 
 # SQLite (including sqlite-vec for vector search)
 rusqlite = { workspace = true }
