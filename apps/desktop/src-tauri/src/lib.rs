@@ -43,6 +43,7 @@ mod shortcut_commands;
 mod sync_commands;
 mod tag_commands;
 mod template_commands;
+mod due_preview_commands;
 mod todo_commands;
 mod wiki_commands;
 
@@ -267,6 +268,7 @@ pub fn run() {
             export_commands::cmd_export_note_pdf,
             backlink_commands::cmd_backlinks_of,
             backlink_commands::cmd_links_graph,
+            due_preview_commands::cmd_preview_due,
             todo_commands::cmd_all_tasks,
             todo_commands::cmd_toggle_task,
             template_commands::cmd_list_templates,

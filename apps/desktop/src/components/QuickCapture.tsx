@@ -5,6 +5,11 @@
  * → textarea 速记 → cmd_import_share（SharePack 复用——与 2.9 剪贴板
  * 捕获同链）落库+#capture 标签（首行截断 title 沿用 v1 语义）。
  *
+ * R3-1：NL 日期实时预览——输入 debounce 250ms invoke `cmd_preview_due`
+ * （core `due_parse` 单一权威），命中片段 chip 标注（「📅 明天 09:00 ·
+ * 已识别」）；v1 边界：chip 预览不做框内 overlay 高亮（字节 span 已就绪，
+ * overlay 是 v2 感知升级项）；browser-mock 静默降级。
+ *
  * v1 边界：固定键 Alt+Shift+N（系统级键与应用内快捷键表域不同，v2 打通）；
  * 全局键注册失败降级（palette「快速捕获」入口同链可用）。
  */
@@ -14,6 +19,14 @@ import tokens from '../design/tokens';
 import type { InvokeFn } from './DesktopShell';
 
 export const QUICK_CAPTURE_EVENT = 'quick-capture';
+
+/** R3-1：cmd_preview_due 返回面（core DueParse span + human）。 */
+export interface DuePreview {
+  due_ts: number;
+  start: number;
+  end: number;
+  human: string;
+}
 
 interface Props {
   invoke: InvokeFn;
@@ -25,12 +38,27 @@ export default function QuickCapture({ invoke, onClose }: Props) {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<DuePreview | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   // 挂载即聚焦（速记场景零摩擦）
   useEffect(() => {
     taRef.current?.focus();
   }, []);
+
+  // R3-1：NL 日期实时预览（debounce 250ms；空串即清；invoke 失败静默——预览非权威）
+  useEffect(() => {
+    if (!text.trim()) {
+      setPreview(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      invoke('cmd_preview_due', { text })
+        .then((r) => setPreview((r as DuePreview | null) ?? null))
+        .catch(() => setPreview(null)); // mock/降级静默
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [text, invoke]);
 
   const save = useCallback(async () => {
     const t = text.trim();
@@ -126,6 +154,28 @@ export default function QuickCapture({ invoke, onClose }: Props) {
         {err && (
           <div role="alert" style={{ color: '#f88', fontSize: 13, marginTop: 4 }}>
             {err}
+          </div>
+        )}
+        {/* R3-1：NL 日期 chip——命中片段 human 标注（识别失败不显示） */}
+        {preview && (
+          <div
+            data-testid="due-preview-chip"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              marginTop: 6,
+              padding: '3px 10px',
+              borderRadius: tokens.radius.sm,
+              background: 'rgba(88,166,255,0.14)',
+              border: '1px solid rgba(88,166,255,0.35)',
+              color: '#8ab8ff',
+              fontSize: 12,
+            }}
+          >
+            <span aria-hidden>📅</span>
+            <span style={{ fontWeight: 600 }}>{preview.human}</span>
+            <span style={{ color: 'rgba(138,184,255,0.7)' }}>· 已识别截止时间</span>
           </div>
         )}
         {msg && (

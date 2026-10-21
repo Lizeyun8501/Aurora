@@ -65,17 +65,26 @@ fn priority_of(text: &str) -> &'static str {
     }
 }
 
-/// 相对期限词 → 截止时间（从 now 起算）。
+/// R3-1：日期解析结果（前端实时预览所需——命中片段 span 用于 chip 标注）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct DueParse {
+    /// 截止时刻（Unix 毫秒）
+    pub due_ts: i64,
+    /// 命中片段字节偏移 `[matched_start, matched_end)`（text 内——
+    /// 天词/周词/N天后 与 时刻段 的并集）
+    pub matched_start: usize,
+    pub matched_end: usize,
+}
+
+/// 相对期限词 → 截止时间 + 命中片段（DK-3.4 v2 + R3-1 span 化）。
 ///
-/// DK-3.4 v2（审阅「明天 9 点」语义）：天偏移 × 时刻组合解析——
+/// 语义与 v2 全同（span 化仅**附加**区间信息，due_ts 计算零回归）：
 /// - 天词：今天/明天/后天/大后天/N 天后/本周/下周/月底
-/// - 周词：周一~周日 → **下一个该周几**（按今天 weekday 环算，含今天）——
-///   取代 v1 恒定偏移（「周五」不再恒 3 天）
-/// - 时刻：`N 点`/`N点半`/`N点M分`/`N:MM`/`N:MM 分`——与天词组合
-///   （「明天 9 点」=明天 09:00）；单独出现=今天该时刻（已过则明天的）
-/// - 无时刻的天词：v1 语义保持 now+days（相对偏移，非 00:00 锚定——
-///   「明天交」=明天此刻前截止，与 v1 行为一致零回归）
-fn due_date_of(text: &str) -> Option<i64> {
+/// - 周词：周一~周日 → **下一个该周几**（按今天 weekday 环算，含今天）
+/// - 时刻：`N 点`/`N点半`/`N点M分`/`N:MM`/`N:MM 分`——与天词组合；
+///   单独出现=今天该时刻（已过则明天的）
+/// - 无时刻的天词：v1 语义 now+days（相对偏移，零回归）
+pub fn due_parse(text: &str) -> Option<DueParse> {
     let now = Utc::now();
     // 时刻解析（局部辅助）：返回 (时, 分)
     fn parse_time(s: &str) -> Option<(u32, u32)> {
@@ -119,7 +128,8 @@ fn due_date_of(text: &str) -> Option<i64> {
     // 1) 组合形态：天词 + 时刻（「明天 9 点」「周五3点」「3 天后 14:30」）
     //    朴素扫描：找时刻标记（点/:），向前回扫数字段、向后吃时刻字，
     //    截出时刻片段；解析失败视为无时刻（纯散文里含「点」不误伤）。
-    let time_str: Option<String> = (|| {
+    //    R3-1：保留片段 span（尾空白回退对齐 trim 边界）。
+    let time_seg: Option<(String, usize, usize)> = (|| {
         let bytes = text.as_bytes();
         let idx = text.rfind(['点', ':', '：'])?;
         // 向前回扫数字与空白
@@ -142,52 +152,83 @@ fn due_date_of(text: &str) -> Option<i64> {
                 break;
             }
         }
-        let seg = text[start..end].trim();
+        // 尾空白回退（对齐 trim 边界——span 精确）
+        let seg_raw = &text[start..end];
+        let end = end - (seg_raw.len() - seg_raw.trim_end().len());
+        let seg_start = start + (seg_raw.len() - seg_raw.trim_start().len());
+        let seg = text[seg_start..end].trim();
         if seg.is_empty() || parse_time(seg).is_none() {
             return None;
         }
-        Some(seg.to_string())
+        Some((seg.to_string(), seg_start, end))
     })();
+    let time_str = time_seg.as_ref().map(|(s, _, _)| s.clone());
 
-    // 2) 天词解析 → (基准日偏移天数)
-    let day_offset: Option<i64> = if text.contains("大后天") {
-        Some(3)
+    // 2) 天词解析 → (基准日偏移, 命中 span)。R3-1：find 定位取区间。
+    let day_hit: Option<(i64, usize, usize)> = if text.contains("大后天") {
+        text.find("大后天").map(|p| (3, p, p + "大后天".len()))
     } else if text.contains("后天") {
-        Some(2)
+        text.find("后天").map(|p| (2, p, p + "后天".len()))
     } else if text.contains("明天") || text.contains("明日") {
-        Some(1)
+        text.find("明天").or_else(|| text.find("明日")).map(|p| {
+            let wlen = if text[p..].starts_with("明日") {
+                "明日".len()
+            } else {
+                "明天".len()
+            };
+            (1, p, p + wlen)
+        })
     } else if text.contains("今天") || text.contains("今日") {
-        Some(0)
+        text.find("今天").or_else(|| text.find("今日")).map(|p| {
+            let wlen = if text[p..].starts_with("今日") {
+                "今日".len()
+            } else {
+                "今天".len()
+            };
+            (0, p, p + wlen)
+        })
     } else if text.contains("本周") || text.contains("这周") {
-        Some(5)
+        text.find("本周").or_else(|| text.find("这周")).map(|p| {
+            let wlen = if text[p..].starts_with("这周") {
+                "这周".len()
+            } else {
+                "本周".len()
+            };
+            (5, p, p + wlen)
+        })
     } else if text.contains("下周") {
-        Some(8)
+        text.find("下周").map(|p| (8, p, p + "下周".len()))
     } else if text.contains("月底") {
-        Some(20)
-    } else if text.contains("下周内") {
-        Some(7)
+        text.find("月底").map(|p| (20, p, p + "月底".len()))
     } else if let Some(idx) = text.find("天后") {
         // N 天后（数字在「天后」前——回扫数字段，允许中间空白「3 天后」）
         let head = &text[..idx];
         let trimmed = head.trim_end();
-        let n: String = trimmed
-            .chars()
-            .rev()
-            .take_while(|c| c.is_ascii_digit())
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
+        let n_start = trimmed.len()
+            - trimmed
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_digit())
+                .map(char::len_utf8)
+                .sum::<usize>();
+        let n: String = trimmed[n_start..].to_string();
         if n.is_empty() {
-            return None; // 裸「天后」无数字——不解析
+            None // 裸「天后」无数字——不解析
+        } else {
+            n.parse::<i64>()
+                .ok()
+                .map(|d| (d.min(3650), n_start, idx + "天后".len()))
         }
-        n.parse::<i64>().ok().map(|d| d.min(3650))
     } else {
         None
     };
+    let day_offset = day_hit.as_ref().map(|(d, _, _)| *d);
+    let day_span = day_hit.as_ref().map(|(_, s, e)| (*s, *e));
 
-    // 3) 周词解析（下一个该周几——按今天 weekday 环算，含今天=0 天）
-    let weekday_offset: Option<i64> = [
+    // 3) 周词解析（下一个该周几——按今天 weekday 环算，含今天=0 天）。
+    //    R3-1：附命中 span。
+    let today = now.weekday().num_days_from_monday() as i64;
+    let weekday_hit: Option<(i64, usize, usize)> = [
         ("周一", chrono::Weekday::Mon),
         ("周二", chrono::Weekday::Tue),
         ("周三", chrono::Weekday::Wed),
@@ -200,26 +241,49 @@ fn due_date_of(text: &str) -> Option<i64> {
     ]
     .iter()
     .find_map(|(w, wd)| {
-        text.contains(w).then(|| {
-            let today = now.weekday().num_days_from_monday() as i64;
+        text.find(w).map(|p| {
             let target = wd.num_days_from_monday() as i64;
-            (target - today + 7) % 7
+            ((target - today + 7) % 7, p, p + w.len())
         })
     });
+    let weekday_offset = weekday_hit.as_ref().map(|(d, _, _)| *d);
+    let weekday_span = weekday_hit.as_ref().map(|(_, s, e)| (*s, *e));
 
     // 4) 合成：时刻存在→那天该时刻（00:00 起 + 天数 + 时分）；
     //    无时刻→v1 相对偏移语义（now+days，零回归）。
+    //    R3-1：span = 命中片段并集（天词/周词/N天后 与 时刻段）。
     let (h, m) = time_str.as_deref().and_then(parse_time).unzip();
+    let span = || {
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        if let Some(s) = day_span {
+            spans.push(s);
+        }
+        if let Some(s) = weekday_span {
+            spans.push(s);
+        }
+        if let Some((_, s, e)) = time_seg.as_ref() {
+            spans.push((*s, *e));
+        }
+        let lo = spans.iter().map(|(s, _)| *s).min().unwrap_or(0);
+        let hi = spans.iter().map(|(_, e)| *e).max().unwrap_or(0);
+        (lo, hi)
+    };
     if let Some(days) = day_offset.or(weekday_offset) {
         let base = now.date_naive() + chrono::Duration::days(days);
         let dt = base
             .and_hms_opt(h.unwrap_or(23), m.unwrap_or(59), 59)
             .unwrap_or_else(|| base.and_hms_opt(23, 59, 59).expect("23:59:59 valid"));
         // 无时刻的天词=相对偏移（v1 语义）；有时刻=当天该时刻
-        return Some(if time_str.is_some() {
+        let due_ts = if time_str.is_some() {
             dt.and_utc().timestamp_millis()
         } else {
             (now + Duration::days(days)).timestamp_millis()
+        };
+        let (matched_start, matched_end) = span();
+        return Some(DueParse {
+            due_ts,
+            matched_start,
+            matched_end,
         });
     }
     // 仅时刻（无天词）：今天该时刻，已过则明天
@@ -230,9 +294,19 @@ fn due_date_of(text: &str) -> Option<i64> {
             .expect("h/m validated");
         let dt = today_at.and_utc();
         let dt = if dt < now { dt + Duration::days(1) } else { dt };
-        return Some(dt.timestamp_millis());
+        let (matched_start, matched_end) = span();
+        return Some(DueParse {
+            due_ts: dt.timestamp_millis(),
+            matched_start,
+            matched_end,
+        });
     }
     None
+}
+
+/// 兼容包装（R3-1 前签名）——现有调用面零改动。
+fn due_date_of(text: &str) -> Option<i64> {
+    due_parse(text).map(|d| d.due_ts)
 }
 
 impl ActionItemExtractor {
@@ -449,14 +523,60 @@ mod tests {
         ActionItemExtractor::apply_to_projection("n2", "- [ ] 写周报", &proj)
             .await
             .unwrap();
-        assert_eq!(proj.rows_for_note("n2")[0].status, "done", "勾完成不因保存重置");
+        assert_eq!(
+            proj.rows_for_note("n2")[0].status,
+            "done",
+            "勾完成不因保存重置"
+        );
         // 反向：用户取消勾（done→inbox）——重建不得重播回 done
         let tid2 = proj.rows_for_note("n2")[0].task_id.clone();
         proj.seed_row(&tid2, "n2", "写周报", "inbox", "medium", None);
         ActionItemExtractor::apply_to_projection("n2", "- [ ] 写周报", &proj)
             .await
             .unwrap();
-        assert_eq!(proj.rows_for_note("n2")[0].status, "inbox", "取消勾不被文本重播");
+        assert_eq!(
+            proj.rows_for_note("n2")[0].status,
+            "inbox",
+            "取消勾不被文本重播"
+        );
+    }
+
+    // ── R3-1：due_parse span 化回归 ──
+
+    #[test]
+    fn due_parse_span_combination() {
+        // 「明天 9 点」——天词+时刻并集 span，覆盖整个短语
+        let d = due_parse("- [ ] 交周报 明天 9 点").unwrap();
+        let m = &"- [ ] 交周报 明天 9 点"[d.matched_start..d.matched_end];
+        assert_eq!(m, "明天 9 点", "并集 span 覆盖天词+时刻段");
+        // 有时刻=当天该时刻语义：非相对偏移（due 应为 09:00 锚定）
+        let due_local = chrono::DateTime::from_timestamp_millis(d.due_ts).unwrap();
+        assert_eq!(due_local.format("%H:%M").to_string(), "09:00");
+    }
+
+    #[test]
+    fn due_parse_span_weekday_and_ndafter() {
+        // 周词 span
+        let d = due_parse("周五 3 点 前完成").unwrap();
+        assert_eq!(
+            &"周五 3 点 前完成"[d.matched_start..d.matched_end],
+            "周五 3 点"
+        );
+        // N 天后（数字回扫含空白）span 覆盖「3 天后」
+        let d2 = due_parse("3 天后 14:30 汇报").unwrap();
+        assert_eq!(
+            &"3 天后 14:30 汇报"[d2.matched_start..d2.matched_end],
+            "3 天后 14:30"
+        );
+    }
+
+    #[test]
+    fn due_parse_span_compat_wrapper() {
+        // 兼容包装与 span 版 due_ts 一致
+        let t = "明天 9 点交";
+        assert_eq!(due_date_of(t), due_parse(t).map(|d| d.due_ts));
+        // 无命中 → None
+        assert!(due_parse("普通散文无日期").is_none());
     }
 
     #[test]
