@@ -93,6 +93,17 @@ pub struct TaskViewRow {
     pub completed_at: Option<i64>,
 }
 
+/// G4：行级 status 变更唯一实现（DK-25 终态 stamp——done/cancelled 记
+/// completed_at，转回非终态清 None——终态口径与 blocked 派生一致）。
+fn apply_status(row: &mut TaskViewRow, new_status: &str) {
+    row.status = new_status.to_string();
+    row.completed_at = if matches!(new_status, "done" | "cancelled") {
+        Some(chrono::Utc::now().timestamp_millis())
+    } else {
+        None
+    };
+}
+
 /// 全量数据源回调（全库任务行）。
 pub type TaskSource = Box<dyn Fn() -> Vec<TaskViewRow> + Send + Sync>;
 
@@ -171,6 +182,32 @@ impl TaskProjection {
         let before = rows.len();
         rows.retain(|_, r| !(r.note_id == note_id && r.task_id.starts_with("ai:")));
         before - rows.len()
+    }
+
+    /// G4：全量行（看板数据源——非终态+终态全含，含 ai:* 播种行）。
+    pub fn rows(&self) -> Vec<TaskViewRow> {
+        self.rows.read().unwrap().values().cloned().collect()
+    }
+
+    /// G4：看板换列——投影行 status 直改（DK-25 终态 stamp 语义与
+    /// TaskStatusChanged apply 完全一致——`apply_status` 唯一实现，
+    /// 事件路径与本路径共用，语义零分叉）。
+    /// 校验：GTD 状态枚举集 + 行存在性。
+    pub fn set_row_status(&self, task_id: &str, new_status: &str) -> Result<(), crate::Error> {
+        const VALID: [&str; 7] = [
+            "inbox", "next", "waiting", "scheduled", "someday", "done", "cancelled",
+        ];
+        if !VALID.contains(&new_status) {
+            return Err(crate::Error::InvalidInput(format!(
+                "invalid task status: {new_status}"
+            )));
+        }
+        let mut rows = self.rows.write().unwrap();
+        let row = rows
+            .get_mut(task_id)
+            .ok_or_else(|| crate::Error::InvalidInput(format!("task not found: {task_id}")))?;
+        apply_status(row, new_status);
+        Ok(())
     }
 
     /// R3-2：窗口查询——due ∈ [from_ms, to_ms) 的非终态行（TodayView
@@ -532,14 +569,9 @@ impl Projection for TaskProjection {
             } => {
                 // 幂等应用最终值（无该行时跳过 — 数据源行会在 rebuild 补）
                 if let Some(row) = self.rows.write().unwrap().get_mut(task_id) {
-                    // DK-25: 终态 stamp 完成时刻；转回非终态清 None。
-                    // 终态口径与 blocked 派生一致（done/cancelled）。
-                    row.status = new_status.clone();
-                    row.completed_at = if matches!(new_status.as_str(), "done" | "cancelled") {
-                        Some(chrono::Utc::now().timestamp_millis())
-                    } else {
-                        None
-                    };
+                    // DK-25: 终态 stamp 完成时刻；转回非终态清 None（G4 抽
+                    // apply_status 共用——事件路径与看板换列路径零分叉）。
+                    apply_status(row, new_status);
                 }
             }
             _ => {}
@@ -600,6 +632,37 @@ impl Projection for TaskProjection {
 
 #[cfg(test)]
 mod tests {
+    // ── G4：set_row_status（看板换列——stamp 语义/枚举校验） ──
+
+    #[test]
+    fn set_row_status_stamps_terminal_state() {
+        let proj = make(vec![]);
+        proj.seed_row("t1", "n1", "写周报", "inbox", "medium", None);
+        // inbox → done：stamp completed_at
+        proj.set_row_status("t1", "done").unwrap();
+        {
+            let rows = proj.rows_for_test();
+            let r = rows.get("t1").unwrap();
+            assert_eq!(r.status, "done");
+            assert!(r.completed_at.is_some(), "终态 stamp completed_at");
+        }
+        // done → next：清 stamp（转回非终态）
+        proj.set_row_status("t1", "next").unwrap();
+        let rows = proj.rows_for_test();
+        let r2 = rows.get("t1").unwrap();
+        assert_eq!(r2.status, "next");
+        assert!(r2.completed_at.is_none(), "非终态清 stamp");
+    }
+
+    #[test]
+    fn set_row_status_rejects_invalid() {
+        let proj = make(vec![]);
+        proj.seed_row("t1", "n1", "写周报", "inbox", "medium", None);
+        assert!(proj.set_row_status("t1", "bogus").is_err(), "非法枚举拒");
+        assert!(proj.set_row_status("ghost", "next").is_err(), "行不存在拒");
+    }
+
+
     use super::*;
     use crate::event_bus::layered::InMemoryEventQueue;
     use crate::event_bus::layered::LayeredEventBus;

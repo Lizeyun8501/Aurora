@@ -7,11 +7,15 @@
  * - 交互 v2：checkbox 可点——cmd_toggle_task(noteId, blockId, done) 回写
  *   源笔记（双条件块定位+行级切换+全纪律 save）；乐观更新+失败回滚+聚合
  *   重拉；行点击仍跳源笔记（checkbox stopPropagation 防误跳）；
+ * - G4：视图形态切换（列表/看板）——看板=KanbanBoard（投影行数据源，
+ *   cmd_board_tasks+cmd_set_task_status 拖拽换列）；compact（右侧常驻）
+ *   不下沉看板；
  * - 呈现纪律：文本原样渲染（不可信内容零 HTML interpret）；invoke=null
  *   （browser-mock）或失败 → 空态降级。
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import tokens from '../design/tokens';
+import KanbanBoard from './KanbanBoard';
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 type TaskItem = {
@@ -33,6 +37,8 @@ export default function TodoView(props: {
   const [items, setItems] = useState<TaskItem[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // G4：视图形态（列表/看板）——compact（右侧常驻）不下沉看板
+  const [mode, setMode] = useState<'list' | 'board'>('list');
 
   const reload = useCallback(
     (alive: { current: boolean }) => {
@@ -64,12 +70,13 @@ export default function TodoView(props: {
     };
   }, [reload]);
 
-  /** v2 回写：乐观切换 → 服务端回写 → 失败回滚 + 重拉对齐。 */
+  /** v2 回写：乐观切换 → 服务端回写 → 失败回滚 + 重拉。 */
   const toggle = (t: TaskItem): void => {
     if (!invoke || busy) return;
     const key = `${t.noteId}:${t.blockId}`;
     const target = !t.done;
     setBusy(key);
+    // 乐观更新（回滚不重排——聚合面快照语义）
     setItems((prev) =>
       (prev ?? []).map((x) => (x.noteId === t.noteId && x.blockId === t.blockId ? { ...x, done: target } : x)),
     );
@@ -162,8 +169,37 @@ export default function TodoView(props: {
       }}
     >
       {!compact && (
-        <h1 style={{ margin: `0 0 ${tokens.spacing.md}px`, fontSize: tokens.typography.title.size }}>
+        <h1
+          style={{
+            margin: `0 0 ${tokens.spacing.md}px`,
+            fontSize: tokens.typography.title.size,
+            display: 'flex',
+            alignItems: 'center',
+            gap: tokens.spacing.sm,
+          }}
+        >
           待办聚合
+          {/* G4：视图切换（列表/看板） */}
+          <span style={{ display: 'inline-flex', gap: 4 }}>
+            {(['list', 'board'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                aria-pressed={mode === m}
+                style={{
+                  fontSize: 12,
+                  padding: '2px 10px',
+                  borderRadius: 999,
+                  border: `1px solid ${mode === m ? 'rgba(88,166,255,0.5)' : 'rgba(255,255,255,0.12)'}`,
+                  background: mode === m ? 'rgba(88,166,255,0.14)' : 'transparent',
+                  color: mode === m ? tokens.color.primaryBright : tokens.color.textSecondary,
+                  cursor: 'pointer',
+                }}
+              >
+                {m === 'list' ? '列表' : '看板'}
+              </button>
+            ))}
+          </span>
         </h1>
       )}
       <p style={{ margin: `0 0 ${tokens.spacing.md}px`, color: tokens.color.textSecondary, fontSize: 12 }}>
@@ -173,27 +209,33 @@ export default function TodoView(props: {
             ? '加载中…'
             : `进行中 ${pending.length} · 已完成 ${done.length}（勾选直接回写源笔记）`}
       </p>
-      {!open && !failed && (items ?? []).length === 0 && (
-        <p style={{ color: tokens.color.textSecondary }}>全库暂无任务行（`- [ ] ` 开头即计入）</p>
-      )}
-      {!open && pending.length > 0 && (
+      {!compact && mode === 'board' ? (
+        <KanbanBoard invoke={invoke} onOpenNote={onOpenNote} />
+      ) : (
         <>
-          <h2 style={{ fontSize: tokens.typography.caption.size + 1, color: tokens.color.warning, margin: `0 0 4px` }}>
-            进行中
-          </h2>
-          <ul style={{ listStyle: 'none', margin: `0 0 ${tokens.spacing.md}px`, padding: 0 }}>
-            {pending.map((t) => row(t, false))}
-          </ul>
-        </>
-      )}
-      {!open && done.length > 0 && (
-        <>
-          <h2 style={{ fontSize: tokens.typography.caption.size + 1, color: tokens.color.success, margin: `0 0 4px` }}>
-            已完成
-          </h2>
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {done.map((t) => row(t, true))}
-          </ul>
+          {!open && !failed && (items ?? []).length === 0 && (
+            <p style={{ color: tokens.color.textSecondary }}>全库暂无任务行（`- [ ] ` 开头即计入）</p>
+          )}
+          {!open && pending.length > 0 && (
+            <>
+              <h2 style={{ fontSize: tokens.typography.caption.size + 1, color: tokens.color.warning, margin: `0 0 4px` }}>
+                进行中
+              </h2>
+              <ul style={{ listStyle: 'none', margin: `0 0 ${tokens.spacing.md}px`, padding: 0 }}>
+                {pending.map((t) => row(t, false))}
+              </ul>
+            </>
+          )}
+          {!open && done.length > 0 && (
+            <>
+              <h2 style={{ fontSize: tokens.typography.caption.size + 1, color: tokens.color.success, margin: `0 0 4px` }}>
+                已完成
+              </h2>
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                {done.map((t) => row(t, true))}
+              </ul>
+            </>
+          )}
         </>
       )}
     </main>

@@ -220,6 +220,8 @@ pub fn run() {
             cmd_weekly_review,
             cmd_get_backlinks,
             cmd_add_review_card,
+            cmd_board_tasks,
+            cmd_set_task_status,
             cmd_due_review_cards,
             cmd_review_card,
             attachment_commands::cmd_read_attachment,
@@ -1044,6 +1046,38 @@ async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, String>
         .review_card(&card_id, rating)
         .ok_or_else(|| format!("card not found: {}", card_id))?;
     Ok(out.due.to_rfc3339())
+}
+
+/// G4：看板数据源——投影全量行（status 分列用）。
+#[tauri::command]
+async fn cmd_board_tasks() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    Ok(task_proj(&core)?
+        .rows()
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "task_id": r.task_id,
+                "note_id": r.note_id,
+                "title": r.title,
+                "status": r.status,
+                "priority": r.priority,
+                "due_date": r.due_date,
+                "blocked": false,
+            })
+        })
+        .collect())
+}
+
+/// G4：看板换列（投影行 status 直改——core set_row_status 统一 stamp
+/// 语义；v1 边界：不回写笔记文本——R2-Bug1 title 映射保投影态自洽，
+/// 文本回写 v2）。
+#[tauri::command]
+async fn cmd_set_task_status(task_id: String, status: String) -> Result<(), String> {
+    let core = get_core()?;
+    task_proj(&core)?
+        .set_row_status(&task_id, &status)
+        .map_err(|e| e.to_string())
 }
 
 /// G3：笔记级建卡（笔记 Distill 的 v1 形态——整笔记一张卡）。
