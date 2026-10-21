@@ -70,8 +70,10 @@ fn priority_of(text: &str) -> &'static str {
 pub struct DueParse {
     /// 截止时刻（Unix 毫秒）
     pub due_ts: i64,
-    /// 命中片段字节偏移 `[matched_start, matched_end)`（text 内——
-    /// 天词/周词/N天后 与 时刻段 的并集）
+    /// 命中片段 **char offset** `[matched_start, matched_end)`（text 内——
+    /// 天词/周词/N天后 与 时刻段 的并集）。char 而非字节：前端 JS 字符串
+    /// 切片按 UTF-16/code point 走（BMP 内 char==code unit），字节偏移会
+    /// 漂移（R-α1 复核采纳——v2 overlay 高亮的正确坐标系）。
     pub matched_start: usize,
     pub matched_end: usize,
 }
@@ -253,6 +255,9 @@ pub fn due_parse(text: &str) -> Option<DueParse> {
     //    无时刻→v1 相对偏移语义（now+days，零回归）。
     //    R3-1：span = 命中片段并集（天词/周词/N天后 与 时刻段）。
     let (h, m) = time_str.as_deref().and_then(parse_time).unzip();
+    // R-α1：字节偏移 → char offset（内部 span 全程字节算，出口统一转——
+    // 前端 JS 切片按 code point 走，中文 UTF-8 3 字节/char 直接漂移）
+    let to_char = |b: usize| text[..b].chars().count();
     let span = || {
         let mut spans: Vec<(usize, usize)> = Vec::new();
         if let Some(s) = day_span {
@@ -266,7 +271,7 @@ pub fn due_parse(text: &str) -> Option<DueParse> {
         }
         let lo = spans.iter().map(|(s, _)| *s).min().unwrap_or(0);
         let hi = spans.iter().map(|(_, e)| *e).max().unwrap_or(0);
-        (lo, hi)
+        (to_char(lo), to_char(hi))
     };
     if let Some(days) = day_offset.or(weekday_offset) {
         let base = now.date_naive() + chrono::Duration::days(days);
@@ -545,10 +550,12 @@ mod tests {
 
     #[test]
     fn due_parse_span_combination() {
-        // 「明天 9 点」——天词+时刻并集 span，覆盖整个短语
+        // R-α1：span=char offset 语义——中文前缀不漂移（JS Array.from 对齐）
         let d = due_parse("- [ ] 交周报 明天 9 点").unwrap();
-        let m = &"- [ ] 交周报 明天 9 点"[d.matched_start..d.matched_end];
-        assert_eq!(m, "明天 9 点", "并集 span 覆盖天词+时刻段");
+        let chars: Vec<char> = "- [ ] 交周报 明天 9 点".chars().collect();
+        let m: String = chars[d.matched_start..d.matched_end].iter().collect();
+        assert_eq!(m, "明天 9 点", "并集 span 覆盖天词+时刻段（char offset）");
+        assert_eq!(&chars[..d.matched_start].iter().collect::<String>(), "- [ ] 交周报 ");
         // 有时刻=当天该时刻语义：非相对偏移（due 应为 09:00 锚定）
         let due_local = chrono::DateTime::from_timestamp_millis(d.due_ts).unwrap();
         assert_eq!(due_local.format("%H:%M").to_string(), "09:00");
@@ -556,18 +563,21 @@ mod tests {
 
     #[test]
     fn due_parse_span_weekday_and_ndafter() {
+        // R-α1 char 语义切片助手
+        let seg = |text: &str, d: &DueParse| -> String {
+            text.chars().collect::<Vec<_>>()[d.matched_start..d.matched_end]
+                .iter()
+                .collect()
+        };
         // 周词 span
         let d = due_parse("周五 3 点 前完成").unwrap();
-        assert_eq!(
-            &"周五 3 点 前完成"[d.matched_start..d.matched_end],
-            "周五 3 点"
-        );
-        // N 天后（数字回扫含空白）span 覆盖「3 天后」
+        assert_eq!(seg("周五 3 点 前完成", &d), "周五 3 点");
+        // N 天后（数字回扫含空白）span 覆盖「3 天后 14:30」
         let d2 = due_parse("3 天后 14:30 汇报").unwrap();
-        assert_eq!(
-            &"3 天后 14:30 汇报"[d2.matched_start..d2.matched_end],
-            "3 天后 14:30"
-        );
+        assert_eq!(seg("3 天后 14:30 汇报", &d2), "3 天后 14:30");
+        // 「记得 交周五3点」——中文前缀 char offset 不漂移
+        let d3 = due_parse("记得 交周五3点").unwrap();
+        assert_eq!(seg("记得 交周五3点", &d3), "周五3点");
     }
 
     #[test]

@@ -9,7 +9,8 @@ use chrono::{Local, TimeZone};
 #[derive(serde::Serialize)]
 pub struct DuePreview {
     pub due_ts: i64,
-    /// 命中片段字节偏移 [start, end)（core span 直传）
+    /// 命中片段 **char offset** [start, end)（core span 直传——R-α1：
+    /// char 而非字节，前端 JS 字符串切片按 code point 走，字节漂移）
     pub start: usize,
     pub end: usize,
     /// 人类可读格式（本地时区）
@@ -73,8 +74,11 @@ mod tests {
 
     #[test]
     fn preview_of_span_matches_core() {
-        let p = preview_of("明天 9 点交周报").unwrap();
-        assert_eq!(&"明天 9 点交周报"[p.start..p.end], "明天 9 点");
+        // R-α1：span=char offset——带中文前缀切 char 而非字节
+        let p = preview_of("记得 交周报 明天 9 点").unwrap();
+        let chars: Vec<char> = "记得 交周报 明天 9 点".chars().collect();
+        let seg: String = chars[p.start..p.end].iter().collect();
+        assert_eq!(seg, "明天 9 点");
         assert_eq!(p.human, "明天 09:00");
         assert!(preview_of("无日期散文").is_none());
     }
