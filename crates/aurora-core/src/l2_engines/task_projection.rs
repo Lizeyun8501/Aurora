@@ -173,6 +173,22 @@ impl TaskProjection {
         before - rows.len()
     }
 
+    /// R3-2：窗口查询——due ∈ [from_ms, to_ms) 的非终态行（TodayView
+    /// 三分区之「后续」数据面）。终态（done/cancelled）排除。
+    pub fn due_between(&self, from_ms: i64, to_ms: i64) -> Vec<TaskViewRow> {
+        self.rows
+            .read()
+            .unwrap()
+            .values()
+            .filter(|r| {
+                r.status != "done"
+                    && r.status != "cancelled"
+                    && r.due_date.is_some_and(|d| d >= from_ms && d < to_ms)
+            })
+            .cloned()
+            .collect()
+    }
+
     /// 今日视图: 未完成 + due <= 给定时刻（含逾期）。
     pub fn today(&self, now_ms: i64) -> Vec<TaskViewRow> {
         self.rows

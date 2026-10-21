@@ -209,6 +209,7 @@ pub fn run() {
             cmd_remove_task_dependency,
             cmd_blocked_task_ids,
             cmd_today_task_rows,
+            cmd_upcoming_tasks,
             cmd_get_task_dependencies,
             cmd_pomodoro_state,
             cmd_pomodoro_start,
@@ -762,10 +763,22 @@ async fn cmd_get_task_dependencies(task_id: String) -> Result<Vec<String>, Strin
 async fn cmd_today_task_rows() -> Result<Vec<serde_json::Value>, String> {
     let core = get_core()?;
     let proj = task_proj(&core)?;
-    let now_ms = chrono::Utc::now().timestamp_millis();
+    // R3-2：窗口=今日全天（23:59:59.999）——今天晚些时刻截止的任务
+    // 今天就该出现在视图里（v1 只取「此刻前」漏掉当日未来截止项）；
+    // 逾期项（due<今日 0 点）天然含在集内——前端按今日 0 点分界分区。
+    let today_end = {
+        use chrono::Datelike;
+        let t = chrono::Local::now();
+        chrono::Local
+            .with_ymd_and_hms(t.year(), t.month(), t.day(), 23, 59, 59)
+            .single()
+            .unwrap_or_else(chrono::Local::now)
+            .timestamp_millis()
+            + 999
+    };
     let blocked = proj.blocked_ids().await;
     let mut rows = proj
-        .today(now_ms)
+        .today(today_end)
         .into_iter()
         .map(|r| {
             serde_json::json!({
@@ -785,6 +798,37 @@ async fn cmd_today_task_rows() -> Result<Vec<serde_json::Value>, String> {
         bb.cmp(&ba)
             .then(b["task_id"].as_str().cmp(&a["task_id"].as_str()))
     });
+    Ok(rows)
+}
+
+/// R3-2：后续任务行——due ∈ (今日末, 今日末+N 天] 的非终态行
+/// （TodayView 三分区之「后续」，默认 7 天窗口）。
+#[tauri::command]
+async fn cmd_upcoming_tasks(days: Option<i64>) -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let proj = task_proj(&core)?;
+    use chrono::Datelike;
+    let t = chrono::Local::now();
+    let today_end = chrono::Local
+        .with_ymd_and_hms(t.year(), t.month(), t.day(), 23, 59, 59)
+        .single()
+        .unwrap_or_else(chrono::Local::now)
+        .timestamp_millis()
+        + 999;
+    let window = days.unwrap_or(7).clamp(1, 90);
+    let rows = proj
+        .due_between(today_end, today_end + window * 86_400_000)
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "task_id": r.task_id,
+                "title": r.title,
+                "status": r.status,
+                "priority": r.priority,
+                "due_date": r.due_date,
+            })
+        })
+        .collect::<Vec<_>>();
     Ok(rows)
 }
 

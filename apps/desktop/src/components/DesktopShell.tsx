@@ -863,25 +863,56 @@ function WeeklyReview({ invoke }: { invoke: InvokeFn | null }): React.ReactEleme
   );
 }
 
+/** R3-2：TodayTaskRow 行数据面（due_date 加——分区判定键）。 */
+interface TodayTaskRow {
+  task_id: string;
+  title: string;
+  status: string;
+  priority?: string;
+  due_date?: number | null;
+  blocked: boolean;
+}
+
+/** R3-2：分区标题行（计数徽章）。 */
+function SectionHead({ label, count, tone }: { label: string; count: number; tone: string }): React.ReactElement {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: tokens.spacing.sm, marginBottom: 2 }}>
+      <span style={{ fontSize: tokens.typography.caption.size, fontWeight: 600, color: tone }}>{label}</span>
+      <span
+        style={{
+          fontSize: tokens.typography.caption.size,
+          padding: '0 7px',
+          borderRadius: 999,
+          background: 'rgba(255,255,255,0.08)',
+          color: tone,
+        }}
+      >
+        {count}
+      </span>
+    </div>
+  );
+}
+
+/** R3-2：今日三分区（Todoist 式——逾期/今天/后续）。 */
 function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElement {
-  const [rows, setRows] = useState<
-    Array<{ task_id: string; title: string; status: string; blocked: boolean }>
-  >([]);
+  const [rows, setRows] = useState<TodayTaskRow[]>([]);
+  const [upcoming, setUpcoming] = useState<TodayTaskRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!invoke) return;
     try {
-      const out = (await invoke('cmd_today_task_rows')) as Array<{
-        task_id: string;
-        title: string;
-        status: string;
-        blocked: boolean;
-      }>;
+      const out = (await invoke('cmd_today_task_rows')) as TodayTaskRow[];
       setRows(out);
     } catch {
       /* 投影未注册等场景静默（列表为空态） */
+    }
+    try {
+      const up = (await invoke('cmd_upcoming_tasks', { days: 7 })) as TodayTaskRow[];
+      setUpcoming(up);
+    } catch {
+      setUpcoming([]); // 后续窗口降级静默
     }
     setLoaded(true);
   }, [invoke]);
@@ -889,6 +920,63 @@ function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElem
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // 分区判定（本地时区今日 0 点为界；due 缺失归今天）
+  const dayStart = (() => {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+  })();
+  const overdue = rows.filter((r) => r.due_date != null && r.due_date < dayStart);
+  const todayRows = rows.filter((r) => !(r.due_date != null && r.due_date < dayStart));
+
+  const renderRow = (r: TodayTaskRow, opts?: { overdue?: boolean }) => (
+    <div key={r.task_id}>
+      <div
+        onClick={() => setExpanded(expanded === r.task_id ? null : r.task_id)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: tokens.spacing.sm,
+          background: tokens.color.bgSurface,
+          border: opts?.overdue ? '1px solid rgba(229,72,77,0.45)' : '1px solid rgba(255,255,255,0.08)',
+          borderRadius: tokens.radius.md,
+          padding: `${tokens.spacing.xs + 2}px ${tokens.spacing.sm}px`,
+          cursor: 'pointer',
+        }}
+      >
+        <span
+          style={{
+            fontSize: tokens.typography.caption.size,
+            padding: '1px 8px',
+            borderRadius: 999,
+            background: r.blocked ? 'rgba(229,72,77,0.18)' : 'rgba(88,166,255,0.14)',
+            color: r.blocked ? tokens.color.danger : tokens.color.primaryBright,
+            whiteSpace: 'nowrap',
+          }}
+          title={r.blocked ? '前置任务未完成——阻塞中' : r.status}
+        >
+          {r.blocked ? '⛔ blocked' : r.status}
+        </span>
+        {opts?.overdue && (
+          <span style={{ color: tokens.color.danger, fontSize: tokens.typography.caption.size }}>
+            逾期 {Math.max(1, Math.ceil((dayStart - (r.due_date ?? 0)) / 86_400_000))} 天
+          </span>
+        )}
+        <span style={{ fontSize: tokens.typography.body.size, flex: 1 }}>{r.title}</span>
+        <span style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size }}>
+          {expanded === r.task_id ? '收起 ▲' : '依赖 ▼'}
+        </span>
+      </div>
+      {expanded === r.task_id && invoke && (
+        <DepEditor
+          invoke={invoke}
+          taskId={r.task_id}
+          candidates={rows.map((x) => ({ task_id: x.task_id, title: x.title }))}
+          onDone={() => void refresh()}
+        />
+      )}
+    </div>
+  );
 
   return (
     <div style={{ marginTop: tokens.spacing.lg }}>
@@ -899,25 +987,35 @@ function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElem
         <p style={{ color: tokens.color.textSecondary }}>
           browser-mock 模式——任务命令仅 tauri 模式可用
         </p>
-      ) : rows.length === 0 ? (
+      ) : rows.length === 0 && upcoming.length === 0 ? (
         <p style={{ color: tokens.color.textSecondary }}>
-          {loaded ? '今日无未完成任务' : '任务加载中…'}
+          {loaded ? '今日无任务，后续 7 天也无安排' : '任务加载中…'}
         </p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
-          {rows.map((r) => (
+          {overdue.length > 0 && (
+            <SectionHead label="逾期" count={overdue.length} tone={tokens.color.danger} />
+          )}
+          {overdue.map((r) => renderRow(r, { overdue: true }))}
+          {todayRows.length > 0 && (
+            <SectionHead label="今天" count={todayRows.length} tone={tokens.color.primaryBright} />
+          )}
+          {todayRows.map((r) => renderRow(r))}
+          {upcoming.length > 0 && (
+            <SectionHead label="后续 7 天" count={upcoming.length} tone={tokens.color.textSecondary} />
+          )}
+          {upcoming.map((r) => (
             <div key={r.task_id}>
               <div
-                onClick={() => setExpanded(expanded === r.task_id ? null : r.task_id)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: tokens.spacing.sm,
                   background: tokens.color.bgSurface,
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  border: '1px solid rgba(255,255,255,0.05)',
                   borderRadius: tokens.radius.md,
                   padding: `${tokens.spacing.xs + 2}px ${tokens.spacing.sm}px`,
-                  cursor: 'pointer',
+                  opacity: 0.75,
                 }}
               >
                 <span
@@ -925,29 +1023,16 @@ function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElem
                     fontSize: tokens.typography.caption.size,
                     padding: '1px 8px',
                     borderRadius: 999,
-                    background: r.blocked
-                      ? 'rgba(229,72,77,0.18)'
-                      : 'rgba(88,166,255,0.14)',
-                    color: r.blocked ? tokens.color.danger : tokens.color.primaryBright,
+                    background: 'rgba(255,255,255,0.07)',
+                    color: tokens.color.textSecondary,
                     whiteSpace: 'nowrap',
                   }}
-                  title={r.blocked ? '前置任务未完成——阻塞中' : r.status}
+                  title="后续任务（未来 7 天窗口）"
                 >
-                  {r.blocked ? '⛔ blocked' : r.status}
+                  {r.due_date != null ? new Date(r.due_date).toLocaleDateString() : r.status}
                 </span>
                 <span style={{ fontSize: tokens.typography.body.size, flex: 1 }}>{r.title}</span>
-                <span style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size }}>
-                  {expanded === r.task_id ? '收起 ▲' : '依赖 ▼'}
-                </span>
               </div>
-              {expanded === r.task_id && invoke && (
-                <DepEditor
-                  invoke={invoke}
-                  taskId={r.task_id}
-                  candidates={rows.map((x) => ({ task_id: x.task_id, title: x.title }))}
-                  onDone={() => void refresh()}
-                />
-              )}
             </div>
           ))}
         </div>
@@ -1523,6 +1608,77 @@ function AttachmentStrip(props: { invoke: InvokeFn | null; content: string }) {
   );
 }
 
+/** R3-3：页面面包屑——层级路径（全部笔记 / 目录A / 子目录B / 标题），
+ *  每级可点击跳目录；树数据 cmd_list_tree 轻量缓存（挂载一次+静默降级）。 */
+function Breadcrumb({
+  invoke,
+  noteId,
+  onSelectFolder,
+}: {
+  invoke: InvokeFn | null;
+  noteId: string;
+  onSelectFolder: (id: string) => void;
+}): React.ReactElement | null {
+  const [tree, setTree] = useState<TreeNodeFlat[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (!invoke) return;
+    invoke('cmd_list_tree')
+      .then((rows) => {
+        if (alive) setTree(rows as TreeNodeFlat[]);
+      })
+      .catch(() => {}); // 树面降级——面包屑不渲染
+    return () => {
+      alive = false;
+    };
+  }, [invoke]);
+
+  if (!tree || tree.length === 0) return null;
+  const byId = new Map(tree.map((n) => [n.note_id, n]));
+  // 回溯 folder 链（防环：seen 集合+上限 32）
+  const chain: TreeNodeFlat[] = [];
+  let cur = byId.get(noteId);
+  let hops = 0;
+  while (cur && cur.parent_id && hops < 32) {
+    if (chain.some((c) => c.note_id === cur?.parent_id)) break; // 环兜底
+    const parent = byId.get(cur.parent_id);
+    if (!parent) break;
+    chain.unshift(parent);
+    cur = parent;
+    hops += 1;
+  }
+  if (chain.length === 0) return null; // 根级笔记不套壳
+  const crumbs = [{ note_id: '', title: '全部笔记', kind: 'Folder' as const }, ...chain];
+  return (
+    <nav
+      data-testid="breadcrumb"
+      aria-label="层级路径"
+      style={{ fontSize: tokens.typography.caption.size, marginBottom: tokens.spacing.xs }}
+    >
+      {crumbs.map((c, i) => (
+        <span key={c.note_id + i}>
+          <span
+            role="link"
+            tabIndex={0}
+            onClick={() => c.note_id && onSelectFolder(c.note_id)}
+            onKeyDown={(e) => e.key === 'Enter' && c.note_id && onSelectFolder(c.note_id)}
+            style={{
+              color: tokens.color.textSecondary,
+              cursor: c.note_id ? 'pointer' : 'default',
+              textDecoration: c.note_id ? 'underline dotted' : 'none',
+            }}
+            title={c.note_id ? `跳转目录：${c.title}` : undefined}
+          >
+            {c.title}
+          </span>
+          <span style={{ color: tokens.color.textSecondary, margin: '0 6px', opacity: 0.5 }}>/</span>
+        </span>
+      ))}
+      <span style={{ color: tokens.color.primaryBright }}>{byId.get(noteId)?.title ?? ''}</span>
+    </nav>
+  );
+}
+
 function EditorPane(props: {
   note: NoteContent | null;
   loading: boolean;
@@ -1530,6 +1686,8 @@ function EditorPane(props: {
   /** DK-UI-S2：反链点击跳转（3.1 起由右侧常驻面板承接——本组件内已无
       直接消费方，prop 保留向后兼容防调用点漂移；TS 前缀下划线规避 6133）。 */
   onSelect?: (id: string) => void;
+  /** R3-3：面包屑目录点击跳转（TreeSection onSelect Folder 链路）。 */
+  onSelectFolder: (id: string) => void;
   /** S3 持久化面（useDataBridge 三方法，主组件桥接） */
   persist: {
     loadSnapshot: (noteId: string) => Promise<string | null>;
@@ -1537,7 +1695,7 @@ function EditorPane(props: {
     saveContent: (noteId: string, content: string) => Promise<void>;
   };
 }) {
-  const { note, loading, invoke, persist, onSelect: _onSelect } = props;
+  const { note, loading, invoke, persist, onSelect: _onSelect, onSelectFolder } = props;
   /* DK-编辑器补全：[[ 触发标题候选（进编辑面后拉一次+切笔记刷新；候选
      容忍陈旧——新建标题在下次进入编辑面时入池，诚实边界） */
   const [wikiTitles, setWikiTitles] = useState<string[]>([]);
@@ -1594,6 +1752,7 @@ function EditorPane(props: {
         minWidth: 0,
       }}
     >
+      <Breadcrumb invoke={invoke} noteId={note.note_id} onSelectFolder={onSelectFolder} />
       <h1
         style={{
           margin: `0 0 ${tokens.spacing.sm}px`,
@@ -3418,6 +3577,10 @@ export default function DesktopShell() {
               loading={loading}
               invoke={invoke}
               onSelect={(id) => {
+                setSelectedId(id);
+                setView('notes');
+              }}
+              onSelectFolder={(id) => {
                 setSelectedId(id);
                 setView('notes');
               }}
