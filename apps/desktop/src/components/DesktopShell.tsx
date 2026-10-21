@@ -1502,6 +1502,48 @@ function TreeSection(props: {
           if (id) void moveNodeTo(id, null);
         }}
       >
+        {/* G2：journal 回看流——title=yyyy-MM-dd 的笔记虚拟分组（Roam/Logseq
+            daily-notes 心智；DK-19 每日笔记的回看面） */}
+        {(() => {
+          const journal = flat
+            .filter((n) => n.kind === 'Note' && /^\d{4}-\d{2}-\d{2}$/.test(n.title))
+            .sort((a, b) => b.title.localeCompare(a.title))
+            .slice(0, 10);
+          if (journal.length === 0) return null;
+          return (
+            <div data-testid="journal-stream" style={{ marginBottom: tokens.spacing.sm }}>
+              <div
+                style={{
+                  fontSize: tokens.typography.caption.size,
+                  fontWeight: 600,
+                  color: tokens.color.textSecondary,
+                  padding: `${tokens.spacing.xs}px ${tokens.spacing.sm}px`,
+                }}
+              >
+                📅 日记（近 {journal.length} 篇）
+              </div>
+              {journal.map((n) => (
+                <div
+                  key={n.note_id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelect(n.note_id, 'Note')}
+                  onKeyDown={(e) => e.key === 'Enter' && onSelect(n.note_id, 'Note')}
+                  style={{
+                    ...rowStyle(n.note_id === selectedId, 0),
+                    color: n.note_id === selectedId ? tokens.color.primaryBright : undefined,
+                  }}
+                  title={`打开日记：${n.title}`}
+                >
+                  <span aria-hidden>🗓</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                    {n.title}
+                  </span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         {tree.map((n) => renderNode(n, 0))}
       </div>
     </div>
