@@ -33,6 +33,7 @@ import LiquifyReview from './LiquifyReview';
 import PairDialog from './PairDialog';
 import QuickCapture, { useQuickCaptureEvent } from './QuickCapture';
 import ReviewPanel from './ReviewPanel';
+import CoverHeader from './CoverHeader';
 // DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
 import SyncStatusBadge from './SyncStatusBadge';
 import QueuePanel from './QueuePanel';
@@ -1742,6 +1743,17 @@ function EditorPane(props: {
   /* DK-编辑器补全：[[ 触发标题候选（进编辑面后拉一次+切笔记刷新；候选
      容忍陈旧——新建标题在下次进入编辑面时入池，诚实边界） */
   const [wikiTitles, setWikiTitles] = useState<string[]>([]);
+  /* R4-2：专注模式（distraction-free v1——正文列窄化居中+弱化元信息；
+     侧栏隐藏联动与块级 zoom-in v2——跨组件路由后续卡） */
+  const [focusMode, setFocusMode] = useState(false);
+  useEffect(() => {
+    if (!focusMode) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setFocusMode(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [focusMode]);
   useEffect(() => {
     let alive = true;
     if (!invoke) return;
@@ -1790,12 +1802,36 @@ function EditorPane(props: {
     <main
       style={{
         flex: 1,
-        padding: `${tokens.spacing.lg}px ${tokens.spacing.xl}px`,
+        padding: focusMode
+          ? `${tokens.spacing.lg}px ${tokens.spacing.xl}px`
+          : `${tokens.spacing.lg}px ${tokens.spacing.xl}px`,
         overflowY: 'auto',
         minWidth: 0,
+        maxWidth: focusMode ? 760 : undefined,
+        margin: focusMode ? '0 auto' : undefined,
+        background: focusMode ? tokens.color.bgBase : undefined,
       }}
     >
-      <Breadcrumb invoke={invoke} noteId={note.note_id} onSelectFolder={onSelectFolder} />
+      {focusMode && (
+        <button
+          onClick={() => setFocusMode(false)}
+          style={{
+            fontSize: 12,
+            padding: '3px 10px',
+            borderRadius: 999,
+            border: '1px solid rgba(255,255,255,0.14)',
+            background: 'transparent',
+            color: tokens.color.textSecondary,
+            cursor: 'pointer',
+            marginBottom: tokens.spacing.xs,
+          }}
+          title="退出专注（Esc）"
+        >
+          ⛶ 专注中 — 退出
+        </button>
+      )}
+      {!focusMode && <Breadcrumb invoke={invoke} noteId={note.note_id} onSelectFolder={onSelectFolder} />}
+      {!focusMode && <CoverHeader noteId={note.note_id} />}
       <h1
         style={{
           margin: `0 0 ${tokens.spacing.sm}px`,
@@ -1814,6 +1850,24 @@ function EditorPane(props: {
         }}
       >
         更新于 {note.updated_at} · DK-05 S3 · 编辑态（快照恢复 / 防抖双写落库）
+        {!focusMode && (
+          <button
+            onClick={() => setFocusMode(true)}
+            style={{
+              marginLeft: tokens.spacing.sm,
+              fontSize: 11,
+              padding: '1px 8px',
+              borderRadius: 999,
+              border: '1px solid rgba(255,255,255,0.12)',
+              background: 'transparent',
+              color: tokens.color.textSecondary,
+              cursor: 'pointer',
+            }}
+            title="专注模式：正文窄化居中，弱化周边信息"
+          >
+            ⛶ 专注
+          </button>
+        )}
       </p>
       {/* DK-2.5 标签行：只读 chips + 「+」编辑（prompt 逗号分隔——
           cmd_set_note_tags 全量覆盖语义；失败静默降级不阻断编辑） */}

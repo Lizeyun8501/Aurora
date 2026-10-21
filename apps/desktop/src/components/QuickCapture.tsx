@@ -126,31 +126,80 @@ export default function QuickCapture({ invoke, onClose }: Props) {
             （Alt+Shift+N 唤起 · Cmd/Ctrl+Enter 保存 · Esc 关闭 · 落 #capture）
           </span>
         </div>
-        <textarea
-          ref={taRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              void save();
-            }
-            if (e.key === 'Escape') onClose();
-          }}
-          rows={4}
-          placeholder="想到什么写什么——第一行作标题"
-          style={{
-            width: '96%',
-            fontFamily: tokens.typography.mono,
-            fontSize: 13,
-            background: tokens.color.bgBase,
-            color: tokens.color.textPrimary,
-            border: '1px solid rgba(255,255,255,0.16)',
-            borderRadius: tokens.radius.sm,
-            padding: 8,
-            resize: 'vertical',
-          }}
-        />
+        {/* R4-3：镜像高亮层——textarea 透明化叠于高亮 div 之上（同字体/
+            padding/行高同步渲染；span=char offset——Array.from 切 code point） */}
+        <div style={{ position: 'relative', width: '96%' }}>
+          {preview && (
+            <div
+              aria-hidden
+              style={{
+                position: 'absolute',
+                inset: 0,
+                padding: 8,
+                fontFamily: tokens.typography.mono,
+                fontSize: 13,
+                lineHeight: '19px',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                overflow: 'hidden',
+                pointerEvents: 'none',
+                color: 'transparent',
+                border: '1px solid transparent',
+                borderRadius: tokens.radius.sm,
+              }}
+            >
+              {(() => {
+                const chars = Array.from(text);
+                const before = chars.slice(0, preview.start).join('');
+                const hit = chars.slice(preview.start, preview.end).join('');
+                const after = chars.slice(preview.end).join('');
+                return (
+                  <>
+                    {before}
+                    <mark
+                      style={{
+                        background: 'rgba(88,166,255,0.32)',
+                        color: 'transparent',
+                        borderRadius: 3,
+                      }}
+                    >
+                      {hit}
+                    </mark>
+                    {after}
+                  </>
+                );
+              })()}
+            </div>
+          )}
+          <textarea
+            ref={taRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                void save();
+              }
+              if (e.key === 'Escape') onClose();
+            }}
+            rows={4}
+            placeholder="想到什么写什么——第一行作标题"
+            style={{
+              width: '100%',
+              fontFamily: tokens.typography.mono,
+              fontSize: 13,
+              lineHeight: '19px',
+              background: tokens.color.bgBase,
+              color: tokens.color.textPrimary,
+              border: '1px solid rgba(255,255,255,0.16)',
+              borderRadius: tokens.radius.sm,
+              padding: 8,
+              resize: 'vertical',
+              position: 'relative',
+              zIndex: 1,
+            }}
+          />
+        </div>
         {err && (
           <div role="alert" style={{ color: '#f88', fontSize: 13, marginTop: 4 }}>
             {err}
