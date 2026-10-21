@@ -87,7 +87,12 @@ pub struct DueParse {
 ///   单独出现=今天该时刻（已过则明天的）
 /// - 无时刻的天词：v1 语义 now+days（相对偏移，零回归）
 pub fn due_parse(text: &str) -> Option<DueParse> {
-    let now = Utc::now();
+    due_parse_at(text, Utc::now())
+}
+
+/// R-α2：now 注入变体——对拍测试可固定时刻断言精确值（相对词
+/// 「明天/周X/N天后」以 now 为基准；due_parse=薄壳注入 Utc::now()）。
+pub fn due_parse_at(text: &str, now: chrono::DateTime<Utc>) -> Option<DueParse> {
     // 时刻解析（局部辅助）：返回 (时, 分)
     fn parse_time(s: &str) -> Option<(u32, u32)> {
         // N:MM / N:MM分
@@ -547,6 +552,30 @@ mod tests {
     }
 
     // ── R3-1：due_parse span 化回归 ──
+
+    // ── R-α2：now 注入对拍（固定时刻断言精确值） ──
+
+    #[test]
+    fn due_parse_at_fixed_now() {
+        use chrono::TimeZone;
+        let now = Utc.with_ymd_and_hms(2026, 10, 21, 10, 0, 0).unwrap(); // 周三
+        // 「明天 9 点」= 2026-10-22 09:00 精确断言
+        let d = due_parse_at("明天 9 点交", now).unwrap();
+        let dt = chrono::DateTime::from_timestamp_millis(d.due_ts).unwrap();
+        assert_eq!(dt.format("%Y-%m-%d %H:%M").to_string(), "2026-10-22 09:00");
+        // 「周五」按环算=本周五=2026-10-23（今天周三）
+        let d2 = due_parse_at("周五前交", now).unwrap();
+        let dt2 = chrono::DateTime::from_timestamp_millis(d2.due_ts).unwrap();
+        assert_eq!(dt2.format("%Y-%m-%d").to_string(), "2026-10-23");
+        // 「3 天后」=2026-10-24
+        let d3 = due_parse_at("3 天后汇报", now).unwrap();
+        let dt3 = chrono::DateTime::from_timestamp_millis(d3.due_ts).unwrap();
+        assert_eq!(dt3.format("%Y-%m-%d").to_string(), "2026-10-24");
+        // 「今天」=相对 now（now+0 天）
+        let d4 = due_parse_at("今天内给", now).unwrap();
+        let dt4 = chrono::DateTime::from_timestamp_millis(d4.due_ts).unwrap();
+        assert_eq!(dt4.format("%Y-%m-%d").to_string(), "2026-10-21");
+    }
 
     #[test]
     fn due_parse_span_combination() {

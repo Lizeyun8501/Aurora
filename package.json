@@ -2,5 +2,11 @@
   "name": "aurora-note",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["apps/*", "shared/*"]
+  "workspaces": [
+    "apps/*",
+    "shared/*"
+  ],
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.2"
+  }
 }
