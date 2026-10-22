@@ -45,6 +45,34 @@ const TYPE_LABEL: Record<string, string> = {
   Formula: '公式',
 };
 
+/* G1-v4/R8：类型感知单元格比较——Number 数值序、Date 归一毫秒序
+   （RFC3339 串与整数时间戳混合形态，ISO 字符串序≠时间序）、
+   Checkbox false<true；其余列 localeCompare 中文拼音序。 */
+function cellCompare(d: PropDef, a: unknown, b: unknown): number {
+  const key = typeKey(d.prop_type);
+  if (key === 'Number') {
+    const na = parseFloat(String(a));
+    const nb = parseFloat(String(b));
+    const va = Number.isNaN(na) ? -Infinity : na;
+    const vb = Number.isNaN(nb) ? -Infinity : nb;
+    return va === vb ? 0 : va < vb ? -1 : 1;
+  }
+  if (key === 'Date') {
+    const toMs = (v: unknown): number => {
+      if (typeof v === 'number') return v;
+      const t = Date.parse(String(v));
+      return Number.isNaN(t) ? -Infinity : t;
+    };
+    const va = toMs(a);
+    const vb = toMs(b);
+    return va === vb ? 0 : va < vb ? -1 : 1;
+  }
+  if (key === 'Checkbox') {
+    return (a === true ? 1 : 0) - (b === true ? 1 : 0);
+  }
+  return String(a).localeCompare(String(b), 'zh-Hans-CN');
+}
+
 function typeKey(t: unknown): string {
   if (typeof t === 'string') return t;
   // R-β2（self-caught）：serde 外部标签变体键为大写原名（{"Select":[...]}）——
@@ -194,6 +222,21 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
       let value: unknown = input;
       if (typeKey(d.prop_type) === 'Number') value = input === '' ? null : Number(input);
       if (typeKey(d.prop_type) === 'Checkbox') value = input === 'true' || input === '是';
+      // R8：Date 列——「t/today」快捷今天；其余可解析输入归一 RFC3339
+      if (typeKey(d.prop_type) === 'Date') {
+        if (input === 't' || input.toLowerCase() === 'today') {
+          value = new Date().toISOString();
+        } else if (input === '') {
+          value = null;
+        } else {
+          const t = Date.parse(input);
+          if (Number.isNaN(t)) {
+            setErr('日期无法解析（RFC3339 或 t=今天）');
+            return false;
+          }
+          value = new Date(t).toISOString();
+        }
+      }
       if (typeKey(d.prop_type) === 'MultiSelect') {
         value = input === '' ? [] : input.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
       }
@@ -235,10 +278,12 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
     }
     if (sortKey) {
       const col = sortKey.col;
+      const titleDef = { prop_type: 'Text' } as PropDef; // 笔记列恒文本序
       list = [...list].sort((a, b) => {
-        const av = col === '__title' ? a.title : String(a.values[col]?.value ?? '');
-        const bv = col === '__title' ? b.title : String(b.values[col]?.value ?? '');
-        return av.localeCompare(bv, 'zh-Hans-CN') * sortKey.dir;
+        if (col === '__title') return cellCompare(titleDef, a.title, b.title) * sortKey.dir;
+        const d = meta?.prop_defs.find((x) => x.id === col);
+        if (!d) return 0;
+        return cellCompare(d, a.values[col]?.value, b.values[col]?.value) * sortKey.dir;
       });
     }
     return list;

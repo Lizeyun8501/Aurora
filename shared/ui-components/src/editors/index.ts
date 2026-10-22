@@ -25,3 +25,10 @@ export type { AuroraEditorHandle, CreateAuroraEditorOptions } from './auroraEdit
 export { RichEditor, EditorToolbar } from './RichEditor';
 export type { EditorPlatformBridge } from './RichEditor';
 export { mdToDoc, mdToNodes, docToMd } from './auroraMarkdown';
+export {
+  focusBlockPlugin,
+  focusBlockKey,
+  focusTopLevelBlock,
+  getCurrentFocus,
+  injectFocusBlockStyle,
+} from './focusBlock';

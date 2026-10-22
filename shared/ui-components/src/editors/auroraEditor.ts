@@ -17,6 +17,7 @@ import { keymap } from 'prosemirror-keymap';
 import { baseKeymap } from 'prosemirror-commands';
 import { splitListItem } from 'prosemirror-schema-list';
 import { LoroDoc } from 'loro-crdt';
+import { focusBlockPlugin } from './focusBlock';
 import { mathNodeViews } from './mathNodeView';
 import { mermaidNodeViews } from './mermaidNodeView';
 import { injectMathStyle } from './mathStyle';
@@ -145,6 +146,7 @@ export function createAuroraEditor(
       }),
       keymap(baseKeymap), // Enter/Backspace/方向键等基础编辑行为
       highlightPlugin, // DK-2.7 切片一：code_block 语法着色
+      focusBlockPlugin, // DK-Zoom / R8：块级聚焦（zoom-in）装饰
       mathInputRules(), // DK-2.7 切片七：$..$ / $$ live 转换
     ],
   });
@@ -178,8 +180,9 @@ export function createAuroraEditor(
     } as EditorProps['nodeViews'],
     dispatchTransaction(tx) {
       view.updateState(view.state.apply(tx));
-      // debounce 保存
-      scheduleSave();
+      // debounce 保存——R8 复核修：仅文档变更才导出快照（deco setMeta 类
+      // 无变化事务——如块聚焦切换——不再触发快照 IO）
+      if (tx.docChanged) scheduleSave();
       onUpdate?.();
     },
   });

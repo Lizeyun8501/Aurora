@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import tokens from '../design/tokens';
 import type { AuroraEditorHandle } from '@aurora/ui-components';
+import { focusTopLevelBlock, getCurrentFocus } from '@aurora/ui-components';
 import CommandPalette, { type PaletteItem } from './CommandPalette';
 import ImportWizard from './ImportWizard';
 import CanvasView from './CanvasView';
@@ -2637,6 +2638,34 @@ function EditAuroraEditor(props: {
               </button>
             ))
           )}
+        </div>
+      )}
+      {/* DK-Zoom / R8：块级聚焦钮——selection 所在顶层块弱化其余块（可再点退出/换块） */}
+      {view && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+          <button
+            onClick={() => {
+              if (!view) return;
+              const { $from } = view.state.selection;
+              if ($from.depth < 1) {
+                focusTopLevelBlock(view, null); // 文档级选区=退出
+                return;
+              }
+              focusTopLevelBlock(view, $from.before(1));
+            }}
+            style={{
+              fontSize: 11,
+              padding: '2px 10px',
+              borderRadius: 999,
+              border: `1px solid ${getCurrentFocus(view) != null ? 'rgba(88,166,255,0.55)' : 'rgba(255,255,255,0.14)'}`,
+              background: getCurrentFocus(view) != null ? 'rgba(88,166,255,0.12)' : 'transparent',
+              color: getCurrentFocus(view) != null ? tokens.color.primaryBright : tokens.color.textSecondary,
+              cursor: 'pointer',
+            }}
+            title="聚焦光标所在顶层块（其余弱化；再点退出）"
+          >
+            {getCurrentFocus(view) != null ? '⌖ 退出聚焦' : '⌖ 聚焦块'}
+          </button>
         </div>
       )}
       <div
