@@ -17,3 +17,7 @@
 
 ## 全局态
 R7→R8 间隔 4h——zoom-in 专项从「侦察后裁切」到直接落地，G1 数据面+编辑器聚焦双线收口；复核五连（R-α1/α2/β1/β2/P3×3）全采节奏稳定。
+
+## 补验闭环（10-22 深夜窗口切片）
+docChanged 门已定位验证：`shared/ui-components/src/editors/auroraEditor.ts` L185 `if (tx.docChanged) scheduleSave()`——与 commit 注记精确一致，deco 事务不再触发快照 IO ✓。**披露条款关闭**。
+**教训自纠**：原披露称「全源 grep」，实际只搜 apps/desktop/src——Alpha 域=shared/ui-components，rg 落点范围=commit 声明域，范围虚标二犯（R7 系列首次）——复核方法学修正：rg 范围覆盖=声明域并集。
