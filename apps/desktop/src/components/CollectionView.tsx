@@ -11,7 +11,7 @@
  * 命令面已就绪等 v2 表格化编辑器；内联单元格编辑/下拉选择器 v2；
  * 视图形态（看板/列表/筛选排序）v2。
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import tokens from '../design/tokens';
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -68,6 +68,10 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
   // G1-v3：内联单元格编辑位 + 视图形态（表格 | 看板）
   const [editing, setEditing] = useState<{ noteId: string; defId: string } | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'board'>('table');
+  // G1-v4：列头排序（null=原始序）+ 文本筛选 + 渲染切片（大集合防卡）
+  const [sortKey, setSortKey] = useState<{ col: string; dir: 1 | -1 } | null>(null);
+  const [filterText, setFilterText] = useState('');
+  const [visibleCount, setVisibleCount] = useState(50);
 
   const refreshCols = useCallback(async () => {
     if (!invoke) return;
@@ -214,6 +218,55 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
     return [];
   }, []);
 
+  /* G1-v4：筛选→排序→切片的渲染管线（纯显示层，不动后端）。
+     筛选匹配 title+文本列值（大小写不敏感）；排序 col='__title' 用 title。 */
+  const shownRows = useMemo(() => {
+    let list = rows;
+    const ft = filterText.trim().toLowerCase();
+    if (ft) {
+      list = list.filter((r) => {
+        if (r.title.toLowerCase().includes(ft)) return true;
+        return (meta?.prop_defs ?? []).some((d) => {
+          if (typeKey(d.prop_type) !== 'Text') return false;
+          const v = r.values[d.id]?.value;
+          return typeof v === 'string' && v.toLowerCase().includes(ft);
+        });
+      });
+    }
+    if (sortKey) {
+      const col = sortKey.col;
+      list = [...list].sort((a, b) => {
+        const av = col === '__title' ? a.title : String(a.values[col]?.value ?? '');
+        const bv = col === '__title' ? b.title : String(b.values[col]?.value ?? '');
+        return av.localeCompare(bv, 'zh-Hans-CN') * sortKey.dir;
+      });
+    }
+    return list;
+  }, [rows, meta, filterText, sortKey]);
+  const visibleRows = useMemo(() => shownRows.slice(0, visibleCount), [shownRows, visibleCount]);
+
+  /* G1-v4：Select 单元格双击循环切选项（表格编辑辅助——看板拖拽为主通道）。 */
+  const cycleSelectCell = useCallback(
+    async (noteId: string, d: PropDef) => {
+      if (!invoke || !meta) return;
+      const opts = selectOptions(d);
+      if (opts.length === 0) return;
+      const r = rows.find((x) => x.note_id === noteId);
+      const cur = r?.values[d.id]?.value;
+      const curStr = typeof cur === 'string' ? cur : '';
+      const idx = opts.indexOf(curStr);
+      const next = idx < 0 ? opts[0] : idx + 1 < opts.length ? opts[idx + 1] : null; // 末位回未分组
+      try {
+        await invoke('cmd_collection_set_cell', { noteId, defId: d.id, value: next });
+        setRows((await invoke('cmd_collection_rows', { id: selected })) as Row[]);
+        setErr(null);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [invoke, meta, rows, selectOptions, selected],
+  );
+
   /* G1-v3 看板视图：按第一个单选列分组；拖卡换组=set_cell（Select 值）。
      「未分组」列对应 null 值（PropertyEngine 对 Select null 放行）。 */
   const [boardDrag, setBoardDrag] = useState<string | null>(null);
@@ -336,17 +389,63 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
               ＋ 加行
             </button>
           </div>
+          {/* G1-v4：文本筛选（title+文本列 contains） */}
+          {meta.prop_defs.length > 0 && (
+            <input
+              value={filterText}
+              onChange={(e) => {
+                setFilterText(e.target.value);
+                setVisibleCount(50); // 筛选变化重置切片
+              }}
+              placeholder="筛选：标题或文本列包含…"
+              style={{
+                width: '100%',
+                maxWidth: 360,
+                marginBottom: 8,
+                padding: '4px 10px',
+                fontSize: 13,
+                borderRadius: tokens.radius.sm,
+                border: '1px solid rgba(255,255,255,0.14)',
+                background: 'rgba(255,255,255,0.04)',
+                color: tokens.color.textPrimary,
+                outline: 'none',
+              }}
+            />
+          )}
           {viewMode === 'table' && (
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
             <thead>
               <tr>
-                <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.14)', color: tokens.color.textSecondary }}>笔记</th>
+                <th
+                  onClick={() =>
+                    setSortKey((prev) =>
+                      prev?.col === '__title' ? (prev.dir === 1 ? { col: '__title', dir: -1 } : null) : { col: '__title', dir: 1 },
+                    )
+                  }
+                  style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.14)', color: tokens.color.textSecondary, cursor: 'pointer', userSelect: 'none' }}
+                  title="点击排序"
+                >
+                  笔记{sortKey?.col === '__title' ? (sortKey.dir === 1 ? ' ▲' : ' ▼') : ''}
+                </th>
                 {meta.prop_defs.map((d) => (
-                  <th key={d.id} style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.14)', color: tokens.color.textSecondary }}>
+                  <th
+                    key={d.id}
+                    onClick={() =>
+                      setSortKey((prev) =>
+                        prev?.col === d.id ? (prev.dir === 1 ? { col: d.id, dir: -1 } : null) : { col: d.id, dir: 1 },
+                      )
+                    }
+                    style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.14)', color: tokens.color.textSecondary, cursor: 'pointer', userSelect: 'none' }}
+                    title="点击排序"
+                  >
                     {d.name}
                     <span style={{ fontSize: 10, marginLeft: 4, opacity: 0.7 }}>[{TYPE_LABEL[typeKey(d.prop_type)] ?? '?'}]</span>
+                    {sortKey?.col === d.id ? (sortKey.dir === 1 ? ' ▲' : ' ▼') : ''}
                     <button
-                      onClick={() => void removeColumn(d.id)}
+                      onClick={(e) => {
+                        e.stopPropagation(); // 防触发列头排序
+                        void removeColumn(d.id);
+                      }}
                       aria-label={`删除列 ${d.name}`}
                       style={{
                         marginLeft: 4,
@@ -366,7 +465,7 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {visibleRows.map((r) => (
                 <tr key={r.note_id}>
                   <td
                     onClick={() => onOpenNote(r.note_id)}
@@ -377,7 +476,7 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                   </td>
                   {meta.prop_defs.map((d) => {
                     const cell = r.values[d.id];
-                    const isEditing = editing?.noteId === r.note_id && editing.defId === d.id;
+                    const isEditing = editing?.noteId === r.note_id && editing?.defId === d.id;
                     const restoreText = cell ? String(cell.value) : '';
                     return (
                       <td
@@ -386,6 +485,11 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                         suppressContentEditableWarning
                         onDoubleClick={(e) => {
                           if (!invoke) return;
+                          // G1-v4：Select 列双击循环切选项（不进文本编辑）
+                          if (typeKey(d.prop_type) === 'Select') {
+                            void cycleSelectCell(r.note_id, d);
+                            return;
+                          }
                           setEditing({ noteId: r.note_id, defId: d.id });
                           setTimeout(() => (e.currentTarget as HTMLElement).focus(), 0);
                         }}
@@ -431,8 +535,32 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                   </td>
                 </tr>
               )}
+              {rows.length > 0 && shownRows.length === 0 && (
+                <tr>
+                  <td colSpan={meta.prop_defs.length + 1} style={{ padding: '14px 8px', color: tokens.color.textSecondary }}>
+                    无匹配——调整筛选词或清除排序
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
+          )}
+          {viewMode === 'table' && shownRows.length > visibleCount && (
+            <button
+              onClick={() => setVisibleCount((n) => n + 50)}
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                padding: '4px 16px',
+                borderRadius: tokens.radius.sm,
+                border: '1px solid rgba(255,255,255,0.14)',
+                background: 'transparent',
+                color: tokens.color.primaryBright,
+                cursor: 'pointer',
+              }}
+            >
+              加载更多（已显示 {visibleRows.length} / {shownRows.length}）
+            </button>
           )}
           {viewMode === 'board' && (() => {
             const selDef = meta.prop_defs.find((d) => typeKey(d.prop_type) === 'Select');

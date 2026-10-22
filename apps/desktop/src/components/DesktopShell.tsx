@@ -1732,6 +1732,9 @@ function EditorPane(props: {
   /** DK-UI-S2：反链点击跳转（3.1 起由右侧常驻面板承接——本组件内已无
       直接消费方，prop 保留向后兼容防调用点漂移；TS 前缀下划线规避 6133）。 */
   onSelect?: (id: string) => void;
+  /** R4-2 v2.1：专注模式（DesktopShell 持有——联动收起侧栏） */
+  focusMode: boolean;
+  setFocusMode: (v: boolean) => void;
   /** R3-3：面包屑目录点击跳转（TreeSection onSelect Folder 链路）。 */
   onSelectFolder: (id: string) => void;
   /** S3 持久化面（useDataBridge 三方法，主组件桥接） */
@@ -1741,13 +1744,21 @@ function EditorPane(props: {
     saveContent: (noteId: string, content: string) => Promise<void>;
   };
 }) {
-  const { note, loading, invoke, persist, onSelect: _onSelect, onSelectFolder } = props;
+  const {
+    note,
+    loading,
+    invoke,
+    persist,
+    onSelect: _onSelect,
+    onSelectFolder,
+    focusMode,
+    setFocusMode,
+  } = props;
   /* DK-编辑器补全：[[ 触发标题候选（进编辑面后拉一次+切笔记刷新；候选
      容忍陈旧——新建标题在下次进入编辑面时入池，诚实边界） */
+  /* R4-2 v2.1：专注模式 state 上提到 DesktopShell（侧栏联动收起）——
+     本组件消费 props 版；块级 zoom-in 后续专项（块渲染面重构侦察后裁切）。 */
   const [wikiTitles, setWikiTitles] = useState<string[]>([]);
-  /* R4-2：专注模式（distraction-free v1——正文列窄化居中+弱化元信息；
-     侧栏隐藏联动与块级 zoom-in v2——跨组件路由后续卡） */
-  const [focusMode, setFocusMode] = useState(false);
   useEffect(() => {
     if (!focusMode) return;
     const onKey = (e: KeyboardEvent): void => {
@@ -2686,6 +2697,9 @@ export default function DesktopShell() {
   const [invoke, setInvoke] = useState<InvokeFn | null>(null);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /* R4-2 v2.1：专注模式 state 上提——EditorPane 进入专注时联动收起侧栏
+     （包裹层 width→0 过渡，Sidebar 不卸载保滚动位/渲染态；zoom-in 仍后续专项）。 */
+  const [focusMode, setFocusMode] = useState(false);
   // DK-3.2 切片二：最近打开（localStorage 持久化——打开笔记即记录，FIFO
   // 去重上限 8；palette 空查询态「最近打开」组数据源）。
   const [recentIds, setRecentIds] = useState<string[]>(() => {
@@ -2705,6 +2719,10 @@ export default function DesktopShell() {
   const [content, setContent] = useState<NoteContent | null>(null);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<MainView>('notes');
+  /* 防悬空：切视图/切笔记强制退出专注（EditorPane 卸载后 Esc 失效） */
+  useEffect(() => {
+    setFocusMode(false);
+  }, [view, selectedId]);
   const [stats, setStats] = useState<{ active: number; done: number; due_today: number } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [results, setResults] = useState<PaletteItem[]>([]);
@@ -3511,6 +3529,18 @@ export default function DesktopShell() {
         )}
       </header>
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* R4-2 v2.1：专注模式联动——包裹层 width→0（0.18s 过渡）视觉收起，
+            Sidebar 不卸载保滚动位与渲染态 */}
+        <div
+          style={{
+            width: focusMode ? 0 : SIDEBAR_W, // auto 不可动画——两端常量才有过渡
+            overflow: 'hidden',
+            display: 'flex',
+            flexShrink: 0,
+            transition: 'width 0.18s ease',
+          }}
+          aria-hidden={focusMode}
+        >
         <Sidebar
           notes={notes}
           selectedId={selectedId}
@@ -3528,6 +3558,7 @@ export default function DesktopShell() {
           }}
           bridge={data}
         />
+        </div>
         {exportAll !== null && (
           /* DK-UI-S2 全量导出确认门（明文出库知情同意——不拦路径/普通交互） */
           <div
@@ -3728,6 +3759,8 @@ export default function DesktopShell() {
               note={content}
               loading={loading}
               invoke={invoke}
+              focusMode={focusMode}
+              setFocusMode={setFocusMode}
               onSelect={(id) => {
                 setSelectedId(id);
                 setView('notes');
