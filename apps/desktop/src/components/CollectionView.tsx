@@ -73,6 +73,17 @@ function cellCompare(d: PropDef, a: unknown, b: unknown): number {
   return String(a).localeCompare(String(b), 'zh-Hans-CN');
 }
 
+/* R8/R9：Date 单元格显示友好化——RFC3339 串/整数时间戳→本地短格式
+   「MM-DD HH:mm」；不可解析原样返回（tooltip 仍显全值）。 */
+function formatCell(d: PropDef, v: unknown): string {
+  if (typeKey(d.prop_type) !== 'Date' || v == null || v === '') return v == null ? '' : String(v);
+  const t = typeof v === 'number' ? v : Date.parse(String(v));
+  if (Number.isNaN(t)) return String(v);
+  const dt = new Date(t);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+}
+
 function typeKey(t: unknown): string {
   if (typeof t === 'string') return t;
   // R-β2（self-caught）：serde 外部标签变体键为大写原名（{"Select":[...]}）——
@@ -522,7 +533,9 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                   {meta.prop_defs.map((d) => {
                     const cell = r.values[d.id];
                     const isEditing = editing?.noteId === r.note_id && editing?.defId === d.id;
-                    const restoreText = cell ? String(cell.value) : '';
+                    // 还原显示值=格式化面（isEditing false 后 React children 逻辑值
+                    // 为 formatted——写回原串会因 diff 相等不 patch 而 DOM 残留）
+                    const shownText = cell ? formatCell(d, cell.value) : '';
                     return (
                       <td
                         key={d.id}
@@ -543,7 +556,7 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                           const el = e.currentTarget as HTMLElement;
                           setEditing(null);
                           void submitInline(r.note_id, d, el).then((ok) => {
-                            if (!ok) el.textContent = restoreText; // 失败还原防 DOM 残留
+                            if (!ok) el.textContent = shownText; // 失败还原防 DOM 残留
                           });
                         }}
                         onKeyDown={(e) => {
@@ -553,7 +566,7 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                           }
                           if (e.key === 'Escape') {
                             e.preventDefault();
-                            e.currentTarget.textContent = restoreText;
+                            e.currentTarget.textContent = shownText;
                             setEditing(null);
                           }
                         }}
@@ -565,9 +578,15 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                           borderRadius: 4,
                           minWidth: 72,
                         }}
-                        title="双击编辑 · Enter 提交 · Esc 取消"
+                        title={cell ? `${String(cell.value)} · 双击编辑 · Enter 提交 · Esc 取消` : '双击编辑 · Enter 提交 · Esc 取消'}
                       >
-                        {cell ? String(cell.value) : <span style={{ color: tokens.color.textDisabled }}>—</span>}
+                        {isEditing
+                          ? cell
+                            ? String(cell.value)
+                            : ''
+                          : cell
+                            ? (formatCell(d, cell.value) || <span style={{ color: tokens.color.textDisabled }}>—</span>)
+                            : <span style={{ color: tokens.color.textDisabled }}>—</span>}
                       </td>
                     );
                   })}

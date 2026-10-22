@@ -31,4 +31,5 @@ export {
   focusTopLevelBlock,
   getCurrentFocus,
   injectFocusBlockStyle,
+  focusBlockShortcut,
 } from './focusBlock';

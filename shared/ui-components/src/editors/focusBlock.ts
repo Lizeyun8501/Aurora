@@ -88,3 +88,26 @@ export function focusTopLevelBlock(view: EditorView, blockPos: number | null): v
 export function getCurrentFocus(view: EditorView): number | null {
   return focusBlockKey.getState(view.state) ?? null;
 }
+
+/**
+ * Mod-Shift-F：聚焦光标所在顶层块；已聚焦时=退出（keymap 装配用）。
+ * 文档级选区（depth<1）视为退出指令。
+ */
+export function focusBlockShortcut(
+  state: import('prosemirror-state').EditorState,
+  dispatch: ((tr: import('prosemirror-state').Transaction) => void) | undefined,
+  view?: EditorView,
+): boolean {
+  if (!view) return false;
+  const { $from } = state.selection;
+  if ($from.depth < 1) {
+    if (focusBlockKey.getState(state) != null) {
+      focusTopLevelBlock(view, null);
+      return true;
+    }
+    return false;
+  }
+  focusTopLevelBlock(view, $from.before(1));
+  void dispatch;
+  return true;
+}

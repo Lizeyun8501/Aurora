@@ -17,7 +17,7 @@ import { keymap } from 'prosemirror-keymap';
 import { baseKeymap } from 'prosemirror-commands';
 import { splitListItem } from 'prosemirror-schema-list';
 import { LoroDoc } from 'loro-crdt';
-import { focusBlockPlugin } from './focusBlock';
+import { focusBlockPlugin, focusBlockShortcut } from './focusBlock';
 import { mathNodeViews } from './mathNodeView';
 import { mermaidNodeViews } from './mermaidNodeView';
 import { injectMathStyle } from './mathStyle';
@@ -143,6 +143,8 @@ export function createAuroraEditor(
         // 必须置于 baseKeymap 之前（keymap 先绑定优先级高），
         // 否则 Enter 拆的是 li 内段落，产生 li>p+p 的非预期结构
         Enter: splitListItem(auroraSchema.nodes.list_item),
+        // DK-Zoom / R8：块级聚焦快捷键（已聚焦时=退出）
+        'Mod-Shift-f': focusBlockShortcut,
       }),
       keymap(baseKeymap), // Enter/Backspace/方向键等基础编辑行为
       highlightPlugin, // DK-2.7 切片一：code_block 语法着色
