@@ -2406,6 +2406,79 @@ function EditAuroraEditor(props: {
   const [Toolbar, setToolbar] = useState<React.ComponentType<{ view: import('prosemirror-view').EditorView | null; tick: number }> | null>(null);
   const persistRef = useRef(persist);
   persistRef.current = persist;
+  /* ── R10：块操作工具条（block handle menu）──────────────────────
+   * hover 顶层块左侧显把手「⠿」，点开菜单：转 H2/H3/正文、删除块、聚焦块。
+   * 纯 tr 手写（setNodeMarkup/delete），零新依赖。idx=host 直接子元素序
+   * （PM 顶层块 DOM=host 直接子——focusBlock 为 node deco 不插顶层节点）。
+   * blockMenu 记 idx+锚点坐标（fixed 浮层）；置 null 关。 */
+  const [hoverBlock, setHoverBlock] = useState<{ idx: number; top: number } | null>(null);
+  const [blockMenu, setBlockMenu] = useState<{ idx: number; top: number } | null>(null);
+  const hostOver = (e: React.MouseEvent) => {
+    if (blockMenu) return;
+    const host = hostRef.current;
+    const el = e.target as HTMLElement | null;
+    if (!el || !host || !host.contains(el)) {
+      setHoverBlock(null);
+      return;
+    }
+    // 爬父链到 host 直接子（PM 顶层块 DOM）
+    let top: HTMLElement | null = el;
+    while (top && top.parentElement && top.parentElement !== host) {
+      top = top.parentElement;
+    }
+    if (!top || top.parentElement !== host) {
+      setHoverBlock(null);
+      return;
+    }
+    const idx = Array.from(host.children).indexOf(top);
+    if (idx < 0) {
+      setHoverBlock(null);
+      return;
+    }
+    setHoverBlock({ idx, top: top.offsetTop });
+  };
+  /* 顶层块 pos 定位：doc 内首块起点 pos=1，前序块 nodeSize 累加 */
+  const topLevelRange = (idx: number): { pos: number; size: number } | null => {
+    if (!view) return null;
+    const doc = view.state.doc;
+    if (idx >= doc.childCount) return null;
+    let pos = 1;
+    for (let i = 0; i < idx; i++) pos += doc.child(i).nodeSize;
+    return { pos, size: doc.child(idx).nodeSize };
+  };
+  const runBlockCmd = (fn: (tr: import('prosemirror-state').Transaction, v: import('prosemirror-view').EditorView) => void) => {
+    if (!view) return;
+    const tr = view.state.tr;
+    fn(tr, view);
+    view.dispatch(tr);
+    setBlockMenu(null);
+    setHoverBlock(null);
+  };
+  const blockMenuItem = (label: string, fn: (tr: import('prosemirror-state').Transaction, v: import('prosemirror-view').EditorView, range: { pos: number; size: number }) => void) => (
+    <button
+      key={label}
+      onClick={() => {
+        const r = blockMenu ? topLevelRange(blockMenu.idx) : null;
+        if (!r) return;
+        runBlockCmd((tr, v) => fn(tr, v, r));
+      }}
+      style={{
+        display: 'block',
+        width: '100%',
+        textAlign: 'left',
+        padding: '5px 10px',
+        fontSize: 12,
+        color: tokens.color.textPrimary,
+        background: 'transparent',
+        border: 'none',
+        borderRadius: 6,
+        cursor: 'pointer',
+        minHeight: tokens.a11y.minTouchTarget,
+      }}
+    >
+      {label}
+    </button>
+  );
   /* ── DK-编辑器补全（[[ 触发 wiki 链接标题补全）────────────────────
    * 触发：光标前 80 字符窗内最近 `[[` 且其后至光标无 `]]`/换行 → 弹浮层；
    * 过滤 v1：精确子串（大小写不敏感）——模糊匹配另批；
@@ -2668,7 +2741,65 @@ function EditAuroraEditor(props: {
           </button>
         </div>
       )}
-      <div
+      {/* R10：块把手+块操作菜单——host 包 relative 容器，把手浮在块左侧 */}
+      <div style={{ position: 'relative' }} onMouseLeave={() => !blockMenu && setHoverBlock(null)}>
+        {view && (hoverBlock || blockMenu) && (
+          <button
+            onClick={() =>
+              setBlockMenu(blockMenu ? null : (hoverBlock ?? blockMenu))
+            }
+            onMouseEnter={() => hoverBlock === null && blockMenu && setHoverBlock(blockMenu)}
+            style={{
+              position: 'absolute',
+              left: -26,
+              top: (blockMenu ?? hoverBlock)?.top ?? 0,
+              width: 22,
+              height: 22,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 6,
+              border: 'none',
+              background: 'transparent',
+              color: tokens.color.textDisabled,
+              cursor: 'grab',
+              fontSize: 13,
+              lineHeight: 1,
+            }}
+            title="块操作"
+          >
+            ⠿
+          </button>
+        )}
+        {view && blockMenu && (
+          <div
+            style={{
+              position: 'absolute',
+              left: -26,
+              top: blockMenu.top + 26,
+              minWidth: 132,
+              background: tokens.color.bgElevated,
+              border: '1px solid rgba(255,255,255,0.14)',
+              borderRadius: tokens.radius.md,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+              zIndex: 55,
+              padding: 4,
+            }}
+          >
+            {blockMenuItem('转为标题 2', (tr, v, rg) =>
+              tr.setNodeMarkup(rg.pos, v.state.schema.nodes.heading, { level: 2 }),
+            )}
+            {blockMenuItem('转为标题 3', (tr, v, rg) =>
+              tr.setNodeMarkup(rg.pos, v.state.schema.nodes.heading, { level: 3 }),
+            )}
+            {blockMenuItem('转为正文', (tr, v, rg) =>
+              tr.setNodeMarkup(rg.pos, v.state.schema.nodes.paragraph, null),
+            )}
+            {blockMenuItem('聚焦此块', (_tr, v, rg) => focusTopLevelBlock(v, rg.pos))}
+            {blockMenuItem('删除块', (tr, _v, rg) => tr.delete(rg.pos, rg.pos + rg.size))}
+          </div>
+        )}
+        <div
         ref={hostRef}
         role="textbox"
         aria-multiline="true"
@@ -2686,7 +2817,9 @@ function EditAuroraEditor(props: {
             : {}),
           cursor: 'text',
         }}
+        onMouseOver={hostOver}
       />
+      </div>
     </div>
   );
 }

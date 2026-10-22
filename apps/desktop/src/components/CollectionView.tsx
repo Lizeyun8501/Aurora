@@ -106,7 +106,47 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
   const [err, setErr] = useState<string | null>(null);
   // G1-v3：内联单元格编辑位 + 视图形态（表格 | 看板）
   const [editing, setEditing] = useState<{ noteId: string; defId: string } | null>(null);
+  /* R10/Bravo：Select 列下拉浮层——双击弹全部选项（循环切换保留为浮层外的兜底语义）。
+     anchor=td 中心视口坐标（fixed 定位）。null=关。 */
+  const [selectMenu, setSelectMenu] = useState<{
+    noteId: string;
+    defId: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'board'>('table');
+  /* R10/Bravo：Select 浮层提交——set_cell + 刷新行 */
+  const commitSelect = useCallback(
+    async (noteId: string, d: PropDef, value: string | null) => {
+      setSelectMenu(null);
+      if (!invoke) return;
+      try {
+        await invoke('cmd_collection_set_cell', { noteId, defId: d.id, value });
+        setRows((await invoke('cmd_collection_rows', { id: selected })) as Row[]);
+        setErr(null);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [invoke, selected],
+  );
+  // 点外/Esc 关浮层
+  useEffect(() => {
+    if (!selectMenu) return;
+    const close = (ev: MouseEvent) => {
+      const t = ev.target as HTMLElement;
+      if (!t.closest('[data-select-menu]')) setSelectMenu(null);
+    };
+    const esc = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') setSelectMenu(null);
+    };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', esc);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', esc);
+    };
+  }, [selectMenu]);
   // G1-v4：列头排序（null=原始序）+ 文本筛选 + 渲染切片（大集合防卡）
   const [sortKey, setSortKey] = useState<{ col: string; dir: 1 | -1 } | null>(null);
   const [filterText, setFilterText] = useState('');
@@ -301,27 +341,7 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
   }, [rows, meta, filterText, sortKey]);
   const visibleRows = useMemo(() => shownRows.slice(0, visibleCount), [shownRows, visibleCount]);
 
-  /* G1-v4：Select 单元格双击循环切选项（表格编辑辅助——看板拖拽为主通道）。 */
-  const cycleSelectCell = useCallback(
-    async (noteId: string, d: PropDef) => {
-      if (!invoke || !meta) return;
-      const opts = selectOptions(d);
-      if (opts.length === 0) return;
-      const r = rows.find((x) => x.note_id === noteId);
-      const cur = r?.values[d.id]?.value;
-      const curStr = typeof cur === 'string' ? cur : '';
-      const idx = opts.indexOf(curStr);
-      const next = idx < 0 ? opts[0] : idx + 1 < opts.length ? opts[idx + 1] : null; // 末位回未分组
-      try {
-        await invoke('cmd_collection_set_cell', { noteId, defId: d.id, value: next });
-        setRows((await invoke('cmd_collection_rows', { id: selected })) as Row[]);
-        setErr(null);
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : String(e));
-      }
-    },
-    [invoke, meta, rows, selectOptions, selected],
-  );
+  /* G1-v4 Select 循环切换已被 R10 下拉浮层取代（全选项直选）；看板拖卡仍是主通道。 */
 
   /* G1-v3 看板视图：按第一个单选列分组；拖卡换组=set_cell（Select 值）。
      「未分组」列对应 null 值（PropertyEngine 对 Select null 放行）。 */
@@ -543,9 +563,16 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                         suppressContentEditableWarning
                         onDoubleClick={(e) => {
                           if (!invoke) return;
-                          // G1-v4：Select 列双击循环切选项（不进文本编辑）
+                          // R10/Bravo：Select 列双击弹下拉浮层（G1-v4 循环升级——
+                          // 全选项直选，不再逐个循环）
                           if (typeKey(d.prop_type) === 'Select') {
-                            void cycleSelectCell(r.note_id, d);
+                            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                            setSelectMenu({
+                              noteId: r.note_id,
+                              defId: d.id,
+                              x: rect.left + rect.width / 2,
+                              y: rect.bottom + 4,
+                            });
                             return;
                           }
                           setEditing({ noteId: r.note_id, defId: d.id });
@@ -701,6 +728,79 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
       {!meta && cols.length === 0 && !err && (
         <p style={{ color: tokens.color.textSecondary }}>暂无集合——「＋ 新建集合」创建第一个</p>
       )}
+      {/* R10/Bravo：Select 下拉浮层（fixed 定位，视口下溢翻转） */}
+      {selectMenu &&
+        (() => {
+          const menuDef = meta?.prop_defs.find((d) => d.id === selectMenu.defId);
+          if (!menuDef) return null;
+          const opts = selectOptions(menuDef);
+          const curRow = rows.find((x) => x.note_id === selectMenu.noteId);
+          const cur = curRow?.values[selectMenu.defId]?.value;
+          const curStr = typeof cur === 'string' ? cur : '';
+          const flip = selectMenu.y > window.innerHeight - 240;
+          return (
+            <div
+              data-select-menu
+              style={{
+                position: 'fixed',
+                left: Math.max(8, Math.min(selectMenu.x - 90, window.innerWidth - 200)),
+                top: flip ? undefined : selectMenu.y,
+                bottom: flip ? window.innerHeight - selectMenu.y + 4 : undefined,
+                minWidth: 180,
+                maxHeight: 224,
+                overflowY: 'auto',
+                background: tokens.color.bgElevated,
+                border: '1px solid rgba(255,255,255,0.14)',
+                borderRadius: tokens.radius.md,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+                zIndex: 60,
+                padding: 4,
+              }}
+            >
+              {opts.map((opt) => (
+                <button
+                  key={opt}
+                  onClick={() => void commitSelect(selectMenu.noteId, menuDef, opt)}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '6px 10px',
+                    fontSize: tokens.typography.body.size,
+                    color: opt === curStr ? tokens.color.primaryBright : tokens.color.textPrimary,
+                    background: opt === curStr ? 'rgba(88,166,255,0.10)' : 'transparent',
+                    border: 'none',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    minHeight: tokens.a11y.minTouchTarget,
+                  }}
+                >
+                  {opt === curStr ? '✓ ' : ''}{opt}
+                </button>
+              ))}
+              <button
+                onClick={() => void commitSelect(selectMenu.noteId, menuDef, null)}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  fontSize: tokens.typography.body.size,
+                  color: curStr === '' ? tokens.color.primaryBright : tokens.color.textSecondary,
+                  background: 'transparent',
+                  border: 'none',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  borderTop: '1px solid rgba(255,255,255,0.08)',
+                  marginTop: 2,
+                  minHeight: tokens.a11y.minTouchTarget,
+                }}
+              >
+                {curStr === '' ? '✓ ' : ''}未分组
+              </button>
+            </div>
+          );
+        })()}
     </main>
   );
 }

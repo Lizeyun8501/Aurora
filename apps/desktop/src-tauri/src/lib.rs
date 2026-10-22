@@ -225,6 +225,7 @@ pub fn run() {
             cmd_set_task_status,
             cmd_due_review_cards,
             cmd_review_card,
+            cmd_add_review_cards_from_blocks,
             attachment_commands::cmd_read_attachment,
             ai_commands::cmd_get_ai_cloud_policy,
             backup_commands::cmd_backup_now,
@@ -1134,6 +1135,99 @@ async fn cmd_add_review_card(note_id: String) -> Result<serde_json::Value, Strin
     }))
 }
 
+/// R10/Alpha（块级卡 Distill 切片一）：markdown → 块卡提取器（纯函数）。
+/// 语义：1-3 级 heading 为卡提示（Q），其下首个非空段为卡底（A 摘要 ≤80 字）。
+/// 列表/代码等非 heading 块 v1 不卡化（诚实边界——管线 v2 扩）。
+fn extract_block_cards(md: &str) -> Vec<(String, String)> {
+    let mut cards: Vec<(String, String)> = Vec::new();
+    let mut cur: Option<(String, String)> = None;
+    for line in md.lines() {
+        let trimmed = line.trim();
+        let hashes = trimmed.len() - trimmed.trim_start_matches('#').len();
+        if hashes >= 1 {
+            let after = &trimmed[hashes..]; // '#' 为单字节，切片边界安全
+            let heading_text = after
+                .strip_prefix([' ', '\t'])
+                .map(str::trim)
+                .filter(|t| !t.is_empty());
+            if hashes <= 3 {
+                if let Some(text) = heading_text {
+                    // 1-3 级 heading：落袋前卡，开新卡
+                    if let Some(prev) = cur.take() {
+                        cards.push(prev);
+                    }
+                    cur = Some((text.to_string(), String::new()));
+                }
+                // 1-3 级但无空格/空文本（#tag、裸#）：非 heading 非正文，跳过
+            } else {
+                // H4+ 子树不卡化；当前卡就此落袋（卡底未收=概念卡）
+                if let Some(prev) = cur.take() {
+                    cards.push(prev);
+                }
+            }
+            continue;
+        }
+        // heading 下首个非空段 = 卡底
+        if let Some((_, a)) = cur.as_mut() {
+            if a.is_empty() && !trimmed.is_empty() {
+                *a = trimmed.chars().take(80).collect();
+            }
+        }
+    }
+    if let Some(last) = cur.take() {
+        cards.push(last);
+    }
+    cards
+}
+
+/// R10/Alpha（块级卡 Distill 切片一）：按块生成复习卡——
+/// 笔记内每个 1-3 级 heading 一张卡（card_id = card:note:{nid}:b{hash8}，
+/// 同 heading 重复注册幂等）。card_id 已预留块级锚定（fsrs.rs ReviewItem 注释），
+/// ReviewQueue/UI 面零改。返回建卡反馈（与 cmd_add_review_card 同构）。
+#[tauri::command]
+async fn cmd_add_review_cards_from_blocks(note_id: String) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let key = format!("note:{}", note_id);
+    let data = core
+        .kv_store
+        .get(&key)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("note not found: {}", note_id))?;
+    let json = unwrap_note_bytes(&core, &vault, &data)?;
+    let title = json
+        .get("title")
+        .and_then(|t| t.as_str())
+        .unwrap_or("未命名")
+        .to_string();
+    let content = json
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let cards = extract_block_cards(content);
+    let mut out = Vec::with_capacity(cards.len());
+    for (idx, (q, a)) in cards.iter().enumerate() {
+        // hash8：heading 文本稳定短指纹（简单 FNV-1a 截断——幂等锚定用，非安全）
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in q.as_bytes() {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        let card_id = format!("card:note:{}:b{:08x}", note_id, h as u32);
+        let scheduled = core.review_queue.add_card(&card_id, &note_id, aurora_core::l3_domain::fsrs::Rating::Good);
+        out.push(serde_json::json!({
+            "card_id": card_id,
+            "note_id": note_id,
+            "title": format!("{} · {}", title, q),
+            "summary": if a.is_empty() { "(无正文 — 概念卡)".to_string() } else { a.clone() },
+            "due_at": scheduled.due.to_rfc3339(),
+            "block_index": idx,
+        }));
+    }
+    Ok(serde_json::json!({ "created": out.len(), "cards": out }))
+}
+
 /// 删除笔记（含搜索索引）。
 #[tauri::command]
 async fn cmd_delete_note(note_id: String) -> Result<(), String> {
@@ -1975,5 +2069,44 @@ impl DesktopPlatform for TauriDesktopPlatform {
     fn notify(&self, title: &str, body: &str) {
         // TODO: 接入 tauri-plugin-notification
         info!(title, body, "notify requested");
+    }
+}
+
+// ── R10/Alpha 块级卡提取器单测 ──────────────────────────────────
+
+#[cfg(test)]
+mod block_card_tests {
+    use super::extract_block_cards;
+
+    #[test]
+    fn headings_and_first_paragraph() {
+        let md = "# 大标题\n首段内容。\n\n## 二级\n二级的首段。\n中间段。\n正文段（无 heading 归属前段）。\n### 三级\n\n#### 四级不算\n文本\n";
+        let cards = extract_block_cards(md);
+        assert_eq!(cards.len(), 3);
+        assert_eq!(cards[0], ("大标题".into(), "首段内容。".into()));
+        assert_eq!(cards[1], ("二级".into(), "二级的首段。".into()));
+        // H4 切断三级卡正文区 → 概念卡（「文本」属于 H4 块，不进卡底）
+        assert_eq!(cards[2], ("三级".into(), "".into()));
+    }
+
+    #[test]
+    fn no_heading_no_tag_no_bare_hash() {
+        assert!(extract_block_cards("正文没有标题\n第二行").is_empty());
+        // #tag 与裸 # 不是 heading
+        assert!(extract_block_cards("#tag 内容\n#").is_empty());
+    }
+
+    #[test]
+    fn empty_answer_concept_card() {
+        let cards = extract_block_cards("## 概念卡\n## 下一个\n");
+        assert_eq!(cards.len(), 2);
+        assert_eq!(cards[0], ("概念卡".into(), "".into()));
+    }
+
+    #[test]
+    fn long_answer_truncated_80_chars() {
+        let long = "字".repeat(120);
+        let cards = extract_block_cards(&format!("## 问题\n{}", long));
+        assert_eq!(cards[0].1.chars().count(), 80);
     }
 }
