@@ -301,12 +301,58 @@ impl ReviewQueue {
             .count();
         (due, items.len())
     }
+
+    /// R12：块卡同步（按块建卡的幂等语义升级）——注册 keep_ids 中缺失的卡
+    /// （新卡首评 Good），移除同笔记内不在 keep 集的旧块卡（heading 改/删致
+    /// hash 锚定失效）。笔记级卡与其他笔记不动；已存在卡 FSRS 进度保留。
+    /// 返回 (added, removed)。
+    pub fn sync_block_cards(&self, note_id: &str, keep_ids: &[String]) -> (usize, usize) {
+        let now = Utc::now();
+        let mut items = self.items.write().unwrap();
+        let keep: std::collections::HashSet<&str> = keep_ids.iter().map(|s| s.as_str()).collect();
+        let before = items.len();
+        items.retain(|i| {
+            if i.note_id != note_id {
+                return true; // 他笔记不动
+            }
+            !(is_block_card_id(&i.card_id) && !keep.contains(i.card_id.as_str()))
+        });
+        let removed = before - items.len();
+        let mut added = 0;
+        for id in keep_ids {
+            if items.iter().any(|i| i.card_id == *id) {
+                continue; // 已存在——FSRS 进度保留
+            }
+            let fresh = self.scheduler.new_card(now);
+            let scheduled = self.scheduler.review(&fresh, Rating::Good, now);
+            items.push(ReviewItem {
+                card_id: id.clone(),
+                note_id: note_id.to_string(),
+                state: scheduled.state.clone(),
+                due: scheduled.due,
+            });
+            added += 1;
+        }
+        (added, removed)
+    }
 }
 
 impl Default for ReviewQueue {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// R12：块卡形态判定（core 单一事实源——desktop due 重拼/同步清理共用；
+/// TS 端正则 /:b[0-9a-f]{8}$/ 互指同语义）。
+pub fn is_block_card_id(card_id: &str) -> bool {
+    card_id
+        .rfind(":b")
+        .map(|i| {
+            let tail = &card_id[i + 2..];
+            tail.len() == 8 && tail.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -414,5 +460,55 @@ mod tests {
         assert_eq!(out.state.reps, 2);
         // 二连 Good 后 S 增长
         assert!(out.state.stability > 1.0, "S 增长: {}", out.state.stability);
+    }
+
+    // ── R12 块卡同步 ─────────────────────────────────────────────
+
+    fn block_id(nid: &str, h: &str) -> String {
+        format!("card:note:{}:b{}", nid, h) // h 手填 8hex
+    }
+
+    #[test]
+    fn block_id_shape_judge() {
+        assert!(is_block_card_id(&block_id("n1", "277e29c9")));
+        assert!(!is_block_card_id("card:note:n1")); // 笔记级
+        assert!(!is_block_card_id("card:note:note:bblue")); // 尾非 8hex
+        assert!(!is_block_card_id("card:note:n1:b277e29")); // 7 位
+    }
+
+    #[test]
+    fn sync_adds_missing_and_keeps_progress() {
+        let q = ReviewQueue::new();
+        let id = block_id("n1", "277e29c9");
+        let s1 = q.add_card(&id, "n1", Rating::Good);
+        let reps1 = s1.state.reps;
+        // 再评分推进进度
+        let s2 = q.review_card(&id, Rating::Good).unwrap();
+        let (added, removed) = q.sync_block_cards("n1", &[id.clone()]);
+        assert_eq!((added, removed), (0, 0));
+        let binding = q.due_items(Utc::now() + Duration::days(3650));
+        let item = binding.iter().find(|i| i.card_id == id).unwrap();
+        assert_eq!(item.state.reps, s2.state.reps, "FSRS 进度保留");
+        assert!(reps1 >= 1);
+    }
+
+    #[test]
+    fn sync_removes_stale_block_cards_only() {
+        let q = ReviewQueue::new();
+        let stale = block_id("n1", "277e29c9");
+        let fresh = block_id("n1", "86023237");
+        let note_card = format!("card:note:n1");
+        let other = block_id("n2", "277e29c9");
+        q.add_card(&stale, "n1", Rating::Good);
+        q.add_card(&note_card, "n1", Rating::Good);
+        q.add_card(&other, "n2", Rating::Good);
+        // 同步 n1 只保留 fresh
+        let (added, removed) = q.sync_block_cards("n1", &[fresh.clone()]);
+        assert_eq!((added, removed), (1, 1), "清 stale 建新");
+        let total = q.stats().1;
+        assert_eq!(total, 3, "笔记级卡+n2 块卡+fresh 块卡");
+        // fresh 已建（added=1 且存在）
+        let again = q.sync_block_cards("n1", &[fresh.clone()]);
+        assert_eq!(again, (0, 0), "幂等二跑");
     }
 }

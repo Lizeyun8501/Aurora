@@ -1936,8 +1936,14 @@ function FlashcardRow({ note, invoke }: { note: NoteContent; invoke: InvokeFn | 
     try {
       const r = (await invoke('cmd_add_review_cards_from_blocks', { noteId: note.note_id })) as {
         created: number;
+        added: number;
+        removed: number;
       };
-      setMsg(r.created > 0 ? `🧩 已按块生成 ${r.created} 张卡（同标题幂等）` : '🧩 未发现可卡化的 1-3 级标题');
+      setMsg(
+        r.created === 0
+          ? '🧩 未发现可卡化的 1-3 级标题'
+          : `🧩 已同步 ${r.created} 张块卡（新增 ${r.added} · 清理失效 ${r.removed}）`,
+      );
     } catch {
       setMsg(null);
     }

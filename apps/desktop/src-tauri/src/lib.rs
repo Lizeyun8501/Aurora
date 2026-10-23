@@ -1009,16 +1009,9 @@ async fn cmd_due_review_cards() -> Result<Vec<serde_json::Value>, String> {
     for it in items {
         let r = scheduler.retrievability(&it.state, now);
         // G3：卡面字段（title 恒明文+首行摘要）——到期队列小（几~几十）逐条读可接受
-        // R11：块卡（card_id 尾 :b{hash8}）卡面重拼——heading=Q + 首段=A；
+        // R11/R12：块卡（尾 :b{hash8}）卡面重拼——heading=Q + 首段=A；
         // heading 已被编辑删除时降级笔记级卡面 + 失效注记（诚实边界）。
-        let is_block = it
-            .card_id
-            .rfind(":b")
-            .map(|i| {
-                let tail = &it.card_id[i + 2..];
-                tail.len() == 8 && tail.bytes().all(|b| b.is_ascii_hexdigit())
-            })
-            .unwrap_or(false);
+        let is_block = aurora_core::l3_domain::fsrs::is_block_card_id(&it.card_id);
         let (title, summary) = match core.kv_store.get(&format!("note:{}", it.note_id)).await {
             Ok(Some(bytes)) => match unwrap_note_bytes(&core, &vault, &bytes) {
                 Ok(json) => {
@@ -1228,10 +1221,9 @@ fn block_card_id(note_id: &str, heading: &str) -> String {
     format!("card:note:{}:b{:08x}", note_id, h as u32)
 }
 
-/// R10/Alpha（块级卡 Distill 切片一）：按块生成复习卡——
-/// 笔记内每个 1-3 级 heading 一张卡（card_id = card:note:{nid}:b{hash8}，
-/// 同 heading 重复注册幂等）。card_id 已预留块级锚定（fsrs.rs ReviewItem 注释），
-/// ReviewQueue/UI 面零改。返回建卡反馈（与 cmd_add_review_card 同构）。
+/// R10/R12（块级卡 Distill）：按块生成复习卡——同步语义（core sync_block_cards）：
+/// 当前 1-3 级 heading 集为准——缺失注册（首评 Good）、失效块卡（heading 改/删）
+/// 清队；已存在卡 FSRS 进度保留。笔记级卡不受影响。
 #[tauri::command]
 async fn cmd_add_review_cards_from_blocks(note_id: String) -> Result<serde_json::Value, String> {
     let core = get_core()?;
@@ -1251,24 +1243,24 @@ async fn cmd_add_review_cards_from_blocks(note_id: String) -> Result<serde_json:
         .to_string();
     let content = json.get("content").and_then(|c| c.as_str()).unwrap_or("");
     let cards = extract_block_cards(content);
+    let keep: Vec<String> = cards
+        .iter()
+        .map(|(q, _)| block_card_id(&note_id, q))
+        .collect();
+    let (added, removed) = core.review_queue.sync_block_cards(&note_id, &keep);
     let mut out = Vec::with_capacity(cards.len());
     for (idx, (q, a)) in cards.iter().enumerate() {
-        let card_id = block_card_id(&note_id, q);
-        let scheduled = core.review_queue.add_card(
-            &card_id,
-            &note_id,
-            aurora_core::l3_domain::fsrs::Rating::Good,
-        );
         out.push(serde_json::json!({
-            "card_id": card_id,
+            "card_id": keep[idx],
             "note_id": note_id,
             "title": format!("{} · {}", title, q),
             "summary": if a.is_empty() { "(无正文 — 概念卡)".to_string() } else { a.clone() },
-            "due_at": scheduled.due.to_rfc3339(),
             "block_index": idx,
         }));
     }
-    Ok(serde_json::json!({ "created": out.len(), "cards": out }))
+    Ok(
+        serde_json::json!({ "created": out.len(), "added": added, "removed": removed, "cards": out }),
+    )
 }
 
 /// 删除笔记（含搜索索引）。
