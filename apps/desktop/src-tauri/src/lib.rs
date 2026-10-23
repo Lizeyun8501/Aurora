@@ -34,6 +34,8 @@ mod attachment_commands;
 mod backlink_commands;
 mod backup_commands;
 mod capture_server;
+mod collection_commands;
+mod due_preview_commands;
 mod export_commands;
 mod history_commands;
 mod import_commands;
@@ -43,8 +45,6 @@ mod shortcut_commands;
 mod sync_commands;
 mod tag_commands;
 mod template_commands;
-mod collection_commands;
-mod due_preview_commands;
 mod todo_commands;
 mod wiki_commands;
 
@@ -1009,20 +1009,57 @@ async fn cmd_due_review_cards() -> Result<Vec<serde_json::Value>, String> {
     for it in items {
         let r = scheduler.retrievability(&it.state, now);
         // G3：卡面字段（title 恒明文+首行摘要）——到期队列小（几~几十）逐条读可接受
+        // R11：块卡（card_id 尾 :b{hash8}）卡面重拼——heading=Q + 首段=A；
+        // heading 已被编辑删除时降级笔记级卡面 + 失效注记（诚实边界）。
+        let is_block = it
+            .card_id
+            .rfind(":b")
+            .map(|i| {
+                let tail = &it.card_id[i + 2..];
+                tail.len() == 8 && tail.bytes().all(|b| b.is_ascii_hexdigit())
+            })
+            .unwrap_or(false);
         let (title, summary) = match core.kv_store.get(&format!("note:{}", it.note_id)).await {
             Ok(Some(bytes)) => match unwrap_note_bytes(&core, &vault, &bytes) {
-                Ok(json) => (
-                    json.get("title").and_then(|t| t.as_str()).unwrap_or("未命名").to_string(),
-                    json.get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .lines()
-                        .find(|l| !l.trim().is_empty())
-                        .unwrap_or("")
-                        .chars()
-                        .take(80)
-                        .collect::<String>(),
-                ),
+                Ok(json) => {
+                    let note_title = json
+                        .get("title")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("未命名")
+                        .to_string();
+                    let content = json.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                    if is_block {
+                        let cards = extract_block_cards(content);
+                        let found = cards
+                            .iter()
+                            .find(|(q, _)| block_card_id(&it.note_id, q) == it.card_id);
+                        match found {
+                            Some((q, a)) => (
+                                format!("{} · {}", note_title, q),
+                                if a.is_empty() {
+                                    "(无正文 — 概念卡)".to_string()
+                                } else {
+                                    a.clone()
+                                },
+                            ),
+                            None => (
+                                format!("{} · （块已失效——标题已改）", note_title),
+                                String::new(),
+                            ),
+                        }
+                    } else {
+                        (
+                            note_title,
+                            content
+                                .lines()
+                                .find(|l| !l.trim().is_empty())
+                                .unwrap_or("")
+                                .chars()
+                                .take(80)
+                                .collect::<String>(),
+                        )
+                    }
+                }
                 Err(_) => ("未命名".to_string(), String::new()),
             },
             _ => ("未命名".to_string(), String::new()),
@@ -1180,6 +1217,17 @@ fn extract_block_cards(md: &str) -> Vec<(String, String)> {
     cards
 }
 
+/// R11：块卡 card_id 构造（FNV-1a hash8 幂等锚定，非安全哈希）——
+/// 建卡与 due 队列重拼共用（单一事实源）。
+fn block_card_id(note_id: &str, heading: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in heading.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("card:note:{}:b{:08x}", note_id, h as u32)
+}
+
 /// R10/Alpha（块级卡 Distill 切片一）：按块生成复习卡——
 /// 笔记内每个 1-3 级 heading 一张卡（card_id = card:note:{nid}:b{hash8}，
 /// 同 heading 重复注册幂等）。card_id 已预留块级锚定（fsrs.rs ReviewItem 注释），
@@ -1201,21 +1249,16 @@ async fn cmd_add_review_cards_from_blocks(note_id: String) -> Result<serde_json:
         .and_then(|t| t.as_str())
         .unwrap_or("未命名")
         .to_string();
-    let content = json
-        .get("content")
-        .and_then(|c| c.as_str())
-        .unwrap_or("");
+    let content = json.get("content").and_then(|c| c.as_str()).unwrap_or("");
     let cards = extract_block_cards(content);
     let mut out = Vec::with_capacity(cards.len());
     for (idx, (q, a)) in cards.iter().enumerate() {
-        // hash8：heading 文本稳定短指纹（简单 FNV-1a 截断——幂等锚定用，非安全）
-        let mut h: u64 = 0xcbf29ce484222325;
-        for b in q.as_bytes() {
-            h ^= u64::from(*b);
-            h = h.wrapping_mul(0x100000001b3);
-        }
-        let card_id = format!("card:note:{}:b{:08x}", note_id, h as u32);
-        let scheduled = core.review_queue.add_card(&card_id, &note_id, aurora_core::l3_domain::fsrs::Rating::Good);
+        let card_id = block_card_id(&note_id, q);
+        let scheduled = core.review_queue.add_card(
+            &card_id,
+            &note_id,
+            aurora_core::l3_domain::fsrs::Rating::Good,
+        );
         out.push(serde_json::json!({
             "card_id": card_id,
             "note_id": note_id,

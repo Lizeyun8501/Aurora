@@ -1928,6 +1928,21 @@ function FlashcardRow({ note, invoke }: { note: NoteContent; invoke: InvokeFn | 
     }
     setBusy(false);
   }, [invoke, note.note_id, busy]);
+  /* R11/切片二：按块建卡——1-3 级 heading 各一张（cmd_add_review_cards_from_blocks） */
+  const addFromBlocks = useCallback(async () => {
+    if (!invoke || busy) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = (await invoke('cmd_add_review_cards_from_blocks', { noteId: note.note_id })) as {
+        created: number;
+      };
+      setMsg(r.created > 0 ? `🧩 已按块生成 ${r.created} 张卡（同标题幂等）` : '🧩 未发现可卡化的 1-3 级标题');
+    } catch {
+      setMsg(null);
+    }
+    setBusy(false);
+  }, [invoke, note.note_id, busy]);
   return (
     <div style={{ margin: `${tokens.spacing.sm}px 0 0`, display: 'flex', alignItems: 'center', gap: tokens.spacing.sm }}>
       <button
@@ -1945,6 +1960,22 @@ function FlashcardRow({ note, invoke }: { note: NoteContent; invoke: InvokeFn | 
         title="注册为 FSRS 闪卡（笔记级 v1）"
       >
         {busy ? '…' : '📇 建复习卡'}
+      </button>
+      <button
+        onClick={() => void addFromBlocks()}
+        disabled={busy}
+        style={{
+          background: 'rgba(163,113,247,0.10)',
+          border: '1px solid rgba(163,113,247,0.3)',
+          borderRadius: tokens.radius.sm,
+          color: '#c9a9ff',
+          padding: '4px 12px',
+          cursor: busy ? 'wait' : 'pointer',
+          fontSize: 13,
+        }}
+        title="按 1-3 级标题逐块生成复习卡（块级 Distill v1）"
+      >
+        {busy ? '…' : '🧩 按块建卡'}
       </button>
       {msg && <span style={{ color: '#c9a9ff', fontSize: 12 }}>{msg}</span>}
     </div>
