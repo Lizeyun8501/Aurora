@@ -224,6 +224,7 @@ pub fn run() {
             cmd_board_tasks,
             cmd_set_task_status,
             cmd_due_review_cards,
+            cmd_review_due_count,
             cmd_review_card,
             cmd_add_review_cards_from_blocks,
             attachment_commands::cmd_read_attachment,
@@ -1090,6 +1091,14 @@ async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, String>
         .ok_or_else(|| format!("card not found: {}", card_id))?;
     persist_queue(&core).await; // R13：评分即落盘
     Ok(out.due.to_rfc3339())
+}
+
+/// R15：到期卡轻量计数（Today 视图复习分区入口徽标——不做卡面重拼，
+/// O(1) 读模型长度；全量重拼走 cmd_due_review_cards）。
+#[tauri::command]
+async fn cmd_review_due_count() -> Result<usize, String> {
+    let core = get_core()?;
+    Ok(core.review_queue.due_items(chrono::Utc::now()).len())
 }
 
 /// G4：看板数据源——投影全量行（status 分列用）。

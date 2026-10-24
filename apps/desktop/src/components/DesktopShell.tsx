@@ -757,6 +757,65 @@ function FocusPomodoro({ invoke }: { invoke: InvokeFn | null }): React.ReactElem
   );
 }
 
+/* ── R15：复习入口卡（Today 视图）──────────────────────────────
+ * 五批 Distill 管线的用户可见面：命令面板入口之外的正门——
+ * due 轻量计数徽标（cmd_review_due_count O(1) 读模型长度）+
+ * 「开始复习」按钮开 ReviewPanel。0 张时低视认（可点击空跑）。 */
+function ReviewEntryCard({
+  invoke,
+  onOpen,
+}: {
+  invoke: InvokeFn | null;
+  onOpen: () => void;
+}): React.ReactElement {
+  const [due, setDue] = useState<number | null>(null);
+  useEffect(() => {
+    if (!invoke) return;
+    invoke('cmd_review_due_count')
+      .then((r) => setDue((r as { count: number }).count))
+      .catch(() => setDue(0));
+  }, [invoke]);
+  const hot = (due ?? 0) > 0;
+  return (
+    <div
+      style={{
+        marginTop: tokens.spacing.lg,
+        background: tokens.color.bgSurface,
+        border: `1px solid ${hot ? 'rgba(201,169,255,0.35)' : 'rgba(255,255,255,0.08)'}`,
+        borderRadius: tokens.radius.lg,
+        padding: tokens.spacing.md,
+        display: 'flex',
+        alignItems: 'center',
+        gap: tokens.spacing.md,
+      }}
+    >
+      <div style={{ fontSize: 28, fontWeight: 700, color: hot ? '#c9a9ff' : tokens.color.textSecondary }}>
+        {due ?? '…'}
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 600 }}>到期复习</div>
+        <div style={{ fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+          {hot ? '有卡片到达复习窗口（FSRS 调度）' : '暂无到期卡——在笔记详情页「建卡」生成 Distill 闪卡'}
+        </div>
+      </div>
+      <button
+        onClick={onOpen}
+        style={{
+          background: hot ? '#c9a9ff' : 'transparent',
+          border: `1px solid ${hot ? '#c9a9ff' : 'rgba(255,255,255,0.18)'}`,
+          color: hot ? '#1a1625' : tokens.color.textSecondary,
+          borderRadius: tokens.radius.sm,
+          padding: '6px 14px',
+          cursor: 'pointer',
+          fontWeight: 600,
+        }}
+      >
+        开始复习
+      </button>
+    </div>
+  );
+}
+
 /** DK-25 S2：周回顾面板（全周口径——本周/上周切换；周一 00:00 ~ 周日 23:59:59.999 闭区间）。 */
 function WeeklyReview({ invoke }: { invoke: InvokeFn | null }): React.ReactElement {
   const [sum, setSum] = useState<{
@@ -3949,6 +4008,7 @@ export default function DesktopShell() {
             <TodayTaskRows invoke={invoke} />
             <FocusPomodoro invoke={invoke} />
             <WeeklyReview invoke={invoke} />
+            <ReviewEntryCard invoke={invoke} onOpen={() => setReviewOpen(true)} />
           </main>
         ) : (
           /* DK-3.1：编辑器 + 右侧常驻信息面板（反链/图谱/待办——可关，
