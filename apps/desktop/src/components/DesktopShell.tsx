@@ -2181,6 +2181,61 @@ function ShareRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.
   );
 }
 
+/* ── R16：大纲面板（InfoPanelTabs 第 5 tab）─────────────────────
+ * heading 导航：currentContent（DK-2.6 实时编辑内容）行级解析 1-6 级，
+ * 缩进按层级；点击派 CustomEvent「aurora:outline-jump」（index=第 N 个
+ * heading）——EditAuroraEditor 监听后按 doc 遍历定位滚动（文本匹配会
+ * 撞同名 heading，序号匹配稳）。零命令改动（纯前端读模型）。 */
+function OutlinePanel({ content }: { content: string }): React.ReactElement {
+  const items = useMemo(() => {
+    const out: { level: number; text: string; index: number }[] = [];
+    let idx = 0;
+    for (const line of content.split('\n')) {
+      const m = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line.trim());
+      if (m) out.push({ level: m[1].length, text: m[2], index: idx++ });
+    }
+    return out;
+  }, [content]);
+  if (!items.length) {
+    return (
+      <p style={{ margin: '12px 0 0', fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+        无标题层级——用块工具条「转 H2/H3」组织结构后即可导航。
+      </p>
+    );
+  }
+  return (
+    <div style={{ marginTop: 10, maxHeight: 340, overflowY: 'auto' }}>
+      {items.map((it) => (
+        <div
+          key={it.index}
+          onClick={() =>
+            window.dispatchEvent(
+              new CustomEvent('aurora:outline-jump', { detail: { index: it.index } }),
+            )
+          }
+          style={{
+            padding: '4px 6px 4px',
+            paddingLeft: (it.level - 1) * 14 + 6,
+            cursor: 'pointer',
+            borderRadius: tokens.radius.sm,
+            fontSize: it.level <= 2 ? tokens.typography.body.size : tokens.typography.caption.size,
+            fontWeight: it.level <= 2 ? 600 : 400,
+            color: it.level <= 2 ? tokens.color.textPrimary : tokens.color.textSecondary,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+          title={it.text}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        >
+          {it.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** DK-UI-S2+图谱原型+DK-3.1：信息面板 Tab 容器（反链 | 图谱 | 待办）。
  * 状态提升到此——BacklinksPanel/GraphPanel/TodoView 各自无 Tab 感知。
  * 3.1 常驻化：EditorPane 内嵌原位与右侧常驻 aside 共用本组件。
@@ -2193,8 +2248,11 @@ function InfoPanelTabs(props: {
   currentContent?: string;
 }): React.ReactElement {
   const { invoke, noteId, onSelect, currentContent = '' } = props;
-  const [tab, setTab] = useState<'backlinks' | 'graph' | 'todos' | 'history'>('backlinks');
-  const tabBtn = (key: 'backlinks' | 'graph' | 'todos' | 'history', label: string): React.ReactElement => (
+  const [tab, setTab] = useState<'backlinks' | 'graph' | 'todos' | 'history' | 'outline'>('backlinks');
+  const tabBtn = (
+    key: 'backlinks' | 'graph' | 'todos' | 'history' | 'outline',
+    label: string,
+  ): React.ReactElement => (
     <button
       style={{
         padding: '4px 12px',
@@ -2212,10 +2270,11 @@ function InfoPanelTabs(props: {
   );
   return (
     <section>
-      <div style={{ display: 'flex', gap: 6, margin: '12px 0 0' }}>
+      <div style={{ display: 'flex', gap: 6, margin: '12px 0 0', flexWrap: 'wrap' }}>
         {tabBtn('backlinks', '反向链接')}
         {tabBtn('graph', '链接图谱')}
         {tabBtn('todos', '待办聚合')}
+        {tabBtn('outline', '大纲')}
         {tabBtn('history', '历史版本')}
       </div>
       {tab === 'backlinks' ? (
@@ -2224,6 +2283,8 @@ function InfoPanelTabs(props: {
         <GraphPanel invoke={invoke} onSelect={onSelect} />
       ) : tab === 'todos' ? (
         <TodoView invoke={invoke} onOpenNote={onSelect} compact />
+      ) : tab === 'outline' ? (
+        <OutlinePanel content={currentContent} />
       ) : (
         <VersionHistoryPanel invoke={invoke} noteId={noteId} currentContent={currentContent} />
       )}
@@ -2726,6 +2787,46 @@ function EditAuroraEditor(props: {
       handle?.destroy();
     };
   }, [noteId, content]);
+
+  /* R16：大纲跳转——OutlinePanel（InfoPanelTabs）派 CustomEvent，
+   * 此处按 doc 第 index 个 heading 定位滚动（TextSelection.near 防
+   * 叶子节点空位；scrollIntoView 滚动视口）。view 经 ref 取最新
+   * （effect 依赖空数组——setState updater 内不跑副作用）。 */
+  const outlineViewRef = useRef<import('prosemirror-view').EditorView | null>(null);
+  useEffect(() => {
+    const onJump = (e: Event): void => {
+      const v = outlineViewRef.current;
+      const idx = (e as CustomEvent<{ index?: number }>).detail?.index;
+      if (!v || typeof idx !== 'number' || idx < 0) return;
+      // prosemirror-state 运行时按需取（本组件零静态 import 风格——保持）
+      void import('prosemirror-state').then(({ TextSelection }) => {
+        let n = -1;
+        let target: number | null = null;
+        v.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'heading') {
+            n += 1;
+            if (n === idx) {
+              target = pos;
+              return false;
+            }
+          }
+          return true;
+        });
+        if (target !== null) {
+          const $pos = v.state.doc.resolve(target);
+          v.dispatch(
+            v.state.tr.setSelection(TextSelection.near($pos)).scrollIntoView(),
+          );
+          v.focus();
+        }
+      });
+    };
+    window.addEventListener('aurora:outline-jump', onJump);
+    return () => window.removeEventListener('aurora:outline-jump', onJump);
+  }, []);
+  useEffect(() => {
+    outlineViewRef.current = view;
+  }, [view]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
