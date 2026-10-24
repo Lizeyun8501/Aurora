@@ -335,6 +335,99 @@ impl ReviewQueue {
         }
         (added, removed)
     }
+
+    /// R13（切片三-1）：全量快照——desktop 壳 KVStore 落盘用（重启恢复）。
+    /// 手写序列化（core 类型零侵入）；version 迁移位。
+    pub fn snapshot_json(&self) -> serde_json::Value {
+        let items = self.items.read().unwrap();
+        serde_json::json!({
+            "version": 1,
+            "items": items
+                .iter()
+                .map(|i| {
+                    serde_json::json!({
+                        "card_id": i.card_id,
+                        "note_id": i.note_id,
+                        "due": i.due.to_rfc3339(),
+                        "stability": i.state.stability,
+                        "difficulty": i.state.difficulty,
+                        "last_review": i.state.last_review.to_rfc3339(),
+                        "reps": i.state.reps,
+                        "lapses": i.state.lapses,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    /// R13（切片三-1）：从快照恢复——逐条覆盖同 card_id（恢复语义）；
+    /// version 不符或条目字段缺失跳过该条（坏数据不毒化队列），返回恢复数。
+    pub fn restore_json(&self, snap: &serde_json::Value) -> usize {
+        if snap.get("version").and_then(|v| v.as_u64()) != Some(1) {
+            return 0;
+        }
+        let arr = match snap.get("items").and_then(|v| v.as_array()) {
+            Some(a) => a.clone(),
+            None => return 0,
+        };
+        let mut restored = 0;
+        let mut items = self.items.write().unwrap();
+        for it in arr {
+            let card_id = it.get("card_id").and_then(|v| v.as_str()).map(String::from);
+            let note_id = it.get("note_id").and_then(|v| v.as_str()).map(String::from);
+            let due = it
+                .get("due")
+                .and_then(|v| v.as_str())
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|d| d.with_timezone(&Utc));
+            let stability = it.get("stability").and_then(|v| v.as_f64());
+            let difficulty = it.get("difficulty").and_then(|v| v.as_f64());
+            let last_review = it
+                .get("last_review")
+                .and_then(|v| v.as_str())
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|d| d.with_timezone(&Utc));
+            let reps = it.get("reps").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let lapses = it.get("lapses").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let (
+                Some(card_id),
+                Some(note_id),
+                Some(due),
+                Some(stability),
+                Some(difficulty),
+                Some(last_review),
+                Some(reps),
+                Some(lapses),
+            ) = (
+                card_id,
+                note_id,
+                due,
+                stability,
+                difficulty,
+                last_review,
+                reps,
+                lapses,
+            )
+            else {
+                continue; // 字段缺失跳过（诚实边界：坏条目不入队）
+            };
+            items.retain(|x| x.card_id != card_id);
+            items.push(ReviewItem {
+                card_id,
+                note_id,
+                state: CardState {
+                    stability,
+                    difficulty,
+                    last_review,
+                    reps,
+                    lapses,
+                },
+                due,
+            });
+            restored += 1;
+        }
+        restored
+    }
 }
 
 impl Default for ReviewQueue {
@@ -510,5 +603,53 @@ mod tests {
         // fresh 已建（added=1 且存在）
         let again = q.sync_block_cards("n1", &[fresh.clone()]);
         assert_eq!(again, (0, 0), "幂等二跑");
+    }
+
+    // ── R13 持久化快照 ───────────────────────────────────────────
+
+    #[test]
+    fn snapshot_roundtrip_preserves_progress() {
+        let q1 = ReviewQueue::new();
+        let id = block_id("n1", "277e29c9");
+        q1.add_card(&id, "n1", Rating::Good);
+        q1.review_card(&id, Rating::Good).unwrap();
+        let snap = q1.snapshot_json();
+
+        let q2 = ReviewQueue::new();
+        let restored = q2.restore_json(&snap);
+        assert_eq!(restored, 1);
+        // 恢复后进度/状态一致（reps=2、due 时刻同）
+        let s1 = q1.due_items(Utc::now() + Duration::days(3650));
+        let s2 = q2.due_items(Utc::now() + Duration::days(3650));
+        assert_eq!(s1.len(), s2.len());
+        let a = s1.iter().find(|i| i.card_id == id).unwrap();
+        let b = s2.iter().find(|i| i.card_id == id).unwrap();
+        assert_eq!(a.state, b.state, "CardState 全等");
+        assert_eq!(a.due, b.due);
+        // 恢复后可继续调度
+        let out = q2.review_card(&id, Rating::Good).unwrap();
+        assert!(out.state.reps >= 3);
+    }
+
+    #[test]
+    fn restore_skips_bad_entries() {
+        let q = ReviewQueue::new();
+        // version 错 → 0
+        assert_eq!(
+            q.restore_json(&serde_json::json!({"version": 99, "items": []})),
+            0
+        );
+        // 字段缺失条目跳过、好条目收
+        let n = q.restore_json(&serde_json::json!({
+            "version": 1,
+            "items": [
+                {"card_id": "card:note:n1", "note_id": "n1", "due": "2030-01-01T00:00:00Z",
+                 "stability": 2.0, "difficulty": 5.0, "last_review": "2026-10-24T00:00:00Z",
+                 "reps": 3, "lapses": 0},
+                {"card_id": "card:note:n2", "note_id": "n2"}
+            ]
+        }));
+        assert_eq!(n, 1, "坏条目跳过");
+        assert_eq!(q.stats().1, 1);
     }
 }

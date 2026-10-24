@@ -314,6 +314,16 @@ pub fn run() {
             *APP_STATE.lock().expect("APP_STATE mutex poisoned") = Some(booted.core.clone());
             *ATTACH_STATE.lock().expect("ATTACH_STATE mutex poisoned") =
                 Some(booted.attachments.clone());
+            // R13（切片三-2）：复习队列恢复——重启清偿（内存读模型 → KVStore）。
+            // 坏快照/缺 key 静默=空队列起步（诚实边界：恢复失败不阻断启动）。
+            if let Ok(Some(raw)) = booted.core.kv_store.get(FSRS_QUEUE_KEY).await {
+                if let Ok(snap) = serde_json::from_slice::<serde_json::Value>(&raw) {
+                    let restored = booted.core.review_queue.restore_json(&snap);
+                    if restored > 0 {
+                        log::info!("fsrs queue restored: {} cards", restored);
+                    }
+                }
+            }
             // BOOTED_STATE 的 move 必须最后——booted 的其余字段先 clone 完
             // （E0382 borrow-after-move，49ae86c 引入 · 2026-09-25 修）。
             let booted_arc = std::sync::Arc::new(booted);
@@ -1086,6 +1096,7 @@ async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, String>
         .review_queue
         .review_card(&card_id, rating)
         .ok_or_else(|| format!("card not found: {}", card_id))?;
+    persist_queue(&core).await; // R13：评分即落盘
     Ok(out.due.to_rfc3339())
 }
 
@@ -1156,6 +1167,7 @@ async fn cmd_add_review_card(note_id: String) -> Result<serde_json::Value, Strin
         &note_id,
         aurora_core::l3_domain::fsrs::Rating::Good,
     );
+    persist_queue(&core).await; // R13（切片三-2）：队列变更即落盘
     Ok(serde_json::json!({
         "card_id": format!("card:note:{}", note_id),
         "note_id": note_id,
@@ -1163,6 +1175,14 @@ async fn cmd_add_review_card(note_id: String) -> Result<serde_json::Value, Strin
         "summary": summary,
         "due_at": scheduled.due.to_rfc3339(),
     }))
+}
+
+/// R13（切片三-2）：复习队列快照落盘（内存读模型 → KVStore 持久化）。
+/// 失败静默（持久化故障不阻断复习主链——下次变更重试覆盖）。
+const FSRS_QUEUE_KEY: &str = "fsrs:queue:v1";
+async fn persist_queue(core: &AppCore) {
+    let snap = core.review_queue.snapshot_json().to_string();
+    let _ = core.kv_store.set(FSRS_QUEUE_KEY, snap.as_bytes()).await;
 }
 
 /// R10/Alpha（块级卡 Distill 切片一）：markdown → 块卡提取器（纯函数）。
@@ -1248,6 +1268,7 @@ async fn cmd_add_review_cards_from_blocks(note_id: String) -> Result<serde_json:
         .map(|(q, _)| block_card_id(&note_id, q))
         .collect();
     let (added, removed) = core.review_queue.sync_block_cards(&note_id, &keep);
+    persist_queue(&core).await; // R13：同步即落盘
     let mut out = Vec::with_capacity(cards.len());
     for (idx, (q, a)) in cards.iter().enumerate() {
         out.push(serde_json::json!({
