@@ -1019,9 +1019,9 @@ async fn cmd_due_review_cards() -> Result<Vec<serde_json::Value>, String> {
     for it in items {
         let r = scheduler.retrievability(&it.state, now);
         // G3：卡面字段（title 恒明文+首行摘要）——到期队列小（几~几十）逐条读可接受
-        // R11/R12：块卡（尾 :b{hash8}）卡面重拼——heading=Q + 首段=A；
-        // heading 已被编辑删除时降级笔记级卡面 + 失效注记（诚实边界）。
-        let is_block = aurora_core::l3_domain::fsrs::is_block_card_id(&it.card_id);
+        // R11/R12/R14：生成卡（:b/:l）卡面重拼——id 反查提取集；
+        // 内容已改删时降级笔记级卡面 + 失效注记（诚实边界）。
+        let is_generated = aurora_core::l3_domain::fsrs::is_generated_card_id(&it.card_id);
         let (title, summary) = match core.kv_store.get(&format!("note:{}", it.note_id)).await {
             Ok(Some(bytes)) => match unwrap_note_bytes(&core, &vault, &bytes) {
                 Ok(json) => {
@@ -1031,22 +1031,14 @@ async fn cmd_due_review_cards() -> Result<Vec<serde_json::Value>, String> {
                         .unwrap_or("未命名")
                         .to_string();
                     let content = json.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                    if is_block {
-                        let cards = extract_block_cards(content);
-                        let found = cards
-                            .iter()
-                            .find(|(q, _)| block_card_id(&it.note_id, q) == it.card_id);
-                        match found {
-                            Some((q, a)) => (
-                                format!("{} · {}", note_title, q),
-                                if a.is_empty() {
-                                    "(无正文 — 概念卡)".to_string()
-                                } else {
-                                    a.clone()
-                                },
-                            ),
+                    if is_generated {
+                        // R11/R12/R14：块卡(:b)/列表卡(:l) 卡面重拼——id 反查
+                        // 当前笔记提取集；heading/术语已改删时降级 + 失效注记。
+                        let cards = extract_distill_cards(&it.note_id, content);
+                        match cards.iter().find(|(cid, _, _)| cid == &it.card_id) {
+                            Some((_, q, a)) => (format!("{} · {}", note_title, q), a.clone()),
                             None => (
-                                format!("{} · （块已失效——标题已改）", note_title),
+                                format!("{} · （卡已失效——内容已改）", note_title),
                                 String::new(),
                             ),
                         }
@@ -1185,12 +1177,15 @@ async fn persist_queue(core: &AppCore) {
     let _ = core.kv_store.set(FSRS_QUEUE_KEY, snap.as_bytes()).await;
 }
 
-/// R10/Alpha（块级卡 Distill 切片一）：markdown → 块卡提取器（纯函数）。
-/// 语义：1-3 级 heading 为卡提示（Q），其下首个非空段为卡底（A 摘要 ≤80 字）。
-/// 列表/代码等非 heading 块 v1 不卡化（诚实边界——管线 v2 扩）。
-fn extract_block_cards(md: &str) -> Vec<(String, String)> {
-    let mut cards: Vec<(String, String)> = Vec::new();
-    let mut cur: Option<(String, String)> = None;
+/// R14（Distill v2 列表项卡化）：markdown → 生成卡提取器（纯函数）。
+/// 两路语义：
+/// 1. 块卡（:b）——1-3 级 heading 为卡提示（Q），其下首个非空段为卡底（A ≤80 字）；
+/// 2. 列表卡（:l）——「- **术语**：定义」形态（粗体术语+冒号——结构特征防线
+///    挡噪音：无粗体前缀/无定义的列表项不卡化），Q=术语、A=定义 ≤80 字。
+/// 返回 (card_id, q, a)——card_id 构造进提取器（建卡与 due 重拼单一事实源）。
+fn extract_distill_cards(note_id: &str, md: &str) -> Vec<(String, String, String)> {
+    let mut cards: Vec<(String, String, String)> = Vec::new();
+    let mut cur: Option<(String, String)> = None; // (heading_q, a)
     for line in md.lines() {
         let trimmed = line.trim();
         let hashes = trimmed.len() - trimmed.trim_start_matches('#').len();
@@ -1203,19 +1198,39 @@ fn extract_block_cards(md: &str) -> Vec<(String, String)> {
             if hashes <= 3 {
                 if let Some(text) = heading_text {
                     // 1-3 级 heading：落袋前卡，开新卡
-                    if let Some(prev) = cur.take() {
-                        cards.push(prev);
+                    if let Some((q, a)) = cur.take() {
+                        cards.push((
+                            block_card_id(note_id, &q),
+                            q,
+                            if a.is_empty() {
+                                "(无正文 — 概念卡)".to_string()
+                            } else {
+                                a
+                            },
+                        ));
                     }
                     cur = Some((text.to_string(), String::new()));
                 }
                 // 1-3 级但无空格/空文本（#tag、裸#）：非 heading 非正文，跳过
             } else {
                 // H4+ 子树不卡化；当前卡就此落袋（卡底未收=概念卡）
-                if let Some(prev) = cur.take() {
-                    cards.push(prev);
+                if let Some((q, a)) = cur.take() {
+                    cards.push((
+                        block_card_id(note_id, &q),
+                        q,
+                        if a.is_empty() {
+                            "(无正文 — 概念卡)".to_string()
+                        } else {
+                            a
+                        },
+                    ));
                 }
             }
             continue;
+        }
+        // 列表卡扫描（R14 v2）：- **术语**：定义
+        if let Some((term, def)) = parse_list_card(trimmed) {
+            cards.push((list_card_id(note_id, &term), term, def));
         }
         // heading 下首个非空段 = 卡底
         if let Some((_, a)) = cur.as_mut() {
@@ -1224,10 +1239,54 @@ fn extract_block_cards(md: &str) -> Vec<(String, String)> {
             }
         }
     }
-    if let Some(last) = cur.take() {
-        cards.push(last);
+    if let Some((q, a)) = cur.take() {
+        cards.push((
+            block_card_id(note_id, &q),
+            q,
+            if a.is_empty() {
+                "(无正文 — 概念卡)".to_string()
+            } else {
+                a
+            },
+        ));
     }
     cards
+}
+
+/// R14：列表卡解析——「- **术语**：定义」/「* **术语**: 定义」形态
+///（中英冒号都收；无粗体术语/无定义不卡化——噪音防线）。
+fn parse_list_card(line: &str) -> Option<(String, String)> {
+    let body = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))?
+        .trim();
+    if !body.starts_with("**") {
+        return None;
+    }
+    let close = body[2..].find("**")? + 2;
+    let term = body[2..close].trim();
+    if term.is_empty() {
+        return None;
+    }
+    let rest = body[close + 2..].trim_start();
+    let def = rest
+        .strip_prefix('：')
+        .or_else(|| rest.strip_prefix(':'))?
+        .trim();
+    if def.is_empty() {
+        return None;
+    }
+    Some((term.to_string(), def.chars().take(80).collect()))
+}
+
+/// R14：列表卡 card_id（:l 尾——FNV-1a hash8 幂等锚定与块卡同族）。
+fn list_card_id(note_id: &str, term: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in term.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("card:note:{}:l{:08x}", note_id, h as u32)
 }
 
 /// R11：块卡 card_id 构造（FNV-1a hash8 幂等锚定，非安全哈希）——
@@ -1262,21 +1321,17 @@ async fn cmd_add_review_cards_from_blocks(note_id: String) -> Result<serde_json:
         .unwrap_or("未命名")
         .to_string();
     let content = json.get("content").and_then(|c| c.as_str()).unwrap_or("");
-    let cards = extract_block_cards(content);
-    let keep: Vec<String> = cards
-        .iter()
-        .map(|(q, _)| block_card_id(&note_id, q))
-        .collect();
+    let cards = extract_distill_cards(&note_id, content);
+    let keep: Vec<String> = cards.iter().map(|(cid, _, _)| cid.clone()).collect();
     let (added, removed) = core.review_queue.sync_block_cards(&note_id, &keep);
     persist_queue(&core).await; // R13：同步即落盘
     let mut out = Vec::with_capacity(cards.len());
-    for (idx, (q, a)) in cards.iter().enumerate() {
+    for (cid, q, a) in cards.iter() {
         out.push(serde_json::json!({
-            "card_id": keep[idx],
+            "card_id": cid,
             "note_id": note_id,
             "title": format!("{} · {}", title, q),
-            "summary": if a.is_empty() { "(无正文 — 概念卡)".to_string() } else { a.clone() },
-            "block_index": idx,
+            "summary": a.clone(),
         }));
     }
     Ok(

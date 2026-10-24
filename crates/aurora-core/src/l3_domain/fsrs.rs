@@ -315,7 +315,7 @@ impl ReviewQueue {
             if i.note_id != note_id {
                 return true; // 他笔记不动
             }
-            !(is_block_card_id(&i.card_id) && !keep.contains(i.card_id.as_str()))
+            !(is_generated_card_id(&i.card_id) && !keep.contains(i.card_id.as_str()))
         });
         let removed = before - items.len();
         let mut added = 0;
@@ -448,6 +448,19 @@ pub fn is_block_card_id(card_id: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// R14：生成卡形态判定（:b 块卡 / :l 列表卡——同 hash8 尾族）。
+/// 同步清理语义用（笔记级卡不动）；块卡重拼仍用 is_block_card_id 分流。
+pub fn is_generated_card_id(card_id: &str) -> bool {
+    card_id
+        .rfind(":b")
+        .or_else(|| card_id.rfind(":l"))
+        .map(|i| {
+            let tail = &card_id[i + 2..];
+            tail.len() == 8 && tail.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,6 +580,14 @@ mod tests {
         assert!(!is_block_card_id("card:note:n1")); // 笔记级
         assert!(!is_block_card_id("card:note:note:bblue")); // 尾非 8hex
         assert!(!is_block_card_id("card:note:n1:b277e29")); // 7 位
+                                                            // R14：生成卡族（:b/:l 同判——列表卡进同步清理语义）
+        assert!(is_generated_card_id(&block_id("n1", "277e29c9")));
+        assert!(is_generated_card_id(&format!(
+            "card:note:n1:l{}",
+            "277e29c9"
+        )));
+        assert!(!is_generated_card_id("card:note:n1"));
+        assert!(!is_generated_card_id("card:note:n1:lblue")); // 非 8hex
     }
 
     #[test]

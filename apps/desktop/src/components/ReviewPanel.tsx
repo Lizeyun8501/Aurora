@@ -146,10 +146,11 @@ export default function ReviewPanel({ invoke, onClose }: Props) {
                 minHeight: 96,
               }}
             >
-              {/* R11/Bravo：块卡辨识——card_id 含 ':b' 为块级 Distill 卡；
-                  title「笔记名 · heading」拆显：笔记名弱化，heading 主显 */}
+              {/* R11/R14：生成卡辨识——card_id 尾 ':b'（块）/':l'（列表）为
+                  Distill 生成卡；title「笔记名 · heading/术语」拆显：笔记名弱化 */}
               {(() => {
                 const isBlock = /:b[0-9a-f]{8}$/.test(card.card_id ?? '');
+                const isList = /:l[0-9a-f]{8}$/.test(card.card_id ?? '');
                 const t = card.title ?? '未命名卡';
                 const sep = t.indexOf(' · ');
                 return (
@@ -159,7 +160,12 @@ export default function ReviewPanel({ invoke, onClose }: Props) {
                         ▸ 块
                       </span>
                     )}
-                    {isBlock && sep > 0 ? (
+                    {isList && (
+                      <span style={{ color: '#8fd3c7', fontSize: tokens.typography.caption.size, marginRight: 6 }}>
+                        ▸ 项
+                      </span>
+                    )}
+                    {(isBlock || isList) && sep > 0 ? (
                       <>
                         <span style={{ color: tokens.color.textSecondary, fontWeight: 400 }}>{t.slice(0, sep)} · </span>
                         {t.slice(sep + 3)}
@@ -171,7 +177,7 @@ export default function ReviewPanel({ invoke, onClose }: Props) {
                 );
               })()}
               <div style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size }}>
-                {card.summary || (/:b[0-9a-f]{8}$/.test(card.card_id ?? '') ? '（无正文——概念卡）' : '（无摘要——笔记首行即卡面，v1 笔记级整卡）')}
+                {card.summary || (/:b[0-9a-f]{8}$|:l[0-9a-f]{8}$/.test(card.card_id ?? '') ? '（无正文——概念卡）' : '（无摘要——笔记首行即卡面，v1 笔记级整卡）')}
               </div>
               <div style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size, marginTop: 8 }}>
                 可提取性 {(card.retrievability * 100).toFixed(0)}% · 复习 {card.reps} 次
