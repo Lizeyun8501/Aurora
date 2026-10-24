@@ -13,7 +13,7 @@
 
 ## TS 侧互指 ✓
 ReviewPanel :b/:l 双正则徽标（▸块 紫/▸项 青 8fd3c7）+L180 概念卡联合正则——三处与 core is_generated 语义互指 ✓
-- block_index 死字段零残留（rg RC=1）✓；单测 id 边界（8hex/7位/非hex/笔记级）✓
+- block_index 死字段零残留（rg 无管道直跑 RG-RC=1；初验管道 rc 被 head 吞——复核自纠）✓；单测 id 边界（8hex/7位/非hex/笔记级）✓
 
 ## XS 备忘（设计权衡非缺陷）
 heading 卡底空位时列表项被吃为块卡 A+同时独立列表卡=同内容双卡并存——heading 概念兜底×术语结构卡的隐含权衡，v2 选择性卡化意图内，无动作。
