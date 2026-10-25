@@ -12,9 +12,9 @@
 //! 视图（表格/看板/筛选）是读端关注点——本域只供数据与行集，视图
 //! 状态不落库（v1 前端本地态）。
 
-use crate::Error;
 use crate::l2_engines::property::{PropertyDefinition, PropertyEngine, PropertySet};
 use crate::traits::kv_store::KVStore;
+use crate::Error;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -92,7 +92,11 @@ impl CollectionStore {
     }
 
     /// schema 全量覆盖编辑（含校验注册——PropertyEngine 同步 register）。
-    pub async fn set_schema(&self, id: &str, prop_defs: Vec<PropertyDefinition>) -> Result<(), Error> {
+    pub async fn set_schema(
+        &self,
+        id: &str,
+        prop_defs: Vec<PropertyDefinition>,
+    ) -> Result<(), Error> {
         let col = self
             .load_one(id)
             .await?
@@ -192,7 +196,10 @@ impl CollectionStore {
 
     async fn save_index(&self, ids: &[String]) -> Result<(), Error> {
         self.kv
-            .set(INDEX_KEY, &serde_json::to_vec(ids).map_err(Error::Serialization)?)
+            .set(
+                INDEX_KEY,
+                &serde_json::to_vec(ids).map_err(Error::Serialization)?,
+            )
             .await
     }
 
@@ -202,7 +209,8 @@ impl CollectionStore {
         }
         match self.kv.get(&collection_key(id)).await? {
             Some(bytes) => {
-                let col: Collection = serde_json::from_slice(&bytes).map_err(Error::Serialization)?;
+                let col: Collection =
+                    serde_json::from_slice(&bytes).map_err(Error::Serialization)?;
                 for def in &col.prop_defs {
                     self.engine.register(def.clone());
                 }
@@ -220,7 +228,10 @@ impl CollectionStore {
             self.save_index(&ids).await?;
         }
         self.kv
-            .set(&collection_key(&col.id), &serde_json::to_vec(col).map_err(Error::Serialization)?)
+            .set(
+                &collection_key(&col.id),
+                &serde_json::to_vec(col).map_err(Error::Serialization)?,
+            )
             .await?;
         self.cache.write().await.insert(col.id.clone(), col.clone());
         Ok(())
@@ -235,21 +246,34 @@ impl CollectionStore {
 
     async fn save_rows(&self, id: &str, rows: &[String]) -> Result<(), Error> {
         self.kv
-            .set(&rows_key(id), &serde_json::to_vec(rows).map_err(Error::Serialization)?)
+            .set(
+                &rows_key(id),
+                &serde_json::to_vec(rows).map_err(Error::Serialization)?,
+            )
             .await
     }
 
     async fn load_props(&self, note_id: &str) -> Result<PropertySet, Error> {
         match self.kv.get(&props_key(note_id)).await? {
-            Some(bytes) => Ok(serde_json::from_slice(&bytes)
-                .unwrap_or_else(|_| PropertySet { block_id: note_id.to_string(), values: Default::default() })),
-            None => Ok(PropertySet { block_id: note_id.to_string(), values: Default::default() }),
+            Some(bytes) => Ok(
+                serde_json::from_slice(&bytes).unwrap_or_else(|_| PropertySet {
+                    block_id: note_id.to_string(),
+                    values: Default::default(),
+                }),
+            ),
+            None => Ok(PropertySet {
+                block_id: note_id.to_string(),
+                values: Default::default(),
+            }),
         }
     }
 
     async fn save_props(&self, note_id: &str, set: &PropertySet) -> Result<(), Error> {
         self.kv
-            .set(&props_key(note_id), &serde_json::to_vec(set).map_err(Error::Serialization)?)
+            .set(
+                &props_key(note_id),
+                &serde_json::to_vec(set).map_err(Error::Serialization)?,
+            )
             .await
     }
 }

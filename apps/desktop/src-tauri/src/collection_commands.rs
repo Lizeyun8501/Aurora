@@ -46,7 +46,10 @@ pub async fn cmd_collection_get(id: String) -> Result<Option<Value>, String> {
 #[tauri::command]
 pub async fn cmd_collection_delete(id: String) -> Result<(), String> {
     let core = get_core()?;
-    core.collections.delete(&id).await.map_err(|e| e.to_string())
+    core.collections
+        .delete(&id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// schema 全量覆盖（列头编辑——PropertyDefinition 数组直传）。
@@ -100,7 +103,11 @@ pub async fn cmd_collection_set_cell(
 #[tauri::command]
 pub async fn cmd_collection_rows(id: String) -> Result<Vec<Value>, String> {
     let core = get_core()?;
-    let rows = core.collections.rows(&id).await.map_err(|e| e.to_string())?;
+    let rows = core
+        .collections
+        .rows(&id)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(rows.len());
     for (note_id, set) in rows {
         let title = match core.kv_store.get(&format!("note:{}", note_id)).await {

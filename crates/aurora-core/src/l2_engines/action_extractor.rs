@@ -559,7 +559,7 @@ mod tests {
     fn due_parse_at_fixed_now() {
         use chrono::TimeZone;
         let now = Utc.with_ymd_and_hms(2026, 10, 21, 10, 0, 0).unwrap(); // 周三
-        // 「明天 9 点」= 2026-10-22 09:00 精确断言
+                                                                         // 「明天 9 点」= 2026-10-22 09:00 精确断言
         let d = due_parse_at("明天 9 点交", now).unwrap();
         let dt = chrono::DateTime::from_timestamp_millis(d.due_ts).unwrap();
         assert_eq!(dt.format("%Y-%m-%d %H:%M").to_string(), "2026-10-22 09:00");
@@ -584,7 +584,10 @@ mod tests {
         let chars: Vec<char> = "- [ ] 交周报 明天 9 点".chars().collect();
         let m: String = chars[d.matched_start..d.matched_end].iter().collect();
         assert_eq!(m, "明天 9 点", "并集 span 覆盖天词+时刻段（char offset）");
-        assert_eq!(&chars[..d.matched_start].iter().collect::<String>(), "- [ ] 交周报 ");
+        assert_eq!(
+            &chars[..d.matched_start].iter().collect::<String>(),
+            "- [ ] 交周报 "
+        );
         // 有时刻=当天该时刻语义：非相对偏移（due 应为 09:00 锚定）
         let due_local = chrono::DateTime::from_timestamp_millis(d.due_ts).unwrap();
         assert_eq!(due_local.format("%H:%M").to_string(), "09:00");

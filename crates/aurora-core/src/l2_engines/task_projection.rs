@@ -195,7 +195,13 @@ impl TaskProjection {
     /// 校验：GTD 状态枚举集 + 行存在性。
     pub fn set_row_status(&self, task_id: &str, new_status: &str) -> Result<(), crate::Error> {
         const VALID: [&str; 7] = [
-            "inbox", "next", "waiting", "scheduled", "someday", "done", "cancelled",
+            "inbox",
+            "next",
+            "waiting",
+            "scheduled",
+            "someday",
+            "done",
+            "cancelled",
         ];
         if !VALID.contains(&new_status) {
             return Err(crate::Error::InvalidInput(format!(
@@ -661,7 +667,6 @@ mod tests {
         assert!(proj.set_row_status("t1", "bogus").is_err(), "非法枚举拒");
         assert!(proj.set_row_status("ghost", "next").is_err(), "行不存在拒");
     }
-
 
     use super::*;
     use crate::event_bus::layered::InMemoryEventQueue;
