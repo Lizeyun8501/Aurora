@@ -64,6 +64,8 @@ export default function ReviewPanel({ invoke, onClose }: Props) {
         await invoke('cmd_review_card', { cardId: card.card_id, rating });
         setDone((d) => d + 1);
         setIdx((i) => i + 1);
+        // R17-α2：评分推进 due 窗口——Today 徽标重拉信号
+        window.dispatchEvent(new CustomEvent('aurora:review-dirty'));
       } catch (e) {
         setErr(String(e));
       }

@@ -771,9 +771,16 @@ function ReviewEntryCard({
   const [due, setDue] = useState<number | null>(null);
   useEffect(() => {
     if (!invoke) return;
-    invoke('cmd_review_due_count')
-      .then((r) => setDue((r as { count: number }).count))
-      .catch(() => setDue(0));
+    const load = (): void => {
+      invoke('cmd_review_due_count')
+        .then((r) => setDue((r as { count: number }).count))
+        .catch(() => setDue(0));
+    };
+    load();
+    // R17-α2：due 徽标实时性——评分（ReviewPanel）与建卡（Distill 面）后
+    // 派 aurora:review-dirty，此处重拉（R15 遗留 stale 边界清偿）
+    window.addEventListener('aurora:review-dirty', load);
+    return () => window.removeEventListener('aurora:review-dirty', load);
   }, [invoke]);
   const hot = (due ?? 0) > 0;
   return (
@@ -1982,6 +1989,7 @@ function FlashcardRow({ note, invoke }: { note: NoteContent; invoke: InvokeFn | 
         due_at: string;
       };
       setMsg(`📇 已入复习队列 · 首次到期 ${new Date(r.due_at).toLocaleDateString()}`);
+      window.dispatchEvent(new CustomEvent('aurora:review-dirty')); // R17-α2
     } catch {
       setMsg(null); // 建卡失败静默（非关键路径）
     }
@@ -2003,6 +2011,9 @@ function FlashcardRow({ note, invoke }: { note: NoteContent; invoke: InvokeFn | 
           ? '🧩 未发现可卡化的 1-3 级标题'
           : `🧩 已同步 ${r.created} 张块卡（新增 ${r.added} · 清理失效 ${r.removed}）`,
       );
+      if (r.added > 0) {
+        window.dispatchEvent(new CustomEvent('aurora:review-dirty')); // R17-α2
+      }
     } catch {
       setMsg(null);
     }
