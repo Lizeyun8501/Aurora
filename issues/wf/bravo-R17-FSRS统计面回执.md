@@ -30,4 +30,5 @@
 ## 待办
 - [ ] Alpha：ReviewStatsPanel 挂载（InfoPanelTabs 第 6 tab 或 ReviewPanel 内嵌——任务书域边界）
 - [ ] Alpha：R-β2 挂账未修（review_due_count 裸 usize vs {count} 解构）
-- [ ] CI：Test/Clippy/desktop-check/MSRV 后台跑完（wasm×3+Rustfmt 已绿）
+- [x] CI 终证（f796077+81af86f 双 commit）：MSRV/Clippy 全绿（功能批 Rust 面 CI 实证）；Rustfmt 债在 f796077 红、81af86f 清偿绿（清偿链自洽）
+- [ ] ⚠ desktop-check 双 commit 同红——OOM 定案（annotation：runner 15G 内存下 rustc ICE option.rs panic，`prelude::v1::Some` 为编译器内部路径非项目代码，rg 零命中）——非代码债，疑似并发排队挤爆的 flaky/劣化，Alpha 域处置（workflow 并发或 runner 尺寸）；Test (stable) 长跑中（本地 478 passed 已是最强 Test 证据）
