@@ -2181,21 +2181,42 @@ function ShareRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.
   );
 }
 
-/* ── R16：大纲面板（InfoPanelTabs 第 5 tab）─────────────────────
- * heading 导航：currentContent（DK-2.6 实时编辑内容）行级解析 1-6 级，
- * 缩进按层级；点击派 CustomEvent「aurora:outline-jump」（index=第 N 个
- * heading）——EditAuroraEditor 监听后按 doc 遍历定位滚动（文本匹配会
- * 撞同名 heading，序号匹配稳）。零命令改动（纯前端读模型）。 */
-function OutlinePanel({ content }: { content: string }): React.ReactElement {
-  const items = useMemo(() => {
-    const out: { level: number; text: string; index: number }[] = [];
-    let idx = 0;
-    for (const line of content.split('\n')) {
-      const m = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line.trim());
-      if (m) out.push({ level: m[1].length, text: m[2], index: idx++ });
+/* ── R16/R17：大纲面板（InfoPanelTabs 第 5 tab）─────────────────
+ * heading 导航：数据源 **view 直连**（R17 实时化——R16 曾用 currentContent
+ * 行级解析，随 debounce 保存滞后 ≈1s）。链路：EditAuroraEditor 在文档
+ * 变更/创建/收到 outline-request 时派「aurora:outline-sync」（headings
+ * 数组）→ 本面板监听 setState（重渲染局限在面板，不惊动 DesktopShell
+ * 巨石树）。点击跳转仍派「aurora:outline-jump」（index 序号匹配——
+ * 文本匹配会撞同名 heading）；index 语义与 collectOutline 遍历序一致。 */
+interface OutlineEntry {
+  level: number;
+  text: string;
+  index: number;
+}
+/** R17：PM doc → headings 快照（遍历序=跳转 index 语义，单一事实源）。 */
+function collectOutline(doc: import('prosemirror-model').Node): OutlineEntry[] {
+  const out: OutlineEntry[] = [];
+  let idx = 0;
+  doc.descendants((node) => {
+    if (node.type.name === 'heading') {
+      out.push({ level: node.attrs.level as number, text: node.textContent, index: idx++ });
     }
-    return out;
-  }, [content]);
+    return true;
+  });
+  return out;
+}
+function OutlinePanel(): React.ReactElement {
+  const [items, setItems] = useState<OutlineEntry[]>([]);
+  useEffect(() => {
+    const onSync = (e: Event): void => {
+      const detail = (e as CustomEvent<{ headings?: OutlineEntry[] }>).detail;
+      if (Array.isArray(detail?.headings)) setItems(detail.headings);
+    };
+    // mount 即同步请求——CustomEvent 同步派发，同帧到达零闪烁
+    window.dispatchEvent(new CustomEvent('aurora:outline-request'));
+    window.addEventListener('aurora:outline-sync', onSync);
+    return () => window.removeEventListener('aurora:outline-sync', onSync);
+  }, []);
   if (!items.length) {
     return (
       <p style={{ margin: '12px 0 0', fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
@@ -2284,7 +2305,7 @@ function InfoPanelTabs(props: {
       ) : tab === 'todos' ? (
         <TodoView invoke={invoke} onOpenNote={onSelect} compact />
       ) : tab === 'outline' ? (
-        <OutlinePanel content={currentContent} />
+        <OutlinePanel />
       ) : (
         <VersionHistoryPanel invoke={invoke} noteId={noteId} currentContent={currentContent} />
       )}
@@ -2765,6 +2786,12 @@ function EditAuroraEditor(props: {
           setTick((t) => t + 1); // 工具条激活态刷新
           // DK-编辑器补全：文档变更后光标窗重扫（[[ 触发/失配即关）
           detectAutocomplete(handle!.view);
+          // R17：大纲实时同步（每变更派——headings 小数组，面板局部重渲染）
+          window.dispatchEvent(
+            new CustomEvent('aurora:outline-sync', {
+              detail: { headings: collectOutline(handle!.view.state.doc) },
+            }),
+          );
         },
       });
       const v = handle.view;
@@ -2776,6 +2803,10 @@ function EditAuroraEditor(props: {
         }
       }
       if (!cancelled) setView(v);
+      // R17：创建完成即派初始大纲（OutlinePanel 未打开时无消费方——零成本）
+      window.dispatchEvent(
+        new CustomEvent('aurora:outline-sync', { detail: { headings: collectOutline(v.state.doc) } }),
+      );
     })().catch((e) => console.error('EditAuroraEditor init failed', e));
     return () => {
       cancelled = true;
@@ -2793,6 +2824,20 @@ function EditAuroraEditor(props: {
    * 叶子节点空位；scrollIntoView 滚动视口）。view 经 ref 取最新
    * （effect 依赖空数组——setState updater 内不跑副作用）。 */
   const outlineViewRef = useRef<import('prosemirror-view').EditorView | null>(null);
+  /* R17 大纲实时化：文档变更/创建/request 时派 sync（headings 快照）。
+   * dispatchEvent 同步语义——OutlinePanel mount 的 request 同帧应答。 */
+  useEffect(() => {
+    const sync = (): void => {
+      const v = outlineViewRef.current;
+      if (!v) return;
+      window.dispatchEvent(
+        new CustomEvent('aurora:outline-sync', { detail: { headings: collectOutline(v.state.doc) } }),
+      );
+    };
+    const onRequest = (): void => sync();
+    window.addEventListener('aurora:outline-request', onRequest);
+    return () => window.removeEventListener('aurora:outline-request', onRequest);
+  }, []);
   useEffect(() => {
     const onJump = (e: Event): void => {
       const v = outlineViewRef.current;
