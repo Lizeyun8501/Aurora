@@ -1097,9 +1097,11 @@ async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, String>
 /// R15：到期卡轻量计数（Today 视图复习分区入口徽标——不做卡面重拼，
 /// O(1) 读模型长度；全量重拼走 cmd_due_review_cards）。
 #[tauri::command]
-async fn cmd_review_due_count() -> Result<usize, String> {
+async fn cmd_review_due_count() -> Result<serde_json::Value, String> {
     let core = get_core()?;
-    Ok(core.review_queue.due_items(chrono::Utc::now()).len())
+    // R17-α3：包 {count} 对象——前端 ReviewEntryCard 按 {count} 解构，
+    // 裸 usize 序列化致 undefined→徽标永不 hot（R-β2 挂账清偿）
+    Ok(serde_json::json!({ "count": core.review_queue.due_items(chrono::Utc::now()).len() }))
 }
 
 /// R17：FSRS 统计面聚合（ReviewStatsPanel 数据源——today/again_rate/due_7d

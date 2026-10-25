@@ -34,6 +34,7 @@ import LiquifyReview from './LiquifyReview';
 import PairDialog from './PairDialog';
 import QuickCapture, { useQuickCaptureEvent } from './QuickCapture';
 import ReviewPanel from './ReviewPanel';
+import ReviewStatsPanel from './ReviewStatsPanel'; // R17：FSRS 统计面板（Bravo T4 交付，Alpha 挂载）
 import CoverHeader from './CoverHeader';
 import CollectionView from './CollectionView';
 // DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
@@ -2280,9 +2281,9 @@ function InfoPanelTabs(props: {
   currentContent?: string;
 }): React.ReactElement {
   const { invoke, noteId, onSelect, currentContent = '' } = props;
-  const [tab, setTab] = useState<'backlinks' | 'graph' | 'todos' | 'history' | 'outline'>('backlinks');
+  const [tab, setTab] = useState<'backlinks' | 'graph' | 'todos' | 'history' | 'outline' | 'stats'>('backlinks');
   const tabBtn = (
-    key: 'backlinks' | 'graph' | 'todos' | 'history' | 'outline',
+    key: 'backlinks' | 'graph' | 'todos' | 'history' | 'outline' | 'stats',
     label: string,
   ): React.ReactElement => (
     <button
@@ -2307,6 +2308,7 @@ function InfoPanelTabs(props: {
         {tabBtn('graph', '链接图谱')}
         {tabBtn('todos', '待办聚合')}
         {tabBtn('outline', '大纲')}
+        {tabBtn('stats', '复习统计')}
         {tabBtn('history', '历史版本')}
       </div>
       {tab === 'backlinks' ? (
@@ -2317,6 +2319,8 @@ function InfoPanelTabs(props: {
         <TodoView invoke={invoke} onOpenNote={onSelect} compact />
       ) : tab === 'outline' ? (
         <OutlinePanel />
+      ) : tab === 'stats' ? (
+        <ReviewStatsPanel invoke={invoke} />
       ) : (
         <VersionHistoryPanel invoke={invoke} noteId={noteId} currentContent={currentContent} />
       )}

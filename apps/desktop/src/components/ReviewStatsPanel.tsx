@@ -52,9 +52,11 @@ function StatCard({
   );
 }
 
-function ReviewStatsPanel({ invoke }: { invoke: InvokeFn }): React.ReactElement {
+function ReviewStatsPanel({ invoke }: { invoke: InvokeFn | null }): React.ReactElement {
+  // α3 挂载接线：InfoPanelTabs 的 invoke 为可空——组件内 !invoke 短路已兜。
   const [stats, setStats] = useState<ReviewStatsDto | null>(null);
   useEffect(() => {
+    if (!invoke) return; // invoke 可空（InfoPanelTabs 直传）——短路
     let alive = true;
     invoke('cmd_review_stats')
       .then((r) => {
@@ -74,6 +76,18 @@ function ReviewStatsPanel({ invoke }: { invoke: InvokeFn }): React.ReactElement 
     return () => {
       alive = false;
     };
+  }, [invoke]);
+  // R17-α3 挂载接线（Alpha）：评分/建卡后统计重拉——与 ReviewEntryCard
+  // 同款 aurora:review-dirty 事件桥（Bravo 交付面板无刷新机制，挂载面补强）。
+  useEffect(() => {
+    if (!invoke) return;
+    const reload = (): void => {
+      invoke('cmd_review_stats')
+        .then((r) => setStats(r as ReviewStatsDto))
+        .catch(() => undefined); // 静默——面板非关键路径
+    };
+    window.addEventListener('aurora:review-dirty', reload);
+    return () => window.removeEventListener('aurora:review-dirty', reload);
   }, [invoke]);
   const s = stats;
   const again = s?.today_again_rate;
