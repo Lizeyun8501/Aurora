@@ -225,6 +225,7 @@ pub fn run() {
             cmd_set_task_status,
             cmd_due_review_cards,
             cmd_review_due_count,
+            cmd_review_stats,
             cmd_review_card,
             cmd_add_review_cards_from_blocks,
             attachment_commands::cmd_read_attachment,
@@ -1099,6 +1100,22 @@ async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, String>
 async fn cmd_review_due_count() -> Result<usize, String> {
     let core = get_core()?;
     Ok(core.review_queue.due_items(chrono::Utc::now()).len())
+}
+
+/// R17：FSRS 统计面聚合（ReviewStatsPanel 数据源——today/again_rate/due_7d
+/// 全量口径；轻计数仍走 cmd_review_due_count。core ReviewStats 零 serde
+/// 侵入——手写 Value 映射对齐 cmd_due_review_cards 惯例）。
+#[tauri::command]
+async fn cmd_review_stats() -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let s = core.review_queue.review_stats(chrono::Utc::now());
+    Ok(serde_json::json!({
+        "total_cards": s.total_cards,
+        "due_now": s.due_now,
+        "today_reviews": s.today_reviews,
+        "today_again_rate": s.today_again_rate,
+        "due_7d": s.due_7d,
+    }))
 }
 
 /// G4：看板数据源——投影全量行（status 分列用）。

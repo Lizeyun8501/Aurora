@@ -238,11 +238,44 @@ pub struct ReviewItem {
     pub due: DateTime<Utc>,
 }
 
+/// 评分日志条目（revlog — 留存率/今日复习量数据源；环形上限内保留）。
+/// 序列化走快照手写（rating 数字化），core 类型零 serde 侵入。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReviewLogEntry {
+    /// 卡片 ID。
+    pub card_id: String,
+    /// 本次评分。
+    pub rating: Rating,
+    /// 评分时刻。
+    pub ts: DateTime<Utc>,
+}
+
+/// revlog 环形上限（无界增长防爆破——超限丢最旧）。
+const REVIEW_LOG_CAP: usize = 10_000;
+
+/// R17：FSRS 统计面聚合结果（review_stats 返回值）。
+pub struct ReviewStats {
+    /// 总卡数。
+    pub total_cards: usize,
+    /// 当前到期数（与 stats() 口径一致）。
+    pub due_now: usize,
+    /// 今日已评分次数（Utc 日界 00:00 起——与 due_items 同用 Utc 会计口径，
+    /// 本地时区偏差可接受，诚实边界）。
+    pub today_reviews: usize,
+    /// 今日 Again 占比（今日 reviews==0 → None）。
+    pub today_again_rate: Option<f64>,
+    /// 未来 7 天到期分布（[0]=今日 24h 窗口含已到期；[n]=(now+24n, now+24(n+1)]；
+    /// 第 6 天尾=now+168h 截止）。
+    pub due_7d: [usize; 7],
+}
+
 /// 复习队列: 到期/可提取性跌破阈值的卡片集合（内存读模型 —
 /// 与 TaskProjection 同模式; 持久化接 KVStore 留后续 PR）。
 pub struct ReviewQueue {
     scheduler: FsrsScheduler,
     items: std::sync::RwLock<Vec<ReviewItem>>,
+    /// 评分日志（revlog）——add_card 首评 + review_card 成功评分追加。
+    review_log: std::sync::RwLock<Vec<ReviewLogEntry>>,
 }
 
 impl ReviewQueue {
@@ -250,6 +283,21 @@ impl ReviewQueue {
         Self {
             scheduler: FsrsScheduler::new(),
             items: std::sync::RwLock::new(Vec::new()),
+            review_log: std::sync::RwLock::new(Vec::new()),
+        }
+    }
+
+    /// 追加评分日志（环形上限——超限丢最旧）。
+    fn push_log(&self, card_id: &str, rating: Rating, ts: DateTime<Utc>) {
+        let mut log = self.review_log.write().unwrap();
+        log.push(ReviewLogEntry {
+            card_id: card_id.to_string(),
+            rating,
+            ts,
+        });
+        if log.len() > REVIEW_LOG_CAP {
+            let overflow = log.len() - REVIEW_LOG_CAP;
+            log.drain(0..overflow);
         }
     }
 
@@ -267,6 +315,8 @@ impl ReviewQueue {
             state: scheduled.state.clone(),
             due: scheduled.due,
         });
+        // 首评入日志（建卡即评分）。
+        self.push_log(card_id, rating, now);
         scheduled
     }
 
@@ -278,6 +328,8 @@ impl ReviewQueue {
         let scheduled = self.scheduler.review(&item.state, rating, now);
         item.state = scheduled.state.clone();
         item.due = scheduled.due;
+        // 评分成功才记（None 早返不入日志）。
+        self.push_log(card_id, rating, now);
         Some(scheduled)
     }
 
@@ -302,6 +354,53 @@ impl ReviewQueue {
         (due, items.len())
     }
 
+    /// R17：FSRS 统计面聚合（统计面板数据源——与 stats() 并列，旧签名零破坏）。
+    pub fn review_stats(&self, now: DateTime<Utc>) -> ReviewStats {
+        // 锁序纪律：items 先、log 后（add_card/review_card 同序——防死锁）。
+        let items = self.items.read().unwrap();
+        let log = self.review_log.read().unwrap();
+        // 「今日」=Utc 日界 00:00 起（与 due_items 同用 Utc 会计口径，
+        // 本地时区偏差可接受——诚实边界）。
+        let day_start = now
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is always a valid naive time")
+            .and_utc();
+        let today_reviews = log.iter().filter(|e| e.ts >= day_start).count();
+        let today_again = log
+            .iter()
+            .filter(|e| e.ts >= day_start && e.rating == Rating::Again)
+            .count();
+        let due_now = items
+            .iter()
+            .filter(|i| i.due <= now || self.scheduler.needs_review(&i.state, now))
+            .count();
+        // 7 天到期分布：[0]=今日 24h 窗口（无下界，含已到期）；
+        // [n]=(now+24n, now+24(n+1)]；第 6 天尾=now+168h 截止。
+        let mut due_7d = [0usize; 7];
+        for i in items.iter() {
+            for (day, slot) in due_7d.iter_mut().enumerate() {
+                let lo = now + Duration::hours(24 * day as i64);
+                let hi = lo + Duration::hours(24);
+                if i.due <= hi && (day == 0 || i.due > lo) {
+                    *slot += 1;
+                    break;
+                }
+            }
+        }
+        ReviewStats {
+            total_cards: items.len(),
+            due_now,
+            today_reviews,
+            today_again_rate: if today_reviews == 0 {
+                None
+            } else {
+                Some(today_again as f64 / today_reviews as f64)
+            },
+            due_7d,
+        }
+    }
+
     /// R12：块卡同步（按块建卡的幂等语义升级）——注册 keep_ids 中缺失的卡
     /// （新卡首评 Good），移除同笔记内不在 keep 集的旧块卡（heading 改/删致
     /// hash 锚定失效）。笔记级卡与其他笔记不动；已存在卡 FSRS 进度保留。
@@ -315,7 +414,7 @@ impl ReviewQueue {
             if i.note_id != note_id {
                 return true; // 他笔记不动
             }
-            !(is_generated_card_id(&i.card_id) && !keep.contains(i.card_id.as_str()))
+            !is_generated_card_id(&i.card_id) || keep.contains(i.card_id.as_str())
         });
         let removed = before - items.len();
         let mut added = 0;
@@ -339,7 +438,9 @@ impl ReviewQueue {
     /// R13（切片三-1）：全量快照——desktop 壳 KVStore 落盘用（重启恢复）。
     /// 手写序列化（core 类型零侵入）；version 迁移位。
     pub fn snapshot_json(&self) -> serde_json::Value {
+        // 锁序纪律：items 先、log 后。
         let items = self.items.read().unwrap();
+        let log = self.review_log.read().unwrap();
         serde_json::json!({
             "version": 1,
             "items": items
@@ -354,6 +455,16 @@ impl ReviewQueue {
                         "last_review": i.state.last_review.to_rfc3339(),
                         "reps": i.state.reps,
                         "lapses": i.state.lapses,
+                    })
+                })
+                .collect::<Vec<_>>(),
+            "review_log": log
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "card_id": e.card_id,
+                        "rating": e.rating.as_u32(),
+                        "ts": e.ts.to_rfc3339(),
                     })
                 })
                 .collect::<Vec<_>>(),
@@ -425,6 +536,48 @@ impl ReviewQueue {
                 due,
             });
             restored += 1;
+        }
+        // R17：评分日志恢复——replace 语义（快照为全量事实源；旧快照无
+        // review_log 字段 → 默认空，version 不 bump，字段缺省即兼容）。
+        // 坏条目跳过不毒化（同 items 语义）；超限环形截断。
+        {
+            let mut log = self.review_log.write().unwrap();
+            log.clear();
+            if let Some(log_arr) = snap.get("review_log").and_then(|v| v.as_array()) {
+                for e in log_arr {
+                    let Some(card_id) = e.get("card_id").and_then(|v| v.as_str()).map(String::from)
+                    else {
+                        continue;
+                    };
+                    let rating = match e.get("rating").and_then(|v| v.as_u64()) {
+                        Some(1) => Some(Rating::Again),
+                        Some(2) => Some(Rating::Hard),
+                        Some(3) => Some(Rating::Good),
+                        Some(4) => Some(Rating::Easy),
+                        _ => None,
+                    };
+                    let Some(rating) = rating else {
+                        continue;
+                    };
+                    let Some(ts) = e
+                        .get("ts")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                        .map(|d| d.with_timezone(&Utc))
+                    else {
+                        continue;
+                    };
+                    log.push(ReviewLogEntry {
+                        card_id,
+                        rating,
+                        ts,
+                    });
+                }
+                if log.len() > REVIEW_LOG_CAP {
+                    let overflow = log.len() - REVIEW_LOG_CAP;
+                    log.drain(0..overflow);
+                }
+            }
         }
         restored
     }
@@ -598,7 +751,7 @@ mod tests {
         let reps1 = s1.state.reps;
         // 再评分推进进度
         let s2 = q.review_card(&id, Rating::Good).unwrap();
-        let (added, removed) = q.sync_block_cards("n1", &[id.clone()]);
+        let (added, removed) = q.sync_block_cards("n1", std::slice::from_ref(&id));
         assert_eq!((added, removed), (0, 0));
         let binding = q.due_items(Utc::now() + Duration::days(3650));
         let item = binding.iter().find(|i| i.card_id == id).unwrap();
@@ -611,18 +764,18 @@ mod tests {
         let q = ReviewQueue::new();
         let stale = block_id("n1", "277e29c9");
         let fresh = block_id("n1", "86023237");
-        let note_card = format!("card:note:n1");
+        let note_card = "card:note:n1".to_string();
         let other = block_id("n2", "277e29c9");
         q.add_card(&stale, "n1", Rating::Good);
         q.add_card(&note_card, "n1", Rating::Good);
         q.add_card(&other, "n2", Rating::Good);
         // 同步 n1 只保留 fresh
-        let (added, removed) = q.sync_block_cards("n1", &[fresh.clone()]);
+        let (added, removed) = q.sync_block_cards("n1", std::slice::from_ref(&fresh));
         assert_eq!((added, removed), (1, 1), "清 stale 建新");
         let total = q.stats().1;
         assert_eq!(total, 3, "笔记级卡+n2 块卡+fresh 块卡");
         // fresh 已建（added=1 且存在）
-        let again = q.sync_block_cards("n1", &[fresh.clone()]);
+        let again = q.sync_block_cards("n1", std::slice::from_ref(&fresh));
         assert_eq!(again, (0, 0), "幂等二跑");
     }
 
@@ -672,5 +825,111 @@ mod tests {
         }));
         assert_eq!(n, 1, "坏条目跳过");
         assert_eq!(q.stats().1, 1);
+    }
+
+    // ── R17 评分日志（revlog）+ 统计聚合 ─────────────────────────
+
+    #[test]
+    fn review_log_append_semantics() {
+        let q = ReviewQueue::new();
+        // 建卡首评 → 1 条
+        q.add_card("c1", "n1", Rating::Good);
+        // 成功复习 → +1
+        q.review_card("c1", Rating::Easy).unwrap();
+        // 卡不存在（None 早返）→ 不记
+        assert!(q.review_card("ghost", Rating::Good).is_none());
+
+        let snap = q.snapshot_json();
+        let log = snap.get("review_log").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(log.len(), 2, "首评+成功复习各一条");
+        // 顺序：首评 Good → 复习 Easy
+        assert_eq!(log[0]["card_id"], "c1");
+        assert_eq!(log[0]["rating"], 3);
+        assert_eq!(log[1]["rating"], 4);
+    }
+
+    #[test]
+    fn review_log_cap_ring_drops_oldest() {
+        let q = ReviewQueue::new();
+        // 10_001 张卡 → 环形丢最旧 1 条（CAP=10_000）
+        for i in 0..=10_000 {
+            q.add_card(&format!("c{i}"), "n1", Rating::Good);
+        }
+        let snap = q.snapshot_json();
+        let log = snap.get("review_log").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(log.len(), 10_000, "上限截断");
+        assert_eq!(log[0]["card_id"], "c1", "最旧 c0 已丢");
+        assert_eq!(log[9_999]["card_id"], "c10000", "最新保留");
+    }
+
+    #[test]
+    fn review_stats_aggregates_and_windows() {
+        let now = Utc::now();
+        let rfc = |h: i64| (now + Duration::hours(h)).to_rfc3339();
+        let q = ReviewQueue::new();
+        // 三卡 due：今日窗(12h) / 明日窗(36h) / 8 天外(200h 不计入)
+        // 两条今日日志：1 Again + 1 Good → again_rate 0.5
+        let n = q.restore_json(&serde_json::json!({
+            "version": 1,
+            "items": [
+                {"card_id": "a", "note_id": "n1", "due": rfc(12), "stability": 2.0,
+                 "difficulty": 5.0, "last_review": rfc(-12), "reps": 1, "lapses": 0},
+                {"card_id": "b", "note_id": "n1", "due": rfc(36), "stability": 2.0,
+                 "difficulty": 5.0, "last_review": rfc(-12), "reps": 1, "lapses": 0},
+                {"card_id": "c", "note_id": "n1", "due": rfc(200), "stability": 9.0,
+                 "difficulty": 5.0, "last_review": rfc(-12), "reps": 1, "lapses": 0}
+            ],
+            "review_log": [
+                {"card_id": "a", "rating": 1, "ts": rfc(-1)},
+                {"card_id": "b", "rating": 3, "ts": rfc(-2)}
+            ]
+        }));
+        assert_eq!(n, 3);
+        let s = q.review_stats(Utc::now());
+        assert_eq!(s.total_cards, 3);
+        assert_eq!(s.today_reviews, 2);
+        assert_eq!(s.today_again_rate, Some(0.5));
+        assert_eq!(s.due_7d, [1, 1, 0, 0, 0, 0, 0], "今日窗/明日窗/8天外");
+        // 窗口边界：恰 now+24h 落今日窗尾（含）；now+48h 落明日窗
+        let q2 = ReviewQueue::new();
+        let now2 = Utc::now();
+        let rfc2 = |h: i64| (now2 + Duration::hours(h)).to_rfc3339();
+        q2.restore_json(&serde_json::json!({
+            "version": 1,
+            "items": [
+                {"card_id": "edge0", "note_id": "n1", "due": rfc2(24), "stability": 2.0,
+                 "difficulty": 5.0, "last_review": rfc2(-12), "reps": 1, "lapses": 0},
+                {"card_id": "edge1", "note_id": "n1", "due": rfc2(48), "stability": 2.0,
+                 "difficulty": 5.0, "last_review": rfc2(-12), "reps": 1, "lapses": 0}
+            ]
+        }));
+        let s2 = q2.review_stats(Utc::now());
+        assert_eq!(s2.due_7d[0], 1, "恰+24h 含于今日窗尾");
+        assert_eq!(s2.due_7d[1], 1, "恰+48h 含于明日窗尾");
+        assert_eq!(s2.due_7d[2], 0);
+    }
+
+    #[test]
+    fn restore_old_snapshot_without_log_is_compatible() {
+        let q = ReviewQueue::new();
+        // 旧快照（R13 格式——无 review_log 字段）→ 默认空日志，items 正常恢复
+        let n = q.restore_json(&serde_json::json!({
+            "version": 1,
+            "items": [
+                {"card_id": "old", "note_id": "n1", "due": "2030-01-01T00:00:00Z",
+                 "stability": 2.0, "difficulty": 5.0, "last_review": "2026-10-24T00:00:00Z",
+                 "reps": 3, "lapses": 0}
+            ]
+        }));
+        assert_eq!(n, 1);
+        let s = q.review_stats(Utc::now());
+        assert_eq!(s.total_cards, 1);
+        assert_eq!(s.today_reviews, 0, "旧快照日志默认空");
+        assert_eq!(s.today_again_rate, None);
+        // 恢复后新评分正常累积（clear 语义不残留）
+        q.review_card("old", Rating::Good).unwrap();
+        let snap = q.snapshot_json();
+        let log = snap.get("review_log").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(log.len(), 1, "恢复后评分重新累积");
     }
 }
