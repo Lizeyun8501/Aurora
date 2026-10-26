@@ -51,9 +51,13 @@ jobs:
           java-version: "17"
 
       - name: Android NDK 26.3.11579264
-        uses: android-actions/setup-android-ndk@v1
-        with:
-          ndk-version: 26.3.11579264 # 对齐本机版本（v23 实战基线）
+        # 2026-10-26：android-actions/setup-android-ndk action 不存在（repo
+        # 404——run「Set up job」failure 根因，两次复现实锤）——runner 预装
+        # sdkmanager（ANDROID_HOME=/usr/local/lib/android/sdk）直装对齐本机版本。
+        run: |
+          yes | sdkmanager "ndk;26.3.11579264" >/dev/null 2>&1 || true
+          ls "$ANDROID_HOME/ndk/"
+          test -x "$ANDROID_HOME/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
 
       - name: Node + deps
         uses: actions/setup-node@v4
@@ -72,7 +76,8 @@ jobs:
 
       - name: FFI arm64 交叉编译（linker 裸名解析——PATH 前置）
         run: |
-          TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+          NDK_ROOT="$ANDROID_HOME/ndk/26.3.11579264"
+          TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64"
           export PATH="$TOOLCHAIN/bin:$PATH"
           export CC_aarch64_linux_android="$TOOLCHAIN/bin/aarch64-linux-android24-clang"
           export CXX_aarch64_linux_android="$TOOLCHAIN/bin/aarch64-linux-android24-clang++"
@@ -90,8 +95,8 @@ jobs:
           gradle-version: "8.5"
       - run: gradle assembleDebug --no-daemon
         working-directory: apps/mobile/android
-        env:
-          ANDROID_HOME: ${{ steps.setup-ndk.outputs.ANDROID_HOME || '/usr/local/lib/android/sdk' }}
+        # ANDROID_HOME=runner 预设 env（/usr/local/lib/android/sdk）——
+        # 无 local.properties（未入库）时 gradle 自动读 env。
 
       - name: 上传 APK artifact
         uses: actions/upload-artifact@v4
