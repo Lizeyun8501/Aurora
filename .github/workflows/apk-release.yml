@@ -50,19 +50,24 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Android NDK 26.3.11579264
-        # 2026-10-26：android-actions/setup-android-ndk action 不存在（repo
-        # 404——run「Set up job」failure 根因，两次复现实锤）——runner 预装
-        # sdkmanager（ANDROID_HOME=/usr/local/lib/android/sdk）直装对齐本机版本。
-        # ::error::=annotation 免认证诊断通道（desktop-check 沉淀同款）。
+      - name: NDK 探测（预装自适配——免安装步骤）
+        # 2026-10-26：sdkmanager 直装两挂（PATH 无该工具——ubuntu-latest→26
+        # image SDK 布局重排）——runner 预装 NDK（ANDROID_NDK_HOME 或
+        # $ANDROID_HOME/ndk/*）自适配探测。clang wrapper 名
+        # aarch64-linux-android24-clang 跨 NDK 版本一致（uniffi 绑定无 NDK
+        # 版本敏感面）；v23 本机 26.3 基线 SO 兼容 minSdk24 语义不变。
         run: |
           set -x
-          which sdkmanager
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          yes | sdkmanager --sdk_root="$ANDROID_HOME" "ndk;26.3.11579264" 2>&1 | tail -3
-          ls "$ANDROID_HOME/ndk/" || echo "::error::ndk-dir-missing ANDROID_HOME=$ANDROID_HOME"
-          test -x "$ANDROID_HOME/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" || \
-            echo "::error::clang-missing df>>$(df -h / | tail -1) sdkmgr>>$(which sdkmanager)"
+          NDK_ROOT="${ANDROID_NDK_HOME:-}"
+          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
+            NDK_ROOT=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | head -1 || true)
+          fi
+          echo "NDK_ROOT=$NDK_ROOT"
+          if [ -z "$NDK_ROOT" ] || [ ! -x "$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" ]; then
+            echo "::error::ndk-missing AH=$ANDROID_HOME NDKH=${ANDROID_NDK_HOME:-unset} ls>>$(ls "$ANDROID_HOME"/ndk 2>&1 | tr '\n' '§')"
+            exit 1
+          fi
+          echo "NDK_ROOT=$NDK_ROOT" >> "$GITHUB_ENV"
 
       - name: Node + deps
         uses: actions/setup-node@v4
@@ -81,7 +86,6 @@ jobs:
 
       - name: FFI arm64 交叉编译（linker 裸名解析——PATH 前置）
         run: |
-          NDK_ROOT="$ANDROID_HOME/ndk/26.3.11579264"
           TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64"
           export PATH="$TOOLCHAIN/bin:$PATH"
           export CC_aarch64_linux_android="$TOOLCHAIN/bin/aarch64-linux-android24-clang"
