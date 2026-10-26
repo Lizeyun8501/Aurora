@@ -1128,7 +1128,9 @@ async fn cmd_review_stats() -> Result<serde_json::Value, String> {
 async fn cmd_review_daily_series(days: Option<usize>) -> Result<serde_json::Value, String> {
     let core = get_core()?;
     let days = days.unwrap_or(7).clamp(1, 30);
-    let series = core.review_queue.review_daily_series(chrono::Utc::now(), days);
+    let series = core
+        .review_queue
+        .review_daily_series(chrono::Utc::now(), days);
     Ok(serde_json::json!(series
         .into_iter()
         .map(|d| serde_json::json!({
