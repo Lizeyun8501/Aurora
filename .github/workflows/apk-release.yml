@@ -89,6 +89,9 @@ jobs:
       - name: FFI arm64 交叉编译（linker 裸名解析——PATH 前置）
         run: |
           set -o pipefail
+          # r6 E0463 实锤 std 缺——幂等自愈（已装秒过）+安装面显证
+          rustup target list --installed
+          rustup target add aarch64-linux-android
           TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64"
           export PATH="$TOOLCHAIN/bin:$PATH"
           export CC_aarch64_linux_android="$TOOLCHAIN/bin/aarch64-linux-android24-clang"
