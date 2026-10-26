@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [ main ]
 
+# 2026-10-26（R17-α4）：desktop-check 双 commit 同红（rustc ICE，option.rs
+# prelude 内部路径）定案非代码债——根因收敛：双 agent 高频 push → 多 CI run
+# 并发 → Swatinem/rust-cache 同 key 并发 save/restore 竞态 → target 元数据
+# 损坏 → rustc ICE。workflow 级 concurrency 串行化（cancel-in-progress 保
+# HEAD 最新结果——双 agent 模式中间态 run 本就无验收意义）。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
