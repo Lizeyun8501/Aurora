@@ -109,18 +109,26 @@ pub async fn cmd_collection_rows(id: String) -> Result<Vec<Value>, String> {
         .await
         .map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(rows.len());
-    for (note_id, set) in rows {
+    for note_id in rows {
         let title = match core.kv_store.get(&format!("note:{}", note_id)).await {
-            Ok(Some(bytes)) => crate::unwrap_note_bytes(&core, &get_vault()?, &bytes)
+            // &get_vault()? 内联形式的推断顺序坑：& 反推 ? 的 Ok 类型为
+            // LocalDekVault 致 Arc→LocalDekVault From 失败（E0308）——显式
+            // 解 Arc（&*）绕开；todo/tag 的先绑定写法不受此坑影响。
+            Ok(Some(bytes)) => crate::unwrap_note_bytes(&core, &*get_vault()?, &bytes)
                 .ok()
                 .and_then(|j| j.get("title").and_then(|t| t.as_str()).map(String::from))
                 .unwrap_or_else(|| "未命名".into()),
             _ => "未命名".into(),
         };
+        // rows() 现签名=Vec<note_id>（G1 后 core 收敛）——行属性经 get_props 单独取。
+        let values = match core.collections.get_props(&note_id).await {
+            Ok(set) => json!(set.values),
+            Err(_) => json!({}), // 行属性读失败=空表渲染（诚实降级，不阻断行集）
+        };
         out.push(json!({
             "note_id": note_id,
             "title": title,
-            "values": set.values,
+            "values": values,
         }));
     }
     Ok(out)

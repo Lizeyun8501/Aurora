@@ -4,7 +4,7 @@
 //! tauri 侧本地时区格式化（「明天 09:00」/「周五 14:30」/「10月23日 09:00」）。
 
 use aurora_core::l2_engines::action_extractor::due_parse;
-use chrono::{Local, TimeZone};
+use chrono::{Datelike, Local, TimeZone};
 
 #[derive(serde::Serialize)]
 pub struct DuePreview {
@@ -51,25 +51,37 @@ impl DuePreview {
     }
 }
 
+/// NL 日期片段预览——纯函数（R-α1 测试面语义：span=char offset）。
+/// desktop-check 存量债修复（2026-10-26）：原内联在 cmd 里致测试引用
+/// 的 preview_of 不存在——抽出为单一事实源，cmd 只做线程桥。
+fn preview_of(text: &str) -> Option<DuePreview> {
+    due_parse(text).map(|d| DuePreview::of(text, d))
+}
+
 /// NL 日期片段预览（输入侧实时调用——纯函数无副作用）。
 #[tauri::command]
 pub async fn cmd_preview_due(text: String) -> Result<Option<DuePreview>, String> {
     // 输入侧实时——放 blocking 线程避免高频 invoke 抖动主线程（解析微秒级）
-    tauri::async_runtime::spawn_blocking(move || {
-        Ok(due_parse(&text).map(|d| DuePreview::of(&text, d)))
-    })
-    .await
-    .map_err(|e| format!("preview join: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || Ok(preview_of(&text)))
+        .await
+        .map_err(|e| format!("preview join: {e}"))?
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike; // with_hour/minute/second（desktop-check 存量债）
 
     #[test]
     fn humanize_relative_days() {
+        // desktop-check 存量债：DateTime<Tz> 无 with_hms_opt（NaiveTime 才有）——
+        // with_hour/minute/second 三链等价（「明早 9 点」意图不变）
         let tomorrow = (Local::now() + chrono::Duration::days(1))
-            .with_hms_opt(9, 0, 0)
+            .with_hour(9)
+            .unwrap()
+            .with_minute(0)
+            .unwrap()
+            .with_second(0)
             .unwrap()
             .timestamp_millis();
         assert_eq!(humanize(tomorrow), "明天 09:00");

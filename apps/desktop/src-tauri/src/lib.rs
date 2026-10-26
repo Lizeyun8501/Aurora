@@ -319,13 +319,20 @@ pub fn run() {
                 Some(booted.attachments.clone());
             // R13（切片三-2）：复习队列恢复——重启清偿（内存读模型 → KVStore）。
             // 坏快照/缺 key 静默=空队列起步（诚实边界：恢复失败不阻断启动）。
-            if let Ok(Some(raw)) = booted.core.kv_store.get(FSRS_QUEUE_KEY).await {
-                if let Ok(snap) = serde_json::from_slice::<serde_json::Value>(&raw) {
-                    let restored = booted.core.review_queue.restore_json(&snap);
-                    if restored > 0 {
-                        log::info!("fsrs queue restored: {} cards", restored);
-                    }
+            // desktop-check 存量债修复（2026-10-26）：setup 闭包非 async——
+            // block_on 桥接（E0728 链头，连带 E0277 假错）；log crate 未链接，
+            // 恢复计数走 eprintln（setup 期 tracing 尚未 init）。
+            let restored = tauri::async_runtime::block_on(async {
+                match booted.core.kv_store.get(FSRS_QUEUE_KEY).await {
+                    Ok(Some(raw)) => match serde_json::from_slice::<serde_json::Value>(&raw) {
+                        Ok(snap) => booted.core.review_queue.restore_json(&snap),
+                        Err(_) => 0,
+                    },
+                    _ => 0,
                 }
+            });
+            if restored > 0 {
+                eprintln!("fsrs queue restored: {} cards", restored);
             }
             // BOOTED_STATE 的 move 必须最后——booted 的其余字段先 clone 完
             // （E0382 borrow-after-move，49ae86c 引入 · 2026-09-25 修）。
@@ -794,7 +801,8 @@ async fn cmd_today_task_rows() -> Result<Vec<serde_json::Value>, String> {
     // 今天就该出现在视图里（v1 只取「此刻前」漏掉当日未来截止项）；
     // 逾期项（due<今日 0 点）天然含在集内——前端按今日 0 点分界分区。
     let today_end = {
-        use chrono::Datelike;
+        // desktop-check 存量债：with_ymd_and_hms 属 TimeZone trait（缺 use 编译债）
+        use chrono::{Datelike, TimeZone};
         let t = chrono::Local::now();
         chrono::Local
             .with_ymd_and_hms(t.year(), t.month(), t.day(), 23, 59, 59)
@@ -834,7 +842,8 @@ async fn cmd_today_task_rows() -> Result<Vec<serde_json::Value>, String> {
 async fn cmd_upcoming_tasks(days: Option<i64>) -> Result<Vec<serde_json::Value>, String> {
     let core = get_core()?;
     let proj = task_proj(&core)?;
-    use chrono::Datelike;
+    // desktop-check 存量债：with_ymd_and_hms 属 TimeZone trait（缺 use 编译债）
+    use chrono::{Datelike, TimeZone};
     let t = chrono::Local::now();
     let today_end = chrono::Local
         .with_ymd_and_hms(t.year(), t.month(), t.day(), 23, 59, 59)
@@ -1231,6 +1240,7 @@ async fn persist_queue(core: &AppCore) {
 /// 1. 块卡（:b）——1-3 级 heading 为卡提示（Q），其下首个非空段为卡底（A ≤80 字）；
 /// 2. 列表卡（:l）——「- **术语**：定义」形态（粗体术语+冒号——结构特征防线
 ///    挡噪音：无粗体前缀/无定义的列表项不卡化），Q=术语、A=定义 ≤80 字。
+///
 /// 返回 (card_id, q, a)——card_id 构造进提取器（建卡与 due 重拼单一事实源）。
 fn extract_distill_cards(note_id: &str, md: &str) -> Vec<(String, String, String)> {
     let mut cards: Vec<(String, String, String)> = Vec::new();
@@ -2233,40 +2243,6 @@ impl DesktopPlatform for TauriDesktopPlatform {
 }
 
 // ── R10/Alpha 块级卡提取器单测 ──────────────────────────────────
-
-#[cfg(test)]
-mod block_card_tests {
-    use super::extract_block_cards;
-
-    #[test]
-    fn headings_and_first_paragraph() {
-        let md = "# 大标题\n首段内容。\n\n## 二级\n二级的首段。\n中间段。\n正文段（无 heading 归属前段）。\n### 三级\n\n#### 四级不算\n文本\n";
-        let cards = extract_block_cards(md);
-        assert_eq!(cards.len(), 3);
-        assert_eq!(cards[0], ("大标题".into(), "首段内容。".into()));
-        assert_eq!(cards[1], ("二级".into(), "二级的首段。".into()));
-        // H4 切断三级卡正文区 → 概念卡（「文本」属于 H4 块，不进卡底）
-        assert_eq!(cards[2], ("三级".into(), "".into()));
-    }
-
-    #[test]
-    fn no_heading_no_tag_no_bare_hash() {
-        assert!(extract_block_cards("正文没有标题\n第二行").is_empty());
-        // #tag 与裸 # 不是 heading
-        assert!(extract_block_cards("#tag 内容\n#").is_empty());
-    }
-
-    #[test]
-    fn empty_answer_concept_card() {
-        let cards = extract_block_cards("## 概念卡\n## 下一个\n");
-        assert_eq!(cards.len(), 2);
-        assert_eq!(cards[0], ("概念卡".into(), "".into()));
-    }
-
-    #[test]
-    fn long_answer_truncated_80_chars() {
-        let long = "字".repeat(120);
-        let cards = extract_block_cards(&format!("## 问题\n{}", long));
-        assert_eq!(cards[0].1.chars().count(), 80);
-    }
-}
+// （2026-10-26 desktop-check 存量债清偿：R14 已将 extract_block_cards 收敛进
+// extract_distill_cards 单一事实源——本 mod 引用已删函数成孤儿，heading/首段
+// 语义由 R14 测试面与 core sync_block_cards 测试覆盖，整段退役。）
