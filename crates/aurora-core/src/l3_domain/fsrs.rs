@@ -269,6 +269,16 @@ pub struct ReviewStats {
     pub due_7d: [usize; 7],
 }
 
+/// R18：留存率曲线日统计（review_daily_series 返回元素——按日时间序列）。
+pub struct ReviewDayStat {
+    /// 日期（"YYYY-MM-DD"，Utc 会计口径——与 review_stats 同偏差边界）。
+    pub date: String,
+    /// 当日评分次数。
+    pub reviews: usize,
+    /// 当日 Again 占比（当日 0 复习 → None）。
+    pub again_rate: Option<f64>,
+}
+
 /// 复习队列: 到期/可提取性跌破阈值的卡片集合（内存读模型 —
 /// 与 TaskProjection 同模式; 持久化接 KVStore 留后续 PR）。
 pub struct ReviewQueue {
@@ -399,6 +409,49 @@ impl ReviewQueue {
             },
             due_7d,
         }
+    }
+
+    /// R18：留存率曲线聚合——最近 days 天按日评分量+Again 率时间序列。
+    /// 窗口=[今日回推 days-1 天起，今日 24h 收尾]（含今日，末元素未完——
+    /// 诚实边界）；Utc 日界与 review_stats 同口径。只读 log 单锁（无 items
+    /// 依赖，无锁序交叉面）。单遍历分桶 O(log)；days=0 → 空序列。
+    pub fn review_daily_series(&self, now: DateTime<Utc>, days: usize) -> Vec<ReviewDayStat> {
+        let log = self.review_log.read().unwrap();
+        let today_start = now
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is always a valid naive time")
+            .and_utc();
+        let window_start = today_start - Duration::hours(24 * (days as i64 - 1).max(0));
+        let mut counts = vec![0usize; days];
+        let mut agains = vec![0usize; days];
+        for e in log.iter() {
+            if e.ts < window_start || e.ts >= today_start + Duration::hours(24) {
+                continue;
+            }
+            // Duration 非负（window_start 已滤）→ num_hours 向零取整=floor。
+            let idx = (e.ts - window_start).num_hours() as usize / 24;
+            if idx < days {
+                counts[idx] += 1;
+                if e.rating == Rating::Again {
+                    agains[idx] += 1;
+                }
+            }
+        }
+        (0..days)
+            .map(|d| ReviewDayStat {
+                date: (window_start + Duration::hours(24 * d as i64))
+                    .date_naive()
+                    .format("%Y-%m-%d")
+                    .to_string(),
+                reviews: counts[d],
+                again_rate: if counts[d] == 0 {
+                    None
+                } else {
+                    Some(agains[d] as f64 / counts[d] as f64)
+                },
+            })
+            .collect()
     }
 
     /// R12：块卡同步（按块建卡的幂等语义升级）——注册 keep_ids 中缺失的卡
@@ -864,7 +917,13 @@ mod tests {
 
     #[test]
     fn review_stats_aggregates_and_windows() {
-        let now = Utc::now();
+        // 锚定当日 12:00 UTC——now±h 相对量在 UTC 午夜附近跑测试时不跨日
+        // （2026-10-26 UTC 00:57 实测踩坑：rfc(-1) 落昨日致今日计数归零）。
+        let now = Utc::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .expect("noon is always a valid naive time")
+            .and_utc();
         let rfc = |h: i64| (now + Duration::hours(h)).to_rfc3339();
         let q = ReviewQueue::new();
         // 三卡 due：今日窗(12h) / 明日窗(36h) / 8 天外(200h 不计入)
@@ -885,14 +944,18 @@ mod tests {
             ]
         }));
         assert_eq!(n, 3);
-        let s = q.review_stats(Utc::now());
+        let s = q.review_stats(now);
         assert_eq!(s.total_cards, 3);
         assert_eq!(s.today_reviews, 2);
         assert_eq!(s.today_again_rate, Some(0.5));
         assert_eq!(s.due_7d, [1, 1, 0, 0, 0, 0, 0], "今日窗/明日窗/8天外");
         // 窗口边界：恰 now+24h 落今日窗尾（含）；now+48h 落明日窗
         let q2 = ReviewQueue::new();
-        let now2 = Utc::now();
+        let now2 = Utc::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .expect("noon is always a valid naive time")
+            .and_utc();
         let rfc2 = |h: i64| (now2 + Duration::hours(h)).to_rfc3339();
         q2.restore_json(&serde_json::json!({
             "version": 1,
@@ -903,10 +966,82 @@ mod tests {
                  "difficulty": 5.0, "last_review": rfc2(-12), "reps": 1, "lapses": 0}
             ]
         }));
-        let s2 = q2.review_stats(Utc::now());
+        let s2 = q2.review_stats(now2);
         assert_eq!(s2.due_7d[0], 1, "恰+24h 含于今日窗尾");
         assert_eq!(s2.due_7d[1], 1, "恰+48h 含于明日窗尾");
         assert_eq!(s2.due_7d[2], 0);
+    }
+
+    #[test]
+    fn review_daily_series_aggregates_and_day_bounds() {
+        // 锚定当日 12:00 UTC（同 review_stats 测试——UTC 午夜附近跑不跨日）。
+        let now = Utc::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .expect("noon is always a valid naive time")
+            .and_utc();
+        let rfc = |h: i64| (now + Duration::hours(h)).to_rfc3339();
+        let q = ReviewQueue::new();
+        // 三天日志：前天 1 条(Again) / 昨天 2 条(1 Again+1 Good) / 今日 3 条(全 Good) /
+        // 4 天前 1 条（days=3 窗外，不计）。
+        q.restore_json(&serde_json::json!({
+            "version": 1,
+            "items": [],
+            "review_log": [
+                {"card_id": "a", "rating": 1, "ts": rfc(-49)},
+                {"card_id": "b", "rating": 3, "ts": rfc(-30)},
+                {"card_id": "c", "rating": 1, "ts": rfc(-25)},
+                {"card_id": "d", "rating": 3, "ts": rfc(-3)},
+                {"card_id": "e", "rating": 3, "ts": rfc(-2)},
+                {"card_id": "f", "rating": 4, "ts": rfc(-1)},
+                {"card_id": "g", "rating": 2, "ts": rfc(-96)}
+            ]
+        }));
+        let series = q.review_daily_series(now, 3);
+        assert_eq!(series.len(), 3);
+        // [0]=前天：1 条，again 1.0；[1]=昨天：2 条 again 0.5；[2]=今日：3 条 again 0.0
+        assert_eq!(series[0].reviews, 1);
+        assert_eq!(series[0].again_rate, Some(1.0));
+        assert_eq!(series[1].reviews, 2);
+        assert_eq!(series[1].again_rate, Some(0.5));
+        assert_eq!(series[2].reviews, 3);
+        assert_eq!(series[2].again_rate, Some(0.0));
+        // 日期字符串=Utc 会计日（末元素=今日）
+        let today = Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        assert_eq!(series[2].date, today);
+        // 日界边界：恰今日 00:00 的评分归今日（idx=2），恰前天 00:00 归前天（idx=0）
+        let q2 = ReviewQueue::new();
+        let today_start = Utc::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+        let at = |h: i64| (today_start + Duration::hours(h)).to_rfc3339();
+        q2.restore_json(&serde_json::json!({
+            "version": 1,
+            "items": [],
+            "review_log": [
+                {"card_id": "edge0", "rating": 3, "ts": at(0)},
+                {"card_id": "edge1", "rating": 1, "ts": at(-48)}
+            ]
+        }));
+        let s2 = q2.review_daily_series(today_start + Duration::hours(12), 3);
+        assert_eq!(s2[0].reviews, 1, "恰前天 00:00 归窗口首日");
+        assert_eq!(s2[0].again_rate, Some(1.0));
+        assert_eq!(s2[2].reviews, 1, "恰今日 00:00 归今日");
+        assert_eq!(s2[2].again_rate, Some(0.0));
+    }
+
+    #[test]
+    fn review_daily_series_empty_and_zero_days() {
+        let q = ReviewQueue::new();
+        // 空日志：全 0 + None；days=0 → 空序列
+        let series = q.review_daily_series(Utc::now(), 7);
+        assert_eq!(series.len(), 7);
+        assert!(series
+            .iter()
+            .all(|d| d.reviews == 0 && d.again_rate.is_none()));
+        assert!(q.review_daily_series(Utc::now(), 0).is_empty());
     }
 
     #[test]

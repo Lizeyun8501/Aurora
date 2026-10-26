@@ -226,6 +226,7 @@ pub fn run() {
             cmd_due_review_cards,
             cmd_review_due_count,
             cmd_review_stats,
+            cmd_review_daily_series,
             cmd_review_card,
             cmd_add_review_cards_from_blocks,
             attachment_commands::cmd_read_attachment,
@@ -1118,6 +1119,24 @@ async fn cmd_review_stats() -> Result<serde_json::Value, String> {
         "today_again_rate": s.today_again_rate,
         "due_7d": s.due_7d,
     }))
+}
+
+/// R18：留存率曲线（ReviewStatsPanel 曲线段数据源）——最近 days 天按日
+/// 评分量+Again 率。days 由前端传参，clamp 1..=30 防滥用（core 信任内部
+/// 调用方；跨边界入参收紧——R-β2 DTO 教训同源）。
+#[tauri::command]
+async fn cmd_review_daily_series(days: Option<usize>) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let days = days.unwrap_or(7).clamp(1, 30);
+    let series = core.review_queue.review_daily_series(chrono::Utc::now(), days);
+    Ok(serde_json::json!(series
+        .into_iter()
+        .map(|d| serde_json::json!({
+            "date": d.date,
+            "reviews": d.reviews,
+            "again_rate": d.again_rate,
+        }))
+        .collect::<Vec<_>>()))
 }
 
 /// G4：看板数据源——投影全量行（status 分列用）。
