@@ -54,10 +54,15 @@ jobs:
         # 2026-10-26：android-actions/setup-android-ndk action 不存在（repo
         # 404——run「Set up job」failure 根因，两次复现实锤）——runner 预装
         # sdkmanager（ANDROID_HOME=/usr/local/lib/android/sdk）直装对齐本机版本。
+        # ::error::=annotation 免认证诊断通道（desktop-check 沉淀同款）。
         run: |
-          yes | sdkmanager "ndk;26.3.11579264" >/dev/null 2>&1 || true
-          ls "$ANDROID_HOME/ndk/"
-          test -x "$ANDROID_HOME/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          set -x
+          which sdkmanager
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          yes | sdkmanager --sdk_root="$ANDROID_HOME" "ndk;26.3.11579264" 2>&1 | tail -3
+          ls "$ANDROID_HOME/ndk/" || echo "::error::ndk-dir-missing ANDROID_HOME=$ANDROID_HOME"
+          test -x "$ANDROID_HOME/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" || \
+            echo "::error::clang-missing df>>$(df -h / | tail -1) sdkmgr>>$(which sdkmanager)"
 
       - name: Node + deps
         uses: actions/setup-node@v4
