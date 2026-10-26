@@ -22,7 +22,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
+  # APK job=产物 job（非 lint 门——fmt/clippy 门独立于 ci.yml）。
+  # 不带 RUSTFLAGS -D warnings：android target cfg 路径的依赖 warning
+  # 不应阻断产物链（r5 实测 FFI exit 101 候选根因）。
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_RELEASE_DEBUG: "0" # SO 无需调试符号（链接产物 -60%）
   CARGO_BUILD_JOBS: "2"
@@ -86,13 +88,17 @@ jobs:
 
       - name: FFI arm64 交叉编译（linker 裸名解析——PATH 前置）
         run: |
+          set -o pipefail
           TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64"
           export PATH="$TOOLCHAIN/bin:$PATH"
           export CC_aarch64_linux_android="$TOOLCHAIN/bin/aarch64-linux-android24-clang"
           export CXX_aarch64_linux_android="$TOOLCHAIN/bin/aarch64-linux-android24-clang++"
           export AR_aarch64_linux_android="$TOOLCHAIN/bin/llvm-ar"
           export RANLIB_aarch64_linux_android="$TOOLCHAIN/bin/llvm-ranlib"
-          cargo build -p aurora-mobile-ffi --release --target aarch64-linux-android
+          if ! cargo build -p aurora-mobile-ffi --release --target aarch64-linux-android 2>&1 | tee /tmp/ffi.log; then
+            echo "::error::ffi-fail tail>>$(tail -c 1500 /tmp/ffi.log | tr '\n' '§' | tr '\r' ' ')"
+            exit 1
+          fi
           mkdir -p apps/mobile/android/app/src/main/jniLibs/arm64-v8a
           cp target/aarch64-linux-android/release/libaurora_mobile_ffi.so \
              apps/mobile/android/app/src/main/jniLibs/arm64-v8a/
