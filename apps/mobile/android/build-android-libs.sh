@@ -11,6 +11,10 @@ NDK_ROOT="$SDK_ROOT/ndk/$NDK_VERSION"
 TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64"
 API_LEVEL=24
 
+# 2026-10-26（APK CI 通道）：.cargo/config.toml linker 已裸名化——
+# 本机链路由此行保证解析（CI apk-release.yml 同款 PATH 前置）。
+export PATH="$TOOLCHAIN/bin:$PATH"
+
 # 工具链：rustup 1.91（MSRV 兼容 time 0.3.47+；旧 .local/rust 1.85 已退役）
 # .cargo/config.toml 已含三 android target 的 NDK linker 配置
 export PATH="/home/z/.cargo/bin:$PATH"
