@@ -38,7 +38,10 @@ fn humanize(due_ts: i64) -> String {
 }
 
 impl DuePreview {
-    fn of(text: &str, d: aurora_core::l2_engines::action_extractor::DueParse) -> Self {
+    // text 参数为保留签名位（调用点传 &text 语义对齐 humanize 展示源）——
+    // 未用加下划线抑制（desktop-check 存量债首层：数月基础设施红后首次
+    // 真正编译，-D warnings 翻出）。
+    fn of(_text: &str, d: aurora_core::l2_engines::action_extractor::DueParse) -> Self {
         DuePreview {
             due_ts: d.due_ts,
             start: d.matched_start,
