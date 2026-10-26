@@ -2219,6 +2219,10 @@ function collectOutline(doc: import('prosemirror-model').Node): OutlineEntry[] {
 }
 function OutlinePanel(): React.ReactElement {
   const [items, setItems] = useState<OutlineEntry[]>([]);
+  // R18-α2：层级折叠——collapsed=被折叠 heading 的 index 集（文档序号语义，
+  // 与 jump index 同源）。v1 边界：session 内态，不持久化；编辑中 heading
+  // 增删致序号漂移时折叠态近似跟随（可接受——诚实边界）。
+  const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
   useEffect(() => {
     const onSync = (e: Event): void => {
       const detail = (e as CustomEvent<{ headings?: OutlineEntry[] }>).detail;
@@ -2229,6 +2233,30 @@ function OutlinePanel(): React.ReactElement {
     window.addEventListener('aurora:outline-sync', onSync);
     return () => window.removeEventListener('aurora:outline-sync', onSync);
   }, []);
+  // 可见性：被折叠 heading 的更深层级（level > 折叠者）隐藏，直到回到
+  // 同级或更浅。O(n) 单趟。
+  const visible: OutlineEntry[] = [];
+  let foldedLevel: number | null = null;
+  for (const it of items) {
+    if (foldedLevel !== null && it.level > foldedLevel) continue;
+    foldedLevel = null;
+    visible.push(it);
+    if (collapsed.has(it.index)) foldedLevel = it.level;
+  }
+  // 有子级的 heading 集（相邻 level 比较，O(n) 预计算——箭头显示判据）。
+  const parents = new Set<number>();
+  for (let i = 0; i < items.length - 1; i++) {
+    if (items[i + 1].level > items[i].level) parents.add(items[i].index);
+  }
+  const toggle = (e: React.MouseEvent, idx: number): void => {
+    e.stopPropagation(); // 折叠切换不触发跳转
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
   if (!items.length) {
     return (
       <p style={{ margin: '12px 0 0', fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
@@ -2238,7 +2266,7 @@ function OutlinePanel(): React.ReactElement {
   }
   return (
     <div style={{ marginTop: 10, maxHeight: 340, overflowY: 'auto' }}>
-      {items.map((it) => (
+      {visible.map((it) => (
         <div
           key={it.index}
           onClick={() =>
@@ -2247,6 +2275,9 @@ function OutlinePanel(): React.ReactElement {
             )
           }
           style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
             padding: '4px 6px 4px',
             paddingLeft: (it.level - 1) * 14 + 6,
             cursor: 'pointer',
@@ -2262,7 +2293,26 @@ function OutlinePanel(): React.ReactElement {
           onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
         >
-          {it.text}
+          {parents.has(it.index) ? (
+            <span
+              onClick={(e) => toggle(e, it.index)}
+              title={collapsed.has(it.index) ? '展开' : '折叠'}
+              style={{
+                flexShrink: 0,
+                cursor: 'pointer',
+                fontSize: 10,
+                color: tokens.color.textSecondary,
+                width: 12,
+                textAlign: 'center',
+                userSelect: 'none',
+              }}
+            >
+              {collapsed.has(it.index) ? '▸' : '▾'}
+            </span>
+          ) : (
+            <span style={{ flexShrink: 0, width: 12 }} aria-hidden="true" />
+          )}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.text}</span>
         </div>
       ))}
     </div>
