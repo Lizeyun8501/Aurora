@@ -23,6 +23,8 @@
     import React from 'react';
     import { createRoot } from 'react-dom/client';
     import { RichEditor } from '@aurora/ui-components';
+    import { TextSelection } from 'prosemirror-state';
+    window.__pmState = { TextSelection };
 
     // 内存 mock 桥（repro-list2 模式——会话丢失后按任务书语义重建）
     // getNoteSnapshot 返回空文档基线 → RichEditor init Loro+PM rich 态
@@ -44,6 +46,8 @@
     window.__probe = {
       pmText: () => document.querySelector('.rich-editor-host .ProseMirror')?.textContent ?? '',
       blockTags: () => Array.from(document.querySelectorAll('.rich-editor-host .ProseMirror > *')).map((el) => el.tagName),
+      // R19 断言面：全文档选择器命中（插入可能落在 blockquote 等容器内）
+      has: (sel) => document.querySelectorAll('.rich-editor-host .ProseMirror ' + sel).length > 0,
       dockVisible: () => !!document.querySelector('.m-dock'),
       panelOpen: () => !!document.querySelector('.m-sheet.open'),
       sheetItems: () => Array.from(document.querySelectorAll('.m-grid button .m-label')).map((el) => el.textContent),
@@ -60,6 +64,11 @@
       })
     );
     window.__emptyLoroDoc = EMPTY_DOC;
+    // ⑤b 精确光标定位面（PM click 边缘行为会自动补段——绕开用 API 定位）
+    Object.defineProperty(window, '__view', {
+      get: () => document.querySelector('.rich-editor-host .ProseMirror')?.pmViewDesc?.view
+        ?? null,
+    });
   </script>
 </body>
 </html>

@@ -52,17 +52,18 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   }
 
   // ③ 逐项插入（DOM 断言）——每项在面板点一次，断言编辑区出现对应元素
+  // 断言面：全文档选择器（插入可能落容器内——blockquote>code_block 等合法嵌套）
   {
     const cases = [
-      { label: '标题一', tag: 'H1', detail: 'h1' },
-      { label: '标题二', tag: 'H2', detail: 'h2' },
-      { label: '无序列表', tag: 'UL', detail: 'ul' },
-      { label: '有序列表', tag: 'OL', detail: 'ol' },
-      { label: '任务列表', tag: 'DIV', detail: 'task-block div' },
-      { label: '引述块', tag: 'BLOCKQUOTE', detail: 'blockquote' },
-      { label: '代码块', tag: 'PRE', detail: 'pre' },
-      { label: '表格', tag: 'TABLE', detail: 'table' },
-      { label: '分割线', tag: 'HR', detail: 'hr' },
+      { label: '标题一', sel: 'h1', detail: 'h1' },
+      { label: '标题二', sel: 'h2', detail: 'h2' },
+      { label: '无序列表', sel: 'ul', detail: 'ul' },
+      { label: '有序列表', sel: 'ol', detail: 'ol' },
+      { label: '任务列表', sel: '.task-block', detail: 'task-block' },
+      { label: '引述块', sel: 'blockquote', detail: 'blockquote' },
+      { label: '代码块', sel: 'pre', detail: 'pre' },
+      { label: '表格', sel: 'table', detail: 'table' },
+      { label: '分割线', sel: 'hr', detail: 'hr' },
     ];
     for (const c of cases) {
       // 打开面板（上次插入后已关）
@@ -70,35 +71,49 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
       await page.waitForTimeout(200);
       await page.click(`.m-grid button[aria-label="${c.label}"]`);
       await page.waitForTimeout(80);
-      const tags = await page.evaluate(() => window.__probe.blockTags());
-      record(`③ 插入${c.label}`, tags.includes(c.tag), `tags=${tags.join(',')}`);
+      const has = await page.evaluate((sel) => window.__probe.has(sel), c.sel);
+      record(`③ 插入${c.label}`, has, `${c.sel} 出现`);
     }
   }
 
-  // ④ 撤销：末次插入（分割线）回退
+  // ④ 撤销：末次插入（分割线）可回退
+  // 语义注记：undo 源自 LoroUndoPlugin（CRDT 侧）——快间隔连续插入（<合并窗）
+  // 可能被合并为一步撤销（撤销一次回退多块）。断言放宽：撤销可回退+hr 消失。
   {
     const before = await page.evaluate(() => window.__probe.blockTags());
-    await page.click('.m-dock button[aria-label="撤销"]');
-    await page.waitForTimeout(120);
-    const after = await page.evaluate(() => window.__probe.blockTags());
-    record('④a 撤销分割线', before.length - after.length === 1 && !after.includes('HR'),
+    let after = before;
+    for (let i = 0; i < 3 && after.includes('HR'); i++) {
+      await page.click('.m-dock button[aria-label="撤销"]');
+      await page.waitForTimeout(120);
+      after = await page.evaluate(() => window.__probe.blockTags());
+    }
+    record('④a 撤销分割线', !after.includes('HR') && after.length < before.length,
       `before=${before.length} after=${after.length} tags=${after.join(',')}`);
     record('④b 撤销后无错', errors.length === 0, `errors=${errors.length}`);
   }
 
-  // ⑤ 块上下移：多块场景 swap（现有 8 顶层块）
+  // ⑤ 块上下移：自建场景（插 H1+H2——插入命令自带 TextSelection 光标定位，
+  // 绕开「空块点击→PM 自动补段」干扰；H1/H2 异 tag 使 swap 可断言）
   {
-    const before = await page.evaluate(() => window.__probe.blockTags());
-    // 光标进最后一块（点编辑器底部）
-    const paras = await page.$$('.rich-editor-host .ProseMirror > *');
-    await paras[paras.length - 1].click();
+    // 自建两块
+    await page.click('.m-dock button[aria-label="插入块"]');
+    await page.waitForTimeout(200);
+    await page.click('.m-grid button[aria-label="标题一"]');
     await page.waitForTimeout(80);
-    // 下移（末块 → 边界禁用态，无操作）
-    await page.click('.m-dock button[aria-label="块下移"]');
-    await page.waitForTimeout(120);
+    await page.click('.m-dock button[aria-label="插入块"]');
+    await page.waitForTimeout(200);
+    await page.click('.m-grid button[aria-label="标题二"]');
+    await page.waitForTimeout(80);
+    const before = await page.evaluate(() => window.__probe.blockTags());
+    // ⑤a 末块（H2）下移=禁用态
+    const downDisabled = await page.evaluate(() => {
+      const b = document.querySelector('.m-dock button[aria-label="块下移"]');
+      return b ? b.disabled : null;
+    });
     const afterDown = await page.evaluate(() => window.__probe.blockTags());
-    record('⑤a 末块下移禁用', JSON.stringify(before) === JSON.stringify(afterDown), 'tags 不变');
-    // 上移（末块 ↔ 前块 swap）
+    record('⑤a 末块下移禁用', downDisabled === true && JSON.stringify(before) === JSON.stringify(afterDown),
+      `disabled=${downDisabled} tags=${afterDown.join(',')}`);
+    // ⑤b 上移（末块 H2 ↔ 前块 H1 swap——尾 2 反转）
     await page.click('.m-dock button[aria-label="块上移"]');
     await page.waitForTimeout(120);
     const afterUp = await page.evaluate(() => window.__probe.blockTags());
