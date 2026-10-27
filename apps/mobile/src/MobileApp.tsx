@@ -1019,6 +1019,11 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
   const refresh = useCallback(() => setNotes(listNotesTitled()), []);
   useEffect(refresh, [refresh]);
 
+  /** 左滑删除（V19 移动端页面1 触屏交互）
+   * ⚠️ hook 必须在 mode 条件 early return 之前——树形轮曾跳过此声明，
+   * 切列表时 hooks 数量 3→4 触发 React #310 渲染崩溃（v24 真机首报）。 */
+  const cardTouch = useRef<{ x: number; y: number } | null>(null);
+
   /** 视图段控 — 树形（思源式笔记本/文档树）/ 列表（原平铺）。 */
   const modeSeg = (
     <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
@@ -1043,8 +1048,6 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
     ? notes.filter((n) => n.title.includes(query.trim()))
     : notes;
 
-  // 左滑删除（V19 移动端页面1 触屏交互）
-  const cardTouch = useRef<{ x: number; y: number } | null>(null);
   const onMove = (e: React.TouchEvent, id: string) => {
     if (!cardTouch.current) return;
     const dx = e.touches[0].clientX - cardTouch.current.x;
