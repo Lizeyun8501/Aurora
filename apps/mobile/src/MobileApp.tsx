@@ -1586,6 +1586,7 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
         <RichEditor
           noteId={noteId}
           platform={editorPlatform}
+          mobileDock
           fallbackText={(() => { try { return platform.getNoteContent(noteId); } catch { return ''; } })()}
           onDirty={() => setStatus('dirty')}
           onSaved={() => setStatus('saved')}

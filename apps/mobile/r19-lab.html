@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>R19 Lab — 移动端块插入面板验证页</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    #app { padding: 0; }
+    .rich-editor-host .ProseMirror { outline: none; min-height: 300px; padding: 12px; border: 1px solid #ddd; }
+    .rich-editor-wrap { position: relative; }
+    #status { padding: 8px; background: #f0f4ff; font-size: 12px; }
+    .editor-toolbar { display: flex; gap: 4px; padding: 6px 8px; border-top: 1px solid #ddd; }
+    .editor-toolbar button { min-width: 38px; min-height: 38px; }
+    /* 键盘视口变量 mock（生产由 MobileApp useKbdViewport 注入——lab 走桌面回退 0） */
+    :root { --kbd-inset: 0px; --vvh: 844px; }
+  </style>
+</head>
+<body>
+  <div id="status">r19-lab ready</div>
+  <div id="app"></div>
+  <script type="module">
+    import React from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { RichEditor } from '@aurora/ui-components';
+
+    // 内存 mock 桥（repro-list2 模式——会话丢失后按任务书语义重建）
+    // getNoteSnapshot 返回空文档基线 → RichEditor init Loro+PM rich 态
+    const EMPTY_DOC = {
+      type: 'doc', content: [{ type: 'paragraph' }],
+    };
+    const mockPlatform = {
+      saveNoteContent: (id, content) => { window.__savedContent = content; return true; },
+      getNoteSnapshot: () => {
+        // loro snapshot 需要 Loro 二进制基线——空文本走 editor 自建空 doc
+        // getNoteSnapshot 返回 ''（无桥）会进 fallback；rich 态需要合法快照。
+        // RichEditor 判定：snapB64 === null → fallback。返回合法空 loro doc base64。
+        return window.__emptyLoroB64 ?? '';
+      },
+      saveNoteSnapshot: (id, b64) => { window.__savedSnapshot = b64; return true; },
+    };
+
+    // 全局探针（Playwright 断言面）
+    window.__probe = {
+      pmText: () => document.querySelector('.rich-editor-host .ProseMirror')?.textContent ?? '',
+      blockTags: () => Array.from(document.querySelectorAll('.rich-editor-host .ProseMirror > *')).map((el) => el.tagName),
+      dockVisible: () => !!document.querySelector('.m-dock'),
+      panelOpen: () => !!document.querySelector('.m-sheet.open'),
+      sheetItems: () => Array.from(document.querySelectorAll('.m-grid button .m-label')).map((el) => el.textContent),
+    };
+
+    const root = createRoot(document.getElementById('app'));
+    root.render(
+      React.createElement(RichEditor, {
+        noteId: 'lab-r19',
+        platform: mockPlatform,
+        mobileDock: true,
+        fallbackText: '',
+        onStatus: (s) => { window.__editorStatus = s; },
+      })
+    );
+    window.__emptyLoroDoc = EMPTY_DOC;
+  </script>
+</body>
+</html>

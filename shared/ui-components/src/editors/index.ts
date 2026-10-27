@@ -22,8 +22,11 @@ export {
   canRedo,
 } from './auroraEditor';
 export type { AuroraEditorHandle, CreateAuroraEditorOptions } from './auroraEditor';
-export { RichEditor, EditorToolbar } from './RichEditor';
+export { RichEditor, EditorToolbar, useToolbarState } from './RichEditor';
 export type { EditorPlatformBridge } from './RichEditor';
+export { MobileEditorDock, BlockInsertPanel, injectMobileDockStyle } from './MobileEditorDock';
+export { insertBlock, moveBlock } from './insertCommands';
+export type { BlockKind } from './insertCommands';
 export { mdToDoc, mdToNodes, docToMd } from './auroraMarkdown';
 export {
   focusBlockPlugin,

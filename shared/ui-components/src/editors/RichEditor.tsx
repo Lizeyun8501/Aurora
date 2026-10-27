@@ -31,6 +31,7 @@ import {
 } from './auroraEditor';
 import { insertMathBlock, insertMermaidBlock } from './mathInputRules';
 import { auroraSchema } from '../schema/auroraSchema';
+import { MobileEditorDock } from './MobileEditorDock';
 
 export type EditorStatus = 'loading' | 'rich' | 'fallback';
 
@@ -45,6 +46,9 @@ interface RichEditorProps {
   onSaved?: () => void;
   /** 状态回调（外层显示"编辑器加载中/降级"）。 */
   onStatus?: (s: EditorStatus) => void;
+  /** R19：移动端底部编辑 Dock（+插入面板/撤销重做/块上下移）。
+   *  宿主显式开启（mobile=MobileApp；desktop 不传=默认关）。 */
+  mobileDock?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +126,7 @@ function insertHorizontalRule(view: EditorView | null) {
  *  3. 非列表 → wrapInList 包裹
  * （prosemirror-schema-list 1.5 无 toggleList，自行组合）
  */
-function makeToggleListCmd(
+export function makeToggleListCmd(
   listType: 'bullet_list' | 'ordered_list',
 ): PMCommand {
   const itemType = auroraSchema.nodes.list_item;
@@ -148,7 +152,7 @@ function makeToggleListCmd(
 }
 
 /** 计算工具栏激活态（tick 变化触发重算）。 */
-function useToolbarState(view: EditorView | null, _tick: number) {
+export function useToolbarState(view: EditorView | null, _tick: number) {
   if (!view) {
     return { marks: new Set<string>(), blocks: new Set<string>(), canUndo: false, canRedo: false };
   }
@@ -541,7 +545,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
 // 主组件
 // ---------------------------------------------------------------------------
 
-export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, onStatus }: RichEditorProps) {
+export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, onStatus, mobileDock }: RichEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const handleRef = useRef<AuroraEditorHandle | null>(null);
@@ -692,6 +696,7 @@ export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, o
         <>
           <FloatingMenu view={handleRef.current?.view ?? null} />
           <EditorToolbar view={handleRef.current?.view ?? null} tick={tick} />
+          {mobileDock && <MobileEditorDock view={handleRef.current?.view ?? null} tick={tick} />}
         </>
       )}
       {status === 'loading' && (
