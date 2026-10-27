@@ -23,8 +23,11 @@
     import React from 'react';
     import { createRoot } from 'react-dom/client';
     import { RichEditor } from '@aurora/ui-components';
+    import { insertBlock, moveBlock } from '@aurora/ui-components';
     import { TextSelection } from 'prosemirror-state';
     window.__pmState = { TextSelection };
+    window.__insertBlock = insertBlock;
+    window.__moveBlock = moveBlock;
 
     // 内存 mock 桥（repro-list2 模式——会话丢失后按任务书语义重建）
     // getNoteSnapshot 返回空文档基线 → RichEditor init Loro+PM rich 态

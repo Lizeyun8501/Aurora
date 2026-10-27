@@ -24,7 +24,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     console.log(`${pass ? 'PASS' : 'FAIL'} ${name}: ${detail}`);
   };
 
-  await page.goto('file:///home/z/my-project/Aurora/apps/mobile/dist-r19/r19-lab.html');
+  await page.goto('file:///home/z/my-project/repos/Aurora/apps/mobile/dist-r19/r19-lab.html');
   await page.waitForFunction(() => window.__editorStatus === 'rich', null, { timeout: 15000 });
   record('lab rich 态加载', true, 'editorStatus=rich');
 
@@ -69,6 +69,14 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
       // 打开面板（上次插入后已关）
       await page.click('.m-dock button[aria-label="插入块"]');
       await page.waitForTimeout(200);
+      // ⍟ Alpha 加固（对向复核发现）：Playwright 自动滚动与 sheet 180ms
+      // transition 交互错位（transform 中 rect 漂移→click 重试死循环）——
+      // 显式同步 scrollIntoView 后再点，任何视口高度下稳定可达
+      await page.evaluate((label) => {
+        document.querySelector(`.m-grid button[aria-label="${label}"]`)
+          ?.scrollIntoView({ block: 'end' });
+      }, c.label);
+      await page.waitForTimeout(60);
       await page.click(`.m-grid button[aria-label="${c.label}"]`);
       await page.waitForTimeout(80);
       const has = await page.evaluate((sel) => window.__probe.has(sel), c.sel);

@@ -38,18 +38,31 @@ function inList(state: EditorView['state']): boolean {
 }
 
 /**
- * 列表内插入新顶层块：当前光标所在顶层块（整个列表）之后插兄弟块，
- * 选区移入新块。语义=「插入块」面板在列表场景的自然行为
+ * 光标所在顶层块之后插兄弟（顶层边界数学恒安全）。
+ * 选区移入新块。语义=「插入块」面板在列表/嵌套场景的自然行为
  * （列表内的 textblock 转换受 schema content 约束不可行——list_item
  * content=paragraph+，heading/task_block/code_block 非法子节点）。
+ *
+ * ⍟ R19-⑤b 轮 Alpha 修复：加 $from.depth<1 兜底（doc 根选择态——
+ * before(1) 会 throw，走 doc 尾 append）。
  */
 function insertSiblingBlock(view: EditorView, node: import('prosemirror-model').Node): boolean {
   const { state } = view;
   const { $from } = state.selection;
+  let pos: number;
+  if ($from.depth < 1) {
+    // doc 根级选择（全选/空 doc）：直接追加尾部
+    pos = state.doc.content.size;
+    const tr = state.tr.insert(pos, node);
+    tr.setSelection(TextSelection.near(tr.doc.resolve(Math.max(0, pos - 1))));
+    view.dispatch(tr.scrollIntoView());
+    view.focus();
+    return true;
+  }
   const topStart = $from.before(1);
   const topNode = state.doc.resolve(topStart).nodeAfter;
   if (!topNode) return false;
-  const pos = topStart + topNode.nodeSize;
+  pos = topStart + topNode.nodeSize;
   const tr = state.tr.insert(pos, node);
   tr.setSelection(TextSelection.near(tr.doc.resolve(pos + 1)));
   view.dispatch(tr.scrollIntoView());
@@ -118,21 +131,18 @@ export function insertBlock(view: EditorView, kind: BlockKind): boolean {
   }
 }
 
-/** 3×3 表格（insertTableCmd 同语义：当前块上方插入）。 */
+/** 3×3 表格——顶层兄弟插入（与列表/嵌套场景同一路径）。
+ * ⍟ R19-⑤b 轮 Alpha 修复：旧实现 depth 反推（$from.before(depth) +
+ * resolve().node().nodeSize）在嵌套先行结构（BQ/列表/代码块后）下
+ * insertAt 越界 →「Position N out of range」throw → MobileEditorDock
+ * insert() 跳断 onClose → sheet 滞留 open 拦截后续 dock 点击（对向复核
+ * 实锤链）。统一走 insertSiblingBlock 顶层边界，数学恒安全。 */
 function insertTable(view: EditorView): boolean {
-  const { state } = view;
   const schema = auroraSchema;
   const cell = () => schema.nodes.table_cell.create(null, schema.nodes.paragraph.create());
   const row = () => schema.nodes.table_row.create(null, Array.from({ length: 3 }, cell));
   const table = schema.nodes.table.create(null, Array.from({ length: 3 }, row));
-  const { $from } = state.selection;
-  const blockDepth = $from.depth - 1;
-  if (blockDepth < 0) return false;
-  const blockPos = $from.before(blockDepth + 1);
-  const insertAt = blockPos + state.doc.resolve(blockPos).node().nodeSize;
-  view.dispatch(state.tr.insert(insertAt, table));
-  view.focus();
-  return true;
+  return insertSiblingBlock(view, table);
 }
 
 /** 分割线（insertHorizontalRule 同语义：选区替换）。 */
@@ -168,14 +178,17 @@ export function moveBlock(view: EditorView, dir: -1 | 1): boolean {
 
   const a = tops[idx];
   const b = tops[target];
-  // 区间 [min.pos, max.pos + max.node.nodeSize) 一次删除，按反转序插回
+  // ⍟ R19-⑤b Alpha 根因修复：旧实现 delete(rangeStart, rangeEnd) 后 PM 对
+  // 「全删至空 doc」自动补一个空 paragraph（doc content block+ 非空保证），
+  // 随后 insert 两块 → [BQ, OL, 尾部空P]——⑤b 断言 [OL,BQ]→[OL,P] 的真凶
+  // （node 纯环境单测实锤，与 click/Loro 无关）。改一步原子 replaceWith
+  // 替换两块——无空 doc 中间态，PM 不触发补段。
   const lo = dir === 1 ? a : b;
   const hi = dir === 1 ? b : a;
   const rangeStart = lo.pos;
   const rangeEnd = hi.pos + hi.node.nodeSize;
-  const tr = state.tr.delete(rangeStart, rangeEnd);
+  const tr = state.tr.replaceWith(rangeStart, rangeEnd, [hi.node, lo.node]);
   // swap = 两块顺序反转（A 前 B 后 → B 前 A 后）
-  tr.insert(rangeStart, hi.node).insert(rangeStart + hi.node.nodeSize, lo.node);
   // 选区锚到移动块（a 块）新起点
   const newSelfPos = dir === 1 ? rangeStart + hi.node.nodeSize : rangeStart;
   tr.setSelection(TextSelection.near(tr.doc.resolve(newSelfPos)));
