@@ -129,3 +129,14 @@ jobs:
           name: aurora-mobile-ffi-arm64-so
           path: target/aarch64-linux-android/release/libaurora_mobile_ffi.so
           retention-days: 7
+
+      # ⍟ 2026-10-28 Alpha：release 附件通道（免凭据下载）——artifact 需
+      # 登录才能取，release 附件匿名可下。GITHUB_TOKEN workflow 内建，
+      # 零外部 secret。tag 触发时 ref_name=tag 名（apk-v25r1 等）。
+      - name: APK 挂 release 附件
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
