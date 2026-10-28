@@ -129,10 +129,12 @@ const VIEW_TITLES: Record<ViewId, string> = {
   today: '今日', notes: '知识库', search: '搜索', agent: 'Agent', settings: '设置', calendar: '日历',
   favorites: '我的收藏', recent: '最近浏览', tasks: '任务中心', diary: '日记本', trash: '回收站',
 };
-/** 次级视图 → Tab 高亮映射（抽屉导航进入次级页时保持主 Tab 语境）。 */
+/** 次级视图 → Tab 高亮映射（抽屉导航进入次级页时保持主 Tab 语境）。
+ *  2026-10-28 搜索入口合并：底部 TabBar 撤搜索项，入口唯一=AppBar 右上角——
+ *  search 视图无主 Tab 高亮（搜索是全局动作，不属于任何主 Tab 语境）。 */
 const TAB_OF_VIEW: Record<ViewId, string> = {
-  today: 'today', notes: 'notes', search: 'search', agent: 'agent', settings: 'settings',
-  calendar: 'calendar', favorites: 'notes', recent: 'notes', diary: 'notes', trash: 'notes', tasks: 'today',
+  today: 'today', notes: 'notes', agent: 'agent', settings: 'settings',
+  calendar: 'calendar', favorites: 'notes', recent: 'notes', diary: 'notes', trash: 'notes', tasks: 'today', search: '',
 };
 
 /** 笔记标题 overlay — 编辑页改标题时覆盖显示（Rust rename API 落地前的前端方案）。 */
@@ -520,7 +522,6 @@ function TabBar({ current, onChange }: { current: ViewId; onChange: (v: ViewId) 
   const items: Array<{ id: ViewId; icon: React.ReactNode; label: string }> = [
     { id: 'today', icon: I.today, label: '今日' },
     { id: 'notes', icon: I.notes, label: '知识库' },
-    { id: 'search', icon: I.search, label: '搜索' },
     { id: 'agent', icon: I.agent, label: 'Agent' },
     { id: 'calendar', icon: I.calendar, label: '日历' },
   ];
