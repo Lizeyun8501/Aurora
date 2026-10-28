@@ -88,10 +88,10 @@ button, .note-card, .drawer-item, .tab-item { transition: background .14s, color
 .tab-item.active { color: var(--brand); font-weight: 500; }
 .tab-item svg { display: block; }
 
-/* 悬浮捕获按钮 — 永不隐藏 V19 §3.1 */
+/* 悬浮捕获按钮 — 永不隐藏 V19 §3.1（2026-10-28 圆形化——用户指令） */
 .fab {
   position: fixed; right: 16px; bottom: 72px; z-index: 55;
-  width: 52px; height: 52px; border-radius: 8px;
+  width: 52px; height: 52px; border-radius: 50%;
   background: var(--brand); color: #fff;
   border: none; cursor: pointer;
   box-shadow: 0 2px 8px rgba(31, 41, 55, 0.18);
@@ -800,12 +800,15 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 
-/* 日历 Tab — 可点选日期 */
+/* 日历 Tab — 可点选日期
+ * 2026-10-28 sel 定宽对齐 today（36px 圆+水平居中）——修复用户实测
+ * 「两个蓝框大小不同」：today=36px 定圆、sel 无宽 stretch 填满格
+ * （~51×40 胶囊观感）。统一后两种高亮视觉完全一致。 */
 .cal-day-btn {
   background: none; border: none; cursor: pointer;
   position: relative; font-family: inherit;
 }
-.cal-day-btn.sel { background: var(--brand); color: #fff; border-radius: 50%; }
+.cal-day-btn.sel { background: var(--brand); color: #fff; border-radius: 50%; width: 36px; margin: 0 auto; }
 .cal-day-btn.sel::after { background: #fff; }
 
 /* ============================================================
