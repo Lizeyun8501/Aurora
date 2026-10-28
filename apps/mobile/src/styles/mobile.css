@@ -206,12 +206,15 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 .task-swipe-del.show { width: 64px; }
 
-/* 本周日历 */
+/* 本周日历 — 2026-10-28 可点（div→button：清按钮默认样式+可点反馈） */
 .week-calendar { display: flex; gap: 4px; }
 .week-day {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 8px 0; border-radius: 8px; font-size: 12px; color: var(--text-secondary);
+  background: none; border: none; cursor: pointer; font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
 }
+.week-day:active { background: var(--bg-secondary); }
 .week-day .d { font-size: 15px; font-weight: 500; color: var(--text-primary); }
 .week-day.today { background: var(--brand-soft); color: var(--brand); }
 .week-day.today .d { color: var(--brand); font-weight: 600; }

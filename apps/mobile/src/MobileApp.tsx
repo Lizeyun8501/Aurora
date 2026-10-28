@@ -284,6 +284,8 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [fallback, setFallback] = useState(false);
   const [view, setView] = useState<ViewId>('today'); // V19: TodayView 默认启动页
+  /** 2026-10-28 周条→日历联动：待跳转选中日期（YYYY-MM-DD），CalendarView 挂载时消费 */
+  const [calendarInit, setCalendarInit] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureDue, setCaptureDue] = useState<string | undefined>(undefined); // 日历入口预置日期
@@ -391,6 +393,7 @@ export default function App() {
                 onTasks={updateTasks}
                 onOpenNote={openNote}
                 showToast={showToast}
+                onOpenDate={(ds) => { setCalendarInit(ds); goto('calendar'); }}
               />
             )}
             {view === 'notes' && (
@@ -407,10 +410,11 @@ export default function App() {
             {view === 'search' && <SearchView onOpen={openNote} />}
             {view === 'calendar' && (
               <CalendarView
-              tasks={tasks}
-              onOpenNote={openNote}
-              onNewTask={(due) => { setCaptureDue(due); setCaptureOpen(true); }}
-            />
+                tasks={tasks}
+                onOpenNote={openNote}
+                onNewTask={(due) => { setCaptureDue(due); setCaptureOpen(true); }}
+                initialSelected={calendarInit ?? undefined}
+              />
             )}
             {view === 'agent' && <AgentView theme={theme} />}
             {view === 'settings' && (
@@ -545,11 +549,13 @@ function TabBar({ current, onChange }: { current: ViewId; onChange: (v: ViewId) 
 // TodayView — V19 移动端页面1（默认启动页 · P1）
 // ===========================================================================
 
-function TodayView({ tasks, onTasks, onOpenNote, showToast }: {
+function TodayView({ tasks, onTasks, onOpenNote, showToast, onOpenDate }: {
   tasks: Task[];
   onTasks: (ts: Task[]) => void;
   onOpenNote: (id: string, title: string) => void;
   showToast: (t: string) => void;
+  /** 2026-10-28 周条可点选日——跳日历页选中该日（用户实测「本周内无法点击」反馈） */
+  onOpenDate: (dateStr: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ done: true });
   const [pomoRunning, setPomoRunning] = useState(false);
@@ -669,7 +675,7 @@ function TodayView({ tasks, onTasks, onOpenNote, showToast }: {
         );
       })}
 
-      {/* 本周日历 */}
+      {/* 本周日历 — 2026-10-28 可点选日（原静态展示 div，用户实测点击无反应） */}
       <div className="card">
         <h3 className="card-title">本周</h3>
         <div className="week-calendar">
@@ -677,12 +683,19 @@ function TodayView({ tasks, onTasks, onOpenNote, showToast }: {
             const d = new Date(today);
             d.setDate(d.getDate() - d.getDay() + i + 1); // 周一起
             const isToday = d.toDateString() === today.toDateString();
+            const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
             return (
-              <div key={i} className={`week-day ${isToday ? 'today' : ''}`}>
+              <button
+                key={i}
+                type="button"
+                className={`week-day ${isToday ? 'today' : ''}`}
+                onClick={() => onOpenDate(ds)}
+                aria-label={`查看 ${ds}`}
+              >
                 <span>{['一', '二', '三', '四', '五', '六', '日'][i]}</span>
                 <span className="d">{d.getDate()}</span>
                 <span className="week-dot has" />
-              </div>
+              </button>
             );
           })}
         </div>
@@ -1851,15 +1864,22 @@ function TasksView({ tasks, onTasks, showToast }: {
 // CalendarView — 底部 Tab「日历」（月历 + 当日任务/笔记聚合）
 // ===========================================================================
 
-function CalendarView({ tasks, onOpenNote, onNewTask }: {
+function CalendarView({ tasks, onOpenNote, onNewTask, initialSelected }: {
   tasks: Task[];
   onOpenNote: (id: string, title: string) => void;
   onNewTask: (due: string) => void;
+  /** 2026-10-28 周条联动预选日期——跨月自动翻页（如 11-01 → 月历翻到 11 月） */
+  initialSelected?: string;
 }) {
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const [monthOffset, setMonthOffset] = useState(0);
-  const [selected, setSelected] = useState<string>(todayStr);
+  /** 周条跳转的跨月偏移（目标月−当前月；仅挂载时消费一次） */
+  const [monthOffset, setMonthOffset] = useState(() => {
+    if (!initialSelected) return 0;
+    const [yy, mm] = initialSelected.split('-').map(Number);
+    return (yy - now.getFullYear()) * 12 + (mm - 1 - now.getMonth());
+  });
+  const [selected, setSelected] = useState<string>(initialSelected ?? todayStr);
 
   const view = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   const y = view.getFullYear();
