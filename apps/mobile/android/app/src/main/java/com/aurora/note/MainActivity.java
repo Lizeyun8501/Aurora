@@ -261,7 +261,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public int purgeExpired(int days) {
             try {
-                return core.purgeExpired(days).size();
+                return core.purgeExpired(days);
             } catch (Exception e) {
                 return -1;
             }
