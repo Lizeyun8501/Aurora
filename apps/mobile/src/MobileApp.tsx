@@ -1929,7 +1929,10 @@ function CalendarView({ tasks, onOpenNote, onNewTask, initialSelected }: {
     ].filter(Boolean);
     const h = HolidayUtil.getHoliday(sy, sm, sd);
     const rest = h ? (h.isWork() ? '（调休上班）' : '（法定假日）') : '';
-    return { text: lunar.toString(), tag: tags.length ? tags[0] + rest : rest };
+    /** DK-CALENDAR-01 黄历宜忌（各取前 4 项，lunar-typescript 数据现成） */
+    const yi = lunar.getDayYi().slice(0, 4);
+    const ji = lunar.getDayJi().slice(0, 4);
+    return { text: lunar.toString(), tag: tags.length ? tags[0] + rest : rest, yi, ji };
   })();
 
   const selD = parseInt(selected.slice(8), 10);
@@ -1983,6 +1986,18 @@ function CalendarView({ tasks, onOpenNote, onNewTask, initialSelected }: {
           {selLunarInfo.text}{selLunarInfo.tag ? ` · ${selLunarInfo.tag}` : ''}
         </span>
       </div>
+
+      {/* DK-CALENDAR-01 黄历宜忌 */}
+      {(selLunarInfo.yi.length > 0 || selLunarInfo.ji.length > 0) && (
+        <div className="almanac">
+          {selLunarInfo.yi.length > 0 && (
+            <div className="almanac-row"><span className="almanac-tag yi">宜</span>{selLunarInfo.yi.map((s) => <span key={s} className="almanac-item">{s}</span>)}</div>
+          )}
+          {selLunarInfo.ji.length > 0 && (
+            <div className="almanac-row"><span className="almanac-tag ji">忌</span>{selLunarInfo.ji.map((s) => <span key={s} className="almanac-item">{s}</span>)}</div>
+          )}
+        </div>
+      )}
 
       {isSelInMonth && (selData.dayTasks.length > 0 || (selData.dayNotes.length + selData.dayDiary.length) > 0) === false && (
         <EmptyState text="这一天没有任务或笔记记录。点右下角 + 捕获。" />
