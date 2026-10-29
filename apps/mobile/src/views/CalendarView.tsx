@@ -32,6 +32,8 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
     return (yy - now.getFullYear()) * 12 + (mm - 1 - now.getMonth());
   });
   const [selected, setSelected] = useState<string>(initialSelected ?? todayStr);
+  /** DK-CALENDAR-01 任务 2：月/日双视图 segmented */
+  const [mode, setMode] = useState<'month' | 'day'>('month');
 
   const view = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   const y = view.getFullYear();
@@ -91,6 +93,28 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
   const selData = dayData(selD);
   const isSelInMonth = selected.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`);
 
+  /** DK-CALENDAR-01 任务 2：日视图时间轴聚合。
+   * 任务（due 无时刻）→ 全天区；日记/笔记按 updated_at 本地小时落轴
+   * （P0 展示聚合——NoteSummary 无 created_at，事件实体真时间 02 卡引入）。
+   * 时间轴 08-22，轴外聚合入「更早/更晚」兜底区。 */
+  const dayAxis = (() => {
+    const hour = (iso: string): number => {
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? -1 : d.getHours();
+    };
+    type AxisItem = { kind: 'task' | 'note' | 'diary'; label: string; id: string };
+    const slots = new Map<number, AxisItem[]>();
+    const push = (h: number, item: AxisItem) => {
+      const arr = slots.get(h) ?? [];
+      arr.push(item);
+      slots.set(h, arr);
+    };
+    for (const t of selData.dayTasks) push(-1, { kind: 'task', label: t.text, id: t.id });
+    for (const n of selData.dayDiary) push(hour(n.updatedAt), { kind: 'diary', label: n.title, id: n.id });
+    for (const n of selData.dayNotes) push(hour(n.updatedAt), { kind: 'note', label: n.title, id: n.id });
+    return slots;
+  })();
+
   return (
     <div className="view">
       <div className="card">
@@ -100,31 +124,84 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
           <button className="icon-btn" onClick={() => setMonthOffset((o) => o + 1)} aria-label="下月">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
           </button>
+          <div className="cal-mode-seg" role="tablist" aria-label="日历视图切换">
+            <button className={`nt-seg ${mode === 'month' ? 'on' : ''}`} role="tab" aria-selected={mode === 'month'} onClick={() => setMode('month')}>月</button>
+            <button className={`nt-seg ${mode === 'day' ? 'on' : ''}`} role="tab" aria-selected={mode === 'day'} onClick={() => setMode('day')}>日</button>
+          </div>
         </div>
-        <div className="cal-grid">
-          {['一', '二', '三', '四', '五', '六', '日'].map((w) => (
-            <span key={w} className="cal-week">{w}</span>
-          ))}
-          {Array.from({ length: lead }, (_, i) => <span key={`e${i}`} />)}
-          {Array.from({ length: daysInMonth }, (_, i) => {
-            const d = i + 1;
-            const key = fmt(d);
-            const isToday = key === todayStr;
-            const isSel = key === selected;
-            const ls = lunarSub(d);
-            return (
-              <button
-                key={d}
-                className={`cal-day cal-day-btn ${isToday ? 'today' : ''} ${isSel ? 'sel' : ''} ${hasMark(d) ? 'has' : ''} ${ls.isStat ? 'fest' : ''} ${ls.isWork ? 'workday' : ''}`}
-                onClick={() => setSelected(key)}
-              >
-                <span className="cal-num">{d}</span>
-                {!isToday && <span className={`cal-lunar ${(ls.isStat || ls.sub.length > 2) && !ls.isWork ? 'fest' : ''}`}>{ls.isWork ? '班' : ls.sub}</span>}
-              </button>
-            );
-          })}
-        </div>
-        {selected !== todayStr && (
+        {mode === 'month' && (
+          <div className="cal-grid" key={monthOffset}>
+            {['一', '二', '三', '四', '五', '六', '日'].map((w) => (
+              <span key={w} className="cal-week">{w}</span>
+            ))}
+            {Array.from({ length: lead }, (_, i) => <span key={`e${i}`} />)}
+            {Array.from({ length: daysInMonth }, (_, i) => {
+              const d = i + 1;
+              const key = fmt(d);
+              const isToday = key === todayStr;
+              const isSel = key === selected;
+              const ls = lunarSub(d);
+              return (
+                <button
+                  key={d}
+                  className={`cal-day cal-day-btn ${isToday ? 'today' : ''} ${isSel ? 'sel' : ''} ${hasMark(d) ? 'has' : ''} ${ls.isStat ? 'fest' : ''} ${ls.isWork ? 'workday' : ''}`}
+                  onClick={() => setSelected(key)}
+                >
+                  <span className="cal-num">{d}</span>
+                  {!isToday && <span className={`cal-lunar ${(ls.isStat || ls.sub.length > 2) && !ls.isWork ? 'fest' : ''}`}>{ls.isWork ? '班' : ls.sub}</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {mode === 'day' && (
+          <div className="day-axis" key={selected}>
+            {/* 全天区：任务（due 无时刻） */}
+            {(() => {
+              const items = dayAxis.get(-1) ?? [];
+              if (items.length === 0) return null;
+              return (
+                <div className="day-axis-row all-day">
+                  <span className="day-axis-time">全天</span>
+                  <div className="day-axis-items">
+                    {items.map((it) => (
+                      <span key={`t-${it.id}`} className="day-axis-item task" role="button"
+                        onClick={() => onNewTask(selected)}>{it.label}</span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+            {/* 08-22 时段 */}
+            {Array.from({ length: 15 }, (_, i) => i + 8).map((h) => {
+              const items = dayAxis.get(h) ?? [];
+              return (
+                <div key={h} className="day-axis-row">
+                  <span className="day-axis-time">{String(h).padStart(2, '0')}:00</span>
+                  <div className="day-axis-items">
+                    {items.map((it) => (
+                      <span key={`${it.kind}-${it.id}-${h}`} className={`day-axis-item ${it.kind}`} role="button"
+                        onClick={() => onOpenNote(it.id, it.label)}>{it.label}</span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            {/* 轴外兜底区（8 点前/22 点后/无时刻解析失败） */}
+            {Array.from(dayAxis.entries()).filter(([h]) => h !== -1 && (h < 8 || h > 22)).map(([h, items]) => (
+              <div key={`x-${h}`} className="day-axis-row">
+                <span className="day-axis-time">{h < 8 ? '更早' : '更晚'}</span>
+                <div className="day-axis-items">
+                  {items.map((it) => (
+                    <span key={`${it.kind}-${it.id}-x`} className={`day-axis-item ${it.kind}`} role="button"
+                      onClick={() => onOpenNote(it.id, it.label)}>{it.label}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {mode === 'month' && selected !== todayStr && (
           <button className="btn btn-text btn-block" style={{ marginTop: 4 }} onClick={() => setSelected(todayStr)}>
             回到今天
           </button>
