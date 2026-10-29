@@ -214,6 +214,60 @@ public class MainActivity extends Activity {
         }
 
         // ------------------------------------------------------------------
+        // DK-02 尾回收站 S2（JSON 串传递——searchNotes 惯例）
+        // ------------------------------------------------------------------
+
+        /** 回收站列表（deleted_at_ms 倒序）。JSON: [{noteId,title,deletedAtMs,originPath}] */
+        @JavascriptInterface
+        public String listTrashed() {
+            try {
+                List<UniffiAppCore.TrashedNoteItem> items = core.listTrashed();
+                JSONArray arr = new JSONArray();
+                for (UniffiAppCore.TrashedNoteItem t : items) {
+                    JSONObject o = new JSONObject();
+                    o.put("noteId", t.noteId);
+                    o.put("title", t.title);
+                    o.put("deletedAtMs", t.deletedAtMs);
+                    o.put("originPath", t.originPath == null ? JSONObject.NULL : t.originPath);
+                    arr.put(o);
+                }
+                return arr.toString();
+            } catch (Exception e) {
+                return "[]";
+            }
+        }
+
+        /** 恢复笔记（软删标记移除）。 */
+        @JavascriptInterface
+        public boolean restoreNote(String noteId) {
+            try {
+                return core.restoreNote(noteId);
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        /** 彻底删除（仅回收站内可删——永久）。 */
+        @JavascriptInterface
+        public boolean purgeNote(String noteId) {
+            try {
+                return core.purgeNote(noteId);
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        /** 清理超期回收站（days 天前软删的永久删除）。返回清理数（-1=错误）。 */
+        @JavascriptInterface
+        public int purgeExpired(int days) {
+            try {
+                return core.purgeExpired(days).size();
+            } catch (Exception e) {
+                return -1;
+            }
+        }
+
+        // ------------------------------------------------------------------
         // ProseMirror + Loro 编辑器（V19 §35 DEV-009）
         // ------------------------------------------------------------------
 

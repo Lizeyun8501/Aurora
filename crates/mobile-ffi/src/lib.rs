@@ -140,6 +140,17 @@ pub struct SnapshotInfo {
     pub size: i64,
 }
 
+/// DK-02 尾回收站 S2：回收站条目（core TrashedNote 桥面映射）。
+#[derive(uniffi::Record, Clone, Debug, serde::Serialize)]
+pub struct TrashedNoteItem {
+    pub note_id: String,
+    /// 软删时间戳（ms）——列表按此倒序。
+    pub deleted_at_ms: i64,
+    pub title: String,
+    /// 删除时路径快照（"/" 连接 Folder title 链；S1 旧标记无此字段=None）。
+    pub origin_path: Option<String>,
+}
+
 /// 每条笔记对应一个独立的 `NoteDoc`（V19 §30.1 五容器模型），
 /// 快照持久化到 KVStore（`notesnap:{user_id}:{id}`——DK-47 per-user 段），
 /// 元数据存 `note:{id}`。
@@ -1105,6 +1116,91 @@ impl UniffiAppCore {
                 &ctx, &note_id, &level,
             ))
             .is_ok()
+    }
+
+    /// DK-02 尾回收站 S2：列出回收站（软删笔记，deleted_at_ms 倒序）。
+    /// fallback 模式（无 core）返回空列表。
+    pub fn list_trashed(self: &Arc<Self>) -> Vec<TrashedNoteItem> {
+        let Some(core) = &self.core else {
+            return Vec::new();
+        };
+        match self
+            .runtime
+            .block_on(aurora_core::write_path::list_trashed(core))
+        {
+            Ok(items) => items
+                .into_iter()
+                .map(|t| TrashedNoteItem {
+                    note_id: t.note_id,
+                    deleted_at_ms: t.deleted_at_ms,
+                    title: t.title,
+                    origin_path: t.origin_path,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "list_trashed failed");
+                Vec::new()
+            }
+        }
+    }
+
+    /// DK-02 尾回收站 S2：恢复笔记（软删标记移除）。
+    pub fn restore_note(self: &Arc<Self>, note_id: String) -> bool {
+        let Some(core) = &self.core else {
+            return false;
+        };
+        let ctx = aurora_core::write_path::WriteContext {
+            core: core.clone(),
+            blocks: self.blocks.clone(),
+            seal: None,
+            content_cipher: self.content_cipher.clone(),
+            attachments: None,
+        };
+        self.runtime
+            .block_on(aurora_core::write_path::restore_note(&ctx, &note_id))
+            .is_ok()
+    }
+
+    /// DK-02 尾回收站 S2：彻底删除（仅回收站内笔记可删——永久）。
+    pub fn purge_note(self: &Arc<Self>, note_id: String) -> bool {
+        let Some(core) = &self.core else {
+            return false;
+        };
+        let ctx = aurora_core::write_path::WriteContext {
+            core: core.clone(),
+            blocks: self.blocks.clone(),
+            seal: None,
+            content_cipher: self.content_cipher.clone(),
+            attachments: None,
+        };
+        self.runtime
+            .block_on(aurora_core::write_path::purge_note(&ctx, &note_id))
+            .is_ok()
+    }
+
+    /// DK-02 尾回收站 S2：清理超期回收站（days 天前软删的永久删除）。
+    /// 返回被清理的 note_id 列表（空=无超期/错误降级）。
+    pub fn purge_expired(self: &Arc<Self>, days: i64) -> Vec<String> {
+        let Some(core) = &self.core else {
+            return Vec::new();
+        };
+        let ctx = aurora_core::write_path::WriteContext {
+            core: core.clone(),
+            blocks: self.blocks.clone(),
+            seal: None,
+            content_cipher: self.content_cipher.clone(),
+            attachments: None,
+        };
+        match self
+            .runtime
+            .block_on(aurora_core::write_path::purge_expired(&ctx, days))
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!(error = %e, "purge_expired failed");
+                Vec::new()
+            }
+        }
     }
 
     /// M3 双写观察期巡检（DK-01）— 返回 KV 权威指针与 Loro 快照不一致
