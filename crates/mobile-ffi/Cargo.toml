@@ -29,6 +29,8 @@ iroh = { workspace = true, optional = true }
 # 共享启动装配（迁移 + DEK 保险库 + AppCore DI）
 aurora-bootstrap = { path = "../aurora-bootstrap" }
 aurora-core = { path = "../aurora-core", features = ["loro-crdt"] }
+# DK-CALENDAR-02: Event 实体（upsert_event_json 反序列化入参）
+aurora-entity = { path = "../entity" }
 aurora-security = { path = "../aurora-security" }
 aurora-ai = { path = "../aurora-ai" }
 # P2P 同步 — iroh 1.0 真实传输层（V19 §31 DEV-005，需要 Rust 1.91+）

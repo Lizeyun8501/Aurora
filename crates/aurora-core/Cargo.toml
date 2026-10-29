@@ -39,6 +39,8 @@ sha3 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 bincode = { workspace = true }
+# DK-CALENDAR-02: Event 一等公民实体（migration 同款 path 引用）
+aurora-entity = { path = "../entity" }
 
 # Async runtime
 tokio = { workspace = true }

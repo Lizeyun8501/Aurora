@@ -1203,6 +1203,85 @@ impl UniffiAppCore {
         }
     }
 
+    // ------------------------------------------------------------------
+    // DK-CALENDAR-02: Event 域方法（core::event_store 直调——JSON 串跨 FFI;
+    // fallback 无 core 返空/false 与 trash 惯例一致）
+    // ------------------------------------------------------------------
+
+    /// 事件全量列表 JSON（start 升序）。UI 月历角标/日轴渲染的数据源。
+    pub fn list_events_json(self: &Arc<Self>) -> String {
+        let Some(core) = &self.core else {
+            return "[]".into();
+        };
+        match self
+            .runtime
+            .block_on(aurora_core::event_store::list_events(core.kv_store.as_ref()))
+        {
+            Ok(events) => serde_json::to_string(&events).unwrap_or_else(|_| "[]".into()),
+            Err(e) => {
+                tracing::warn!(error = %e, "list_events failed");
+                "[]".into()
+            }
+        }
+    }
+
+    /// 事件创建/更新二合一（全字段 JSON;id 空则 core 建新 UUID）。
+    /// 成功返 event_id,失败返空串（fail-closed: 空标题/end<start/
+    /// 幽灵更新/JSON 烂）。
+    pub fn upsert_event_json(self: &Arc<Self>, event_json: &str) -> String {
+        let Some(core) = &self.core else {
+            return String::new();
+        };
+        let Ok(ev) = serde_json::from_str::<aurora_entity::Event>(event_json) else {
+            tracing::warn!(raw = %event_json, "upsert_event json parse failed");
+            return String::new();
+        };
+        match self.runtime.block_on(aurora_core::event_store::upsert_event(
+            core.kv_store.as_ref(),
+            &ev,
+        )) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(error = %e, "upsert_event failed");
+                String::new()
+            }
+        }
+    }
+
+    /// 删除事件（幂等清场语义同 trash 系——不存在也 Ok(true）。
+    pub fn delete_event(self: &Arc<Self>, event_id: &str) -> bool {
+        let Some(core) = &self.core else {
+            return false;
+        };
+        self.runtime
+            .block_on(aurora_core::event_store::delete_event(core.kv_store.as_ref(), event_id))
+            .is_ok()
+    }
+
+    /// 范围查询 JSON [from_ms, to_ms)（事件与 [from,to) 有交叠即命中——
+    /// start < to && (end|start) > from;跨月全天事件正确落两侧月视图）。
+    pub fn query_events_range_json(self: &Arc<Self>, from_ms: i64, to_ms: i64) -> String {
+        let Some(core) = &self.core else {
+            return "[]".into();
+        };
+        let from = chrono::DateTime::from_timestamp_millis(from_ms);
+        let to = chrono::DateTime::from_timestamp_millis(to_ms);
+        let (Some(from), Some(to)) = (from, to) else {
+            return "[]".into();
+        };
+        match self.runtime.block_on(aurora_core::event_store::query_events_by_range(
+            core.kv_store.as_ref(),
+            from,
+            to,
+        )) {
+            Ok(events) => serde_json::to_string(&events).unwrap_or_else(|_| "[]".into()),
+            Err(e) => {
+                tracing::warn!(error = %e, "query_events failed");
+                "[]".into()
+            }
+        }
+    }
+
     /// M3 双写观察期巡检（DK-01）— 返回 KV 权威指针与 Loro 快照不一致
     /// 的 note_id 列表（空 = 双写一致）。UI/运维可周期触发。
     pub fn verify_dual_write_impl(self: &Arc<Self>) -> Vec<String> {
@@ -1758,6 +1837,59 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativePurgeExpired(
 ) -> jint {
     let core = unsafe { core_from_handle(handle) };
     core.purge_expired(days).len() as jint
+}
+
+// ---------------------------------------------------------------------------
+// DK-CALENDAR-02: Event JNI 导出四方法（JSON 串惯例——与 DK02 回收站同模式）。
+// ---------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeListEvents(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let json = core.list_events_json();
+    dk49_json_to_jstring(&mut env, &serde_json::from_str(&json).unwrap_or(serde_json::Value::Array(vec![])))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeUpsertEvent(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    event_json: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let json = jstring_to_rust(&mut env, &event_json).unwrap_or_default();
+    let id = core.upsert_event_json(&json);
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(id))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeDeleteEvent(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    event_id: JString,
+) -> jboolean {
+    let core = unsafe { core_from_handle(handle) };
+    let id = jstring_to_rust(&mut env, &event_id).unwrap_or_default();
+    core.delete_event(&id) as jboolean
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeQueryEvents(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    from_ms: jlong,
+    to_ms: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let json = core.query_events_range_json(from_ms, to_ms);
+    dk49_json_to_jstring(&mut env, &serde_json::from_str(&json).unwrap_or(serde_json::Value::Array(vec![])))
 }
 
 /// DK-49 函数 4：待处理冲突合并视图 JSON 数组（ConflictDto 同构）。

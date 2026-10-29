@@ -33,6 +33,7 @@ pub mod pinyin; // DK-3.3: 拼音首字母折叠（中文标题模糊召回）
 pub mod time_machine; // V23-I4: 时间机器快照回溯
 pub mod traits;
 pub mod write_path; // V26 I2/DK-01W: 唯一写入入口（load→apply→原子保存→派生→发事件）
+pub mod event_store; // DK-CALENDAR-02: 日程事件 KV 存储（Event 一等公民;repeat 03 占位）
 
 use thiserror::Error;
 

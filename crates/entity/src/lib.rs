@@ -138,6 +138,71 @@ pub struct Link {
     pub metadata: serde_json::Value,
 }
 
+/// 日程事件实体 (DK-CALENDAR-02) — 笔记生态一等公民（用户裁决 2026-10-29：
+/// 与 Task/Note 同层，非独立日历模块;定位不变=只升级日历能力）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Event {
+    pub id: String,
+    pub title: String,
+    /// 起始时刻（UTC 存储;all_day=true 时取当日 00:00 本地语义由 UI 层折算）。
+    pub start: DateTime<Utc>,
+    /// 结束时刻（None=瞬时事件;all_day=true 时 None=单日全天）。
+    pub end: Option<DateTime<Utc>>,
+    /// 全天事件（跨天用 end 表达）。
+    pub all_day: bool,
+    pub location: Option<String>,
+    /// 关联笔记（生态联动点——onOpenNote 跳转复用）。
+    pub note_id: Option<String>,
+    /// 标签色 0-5（UI 色板索引;越界折 0）。
+    pub color: u8,
+    /// 重复规则（CALENDAR-03 完整引擎;02 先占位序列化面,扩展字段 until 03 前不消费）。
+    pub repeat: Option<RepeatRule>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Event {
+    pub fn new(id: impl Into<String>, title: impl Into<String>, start: DateTime<Utc>) -> Self {
+        let now = Utc::now();
+        Self {
+            id: id.into(),
+            title: title.into(),
+            start,
+            end: None,
+            all_day: false,
+            location: None,
+            note_id: None,
+            color: 0,
+            repeat: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+/// 重复规则（CALENDAR-03 引擎入参;02 序列化面占位——字段冻结防 03 破坏性变更）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RepeatRule {
+    pub freq: RepeatFreq,
+    /// 间隔倍数（1=每周期;2=隔周期）。
+    pub interval: u32,
+    /// 截止（None=无限）。
+    pub until: Option<DateTime<Utc>>,
+}
+
+/// 重复频率（农历生日=Yearly+农历锚点,03 卡落）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RepeatFreq {
+    #[serde(rename = "daily")]
+    Daily,
+    #[serde(rename = "weekly")]
+    Weekly,
+    #[serde(rename = "monthly")]
+    Monthly,
+    #[serde(rename = "yearly")]
+    Yearly,
+}
+
 impl Link {
     pub fn new(
         id: impl Into<String>,
