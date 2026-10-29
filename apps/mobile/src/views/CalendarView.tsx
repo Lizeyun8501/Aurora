@@ -46,7 +46,13 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
   /** 当日数据: 笔记（updatedAt 日期匹配）+ 任务（due 匹配）+ 日记（title 含日期） */
   const dayData = (d: number) => {
     const key = fmt(d);
-    const dayNotes = notes.filter((n) => n.updatedAt.startsWith(key));
+    // 对向复核修复（Leo 10-29）: updatedAt 为 RFC3339 UTC——startsWith 匹配公历日期会把
+    // 本地 00:00-07:59 的笔记（UTC=前一天）错落到昨日格子。改本地日界比对。
+    const dayNotes = notes.filter((n) => {
+      const dt = new Date(n.updatedAt);
+      if (Number.isNaN(dt.getTime())) return n.updatedAt.startsWith(key);
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}` === key;
+    });
     const dayDiary = notes.filter((n) => n.title.includes(key) && n.title.includes('日记'));
     const dayTasks = tasks.filter((t) => t.due === key);
     return { dayNotes, dayDiary, dayTasks };
@@ -187,18 +193,28 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
                 </div>
               );
             })}
-            {/* 轴外兜底区（8 点前/22 点后/无时刻解析失败） */}
-            {Array.from(dayAxis.entries()).filter(([h]) => h !== -1 && (h < 8 || h > 22)).map(([h, items]) => (
-              <div key={`x-${h}`} className="day-axis-row">
-                <span className="day-axis-time">{h < 8 ? '更早' : '更晚'}</span>
-                <div className="day-axis-items">
-                  {items.map((it) => (
-                    <span key={`${it.kind}-${it.id}-x`} className={`day-axis-item ${it.kind}`} role="button"
-                      onClick={() => onOpenNote(it.id, it.label)}>{it.label}</span>
-                  ))}
+            {/* 轴外兜底区（8 点前/22 点后/无时刻解析失败）——Leo 10-29 合并为单「更早」/单「更晚」行 */}
+            {(() => {
+              const early: Array<{ kind: 'task' | 'note' | 'diary'; label: string; id: string; key: string }> = [];
+              const late: typeof early = [];
+              for (const [h, items] of dayAxis.entries()) {
+                if (h === -1 || (h >= 8 && h <= 22)) continue;
+                (h < 8 ? early : late).push(...items.map((it) => ({ ...it, key: `${it.kind}-${it.id}-x` })));
+              }
+              type XItem = { kind: 'task' | 'note' | 'diary'; label: string; id: string; key: string };
+              const row = (label: string, arr: XItem[]) => arr.length === 0 ? null : (
+                <div className="day-axis-row">
+                  <span className="day-axis-time">{label}</span>
+                  <div className="day-axis-items">
+                    {arr.map((it: XItem) => (
+                      <span key={it.key} className={`day-axis-item ${it.kind}`} role="button"
+                        onClick={() => onOpenNote(it.id, it.label)}>{it.label}</span>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+              return <>{row('更早', early)}{row('更晚', late)}</>;
+            })()}
           </div>
         )}
         {mode === 'month' && selected !== todayStr && (
