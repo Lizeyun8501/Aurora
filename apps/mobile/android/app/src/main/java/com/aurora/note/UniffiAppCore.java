@@ -236,6 +236,66 @@ public class UniffiAppCore {
     private static native void nativeConflictResolveSemantic(long handle, String conflictId, String resolution);
     private static native void nativeAttachSyncEngine(long handle, long engineHandle);
     private static native void nativeDetachSyncEngine(long handle);
+    // ------------------------------------------------------------------
+    // DK-02 尾回收站 S2（Leo 对向复核补链 2026-10-29——与 Rust JNI export 对齐）
+    // ------------------------------------------------------------------
+
+    /** 回收站条目（软删笔记——deleted_at_ms 倒序）。 */
+    public static class TrashedNoteItem {
+        public final String noteId;
+        public final long deletedAtMs;
+        public final String title;
+        /** 删除时路径快照（S1 旧标记无此字段=null）。 */
+        public final String originPath;
+
+        public TrashedNoteItem(String noteId, long deletedAtMs, String title, String originPath) {
+            this.noteId = noteId;
+            this.deletedAtMs = deletedAtMs;
+            this.title = title;
+            this.originPath = originPath;
+        }
+    }
+
+    /** 列出回收站（软删笔记，deleted_at_ms 倒序;桥/域错误降级空列表）。 */
+    public java.util.List<TrashedNoteItem> listTrashed() {
+        String json = nativeListTrashed(handle);
+        java.util.List<TrashedNoteItem> out = new java.util.ArrayList<>();
+        if (json == null) return out;
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                org.json.JSONObject o = arr.getJSONObject(i);
+                out.add(new TrashedNoteItem(
+                        o.optString("noteId", ""),
+                        o.optLong("deletedAtMs", 0L),
+                        o.optString("title", ""),
+                        o.has("originPath") && !o.isNull("originPath") ? o.optString("originPath") : null));
+            }
+        } catch (Exception ignored) {
+            // 错误降级空列表（与域方法 warn 惯例一致）
+        }
+        return out;
+    }
+
+    /** 恢复笔记（软删标记移除;失败 false）。 */
+    public boolean restoreNote(String noteId) {
+        return nativeRestoreNote(handle, noteId);
+    }
+
+    /** 彻底删除（仅回收站内可删;失败 false）。 */
+    public boolean purgeNote(String noteId) {
+        return nativePurgeNote(handle, noteId);
+    }
+
+    /** 清理超期回收站（days 天前软删的永久删除）——返回清理条数。 */
+    public int purgeExpired(long days) {
+        return nativePurgeExpired(handle, days);
+    }
+
+    private static native String nativeListTrashed(long handle);
+    private static native boolean nativeRestoreNote(long handle, String noteId);
+    private static native boolean nativePurgeNote(long handle, String noteId);
+    private static native int nativePurgeExpired(long handle, long days);
     private static native String nativeCreateNote(long handle, String title);
     private static native int nativeListNotesCount(long handle);
     private static native String[] nativeGetNote(long handle, int index);

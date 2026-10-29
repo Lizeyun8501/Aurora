@@ -1693,6 +1693,73 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeQueueDrain(
     std::ptr::null_mut()
 }
 
+// ---------------------------------------------------------------------------
+// DK-02 尾回收站 S2：JNI 导出四方法（Leo 对向复核补链 2026-10-29——
+// Alpha 3e361f4 交付域方法+MainActivity 调用，但 JNI export 与 UniffiAppCore
+// Java 桥未落（javac cannot find symbol）。JSON 串惯例（queueList/searchNotes）。
+// ---------------------------------------------------------------------------
+
+/// 回收站列表 JSON（deleted_at_ms 倒序;错误降级空数组——域方法内已 warn）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeListTrashed(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let arr: Vec<serde_json::Value> = core
+        .list_trashed()
+        .into_iter()
+        .map(|t| {
+            serde_json::json!({
+                "noteId": t.note_id,
+                "title": t.title,
+                "deletedAtMs": t.deleted_at_ms,
+                "originPath": t.origin_path,
+            })
+        })
+        .collect();
+    dk49_json_to_jstring(&mut env, &serde_json::Value::Array(arr))
+}
+
+/// 恢复笔记（软删标记移除）。Java boolean 直传（None 参数=空串 fail-closed）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeRestoreNote(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    note_id: JString,
+) -> jboolean {
+    let core = unsafe { core_from_handle(handle) };
+    let nid = jstring_to_rust(&mut env, &note_id).unwrap_or_default();
+    core.restore_note(nid) as jboolean
+}
+
+/// 彻底删除（仅回收站内可删）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativePurgeNote(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    note_id: JString,
+) -> jboolean {
+    let core = unsafe { core_from_handle(handle) };
+    let nid = jstring_to_rust(&mut env, &note_id).unwrap_or_default();
+    core.purge_note(nid) as jboolean
+}
+
+/// 清理超期回收站（days 天前软删的永久删除）——返回清理条数。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativePurgeExpired(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    days: jlong,
+) -> jint {
+    let core = unsafe { core_from_handle(handle) };
+    core.purge_expired(days).len() as jint
+}
+
 /// DK-49 函数 4：待处理冲突合并视图 JSON 数组（ConflictDto 同构）。
 #[no_mangle]
 pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeConflictList(
