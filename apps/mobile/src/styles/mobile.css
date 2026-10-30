@@ -411,6 +411,83 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   background: var(--bg-secondary); border-radius: 8px; padding: 8px 10px;
 }
 
+/* ============================================================
+   DK-CALENDAR-04 — 周/年/列表视图 + 提醒段
+   ============================================================ */
+.week-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  gap: 4px; margin-top: 8px;
+  overflow-x: auto;
+}
+.week-col {
+  min-width: 46px; border-radius: 8px; background: var(--bg-secondary);
+  display: flex; flex-direction: column; min-height: 180px;
+}
+.week-col.today { outline: 1.5px solid var(--accent, #2563eb); }
+.week-col-head {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 6px 0 4px; gap: 2px; cursor: pointer; background: transparent;
+}
+.week-wd { font-size: 11px; color: var(--text-tertiary); }
+.week-num { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.week-col.today .week-num { color: var(--accent, #2563eb); }
+.week-col-items {
+  flex: 1; display: flex; flex-direction: column; gap: 3px; padding: 4px 3px;
+  overflow-y: auto;
+}
+.week-col-items .day-axis-item { font-size: 10px; padding: 3px 4px; }
+.week-more { font-size: 10px; color: var(--text-tertiary); padding: 2px 4px; }
+.year-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px;
+}
+.year-month {
+  border-radius: 10px; background: var(--bg-secondary); padding: 10px 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  cursor: pointer; transition: transform 0.18s ease;
+}
+.year-month:active { transform: scale(0.96); }
+.ym-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.ym-dots { display: flex; gap: 3px; min-height: 6px; }
+.ym-dot { display: block; width: 5px; height: 5px; border-radius: 50%; background: var(--accent, #2563eb); }
+.ev-list { margin-top: 8px; }
+.ev-list-filters { display: flex; gap: 6px; margin-top: 8px; }
+.ev-list-group { margin-top: 10px; }
+.ev-list-head {
+  font-size: 12px; font-weight: 600; color: var(--text-tertiary);
+  padding: 4px 2px; border-bottom: 1px solid var(--border);
+}
+.ev-list-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 6px; background: transparent; cursor: pointer;
+  border-radius: 8px; text-align: left;
+}
+.ev-list-item:active { background: var(--bg-secondary); }
+.ev-list-dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; }
+.ev-list-time { flex: 0 0 38px; font-size: 12px; color: var(--text-tertiary); }
+.ev-list-title { flex: 1; font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-list-badge {
+  flex: 0 0 auto; font-size: 10px; color: var(--accent, #2563eb);
+  border: 1px solid var(--accent, #2563eb); border-radius: 4px; padding: 1px 4px;
+}
+.ev-reminders { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
+.ev-rem { display: inline-flex; align-items: center; gap: 2px; }
+.ev-rem-btn {
+  padding: 4px 10px; border-radius: 14px; font-size: 12px;
+  background: var(--bg-secondary); color: var(--text-secondary);
+  border: 1px solid var(--border); cursor: pointer;
+}
+.ev-rem.sel .ev-rem-btn {
+  background: var(--accent, #2563eb); color: #fff; border-color: var(--accent, #2563eb);
+}
+.ev-rem-alarm {
+  width: 22px; height: 22px; border-radius: 50%; font-size: 11px;
+  background: var(--bg-secondary); color: var(--text-tertiary);
+  border: 1px solid var(--border); cursor: pointer;
+}
+.ev-rem-alarm.on {
+  background: #d97706; color: #fff; border-color: #d97706;
+}
+
 .result-section-title {
   font-size: 13px; font-weight: 500; color: var(--text-secondary);
   padding: 12px 4px 8px;

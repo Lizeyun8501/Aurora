@@ -6,6 +6,9 @@
  *    （闰月年用例: 2025 闰六月/2026 无闰——Lunar 反推正确性）
  * ③ 短月钳制: 月末 31 重复事件 2 月角标在 28/29
  */
+const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobile/dist/index.html')
+  ? 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html'
+  : 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
 
 (async () => {
@@ -22,7 +25,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   };
 
   // ① 每周五重复（今天起）→ 本月+次两周角标
-  await page.goto('file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html');
+  await page.goto(BASE);
   await page.waitForTimeout(800);
   await page.evaluate(() => localStorage.setItem('aurora.events', JSON.stringify([{
     id: 'ev-w1', title: '每周例会', start: new Date().toISOString(), end: null,

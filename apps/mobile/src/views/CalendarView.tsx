@@ -14,7 +14,7 @@ import { Solar, HolidayUtil, Lunar } from 'lunar-typescript';
 import {
   type Task, TASK_GROUPS, I, listNotesTitled, NoteCard, EmptyState,
 } from '../MobileApp';
-import type { CalEvent } from '../adapters/androidPlatform';
+import type { CalEvent, ReminderSetting } from '../adapters/androidPlatform';
 import { expandAll, type EvInstance } from './repeatUtil';
 
 
@@ -38,10 +38,13 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
     return (yy - now.getFullYear()) * 12 + (mm - 1 - now.getMonth());
   });
   const [selected, setSelected] = useState<string>(initialSelected ?? todayStr);
-  /** DK-CALENDAR-01 任务 2：月/日双视图 segmented */
-  const [mode, setMode] = useState<'month' | 'day'>('month');
+  /** DK-CALENDAR-01 任务 2 + 04 四态：月/周/日/列表（年视图独立 mode 覆盖月）。 */
+  const [mode, setMode] = useState<'month' | 'week' | 'day' | 'list' | 'year'>('month');
   /** DK-CALENDAR-02：事件编辑器（null=关;编辑/新建共用 sheet）。 */
   const [eventEditor, setEventEditor] = useState<CalEvent | null>(null);
+  /** DK-CALENDAR-04 任务 3: 列表页筛选+搜索。 */
+  const [listFilter, setListFilter] = useState<'all' | 'linked' | 'birthday'>('all');
+  const [listQuery, setListQuery] = useState('');
 
   const view = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   const y = view.getFullYear();
@@ -187,13 +190,16 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
       <div className="card">
         <div className="cal-head">
           <button className="icon-btn" onClick={() => setMonthOffset((o) => o - 1)} aria-label="上月">{I.back}</button>
-          <span className="cal-title">{y} 年 {m + 1} 月</span>
+          <span className="cal-title" role="button" aria-label="查看年视图"
+            onClick={() => setMode('year')}>{y} 年 {m + 1} 月</span>
           <button className="icon-btn" onClick={() => setMonthOffset((o) => o + 1)} aria-label="下月">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
           </button>
           <div className="cal-mode-seg" role="tablist" aria-label="日历视图切换">
             <button className={`nt-seg ${mode === 'month' ? 'on' : ''}`} role="tab" aria-selected={mode === 'month'} onClick={() => setMode('month')}>月</button>
+            <button className={`nt-seg ${mode === 'week' ? 'on' : ''}`} role="tab" aria-selected={mode === 'week'} onClick={() => setMode('week')}>周</button>
             <button className={`nt-seg ${mode === 'day' ? 'on' : ''}`} role="tab" aria-selected={mode === 'day'} onClick={() => setMode('day')}>日</button>
+            <button className={`nt-seg ${mode === 'list' ? 'on' : ''}`} role="tab" aria-selected={mode === 'list'} onClick={() => setMode('list')}>列表</button>
           </div>
         </div>
         {mode === 'month' && (
@@ -229,6 +235,136 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             })}
           </div>
         )}
+        {mode === 'week' && (() => {
+          /** DK-CALENDAR-04 任务 1: 周视图——7 天并排+当日实例色块列。
+           * 周界=selected 所在周一;列头点入切日视图。 */
+          const wStart = new Date(`${selected}T00:00:00`);
+          wStart.setDate(wStart.getDate() - ((wStart.getDay() + 6) % 7));
+          const days = Array.from({ length: 7 }, (_, i) => {
+            const d = new Date(wStart);
+            d.setDate(d.getDate() + i);
+            return d;
+          });
+          const WD = ['一', '二', '三', '四', '五', '六', '日'];
+          const pad = (n: number) => String(n).padStart(2, '0');
+          const dKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+          return (
+            <div className="week-grid" key={dKey(wStart)}>
+              {days.map((d, i) => {
+                const k = dKey(d);
+                const insts = expandAll(events, new Date(`${k}T00:00:00`), new Date(`${k}T23:59:59`));
+                const isToday = k === todayStr;
+                return (
+                  <div key={k} className={`week-col ${isToday ? 'today' : ''}`}>
+                    <button className="week-col-head" aria-label={`查看 ${k}`}
+                      onClick={() => { setSelected(k); setMode('day'); }}>
+                      <span className="week-wd">{WD[i]}</span>
+                      <span className="week-num">{d.getDate()}</span>
+                    </button>
+                    <div className="week-col-items">
+                      {insts.slice(0, 5).map((inst) => (
+                        <span key={`${inst.ev.id}@${inst.offsetDays}`} className="day-axis-item event"
+                          role="button" style={{
+                            background: `rgba(${parseInt(EV_COLORS[inst.ev.color % 6].slice(1, 3), 16)}, ${parseInt(EV_COLORS[inst.ev.color % 6].slice(3, 5), 16)}, ${parseInt(EV_COLORS[inst.ev.color % 6].slice(5, 7), 16)}, 0.15)`,
+                            color: EV_COLORS[inst.ev.color % 6],
+                          }} onClick={() => setEventEditor(inst.ev)}>{inst.ev.title}</span>
+                      ))}
+                      {insts.length > 5 && <span className="week-more">+{insts.length - 5} 更多</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+        {mode === 'year' && (() => {
+          /** DK-CALENDAR-04 任务 2: 年视图——12 月缩略格（月名+密度微标）。
+           * 点月格→monthOffset 定位+切月视图。 */
+          const y2 = view.getFullYear();
+          return (
+            <div className="year-grid" key={y2}>
+              {Array.from({ length: 12 }, (_, i) => {
+                const mFrom = new Date(y2, i, 1);
+                const mTo = new Date(y2, i + 1, 0, 23, 59, 59);
+                const cnt = expandAll(events, mFrom, mTo).length;
+                return (
+                  <button key={i} className="year-month"
+                    aria-label={`进入 ${y2} 年 ${i + 1} 月`}
+                    onClick={() => { setMonthOffset((y2 - now.getFullYear()) * 12 + i - now.getMonth()); setMode('month'); }}>
+                    <span className="ym-name">{i + 1} 月</span>
+                    <span className="ym-dots">{cnt > 0 && Array.from({ length: Math.min(cnt, 6) }, (_, j) => <i key={j} className="ym-dot" />)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
+        {mode === 'list' && (() => {
+          /** DK-CALENDAR-04 任务 3: 日程列表页——全量按时间序+分组头+筛选+搜索。 */
+          const [filtered] = [listFilter]; // 依赖标记（filter state 变化重渲染）
+          const from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          from.setDate(from.getDate() - 7); // 含过去 7 天已完成
+          const to = new Date(from);
+          to.setDate(to.getDate() + 365);
+          let insts = expandAll(events, from, to);
+          if (listFilter === 'linked') insts = insts.filter((i) => i.ev.note_id != null);
+          if (listFilter === 'birthday') insts = insts.filter((i) => i.ev.repeat?.lunar_month != null);
+          if (listQuery.trim()) {
+            const q = listQuery.trim().toLowerCase();
+            insts = insts.filter((i) =>
+              i.ev.title.toLowerCase().includes(q) || (i.ev.location ?? '').toLowerCase().includes(q));
+          }
+          insts.sort((a, b) => a.start.getTime() - b.start.getTime());
+          /** 分组头: 今天/明天/本周/更晚（按本地日期键）。 */
+          const groupOf = (d: Date): string => {
+            const k = dKey2(d);
+            if (k === todayStr) return '今天';
+            const tmr = new Date(now); tmr.setDate(tmr.getDate() + 1);
+            if (k === dKey2(tmr)) return '明天';
+            const wk = new Date(now); wk.setDate(wk.getDate() + 6);
+            if (d <= wk) return '本周';
+            return '更晚';
+          };
+          const dKey2 = (d: Date) =>
+            `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          const groups: Array<{ label: string; items: typeof insts }> = [];
+          for (const inst of insts) {
+            const g = groupOf(inst.start);
+            const last = groups[groups.length - 1];
+            if (last && last.label === g) last.items.push(inst);
+            else groups.push({ label: g, items: [inst] });
+          }
+          return (
+            <div className="ev-list">
+              <input className="input" placeholder="搜索标题/地点" value={listQuery}
+                onChange={(e) => setListQuery(e.target.value)} aria-label="日程搜索" />
+              <div className="ev-list-filters" role="tablist" aria-label="日程筛选">
+                {([['all', '全部'], ['linked', '待办关联'], ['birthday', '生日']] as const).map(([v, label]) => (
+                  <button key={v} className={`nt-seg ${listFilter === v ? 'on' : ''}`} role="tab"
+                    aria-selected={listFilter === v} onClick={() => setListFilter(v)}>{label}</button>
+                ))}
+              </div>
+              {groups.length === 0 && (
+                <div className="empty-state"><div className="empty-text">无日程（{filtered === 'all' ? '全时间线' : '当前筛选'}）</div></div>
+              )}
+              {groups.map((g) => (
+                <div key={g.label} className="ev-list-group">
+                  <div className="ev-list-head">{g.label}</div>
+                  {g.items.map((inst) => (
+                    <button key={`${inst.ev.id}@${inst.offsetDays}`} className="ev-list-item" role="button"
+                      onClick={() => setEventEditor(inst.ev)}>
+                      <i className="ev-list-dot" style={{ background: EV_COLORS[inst.ev.color % 6] }} />
+                      <span className="ev-list-time">{inst.ev.all_day ? '全天' : `${String(inst.start.getHours()).padStart(2, '0')}:${String(inst.start.getMinutes()).padStart(2, '0')}`}</span>
+                      <span className="ev-list-title">{inst.ev.title}</span>
+                      {inst.ev.note_id != null && <span className="ev-list-badge">关联</span>}
+                      {inst.ev.repeat?.lunar_month != null && <span className="ev-list-badge">生日</span>}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         {mode === 'day' && (
           <div className="day-axis" key={selected}>
             {/* 全天区：任务（due 无时刻）+ 全天事件 */}
@@ -409,6 +545,16 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
   const [interval, setInterval] = useState(Math.max(1, ev.repeat?.interval ?? 1));
   const [weekdays, setWeekdays] = useState<number[]>(ev.repeat?.by_weekday ?? []);
   const [count, setCount] = useState(ev.repeat?.count?.toString() ?? '');
+  // DK-CALENDAR-04 任务 5: 提醒段（多档勾选+自定义分钟+闹钟级）。
+  const [reminders, setReminders] = useState<ReminderSetting[]>(ev.reminders ?? []);
+  const toggleReminder = (min: number) => {
+    setReminders((rs) => rs.some((r) => r.offset_min === min)
+      ? rs.filter((r) => r.offset_min !== min)
+      : [...rs, { offset_min: min, alarm_level: 0 }]);
+  };
+  const toggleAlarm = (min: number) => {
+    setReminders((rs) => rs.map((r) => r.offset_min === min ? { ...r, alarm_level: r.alarm_level > 0 ? 0 : 1 } : r));
+  };
   const isNew = !ev.id;
   const EV_COLORS = ['#dc2626', '#2563eb', '#059669', '#d97706', '#7c3aed', '#6b7280'];
   const WD = ['一', '二', '三', '四', '五', '六', '日'];
@@ -447,6 +593,7 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
       location: location.trim() || null,
       color,
       repeat,
+      reminders: reminders.length ? reminders.sort((a, b) => a.offset_min - b.offset_min) : null,
     });
   };
 
@@ -537,6 +684,48 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
           {freq === 'yearly_lunar' && start && (
             <div className="ev-lunar-hint">
               按农历 {Lunar.fromDate(new Date(start)).toString()} 每年重复（闰年无对应闰月取次月同日）
+            </div>
+          )}
+          {/* DK-CALENDAR-04 任务 5: 提醒段——多档勾选+自定义+闹钟级。 */}
+          <div className="ev-field">
+            <span>提醒</span>
+            <div className="ev-reminders" role="group" aria-label="提醒档位">
+              {[5, 30, 60, 1440].map((min) => {
+                const on = reminders.some((r) => r.offset_min === min);
+                const alarm = reminders.some((r) => r.offset_min === min && r.alarm_level > 0);
+                return (
+                  <span key={min} className={`ev-rem ${on ? 'sel' : ''}`}>
+                    <button type="button" className="ev-rem-btn"
+                      aria-pressed={on} onClick={() => toggleReminder(min)}>
+                      {min === 1440 ? '1 天' : `${min} 分钟`}
+                    </button>
+                    {on && (
+                      <button type="button" className={`ev-rem-alarm ${alarm ? 'on' : ''}`}
+                        aria-pressed={alarm} title="闹钟级（Doze 准时）"
+                        aria-label={`${min === 1440 ? '1天' : min + '分钟'}闹钟级提醒`}
+                        onClick={() => toggleAlarm(min)}>铃</button>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+          <label className="ev-field">
+            <span>自定义</span>
+            <span className="ev-interval">提前
+              <input type="number" min={0} placeholder="分钟" aria-label="自定义提前分钟"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const v = parseInt((e.target as HTMLInputElement).value, 10);
+                    if (!Number.isNaN(v) && v >= 0) { toggleReminder(v); (e.target as HTMLInputElement).value = ''; }
+                  }
+                }} />
+              分钟回车
+            </span>
+          </label>
+          {reminders.length > 0 && (
+            <div className="ev-lunar-hint">
+              已设 {reminders.length} 档: {reminders.map((r) => `${r.offset_min === 1440 ? '1天' : r.offset_min + '分'}${r.alarm_level > 0 ? '(铃)' : ''}`).join(' / ')}
             </div>
           )}
           {ev.note_id && (

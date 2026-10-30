@@ -5,6 +5,7 @@ import QueuePanel from './components/QueuePanel';
 import ConflictReviewPanel from './components/ConflictReviewPanel';
 import { Solar, HolidayUtil } from 'lunar-typescript';
 import CalendarView from './views/CalendarView';
+import { expandAll } from './views/repeatUtil';
 
 // 编辑器懒加载 — schema/wasm 初始化失败不拖垮整个应用（白屏防御）
 // DK-0F editor-uplift：三件套上移共享层，mobile 侧零本地编辑器实现（真实 import）
@@ -400,6 +401,7 @@ export default function App() {
             {view === 'today' && (
               <TodayView
                 tasks={tasks}
+                events={events}
                 onTasks={updateTasks}
                 onOpenNote={openNote}
                 showToast={showToast}
@@ -577,8 +579,10 @@ function TabBar({ current, onChange }: { current: ViewId; onChange: (v: ViewId) 
 // TodayView — V19 移动端页面1（默认启动页 · P1）
 // ===========================================================================
 
-function TodayView({ tasks, onTasks, onOpenNote, showToast, onOpenDate }: {
+function TodayView({ tasks, events, onTasks, onOpenNote, showToast, onOpenDate }: {
   tasks: Task[];
+  /** DK-CALENDAR-04 任务 6: 今日事件块进「日程」分区（Event 按 start 落——与 Task 并列）。 */
+  events: CalEvent[];
   onTasks: (ts: Task[]) => void;
   onOpenNote: (id: string, title: string) => void;
   showToast: (t: string) => void;
@@ -641,6 +645,34 @@ function TodayView({ tasks, onTasks, onOpenNote, showToast, onOpenDate }: {
           <span style={{ color: 'var(--text-tertiary)' }}>（本地统计 · Agent 未启用）</span>
         </div>
       </div>
+
+      {/* DK-CALENDAR-04 任务 6: 日程分区——今日事件块（展开实例;与 Task 并列——PRD 今日备忘 P0）。 */}
+      {(() => {
+        const todayKey = (() => {
+          const n = new Date();
+          return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+        })();
+        const insts = expandAll(events, new Date(`${todayKey}T00:00:00`), new Date(`${todayKey}T23:59:59`));
+        insts.sort((a, b) => a.start.getTime() - b.start.getTime());
+        if (insts.length === 0) return null;
+        return (
+          <div className="task-section open">
+            <button className="task-section-head" aria-label="日程分区">
+              <span>今日日程</span><span className="count">{insts.length}</span>
+            </button>
+            <div className="ev-list-group">
+              {insts.map((inst) => (
+                <button key={`${inst.ev.id}@${inst.offsetDays}`} className="ev-list-item" role="button"
+                  onClick={() => onOpenDate(todayKey)}>
+                  <i className="ev-list-dot" style={{ background: ['#dc2626', '#2563eb', '#059669', '#d97706', '#7c3aed', '#6b7280'][inst.ev.color % 6] }} />
+                  <span className="ev-list-time">{inst.ev.all_day ? '全天' : `${String(inst.start.getHours()).padStart(2, '0')}:${String(inst.start.getMinutes()).padStart(2, '0')}`}</span>
+                  <span className="ev-list-title">{inst.ev.title}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 任务分区 — GTD2.0 四组可折叠 */}
       {TASK_GROUPS.map((g) => {
