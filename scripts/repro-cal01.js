@@ -20,7 +20,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     console.log(`${pass ? 'PASS' : 'FAIL'} ${name}: ${detail}`);
   };
 
-  await page.goto('file:///home/z/my-project/Aurora/apps/mobile/dist/index.html');
+  await page.goto('file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html');
   await page.waitForTimeout(800);
 
   // ① 进日历 Tab（TabBar 结构: .tab-bar > .tab-item:has-text(日历)）

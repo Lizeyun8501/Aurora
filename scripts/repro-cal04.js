@@ -20,7 +20,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   };
 
   const today = await (async () => {
-    await page.goto('file:///home/z/my-project/Aurora/apps/mobile/dist/index.html');
+    await page.goto('file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html');
     await page.waitForTimeout(800);
     return page.evaluate(() => {
       const n = new Date();
