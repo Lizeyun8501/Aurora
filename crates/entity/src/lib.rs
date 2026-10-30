@@ -157,6 +157,14 @@ pub struct Event {
     pub color: u8,
     /// 重复规则（CALENDAR-03 完整引擎;02 先占位序列化面,扩展字段 until 03 前不消费）。
     pub repeat: Option<RepeatRule>,
+    /// 提醒规则（CALENDAR-04 提醒 P0——方案 B 裁决 2026-10-30 21:59:
+    /// 日历主承载待办/日程,提醒为刚需升 P0。多档提前量（分钟;
+    /// alarm_level: 0=通知 1=闹钟级强提醒（ vibra+sound——Java 端消费）。
+    /// None/空=不提醒。调度全在 Java ReminderScheduler（AlarmManager
+    /// 精确闹钟——杀进程可响）;core 只做权威存储与透传（listEvents
+    /// JSON 已含本字段,FFI 零增量）。
+    #[serde(default)]
+    pub reminders: Option<Vec<ReminderRule>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -174,10 +182,22 @@ impl Event {
             note_id: None,
             color: 0,
             repeat: None,
+            reminders: None,
             created_at: now,
             updated_at: now,
         }
     }
+}
+
+/// 提醒规则（CALENDAR-04——单档提前量;多档=多条。
+/// offset_min: 相对事件 start 的提前分钟数（0=准时;
+/// 常用档: 5/30/60/1440（1 天）。全天事件按当日 09:00 锚。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReminderRule {
+    /// 提前分钟数（>=0;负值折 0）。
+    pub offset_min: i64,
+    /// 0=通知提醒 1=闹钟级强提醒（全屏/振动/声音——Android 语义）。
+    pub alarm_level: u8,
 }
 
 /// 重复规则（CALENDAR-03 引擎入参;02 序列化面占位——字段冻结防 03 破坏性变更。

@@ -354,6 +354,16 @@ public class UniffiAppCore {
         return out;
     }
 
+    /**
+     * CALENDAR-04: 原始 JSON 串直返（含 reminders/repeat 全字段——
+     * ReminderScheduler 提醒重扫专用;listEvents() 的 EventItem 强类型
+     * 面只取 UI 八字段丢 reminders（Bravo cfd0b32 分层）。
+     */
+    public String listEventsRaw() {
+        String json = nativeListEvents(handle);
+        return json == null ? "[]" : json;
+    }
+
     /** 事件创建/更新二合一。全字段 JSON;id 空=新建。成功返 event_id,失败空串。 */
     public String upsertEvent(String eventJson) {
         return nativeUpsertEvent(handle, eventJson);

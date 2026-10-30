@@ -422,8 +422,8 @@ export default function App() {
               <CalendarView
                 tasks={tasks}
                 events={events}
-                onUpsertEvent={(ev) => { platform.upsertEvent(ev); refreshEvents(); }}
-                onDeleteEvent={(id) => { platform.deleteEvent(id); refreshEvents(); }}
+                onUpsertEvent={(ev) => { platform.upsertEvent(ev); refreshEvents(); platform.refreshReminders(); }}
+                onDeleteEvent={(id) => { platform.deleteEvent(id); refreshEvents(); platform.refreshReminders(); }}
                 onOpenNote={openNote}
                 onNewTask={(due) => { setCaptureDue(due); setCaptureOpen(true); }}
                 initialSelected={calendarInit ?? undefined}

@@ -55,6 +55,15 @@ public class MainActivity extends Activity {
         networkRelay = new NetworkStateRelay(this);
         networkRelay.register();
 
+        // CALENDAR-04 提醒 P0（方案 B 裁决 10-30）: 启动重扫注册
+        // （事件写后 JS 桥 refreshReminders() 增量补——WebView 死了也响）
+        try {
+            ReminderScheduler.ensureChannels(this);
+            ReminderScheduler.reschedule(this, core);
+        } catch (Throwable t) {
+            android.util.Log.w("Aurora", "reminder rescan failed", t);
+        }
+
         // WebView 容器
         webView = new WebView(this);
         webView.setLayoutParams(new FrameLayout.LayoutParams(
@@ -310,6 +319,17 @@ public class MainActivity extends Activity {
         public boolean deleteEvent(String eventId) {
             try {
                 return core.deleteEvent(eventId);
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        /** CALENDAR-04: 事件写后提醒重扫（AlarmManager 滚动窗口补注册）。失败静默——启动兜底。 */
+        @JavascriptInterface
+        public boolean refreshReminders() {
+            try {
+                ReminderScheduler.reschedule(MainActivity.this, core);
+                return true;
             } catch (Exception e) {
                 return false;
             }

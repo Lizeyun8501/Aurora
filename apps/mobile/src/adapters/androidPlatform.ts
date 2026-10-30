@@ -54,6 +54,16 @@ export interface CalEvent {
     lunar_month?: number | null;
     lunar_day?: number | null;
   } | null;
+  /** 04: 提醒规则（方案 B 裁决 10-30——多档;None/空=不提醒。
+   * alarm_level: 0=通知 1=闹钟级。调度全原生 ReminderScheduler
+   * （AlarmManager——杀进程可响）;本层只透传。 */
+  reminders?: ReminderSetting[] | null;
+}
+
+/** CALENDAR-04: 单档提醒（offset_min 相对 start 提前分钟;0=准时）。 */
+export interface ReminderSetting {
+  offset_min: number;
+  alarm_level: number;
 }
 
 interface AndroidBridge {
@@ -100,6 +110,8 @@ interface AndroidBridge {
   upsertEvent(eventJson: string): string;
   deleteEvent(eventId: string): boolean;
   queryEvents(fromMs: number, toMs: number): string;
+  /** CALENDAR-04: 事件写后提醒重扫（AlarmManager 补注册;mock 无桥=空操作）。 */
+  refreshReminders(): boolean;
 }
 
 /** P2P 同步结果报告。 */
@@ -633,6 +645,19 @@ export const platform = {
     else events.push(event);
     localStorage.setItem('aurora.events', JSON.stringify(events));
     return event.id;
+  },
+
+  /** CALENDAR-04: 事件写后提醒重扫（真桥→AlarmManager 补注册;mock 返 true 空操作）。 */
+  refreshReminders(): boolean {
+    const b = bridge();
+    if (b) {
+      try {
+        return b.refreshReminders() === true;
+      } catch {
+        return false;
+      }
+    }
+    return true; // mock: 调度原生面不存在（真机验收面）
   },
 
   deleteEvent(eventId: string): boolean {

@@ -288,3 +288,38 @@ mod event_tests {
         assert_eq!(all[0].id, id);
     }
 }
+
+// CALENDAR-04 提醒字段兼容性内联验（旧 JSON 无 reminders → None,新规则往返）。
+#[cfg(test)]
+mod reminder_compat_tests {
+    use super::*;
+    use crate::l1_infrastructure::storage_engine::MemoryKVStore;
+    use chrono::TimeZone;
+
+    #[tokio::test]
+    async fn old_json_without_reminders_deserializes() {
+        // 03 时代旧 JSON（无 reminders 键——serde default 兼容面
+        let old_json = r#"{"id":"e-old","title":"旧事件","start":"2026-10-30T01:00:00Z","end":null,"all_day":false,"location":null,"note_id":null,"color":1,"repeat":null,"created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:00:00Z","by_weekday":null,"day_of_month":null,"count":null,"lunar_month":null,"lunar_day":null}"#.as_bytes();
+        let ev: Event = serde_json::from_slice(old_json).expect("旧 JSON 必须可读（serde default");
+        assert!(ev.reminders.is_none(), "缺省=不提醒（None 语义）");
+        assert_eq!(ev.title, "旧事件");
+    }
+
+    #[tokio::test]
+    async fn reminders_roundtrip_and_validation() {
+        let kv: std::sync::Arc<MemoryKVStore> = std::sync::Arc::new(MemoryKVStore::default());
+        let mut e = Event::new("", "带提醒", chrono::Utc.with_ymd_and_hms(2026, 10, 31, 9, 0, 0).unwrap());
+        e.reminders = Some(vec![
+            entity_reminder(30, 0),
+            entity_reminder(1440, 1),
+        ]);
+        let id = create_event(kv.as_ref(), &e).await.unwrap();
+        let back = get_event(kv.as_ref(), &id).await.unwrap().unwrap();
+        assert_eq!(back.reminders.as_ref().unwrap().len(), 2);
+        assert_eq!(back.reminders.as_ref().unwrap()[1].alarm_level, 1, "闹钟级档往返无损");
+    }
+
+    fn entity_reminder(offset_min: i64, level: u8) -> aurora_entity::ReminderRule {
+        aurora_entity::ReminderRule { offset_min, alarm_level: level }
+    }
+}
