@@ -2258,3 +2258,353 @@ mod dk40a_tests {
         assert!(reopened.body().contains("legacy-edit"));
     }
 }
+
+// ============================================================================
+// DK-02 S1 回收站补测（Leo 对向复核产出——Alpha 回 receipt 虚报清债:
+// 原「dk02_s1_trash.rs 352 行」全仓不存在,cargo test dk02=0 matched 实锤）。
+// 纯 KV 面: list 排序/坏 marker 降级/is_trashed/purge_expired 窗口+
+// 物理键失批次不炸。restore 全链（NoteCreated 重放需 loro doc）挂
+// 桌面 e2e 批。TestStack Noop 桩抄 aurora-ai liquify TestStack（同源复用）。
+// ============================================================================
+#[cfg(test)]
+mod dk02_trash_tests {
+    use super::{is_trashed, list_trashed, purge_expired, TrashedNote, WriteContext};
+    use crate::app_core::{AppCore, AppCoreBuilder};
+    use crate::l1_infrastructure::storage_engine::MemoryKVStore;
+    use crate::traits::kv_store::KVStore;
+    use std::sync::Arc;
+
+    // === TestStack：AppCore 全依赖空转 mock（liquify 只碰 kv+write_path； ===
+    // === 后续 DK-10 Agent 会话片测试可复用/提炼）===
+
+    struct NoopAi;
+    #[async_trait::async_trait]
+    impl crate::traits::ai_provider::AIProvider for NoopAi {
+        async fn embed(&self, _t: &[&str]) -> Result<Vec<Vec<f32>>, crate::Error> {
+            Ok(vec![])
+        }
+        async fn complete(
+            &self,
+            _p: &str,
+            _o: &crate::traits::ai_provider::CompletionOptions,
+        ) -> Result<String, crate::Error> {
+            Ok(String::new())
+        }
+        fn stream_complete(
+            &self,
+            _p: &str,
+            _o: &crate::traits::ai_provider::CompletionOptions,
+            _c: Box<dyn Fn(String) + Send + Sync>,
+        ) {
+        }
+        async fn chat(
+            &self,
+            _m: &[crate::traits::ai_provider::Message],
+            _o: &crate::traits::ai_provider::ChatOptions,
+        ) -> Result<String, crate::Error> {
+            Ok(String::new())
+        }
+        async fn function_call(
+            &self,
+            _p: &str,
+            _t: &[crate::traits::ai_provider::Tool],
+        ) -> Result<crate::traits::ai_provider::ToolCall, crate::Error> {
+            Err(crate::Error::Internal("noop ai".into()))
+        }
+        fn is_available(&self) -> bool {
+            false
+        }
+    }
+
+    struct NoopSyncTarget;
+    #[async_trait::async_trait]
+    impl crate::traits::sync_target::SyncTarget for NoopSyncTarget {
+        async fn connect(
+            &mut self,
+            _: &crate::traits::sync_target::Endpoint,
+        ) -> Result<crate::traits::sync_target::Connection, crate::Error> {
+            unimplemented!("liquify 测试不触同步")
+        }
+        async fn sync(
+            &self,
+            _: &crate::traits::sync_target::Connection,
+            _: &crate::traits::sync_target::DocSet,
+        ) -> Result<crate::traits::sync_target::SyncReport, crate::Error> {
+            unimplemented!("liquify 测试不触同步")
+        }
+        async fn send_update(
+            &self,
+            _: &crate::traits::sync_target::Connection,
+            _: &crate::traits::sync_target::UpdatePayload,
+        ) -> Result<(), crate::Error> {
+            unimplemented!("liquify 测试不触同步")
+        }
+        async fn recv_update(
+            &self,
+            _: &crate::traits::sync_target::Connection,
+            _: &str,
+        ) -> Result<Vec<u8>, crate::Error> {
+            unimplemented!("liquify 测试不触同步")
+        }
+        async fn sync_version(
+            &self,
+            _: &crate::traits::sync_target::Connection,
+            _: &str,
+        ) -> Result<Option<u64>, crate::Error> {
+            unimplemented!("liquify 测试不触同步")
+        }
+        fn watch(&self, _: Box<dyn Fn(crate::traits::sync_target::SyncEvent) + Send + Sync>) {}
+        async fn disconnect(
+            &self,
+            _: &crate::traits::sync_target::Connection,
+        ) -> Result<(), crate::Error> {
+            unimplemented!("liquify 测试不触同步")
+        }
+    }
+
+    struct NoopCrypto;
+    impl crate::traits::crypto_provider::CryptoProvider for NoopCrypto {
+        fn encrypt(
+            &self,
+            _: &[u8],
+            _: &[u8; 32],
+        ) -> Result<crate::traits::crypto_provider::Ciphertext, crate::Error> {
+            unimplemented!("liquify 测试不触加密")
+        }
+        fn decrypt(
+            &self,
+            _: &crate::traits::crypto_provider::Ciphertext,
+            _: &[u8; 32],
+        ) -> Result<Vec<u8>, crate::Error> {
+            unimplemented!("liquify 测试不触加密")
+        }
+        fn derive_key(&self, _: &str, _: &[u8]) -> Result<[u8; 32], crate::Error> {
+            unimplemented!("liquify 测试不触加密")
+        }
+        fn kem_keypair(
+            &self,
+        ) -> Result<
+            (
+                crate::traits::crypto_provider::KemPublicKey,
+                crate::traits::crypto_provider::KemSecretKey,
+            ),
+            crate::Error,
+        > {
+            unimplemented!("liquify 测试不触加密")
+        }
+        fn kem_encapsulate(
+            &self,
+            _: &crate::traits::crypto_provider::KemPublicKey,
+        ) -> Result<
+            (
+                crate::traits::crypto_provider::KemSharedSecret,
+                crate::traits::crypto_provider::KemCiphertext,
+            ),
+            crate::Error,
+        > {
+            unimplemented!("liquify 测试不触加密")
+        }
+        fn kem_decapsulate(
+            &self,
+            _: &crate::traits::crypto_provider::KemSecretKey,
+            _: &crate::traits::crypto_provider::KemCiphertext,
+        ) -> Result<crate::traits::crypto_provider::KemSharedSecret, crate::Error> {
+            unimplemented!("liquify 测试不触加密")
+        }
+        fn random_bytes(&self, _: usize) -> Vec<u8> {
+            unimplemented!("liquify 测试不触加密")
+        }
+        fn hash(&self, _: &[u8]) -> [u8; 32] {
+            unimplemented!("liquify 测试不触加密")
+        }
+        fn hmac_sign(&self, _: &[u8], _: &[u8]) -> Vec<u8> {
+            unimplemented!("liquify 测试不触加密")
+        }
+        fn hmac_verify(&self, _: &[u8], _: &[u8], _: &[u8]) -> bool {
+            unimplemented!("liquify 测试不触加密")
+        }
+        fn ed25519_verify(
+            &self,
+            _: &crate::traits::crypto_provider::Ed25519PublicKey,
+            _: &[u8],
+            _: &crate::traits::crypto_provider::Ed25519Signature,
+        ) -> bool {
+            unimplemented!("liquify 测试不触加密")
+        }
+        fn algorithm_version(&self) -> u16 {
+            unimplemented!("liquify 测试不触加密")
+        }
+    }
+
+    struct NoopSearch;
+    #[async_trait::async_trait]
+    impl crate::traits::search_backend::SearchBackend for NoopSearch {
+        async fn search(
+            &self,
+            _: &str,
+            _: &crate::traits::search_backend::SearchOptions,
+        ) -> Result<crate::traits::search_backend::SearchResult, crate::Error> {
+            unimplemented!("liquify 测试不触检索")
+        }
+        async fn index_note(
+            &self,
+            _: &str,
+            _: &str,
+            _: &crate::traits::search_backend::NoteMetadata,
+        ) -> Result<(), crate::Error> {
+            Ok(())
+        }
+        async fn batch_index(
+            &self,
+            _: &[crate::traits::search_backend::IndexEntry],
+        ) -> Result<(), crate::Error> {
+            Ok(())
+        }
+        async fn remove_index(&self, _: &str) -> Result<(), crate::Error> {
+            Ok(())
+        }
+        async fn rebuild_index(
+            &self,
+            _: &[crate::traits::search_backend::IndexEntry],
+        ) -> Result<(), crate::Error> {
+            Ok(())
+        }
+        fn tokenize(&self, text: &str) -> Vec<String> {
+            text.split_whitespace().map(String::from).collect()
+        }
+    }
+
+    struct NoopOcr;
+    #[async_trait::async_trait]
+    impl crate::traits::ocr_provider::OcrProvider for NoopOcr {
+        async fn recognize(
+            &self,
+            _: &[u8],
+        ) -> Result<crate::traits::ocr_provider::OcrResult, crate::Error> {
+            unimplemented!("liquify 测试不触 OCR")
+        }
+        async fn recognize_batch(
+            &self,
+            _: &[&[u8]],
+        ) -> Result<Vec<crate::traits::ocr_provider::OcrResult>, crate::Error> {
+            unimplemented!("liquify 测试不触 OCR")
+        }
+        fn is_available(&self) -> bool {
+            false
+        }
+    }
+
+    struct NoopPlugin;
+    #[async_trait::async_trait]
+    impl crate::traits::plugin_runtime::PluginRuntime for NoopPlugin {
+        async fn load(
+            &mut self,
+            _: &crate::traits::plugin_runtime::PluginManifest,
+        ) -> Result<crate::traits::plugin_runtime::PluginHandle, crate::Error> {
+            unimplemented!("liquify 测试不触插件")
+        }
+        async fn invoke(
+            &self,
+            _: &crate::traits::plugin_runtime::PluginHandle,
+            _: &str,
+            _: &serde_json::Value,
+        ) -> Result<serde_json::Value, crate::Error> {
+            unimplemented!("liquify 测试不触插件")
+        }
+        async fn unload(
+            &mut self,
+            _: &crate::traits::plugin_runtime::PluginHandle,
+        ) -> Result<(), crate::Error> {
+            unimplemented!("liquify 测试不触插件")
+        }
+        fn list_hooks(&self, _: &str) -> Vec<crate::traits::plugin_runtime::PluginHandle> {
+            vec![]
+        }
+    }
+
+    fn core(kv: Arc<MemoryKVStore>) -> AppCore {
+        AppCoreBuilder::new()
+            .sync_target(Arc::new(NoopSyncTarget))
+            .crypto(Arc::new(NoopCrypto))
+            .ai(Arc::new(NoopAi))
+            .kv_store(kv)
+            .search(Arc::new(NoopSearch))
+            .ocr(Arc::new(NoopOcr))
+            .plugin(Arc::new(NoopPlugin))
+            .build()
+    }
+    fn ctx(core: &Arc<AppCore>) -> WriteContext {
+        WriteContext {
+            core: core.clone(),
+            blocks: None,
+            seal: None,
+            content_cipher: None,
+            attachments: None,
+        }
+    }
+    async fn put_marker(kv: &dyn KVStore, note_id: &str, at_ms: i64, title: &str) {
+        let m = TrashedNote {
+            note_id: note_id.into(),
+            deleted_at_ms: at_ms,
+            title: title.into(),
+            origin_path: None,
+        };
+        kv.set(
+            &format!("trash:{note_id}"),
+            &serde_json::to_vec(&m).unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_trashed_desc_and_bad_marker_skipped() {
+        let kv = Arc::new(MemoryKVStore::default());
+        put_marker(kv.as_ref(), "n-new", 2_000, "新删").await;
+        put_marker(kv.as_ref(), "n-old", 1_000, "旧删").await;
+        // 烂 marker: 非 JSON——批次降级不炸（warn 跳过惯例,同 list_events）
+        kv.set("trash:n-bad", b"{not-json".as_ref()).await.unwrap();
+
+        let out = list_trashed(&core(kv)).await.unwrap();
+        assert_eq!(out.len(), 2, "烂 marker 跳过,好 marker 全收");
+        assert_eq!(out[0].note_id, "n-new", "按删除时间倒序（新删在前）");
+        assert_eq!(out[1].note_id, "n-old");
+        assert_eq!(out[1].title, "旧删", "title 快照随 marker 透出");
+    }
+
+    #[tokio::test]
+    async fn is_trashed_membership() {
+        let kv = Arc::new(MemoryKVStore::default());
+        put_marker(kv.as_ref(), "n-1", 1, "t").await;
+        let c = core(kv.clone());
+        assert!(is_trashed(&c, "n-1").await);
+        assert!(
+            !is_trashed(&c, "n-2").await,
+            "无 marker=false（防误伤未删笔记）"
+        );
+    }
+
+    #[tokio::test]
+    async fn purge_expired_window_and_resilient_batch() {
+        let kv = Arc::new(MemoryKVStore::default());
+        // 基准 now-40 天（cutoff 外）vs now-5 天（窗内不清）
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        put_marker(kv.as_ref(), "n-expired", now_ms - 40 * 86_400_000, "过期").await;
+        put_marker(kv.as_ref(), "n-fresh", now_ms - 5 * 86_400_000, "新鲜").await;
+        // 烂 marker 同批（批次不炸面）
+        kv.set("trash:n-bad", b"~".as_ref()).await.unwrap();
+        // 物理 note 键失（purge_note 物理清理步会失败——单条跳过不阻塞）
+
+        let c = Arc::new(core(kv.clone()));
+        let ctx = ctx(&c);
+        let purged = purge_expired(&ctx, 30).await.unwrap();
+        // purge_note 幂等清场: 物理 note 键失（KV delete 不存在=Ok）——
+        // marker+物理双删均成功,purged 含过期条目（实测行为,比预期更强）。
+        assert_eq!(purged, vec!["n-expired".to_string()], "仅清 30 天窗外条目");
+        assert!(
+            is_trashed(&c, "n-fresh").await,
+            "窗内 5 天不动（marker 保留）"
+        );
+        assert!(!is_trashed(&c, "n-expired").await, "过期条目 marker 已清");
+    }
+}
