@@ -268,6 +268,78 @@ public class MainActivity extends Activity {
         }
 
         // ------------------------------------------------------------------
+        // DK-CALENDAR-02: Event 四方法（JSON 串惯例——searchNotes 同模式）
+        // ------------------------------------------------------------------
+
+        /** 全量事件列表。JSON: [{id,title,start,end,all_day,location,note_id,color}] */
+        @JavascriptInterface
+        public String listEvents() {
+            try {
+                List<UniffiAppCore.EventItem> events = core.listEvents();
+                JSONArray arr = new JSONArray();
+                for (UniffiAppCore.EventItem ev : events) {
+                    JSONObject o = new JSONObject();
+                    o.put("id", ev.id);
+                    o.put("title", ev.title);
+                    o.put("start", ev.start);
+                    o.put("end", ev.end == null ? JSONObject.NULL : ev.end);
+                    o.put("all_day", ev.allDay);
+                    o.put("location", ev.location == null ? JSONObject.NULL : ev.location);
+                    o.put("note_id", ev.noteId == null ? JSONObject.NULL : ev.noteId);
+                    o.put("color", ev.color);
+                    arr.put(o);
+                }
+                return arr.toString();
+            } catch (Exception e) {
+                return "[]";
+            }
+        }
+
+        /** 事件创建/更新二合一（全字段 JSON;id 空=新建）。成功返 event_id,失败空串。 */
+        @JavascriptInterface
+        public String upsertEvent(String eventJson) {
+            try {
+                return core.upsertEvent(eventJson);
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        /** 删除事件（幂等）。 */
+        @JavascriptInterface
+        public boolean deleteEvent(String eventId) {
+            try {
+                return core.deleteEvent(eventId);
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        /** 范围查询 [fromMs, toMs)（交叠命中）。JSON 数组同 listEvents。 */
+        @JavascriptInterface
+        public String queryEvents(long fromMs, long toMs) {
+            try {
+                List<UniffiAppCore.EventItem> events = core.queryEvents(fromMs, toMs);
+                JSONArray arr = new JSONArray();
+                for (UniffiAppCore.EventItem ev : events) {
+                    JSONObject o = new JSONObject();
+                    o.put("id", ev.id);
+                    o.put("title", ev.title);
+                    o.put("start", ev.start);
+                    o.put("end", ev.end == null ? JSONObject.NULL : ev.end);
+                    o.put("all_day", ev.allDay);
+                    o.put("location", ev.location == null ? JSONObject.NULL : ev.location);
+                    o.put("note_id", ev.noteId == null ? JSONObject.NULL : ev.noteId);
+                    o.put("color", ev.color);
+                    arr.put(o);
+                }
+                return arr.toString();
+            } catch (Exception e) {
+                return "[]";
+            }
+        }
+
+        // ------------------------------------------------------------------
         // ProseMirror + Loro 编辑器（V19 §35 DEV-009）
         // ------------------------------------------------------------------
 

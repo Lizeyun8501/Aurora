@@ -14,10 +14,15 @@ import { Solar, HolidayUtil } from 'lunar-typescript';
 import {
   type Task, TASK_GROUPS, I, listNotesTitled, NoteCard, EmptyState,
 } from '../MobileApp';
+import type { CalEvent } from '../adapters/androidPlatform';
 
 
-export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSelected }: {
+export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEvent, onOpenNote, onNewTask, initialSelected }: {
   tasks: Task[];
+  /** DK-CALENDAR-02：日程事件（MobileApp 层注入）。 */
+  events: CalEvent[];
+  onUpsertEvent: (ev: CalEvent) => void;
+  onDeleteEvent: (id: string) => void;
   onOpenNote: (id: string, title: string) => void;
   onNewTask: (due: string) => void;
   /** 2026-10-28 周条联动预选日期——跨月自动翻页（如 11-01 → 月历翻到 11 月） */
@@ -34,6 +39,8 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
   const [selected, setSelected] = useState<string>(initialSelected ?? todayStr);
   /** DK-CALENDAR-01 任务 2：月/日双视图 segmented */
   const [mode, setMode] = useState<'month' | 'day'>('month');
+  /** DK-CALENDAR-02：事件编辑器（null=关;编辑/新建共用 sheet）。 */
+  const [eventEditor, setEventEditor] = useState<CalEvent | null>(null);
 
   const view = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   const y = view.getFullYear();
@@ -59,7 +66,25 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
   };
   const hasMark = (d: number) => {
     const { dayNotes, dayDiary, dayTasks } = dayData(d);
-    return dayNotes.length > 0 || dayDiary.length > 0 || dayTasks.length > 0;
+    if (dayNotes.length > 0 || dayDiary.length > 0 || dayTasks.length > 0) return true;
+    // DK-CALENDAR-02 任务 3：月历日格事件角标（当月日格含事件）
+    const key = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    return events.some((e) => {
+      const sKey = eventLocalKey(e.start);
+      const eKey = e.end ? eventLocalKey(e.end) : sKey;
+      return sKey <= key && key <= eKey;
+    });
+  };
+
+  /** DK-CALENDAR-02 任务 3：日格事件色点列表（最多 3 色，多的省略号）。 */
+  const dayEventDots = (d: number): number[] => {
+    const key = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const hits = events.filter((e) => {
+      const sKey = eventLocalKey(e.start);
+      const eKey = e.end ? eventLocalKey(e.end) : sKey;
+      return sKey <= key && key <= eKey;
+    });
+    return [...new Set(hits.map((e) => e.color % 6))].slice(0, 3);
   };
 
   // 农历/节假日 — lunar-typescript（6tail, 含法定节假日+调休数据随库更新）
@@ -99,6 +124,26 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
   const selData = dayData(selD);
   const isSelInMonth = selected.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`);
 
+  /** DK-CALENDAR-02：事件工具——本地日期键（UTC RFC3339→本地 YYYY-MM-DD;
+   * 时区纪律：所有日界/小时换算一律 Date 本地解析——Leo 8f82772 教训）。 */
+  const eventLocalKey = (iso: string): string => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  /** 选中日事件（all_day 按本地 start 日;跨天事件按交叠——P0 按日含 start/end 落格）。 */
+  const selEvents = events.filter((e) => {
+    const s = new Date(e.start);
+    if (Number.isNaN(s.getTime())) return false;
+    const sKey = eventLocalKey(e.start);
+    const eKey = e.end ? eventLocalKey(e.end) : sKey;
+    return selected >= sKey && selected <= eKey;
+  });
+
+  /** 事件色板 0-5（V25 语义色——红/蓝/绿/琥珀/紫/灰）。 */
+  const EV_COLORS = ['#dc2626', '#2563eb', '#059669', '#d97706', '#7c3aed', '#6b7280'];
+
   /** DK-CALENDAR-01 任务 2：日视图时间轴聚合。
    * 任务（due 无时刻）→ 全天区；日记/笔记按 updated_at 本地小时落轴
    * （P0 展示聚合——NoteSummary 无 created_at，事件实体真时间 02 卡引入）。
@@ -108,7 +153,7 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
       const d = new Date(iso);
       return Number.isNaN(d.getTime()) ? -1 : d.getHours();
     };
-    type AxisItem = { kind: 'task' | 'note' | 'diary'; label: string; id: string };
+    type AxisItem = { kind: 'task' | 'note' | 'diary' | 'event'; label: string; id: string; ev?: CalEvent };
     const slots = new Map<number, AxisItem[]>();
     const push = (h: number, item: AxisItem) => {
       const arr = slots.get(h) ?? [];
@@ -118,6 +163,11 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
     for (const t of selData.dayTasks) push(-1, { kind: 'task', label: t.text, id: t.id });
     for (const n of selData.dayDiary) push(hour(n.updatedAt), { kind: 'diary', label: n.title, id: n.id });
     for (const n of selData.dayNotes) push(hour(n.updatedAt), { kind: 'note', label: n.title, id: n.id });
+    // DK-CALENDAR-02 任务 4 聚合混排：事件色块（all_day→全天区;时刻事件按 start 本地小时）
+    for (const e of selEvents) {
+      const h = e.all_day ? -1 : hour(e.start);
+      push(h, { kind: 'event', label: e.title, id: e.id, ev: e });
+    }
     return slots;
   })();
 
@@ -155,6 +205,14 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
                 >
                   <span className="cal-num">{d}</span>
                   {!isToday && <span className={`cal-lunar ${(ls.isStat || ls.sub.length > 2) && !ls.isWork ? 'fest' : ''}`}>{ls.isWork ? '班' : ls.sub}</span>}
+                  {/* DK-CALENDAR-02 任务 3：事件色点角标（has 点位被任务/笔记占——事件点独立行显色） */}
+                  {dayEventDots(d).length > 0 && (
+                    <span className="cal-ev-dots">
+                      {dayEventDots(d).map((c) => (
+                        <i key={c} className="cal-ev-dot" style={{ background: EV_COLORS[c] }} />
+                      ))}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -162,7 +220,7 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
         )}
         {mode === 'day' && (
           <div className="day-axis" key={selected}>
-            {/* 全天区：任务（due 无时刻） */}
+            {/* 全天区：任务（due 无时刻）+ 全天事件 */}
             {(() => {
               const items = dayAxis.get(-1) ?? [];
               if (items.length === 0) return null;
@@ -170,7 +228,12 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
                 <div className="day-axis-row all-day">
                   <span className="day-axis-time">全天</span>
                   <div className="day-axis-items">
-                    {items.map((it) => (
+                    {items.map((it) => it.kind === 'event' && it.ev ? (
+                      <span key={`e-${it.id}`} className="day-axis-item event" role="button" style={{
+                        background: `rgba(${parseInt(EV_COLORS[it.ev.color % 6].slice(1, 3), 16)}, ${parseInt(EV_COLORS[it.ev.color % 6].slice(3, 5), 16)}, ${parseInt(EV_COLORS[it.ev.color % 6].slice(5, 7), 16)}, 0.15)`,
+                        color: EV_COLORS[it.ev.color % 6],
+                      }} onClick={() => setEventEditor(it.ev!)}>{it.label}</span>
+                    ) : (
                       <span key={`t-${it.id}`} className="day-axis-item task" role="button"
                         onClick={() => onNewTask(selected)}>{it.label}</span>
                     ))}
@@ -185,7 +248,12 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
                 <div key={h} className="day-axis-row">
                   <span className="day-axis-time">{String(h).padStart(2, '0')}:00</span>
                   <div className="day-axis-items">
-                    {items.map((it) => (
+                    {items.map((it) => it.kind === 'event' && it.ev ? (
+                      <span key={`${it.kind}-${it.id}-${h}`} className="day-axis-item event" role="button" style={{
+                        background: `rgba(${parseInt(EV_COLORS[it.ev.color % 6].slice(1, 3), 16)}, ${parseInt(EV_COLORS[it.ev.color % 6].slice(3, 5), 16)}, ${parseInt(EV_COLORS[it.ev.color % 6].slice(5, 7), 16)}, 0.15)`,
+                        color: EV_COLORS[it.ev.color % 6],
+                      }} onClick={() => setEventEditor(it.ev!)}>{it.label}</span>
+                    ) : (
                       <span key={`${it.kind}-${it.id}-${h}`} className={`day-axis-item ${it.kind}`} role="button"
                         onClick={() => onOpenNote(it.id, it.label)}>{it.label}</span>
                     ))}
@@ -195,18 +263,23 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
             })}
             {/* 轴外兜底区（8 点前/22 点后/无时刻解析失败）——Leo 10-29 合并为单「更早」/单「更晚」行 */}
             {(() => {
-              const early: Array<{ kind: 'task' | 'note' | 'diary'; label: string; id: string; key: string }> = [];
+              const early: Array<{ kind: 'task' | 'note' | 'diary' | 'event'; label: string; id: string; key: string; ev?: CalEvent }> = [];
               const late: typeof early = [];
               for (const [h, items] of dayAxis.entries()) {
                 if (h === -1 || (h >= 8 && h <= 22)) continue;
                 (h < 8 ? early : late).push(...items.map((it) => ({ ...it, key: `${it.kind}-${it.id}-x` })));
               }
-              type XItem = { kind: 'task' | 'note' | 'diary'; label: string; id: string; key: string };
+              type XItem = { kind: 'task' | 'note' | 'diary' | 'event'; label: string; id: string; key: string; ev?: CalEvent };
               const row = (label: string, arr: XItem[]) => arr.length === 0 ? null : (
                 <div className="day-axis-row">
                   <span className="day-axis-time">{label}</span>
                   <div className="day-axis-items">
-                    {arr.map((it: XItem) => (
+                    {arr.map((it: XItem) => it.kind === 'event' && it.ev ? (
+                      <span key={it.key} className="day-axis-item event" role="button" style={{
+                        background: `rgba(${parseInt(EV_COLORS[it.ev.color % 6].slice(1, 3), 16)}, ${parseInt(EV_COLORS[it.ev.color % 6].slice(3, 5), 16)}, ${parseInt(EV_COLORS[it.ev.color % 6].slice(5, 7), 16)}, 0.15)`,
+                        color: EV_COLORS[it.ev.color % 6],
+                      }} onClick={() => setEventEditor(it.ev!)}>{it.label}</span>
+                    ) : (
                       <span key={it.key} className={`day-axis-item ${it.kind}`} role="button"
                         onClick={() => onOpenNote(it.id, it.label)}>{it.label}</span>
                     ))}
@@ -273,6 +346,126 @@ export default function CalendarView({ tasks, onOpenNote, onNewTask, initialSele
       <button className="btn btn-secondary btn-block" style={{ marginTop: 8 }} onClick={() => onNewTask(selected)}>
         {I.plus} 为这一天添加任务
       </button>
+
+      {/* DK-CALENDAR-02 任务 3：日程入口（选中日预填 start）。 */}
+      <button className="btn btn-primary btn-block" style={{ marginTop: 8 }} onClick={() => setEventEditor({
+        id: '', title: '', start: `${selected}T09:00:00`, end: null,
+        all_day: false, location: null, note_id: null, color: 1,
+      })}>
+        {I.calendar} 为这一天添加日程
+      </button>
+
+      {/* DK-CALENDAR-02：事件编辑 sheet（新建/编辑共用——存/删/关联笔记跳转）。 */}
+      {eventEditor && (
+        <EventEditorSheet
+          ev={eventEditor}
+          onClose={() => setEventEditor(null)}
+          onSave={(ev) => { onUpsertEvent(ev); setEventEditor(null); }}
+          onDelete={(id) => { onDeleteEvent(id); setEventEditor(null); }}
+          onOpenNote={onOpenNote}
+        />
+      )}
     </div>
+  );
+}
+
+/** DK-CALENDAR-02：事件编辑 sheet。
+ * 字段面（P0）：标题/起止 datetime-local/全天/色 0-5/地点/关联笔记。
+ * datetime-local 值「YYYY-MM-DDTHH:mm」↔ RFC3339 本地→ISO 转换。 */
+function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
+  ev: CalEvent;
+  onClose: () => void;
+  onSave: (ev: CalEvent) => void;
+  onDelete: (id: string) => void;
+  onOpenNote: (id: string, title: string) => void;
+}) {
+  /** RFC3339→datetime-local（本地时区显示——Leo 8f82772 时区纪律）。 */
+  const toLocalInput = (iso: string): string => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const [title, setTitle] = useState(ev.title);
+  const [start, setStart] = useState(toLocalInput(ev.start));
+  const [end, setEnd] = useState(ev.end ? toLocalInput(ev.end) : '');
+  const [allDay, setAllDay] = useState(ev.all_day);
+  const [location, setLocation] = useState(ev.location ?? '');
+  const [color, setColor] = useState(ev.color % 6);
+  const isNew = !ev.id;
+  const EV_COLORS = ['#dc2626', '#2563eb', '#059669', '#d97706', '#7c3aed', '#6b7280'];
+
+  const save = () => {
+    if (!title.trim() || !start) return;
+    const startIso = new Date(start).toISOString();
+    const endIso = end ? new Date(end).toISOString() : null;
+    onSave({
+      ...ev,
+      title: title.trim(),
+      start: startIso,
+      end: endIso,
+      all_day: allDay,
+      location: location.trim() || null,
+      color,
+    });
+  };
+
+  return (
+    <>
+      <div className="sheet-mask" onClick={onClose} />
+      <div className="sheet">
+        <div className="sheet-grab" />
+        <div className="sheet-head">
+          <span className="sheet-title">{isNew ? '新建日程' : '编辑日程'}</span>
+          <button className="icon-btn" onClick={onClose} aria-label="关闭">{I.x}</button>
+        </div>
+        <div className="sheet-body">
+          <input className="input" placeholder="日程标题" value={title}
+            onChange={(e) => setTitle(e.target.value)} aria-label="日程标题" />
+          <label className="ev-field">
+            <span>开始</span>
+            <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} aria-label="开始时间" />
+          </label>
+          <label className="ev-field">
+            <span>结束</span>
+            <input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} aria-label="结束时间" />
+          </label>
+          <label className="ev-field ev-check">
+            <span>全天</span>
+            <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} aria-label="全天事件" />
+          </label>
+          <label className="ev-field">
+            <span>地点</span>
+            <input className="input" placeholder="可选" value={location}
+              onChange={(e) => setLocation(e.target.value)} aria-label="地点" />
+          </label>
+          <div className="ev-field">
+            <span>颜色</span>
+            <div className="ev-colors" role="radiogroup" aria-label="日程颜色">
+              {EV_COLORS.map((c, i) => (
+                <button key={i} type="button" className={`ev-color ${i === color ? 'sel' : ''}`}
+                  style={{ background: c }} role="radio" aria-checked={i === color}
+                  onClick={() => setColor(i)} aria-label={`颜色 ${i + 1}`} />
+              ))}
+            </div>
+          </div>
+          {ev.note_id && (
+            <button className="btn btn-text btn-block" onClick={() => onOpenNote(ev.note_id!, ev.title)}>
+              {I.notes} 打开关联笔记
+            </button>
+          )}
+          <button className="btn btn-primary btn-block" style={{ marginTop: 8 }} onClick={save}
+            disabled={!title.trim() || !start}>
+            保存日程
+          </button>
+          {!isNew && (
+            <button className="btn btn-danger-text btn-block" style={{ marginTop: 8 }}
+              onClick={() => { if (window.confirm('彻底删除该日程？')) onDelete(ev.id); }}>
+              删除日程
+            </button>
+          )}
+        </div>
+      </div>
+    </>
   );
 }

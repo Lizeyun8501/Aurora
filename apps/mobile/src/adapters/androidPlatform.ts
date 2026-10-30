@@ -24,6 +24,27 @@ export interface SearchResult {
   score: number;
 }
 
+/** DK-02 尾回收站 S2：回收站条目（MainActivity JSON 字段 camelCase）。 */
+export interface TrashedNoteDto {
+  noteId: string;
+  title: string;
+  deletedAtMs: number;
+  originPath: string | null;
+}
+
+/** DK-CALENDAR-02: 日程事件（与 entity Event JSON 同构——snake_case；
+ * start/end=RFC3339 UTC 字符串）。 */
+export interface CalEvent {
+  id: string;
+  title: string;
+  start: string;
+  end: string | null;
+  all_day: boolean;
+  location: string | null;
+  note_id: string | null;
+  color: number;
+}
+
 interface AndroidBridge {
   init(dataDir: string): string;
   listNotes(): string;
@@ -58,6 +79,16 @@ interface AndroidBridge {
   conflictList(): string;
   conflictResolve(artifactId: string): boolean;
   conflictResolveSemantic(conflictId: string, resolution: string): boolean;
+  // DK-02 尾回收站 S2（JSON 串惯例——searchNotes 同模式）
+  listTrashed(): string;
+  restoreNote(noteId: string): boolean;
+  purgeNote(noteId: string): boolean;
+  purgeExpired(days: number): number;
+  // DK-CALENDAR-02: Event 四方法（JSON 串惯例）
+  listEvents(): string;
+  upsertEvent(eventJson: string): string;
+  deleteEvent(eventId: string): boolean;
+  queryEvents(fromMs: number, toMs: number): string;
 }
 
 /** P2P 同步结果报告。 */
@@ -494,5 +525,123 @@ export const platform = {
   /** 关闭同步引擎。 */
   closeSyncEngine(): void {
     bridge()?.closeSyncEngine();
+  },
+
+  // -------------------------------------------------------------------------
+  // DK-02 尾回收站 S2：四方法（真桥 JSON 串 / mock localStorage 降级）
+  // -------------------------------------------------------------------------
+
+  listTrashed(): TrashedNoteDto[] {
+    const b = bridge();
+    if (b) {
+      try {
+        return JSON.parse(b.listTrashed()) as TrashedNoteDto[];
+      } catch {
+        return [];
+      }
+    }
+    try {
+      return JSON.parse(localStorage.getItem('aurora.trash') ?? '[]') as TrashedNoteDto[];
+    } catch {
+      return [];
+    }
+  },
+
+  restoreNote(noteId: string): boolean {
+    const b = bridge();
+    if (b) return b.restoreNote(noteId);
+    const trashed = this.listTrashed();
+    if (!trashed.some((t) => t.noteId === noteId)) return false;
+    localStorage.setItem(
+      'aurora.trash',
+      JSON.stringify(trashed.filter((t) => t.noteId !== noteId)),
+    );
+    return true;
+  },
+
+  purgeNote(noteId: string): boolean {
+    const b = bridge();
+    if (b) return b.purgeNote(noteId);
+    const trashed = this.listTrashed();
+    if (!trashed.some((t) => t.noteId === noteId)) return false;
+    localStorage.setItem(
+      'aurora.trash',
+      JSON.stringify(trashed.filter((t) => t.noteId !== noteId)),
+    );
+    return true;
+  },
+
+  purgeExpired(days: number): number {
+    const b = bridge();
+    if (b) return b.purgeExpired(days);
+    const trashed = this.listTrashed();
+    const cutoff = days === 0 ? Number.MAX_SAFE_INTEGER : Date.now() - days * 86400_000;
+    const keep = trashed.filter((t) => t.deletedAtMs > cutoff);
+    localStorage.setItem('aurora.trash', JSON.stringify(keep));
+    return trashed.length - keep.length;
+  },
+
+  // -------------------------------------------------------------------------
+  // DK-CALENDAR-02: Event 四方法（真桥 JSON 串 / mock localStorage 降级——
+  // Playwright 全链路走 mock 路径: 新建→角标→日轴块→编辑→删除）
+  // -------------------------------------------------------------------------
+
+  listEvents(): CalEvent[] {
+    const b = bridge();
+    if (b) {
+      try {
+        return JSON.parse(b.listEvents()) as CalEvent[];
+      } catch {
+        return [];
+      }
+    }
+    try {
+      return JSON.parse(localStorage.getItem('aurora.events') ?? '[]') as CalEvent[];
+    } catch {
+      return [];
+    }
+  },
+
+  upsertEvent(event: CalEvent): string {
+    const b = bridge();
+    if (b) return b.upsertEvent(JSON.stringify(event));
+    const events = this.listEvents();
+    if (!event.id) {
+      event = { ...event, id: `ev-${Date.now()}-${Math.floor(Math.random() * 1e4)}` };
+    }
+    const idx = events.findIndex((e) => e.id === event.id);
+    if (idx >= 0) events[idx] = event;
+    else events.push(event);
+    localStorage.setItem('aurora.events', JSON.stringify(events));
+    return event.id;
+  },
+
+  deleteEvent(eventId: string): boolean {
+    const b = bridge();
+    if (b) return b.deleteEvent(eventId);
+    const events = this.listEvents();
+    localStorage.setItem(
+      'aurora.events',
+      JSON.stringify(events.filter((e) => e.id !== eventId)),
+    );
+    return true;
+  },
+
+  queryEvents(fromMs: number, toMs: number): CalEvent[] {
+    const b = bridge();
+    if (b) {
+      try {
+        return JSON.parse(b.queryEvents(fromMs, toMs)) as CalEvent[];
+      } catch {
+        return [];
+      }
+    }
+    // mock 侧同 core 语义: 交叠命中（start < to && (end|start) > from）
+    return this.listEvents().filter((e) => {
+      const s = Date.parse(e.start);
+      if (Number.isNaN(s) || s >= toMs) return false;
+      const endMs = e.end ? Date.parse(e.end) : s;
+      return (Number.isNaN(endMs) ? s : endMs) > fromMs;
+    });
   },
 };

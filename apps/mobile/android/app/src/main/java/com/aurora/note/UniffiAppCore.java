@@ -292,10 +292,101 @@ public class UniffiAppCore {
         return nativePurgeExpired(handle, days);
     }
 
+    // ------------------------------------------------------------------
+    // DK-CALENDAR-02: Event 桥（2026-10-30——与 Rust JNI export 对齐。
+    // JSON 字段 snake_case：id/title/start/end/all_day/location/note_id/
+    // color/repeat/created_at/updated_at;start/end=RFC3339 字符串。
+    // ------------------------------------------------------------------
+
+    /** 日程事件（笔记生态一等公民——与 Task/Note 同层）。 */
+    public static class EventItem {
+        public final String id;
+        public final String title;
+        /** RFC3339 UTC 起始时刻。 */
+        public final String start;
+        /** RFC3339 结束（null=瞬时事件/单日全天）。 */
+        public final String end;
+        public final boolean allDay;
+        public final String location;
+        /** 关联笔记 id（生态联动——null=无）。 */
+        public final String noteId;
+        /** 标签色 0-5。 */
+        public final int color;
+
+        public EventItem(String id, String title, String start, String end,
+                         boolean allDay, String location, String noteId, int color) {
+            this.id = id;
+            this.title = title;
+            this.start = start;
+            this.end = end;
+            this.allDay = allDay;
+            this.location = location;
+            this.noteId = noteId;
+            this.color = color;
+        }
+    }
+
+    private static EventItem parseEvent(org.json.JSONObject o) {
+        return new EventItem(
+                o.optString("id", ""),
+                o.optString("title", ""),
+                o.optString("start", ""),
+                o.has("end") && !o.isNull("end") ? o.optString("end") : null,
+                o.optBoolean("all_day", false),
+                o.has("location") && !o.isNull("location") ? o.optString("location") : null,
+                o.has("note_id") && !o.isNull("note_id") ? o.optString("note_id") : null,
+                o.optInt("color", 0));
+    }
+
+    /** 全量事件列表（错误降级空列表）。 */
+    public java.util.List<EventItem> listEvents() {
+        String json = nativeListEvents(handle);
+        java.util.List<EventItem> out = new java.util.ArrayList<>();
+        if (json == null) return out;
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                out.add(parseEvent(arr.getJSONObject(i)));
+            }
+        } catch (Exception ignored) {
+            // 错误降级空列表（与域方法 warn 惯例一致）
+        }
+        return out;
+    }
+
+    /** 事件创建/更新二合一。全字段 JSON;id 空=新建。成功返 event_id,失败空串。 */
+    public String upsertEvent(String eventJson) {
+        return nativeUpsertEvent(handle, eventJson);
+    }
+
+    /** 删除事件（幂等清场语义同 trash 系）。 */
+    public boolean deleteEvent(String eventId) {
+        return nativeDeleteEvent(handle, eventId);
+    }
+
+    /** 范围查询 [fromMs, toMs)——事件与区间有交叠即命中。错误降级空列表。 */
+    public java.util.List<EventItem> queryEvents(long fromMs, long toMs) {
+        String json = nativeQueryEvents(handle, fromMs, toMs);
+        java.util.List<EventItem> out = new java.util.ArrayList<>();
+        if (json == null) return out;
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                out.add(parseEvent(arr.getJSONObject(i)));
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
     private static native String nativeListTrashed(long handle);
     private static native boolean nativeRestoreNote(long handle, String noteId);
     private static native boolean nativePurgeNote(long handle, String noteId);
     private static native int nativePurgeExpired(long handle, long days);
+    private static native String nativeListEvents(long handle);
+    private static native String nativeUpsertEvent(long handle, String eventJson);
+    private static native boolean nativeDeleteEvent(long handle, String eventId);
+    private static native String nativeQueryEvents(long handle, long fromMs, long toMs);
     private static native String nativeCreateNote(long handle, String title);
     private static native int nativeListNotesCount(long handle);
     private static native String[] nativeGetNote(long handle, int index);

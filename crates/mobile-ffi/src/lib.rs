@@ -3015,4 +3015,50 @@ mod tests {
         let err = core.queue_drain_impl().unwrap_err();
         assert!(err.to_string().contains("P2P 未启用"));
     }
+
+    /// DK-02 尾回收站 S2：全流程往返（DoD 1）——软删→list→restore→
+    /// list 空；软删→purge 永久；未软删 purge 拒；purge_expired 超期清。
+    #[test]
+    fn dk02_s2_trash_flow_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+
+        // ① 未软删的笔记 purge 拒（仅回收站内可彻底删）
+        let id1 = core.clone().create_note("回收站往返".into()).unwrap();
+        assert!(!core.clone().purge_note(id1.clone()), "未软删 purge 应拒");
+
+        // ② 软删 → list_trashed 出现（title 对齐）
+        core.clone().delete_note(id1.clone()).unwrap();
+        let trashed = core.clone().list_trashed();
+        assert_eq!(trashed.len(), 1);
+        assert_eq!(trashed[0].note_id, id1);
+        assert_eq!(trashed[0].title, "回收站往返");
+        assert!(trashed[0].deleted_at_ms > 0);
+
+        // ③ restore → 回收站空 + 笔记列表回归
+        assert!(core.clone().restore_note(id1.clone()));
+        assert!(core.clone().list_trashed().is_empty());
+        assert!(core
+            .clone()
+            .list_notes()
+            .iter()
+            .any(|n| n.id == id1));
+
+        // ④ 幂等重删无害 + purge 永久（恢复后再删→彻底删）
+        core.clone().delete_note(id1.clone()).unwrap();
+        core.clone().delete_note(id1.clone()).unwrap(); // 幂等
+        assert!(core.clone().purge_note(id1.clone()));
+        assert!(core.clone().list_trashed().is_empty());
+        assert!(core.clone().list_notes().is_empty(), "purge 后笔记永久消失");
+
+        // ⑤ purge_expired：当日软删不超期（30 天口径）→ 空清理
+        let id2 = core.clone().create_note("过期清理口径".into()).unwrap();
+        core.clone().delete_note(id2.clone()).unwrap();
+        let cleaned = core.clone().purge_expired(30);
+        assert!(cleaned.is_empty(), "当日软删不超 30 天");
+        // days=0 = 立即全清（口径边界）
+        let cleaned0 = core.clone().purge_expired(0);
+        assert_eq!(cleaned0, vec![id2.clone()]);
+        assert!(core.clone().list_trashed().is_empty());
+    }
 }

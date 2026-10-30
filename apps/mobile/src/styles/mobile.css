@@ -351,6 +351,36 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 [data-theme='dark'] .day-axis-item.note { background: rgba(16, 185, 129, 0.15); color: #34D399; }
 [data-theme='dark'] .day-axis-item.diary { background: rgba(245, 158, 11, 0.15); color: #FBBF24; }
 
+/* ============================================================
+   DK-CALENDAR-02 — 事件角标 + 编辑 sheet 字段
+   ============================================================ */
+.cal-ev-dots {
+  position: absolute; bottom: 2px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; gap: 3px;
+}
+.cal-ev-dot { display: block; width: 4px; height: 4px; border-radius: 50%; }
+.cal-day.sel .cal-ev-dot { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.8); }
+.ev-field {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 10px; font-size: 13px;
+}
+.ev-field > span:first-child { flex: 0 0 40px; color: var(--text-tertiary); }
+.ev-field input[type='datetime-local'] {
+  flex: 1; padding: 6px 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg-secondary);
+  color: var(--text-primary); font-size: 13px; font-family: inherit;
+}
+.ev-check input { width: 18px; height: 18px; }
+.ev-colors { flex: 1; display: flex; gap: 8px; flex-wrap: wrap; }
+.ev-color {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 2px solid transparent; cursor: pointer;
+  transition: transform 0.18s ease;
+}
+.ev-color:active { transform: scale(0.92); }
+.ev-color.sel { border-color: var(--text-primary); box-shadow: 0 0 0 2px var(--bg-primary); }
+
 .result-section-title {
   font-size: 13px; font-weight: 500; color: var(--text-secondary);
   padding: 12px 4px 8px;

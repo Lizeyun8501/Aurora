@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { platform, type NoteSummary, type SearchResult } from './adapters/androidPlatform';
+import { platform, type NoteSummary, type SearchResult, type CalEvent } from './adapters/androidPlatform';
 import SyncStatusBadge from './components/SyncStatusBadge';
 import QueuePanel from './components/QueuePanel';
 import ConflictReviewPanel from './components/ConflictReviewPanel';
@@ -299,6 +299,8 @@ export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     (localStorage.getItem('aurora.theme') as 'light' | 'dark') ?? 'light');
   const [tasks, setTasks] = useState<Task[]>(loadTasks);
+  // DK-CALENDAR-02：日程事件（mock/真桥双路径——platform.listEvents）
+  const [events, setEvents] = useState<CalEvent[]>([]);
   const [favs, setFavs] = useState<string[]>(() => loadList<string>(K_FAVS));
   const [recents, setRecents] = useState<RecentItem[]>(() => loadList<RecentItem>(K_RECENT));
   const [trash, setTrash] = useState<TrashItem[]>(() => loadList<TrashItem>(K_TRASH));
@@ -313,7 +315,14 @@ export default function App() {
     const ok = platform.init('/data/aurora');
     setReady(true);
     setFallback(!ok || platform.isFallback());
+    // DK-CALENDAR-02：事件初始化加载（mock/真桥双路径）
+    try { setEvents(platform.listEvents()); } catch { setEvents([]); }
   }, []);
+
+  /** DK-CALENDAR-02：事件 upsert/删除后刷新列表。 */
+  const refreshEvents = () => {
+    try { setEvents(platform.listEvents()); } catch { /* 降级保旧态 */ }
+  };
 
   if (!ready) return <SplashScreen />;
 
@@ -412,6 +421,9 @@ export default function App() {
             {view === 'calendar' && (
               <CalendarView
                 tasks={tasks}
+                events={events}
+                onUpsertEvent={(ev) => { platform.upsertEvent(ev); refreshEvents(); }}
+                onDeleteEvent={(id) => { platform.deleteEvent(id); refreshEvents(); }}
                 onOpenNote={openNote}
                 onNewTask={(due) => { setCaptureDue(due); setCaptureOpen(true); }}
                 initialSelected={calendarInit ?? undefined}
@@ -485,6 +497,21 @@ export default function App() {
             setCaptureDue(undefined);
             setView('today');
             showToast(captureDue ? `任务已计划到 ${captureDue}` : '已添加到今日任务');
+          }}
+          onNewEvent={(title) => {
+            // DK-CALENDAR-02：今日 09:00 预填日程（captureDue 优先——日历入口带日期）
+            const n = new Date();
+            const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+            const day = captureDue ?? today;
+            platform.upsertEvent({
+              id: '', title, start: `${day}T09:00:00`, end: null,
+              all_day: false, location: null, note_id: null, color: 1,
+            });
+            refreshEvents();
+            setCaptureOpen(false);
+            setCaptureDue(undefined);
+            setView('calendar');
+            showToast(`日程已添加到 ${day} 09:00`);
           }}
         />
       )}
@@ -740,10 +767,12 @@ function TodayView({ tasks, onTasks, onOpenNote, showToast, onOpenDate }: {
 // 捕获 & AI 液化 — V19 移动端页面2（悬浮 + 唤起底部抽屉 70%）
 // ===========================================================================
 
-function CaptureSheet({ onClose, onNewNote, onNewTask }: {
+function CaptureSheet({ onClose, onNewNote, onNewTask, onNewEvent }: {
   onClose: () => void;
   onNewNote: (title: string, body: string) => void;
   onNewTask: (text: string, status: TaskStatus) => void;
+  /** DK-CALENDAR-02 任务 3：FAB 捕获流「日程」类型（今日 09:00 预填）。 */
+  onNewEvent: (title: string) => void;
 }) {
   const [mode, setMode] = useState<'text' | 'ocr' | 'voice'>('text');
   const [text, setText] = useState('');
@@ -810,6 +839,12 @@ function CaptureSheet({ onClose, onNewNote, onNewTask }: {
                   style={{ opacity: text.trim() ? 1 : 0.5 }}
                   onClick={() => onNewTask(text.trim().slice(0, 60), 'next')}
                 >加入今日任务</button>
+                <button
+                  className="btn btn-secondary"
+                  disabled={!text.trim()}
+                  style={{ opacity: text.trim() ? 1 : 0.5 }}
+                  onClick={() => onNewEvent(text.trim().slice(0, 60))}
+                >存为日程</button>
               </div>
             </>
           )}
