@@ -417,6 +417,9 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
     if (!title.trim() || !start) return;
     const startIso = new Date(start).toISOString();
     const endIso = end ? new Date(end).toISOString() : null;
+    // end<start fail-closed（core A04 同语义——防真桥拒绝后 UI 静默丢:
+    // MobileApp onUpsertEvent 不看返回值,前置守卫是唯一防线）
+    if (endIso && endIso < startIso) return;
     // 组装 repeat（03: 农历模式由锚点反推 lunar_month/lunar_day——锚点即生日）
     let repeat: CalEvent['repeat'] = null;
     if (freq !== 'none') {

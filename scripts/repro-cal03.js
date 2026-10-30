@@ -22,7 +22,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   };
 
   // ① 每周五重复（今天起）→ 本月+次两周角标
-  await page.goto('file:///home/z/my-project/Aurora/apps/mobile/dist/index.html');
+  await page.goto('file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html');
   await page.waitForTimeout(800);
   await page.evaluate(() => localStorage.setItem('aurora.events', JSON.stringify([{
     id: 'ev-w1', title: '每周例会', start: new Date().toISOString(), end: null,

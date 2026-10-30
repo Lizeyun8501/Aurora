@@ -616,11 +616,19 @@ export const platform = {
   upsertEvent(event: CalEvent): string {
     const b = bridge();
     if (b) return b.upsertEvent(JSON.stringify(event));
+    // mock 与 core::event_store 语义对齐（对向复核补）:
+    // 空标题 A04 拒 / end<start 拒 / 幽灵更新 NoteNotFound 拒——均返 ''。
+    if (!event.title.trim()) return '';
+    const s = Date.parse(event.start);
+    const e = event.end ? Date.parse(event.end) : s;
+    if (Number.isNaN(s) || e < s) return '';
     const events = this.listEvents();
     if (!event.id) {
       event = { ...event, id: `ev-${Date.now()}-${Math.floor(Math.random() * 1e4)}` };
+    } else if (!events.some((x) => x.id === event.id)) {
+      return ''; // 幽灵更新 fail-closed（core NoteNotFound 同语义）
     }
-    const idx = events.findIndex((e) => e.id === event.id);
+    const idx = events.findIndex((e2) => e2.id === event.id);
     if (idx >= 0) events[idx] = event;
     else events.push(event);
     localStorage.setItem('aurora.events', JSON.stringify(events));
