@@ -33,7 +33,7 @@ export interface TrashedNoteDto {
 }
 
 /** DK-CALENDAR-02: 日程事件（与 entity Event JSON 同构——snake_case；
- * start/end=RFC3339 UTC 字符串）。 */
+ * start/end=RFC3339 UTC 字符串;repeat 03 卡消费）。 */
 export interface CalEvent {
   id: string;
   title: string;
@@ -43,6 +43,17 @@ export interface CalEvent {
   location: string | null;
   note_id: string | null;
   color: number;
+  /** 03: 重复规则（None=单次）。 */
+  repeat?: {
+    freq: 'daily' | 'weekly' | 'monthly' | 'yearly';
+    interval: number;
+    until: string | null;
+    by_weekday?: number[] | null;
+    day_of_month?: number | null;
+    count?: number | null;
+    lunar_month?: number | null;
+    lunar_day?: number | null;
+  } | null;
 }
 
 interface AndroidBridge {

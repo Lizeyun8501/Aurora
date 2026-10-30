@@ -10,11 +10,12 @@
  * React 组件环是既有生态常见形态）。
  */
 import { useState } from 'react';
-import { Solar, HolidayUtil } from 'lunar-typescript';
+import { Solar, HolidayUtil, Lunar } from 'lunar-typescript';
 import {
   type Task, TASK_GROUPS, I, listNotesTitled, NoteCard, EmptyState,
 } from '../MobileApp';
 import type { CalEvent } from '../adapters/androidPlatform';
+import { expandAll, type EvInstance } from './repeatUtil';
 
 
 export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEvent, onOpenNote, onNewTask, initialSelected }: {
@@ -67,24 +68,16 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   const hasMark = (d: number) => {
     const { dayNotes, dayDiary, dayTasks } = dayData(d);
     if (dayNotes.length > 0 || dayDiary.length > 0 || dayTasks.length > 0) return true;
-    // DK-CALENDAR-02 任务 3：月历日格事件角标（当月日格含事件）
+    // DK-CALENDAR-03：月历日格事件角标（当月展开实例命中——重复事件已展开）
     const key = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    return events.some((e) => {
-      const sKey = eventLocalKey(e.start);
-      const eKey = e.end ? eventLocalKey(e.end) : sKey;
-      return sKey <= key && key <= eKey;
-    });
+    return monthInstances.some((i) => eventLocalKey(i.start.toISOString()) === key);
   };
 
-  /** DK-CALENDAR-02 任务 3：日格事件色点列表（最多 3 色，多的省略号）。 */
+  /** DK-CALENDAR-02 任务 3 / 03 展开面：日格事件色点列表（最多 3 色）。 */
   const dayEventDots = (d: number): number[] => {
     const key = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const hits = events.filter((e) => {
-      const sKey = eventLocalKey(e.start);
-      const eKey = e.end ? eventLocalKey(e.end) : sKey;
-      return sKey <= key && key <= eKey;
-    });
-    return [...new Set(hits.map((e) => e.color % 6))].slice(0, 3);
+    const hits = monthInstances.filter((i) => eventLocalKey(i.start.toISOString()) === key);
+    return [...new Set(hits.map((i) => i.ev.color % 6))].slice(0, 3);
   };
 
   // 农历/节假日 — lunar-typescript（6tail, 含法定节假日+调休数据随库更新）
@@ -124,22 +117,39 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   const selData = dayData(selD);
   const isSelInMonth = selected.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`);
 
-  /** DK-CALENDAR-02：事件工具——本地日期键（UTC RFC3339→本地 YYYY-MM-DD;
-   * 时区纪律：所有日界/小时换算一律 Date 本地解析——Leo 8f82772 教训）。 */
+  /** 选中日事件实例（DK-CALENDAR-03: 重复事件展开 + 02 跨天单次保留）。
+   * 时区纪律：所有日界/小时换算一律 Date 本地解析——Leo 8f82772 教训。 */
   const eventLocalKey = (iso: string): string => {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '';
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
 
-  /** 选中日事件（all_day 按本地 start 日;跨天事件按交叠——P0 按日含 start/end 落格）。 */
-  const selEvents = events.filter((e) => {
-    const s = new Date(e.start);
-    if (Number.isNaN(s.getTime())) return false;
-    const sKey = eventLocalKey(e.start);
-    const eKey = e.end ? eventLocalKey(e.end) : sKey;
-    return selected >= sKey && selected <= eKey;
-  });
+  /** DK-CALENDAR-03: 当月展开实例（角标消费——月窗 [1 号, 月末]）。 */
+  const monthInstances: EvInstance[] = (() => {
+    const from = new Date(y, m, 1);
+    const to = new Date(y, m + 1, 0, 23, 59, 59);
+    return expandAll(events, from, to);
+  })();
+
+  /** 选中日实例集（重复展开 + 跨天单次 02 语义保留;id@offset 去重）。 */
+  const selEvents: EvInstance[] = (() => {
+    const from = new Date(`${selected}T00:00:00`);
+    const to = new Date(`${selected}T23:59:59`);
+    const out = expandAll(events, from, to);
+    // 02 跨天单次（sKey≤selected≤eKey——start 不在窗但交叠）
+    for (const e of events) {
+      if (e.repeat) continue;
+      const s = new Date(e.start);
+      if (Number.isNaN(s.getTime())) continue;
+      const sKey = eventLocalKey(e.start);
+      const eKey = e.end ? eventLocalKey(e.end) : sKey;
+      if (selected >= sKey && selected <= eKey && !out.some((i) => i.ev.id === e.id)) {
+        out.push({ ev: e, start: s, offsetDays: 0 });
+      }
+    }
+    return out;
+  })();
 
   /** 事件色板 0-5（V25 语义色——红/蓝/绿/琥珀/紫/灰）。 */
   const EV_COLORS = ['#dc2626', '#2563eb', '#059669', '#d97706', '#7c3aed', '#6b7280'];
@@ -153,7 +163,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
       const d = new Date(iso);
       return Number.isNaN(d.getTime()) ? -1 : d.getHours();
     };
-    type AxisItem = { kind: 'task' | 'note' | 'diary' | 'event'; label: string; id: string; ev?: CalEvent };
+    type AxisItem = { kind: 'task' | 'note' | 'diary' | 'event'; label: string; id: string; ev?: CalEvent; instStart?: Date };
     const slots = new Map<number, AxisItem[]>();
     const push = (h: number, item: AxisItem) => {
       const arr = slots.get(h) ?? [];
@@ -163,10 +173,11 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
     for (const t of selData.dayTasks) push(-1, { kind: 'task', label: t.text, id: t.id });
     for (const n of selData.dayDiary) push(hour(n.updatedAt), { kind: 'diary', label: n.title, id: n.id });
     for (const n of selData.dayNotes) push(hour(n.updatedAt), { kind: 'note', label: n.title, id: n.id });
-    // DK-CALENDAR-02 任务 4 聚合混排：事件色块（all_day→全天区;时刻事件按 start 本地小时）
-    for (const e of selEvents) {
-      const h = e.all_day ? -1 : hour(e.start);
-      push(h, { kind: 'event', label: e.title, id: e.id, ev: e });
+    // DK-CALENDAR-02 任务 4 聚合混排 / 03 实例面: 展开实例色块
+    // （all_day→全天区;时刻实例按 inst.start 本地小时——实例时刻而非锚点）
+    for (const inst of selEvents) {
+      const h = inst.ev.all_day ? -1 : inst.start.getHours();
+      push(h, { kind: 'event', label: inst.ev.title, id: inst.ev.id, ev: inst.ev, instStart: inst.start });
     }
     return slots;
   })();
@@ -392,13 +403,38 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
   const [allDay, setAllDay] = useState(ev.all_day);
   const [location, setLocation] = useState(ev.location ?? '');
   const [color, setColor] = useState(ev.color % 6);
+  // DK-CALENDAR-03: 重复 UI 状态（回填自 ev.repeat）
+  const [freq, setFreq] = useState<'none' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'yearly_lunar'>(
+    ev.repeat ? (ev.repeat.lunar_month != null ? 'yearly_lunar' : ev.repeat.freq) : 'none');
+  const [interval, setInterval] = useState(Math.max(1, ev.repeat?.interval ?? 1));
+  const [weekdays, setWeekdays] = useState<number[]>(ev.repeat?.by_weekday ?? []);
+  const [count, setCount] = useState(ev.repeat?.count?.toString() ?? '');
   const isNew = !ev.id;
   const EV_COLORS = ['#dc2626', '#2563eb', '#059669', '#d97706', '#7c3aed', '#6b7280'];
+  const WD = ['一', '二', '三', '四', '五', '六', '日'];
 
   const save = () => {
     if (!title.trim() || !start) return;
     const startIso = new Date(start).toISOString();
     const endIso = end ? new Date(end).toISOString() : null;
+    // 组装 repeat（03: 农历模式由锚点反推 lunar_month/lunar_day——锚点即生日）
+    let repeat: CalEvent['repeat'] = null;
+    if (freq !== 'none') {
+      if (freq === 'yearly_lunar') {
+        const anchor = new Date(start);
+        const lunar = Lunar.fromDate(anchor);
+        repeat = {
+          freq: 'yearly', interval: Math.max(1, interval), until: null,
+          lunar_month: lunar.getMonth(), lunar_day: lunar.getDay(),
+        };
+      } else {
+        repeat = {
+          freq, interval: Math.max(1, interval), until: null,
+          by_weekday: freq === 'weekly' ? (weekdays.length ? [...weekdays].sort((a, b) => a - b) : null) : null,
+          count: count.trim() ? Math.max(1, parseInt(count, 10) || 1) : null,
+        };
+      }
+    }
     onSave({
       ...ev,
       title: title.trim(),
@@ -407,6 +443,7 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
       all_day: allDay,
       location: location.trim() || null,
       color,
+      repeat,
     });
   };
 
@@ -449,6 +486,56 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
               ))}
             </div>
           </div>
+          {/* DK-CALENDAR-03: 重复规则段。 */}
+          <div className="ev-field">
+            <span>重复</span>
+            <div className="ev-freq-seg" role="radiogroup" aria-label="重复频率">
+              {([
+                ['none', '不重复'], ['daily', '每天'], ['weekly', '每周'],
+                ['monthly', '每月'], ['yearly', '每年'], ['yearly_lunar', '农历每年'],
+              ] as const).map(([v, label]) => (
+                <button key={v} type="button" className={`ev-freq ${freq === v ? 'sel' : ''}`}
+                  role="radio" aria-checked={freq === v} onClick={() => setFreq(v)}>{label}</button>
+              ))}
+            </div>
+          </div>
+          {freq !== 'none' && (
+            <label className="ev-field">
+              <span>间隔</span>
+              <span className="ev-interval">每
+                <input type="number" min={1} max={99} value={interval}
+                  onChange={(e) => setInterval(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  aria-label="重复间隔" />
+                {freq === 'daily' ? '天' : freq === 'weekly' ? '周' : freq === 'monthly' ? '月' : '年'}
+              </span>
+            </label>
+          )}
+          {freq === 'weekly' && (
+            <div className="ev-field">
+              <span>周几</span>
+              <div className="ev-weekdays" role="group" aria-label="重复周几">
+                {WD.map((w, i) => (
+                  <button key={i} type="button" className={`ev-wd ${weekdays.includes(i) ? 'sel' : ''}`}
+                    aria-pressed={weekdays.includes(i)}
+                    onClick={() => setWeekdays((ws) => ws.includes(i) ? ws.filter((x) => x !== i) : [...ws, i])}>
+                    {w}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {freq !== 'none' && freq !== 'yearly_lunar' && (
+            <label className="ev-field">
+              <span>次数</span>
+              <input type="number" min={1} placeholder="不限" value={count}
+                onChange={(e) => setCount(e.target.value)} aria-label="重复次数（空=不限）" />
+            </label>
+          )}
+          {freq === 'yearly_lunar' && start && (
+            <div className="ev-lunar-hint">
+              按农历 {Lunar.fromDate(new Date(start)).toString()} 每年重复（闰年无对应闰月取次月同日）
+            </div>
+          )}
           {ev.note_id && (
             <button className="btn btn-text btn-block" onClick={() => onOpenNote(ev.note_id!, ev.title)}>
               {I.notes} 打开关联笔记

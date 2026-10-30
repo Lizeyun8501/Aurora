@@ -86,7 +86,9 @@ pub async fn update_event(kv: &dyn KVStore, event: &Event) -> Result<(), Error> 
     }
     let key = event_key(&event.id);
     let Some(old) = kv.get(&key).await? else {
-        return Err(Error::NoteNotFound { id: event.id.clone() });
+        return Err(Error::NoteNotFound {
+            id: event.id.clone(),
+        });
     };
     let old: Event = serde_json::from_slice(&old)
         .map_err(|e| Error::Internal(format!("event parse failed: {e}")))?;
@@ -109,10 +111,11 @@ pub async fn delete_event(kv: &dyn KVStore, event_id: &str) -> Result<(), Error>
 pub async fn get_event(kv: &dyn KVStore, event_id: &str) -> Result<Option<Event>, Error> {
     match kv.get(&event_key(event_id)).await? {
         None => Ok(None),
-        Some(bytes) => Ok(Some(
-            serde_json::from_slice(&bytes)
-                .map_err(|e| Error::Internal(format!("event parse failed: {e}")))?,
-        )),
+        Some(bytes) => {
+            Ok(Some(serde_json::from_slice(&bytes).map_err(|e| {
+                Error::Internal(format!("event parse failed: {e}"))
+            })?))
+        }
     }
 }
 
@@ -126,7 +129,9 @@ pub async fn upsert_event(kv: &dyn KVStore, event: &Event) -> Result<String, Err
     } else if get_event(kv, &event.id).await?.is_some() {
         update_event(kv, event).await.map(|_| event.id.clone())
     } else {
-        Err(Error::NoteNotFound { id: event.id.clone() })
+        Err(Error::NoteNotFound {
+            id: event.id.clone(),
+        })
     }
 }
 
@@ -209,8 +214,12 @@ mod event_tests {
     async fn range_cross_month() {
         let kv = kv();
         // 三个事件: 9 月末 / 10 月中 / 10-31→11-01 跨月
-        create_event(kv.as_ref(), &ev("", "九月旧事", 2026, 9, 30, 23)).await.unwrap();
-        create_event(kv.as_ref(), &ev("", "十月例会", 2026, 10, 15, 10)).await.unwrap();
+        create_event(kv.as_ref(), &ev("", "九月旧事", 2026, 9, 30, 23))
+            .await
+            .unwrap();
+        create_event(kv.as_ref(), &ev("", "十月例会", 2026, 10, 15, 10))
+            .await
+            .unwrap();
         let mut night = ev("", "跨月通宵", 2026, 10, 31, 22);
         night.end = Some(chrono::Utc.with_ymd_and_hms(2026, 11, 1, 6, 0, 0).unwrap());
         create_event(kv.as_ref(), &night).await.unwrap();
@@ -225,8 +234,14 @@ mod event_tests {
         // 查 11 月（跨月通宵仍在（end>=11-01 from
         let nov_from = to;
         let nov_to = chrono::Utc.with_ymd_and_hms(2026, 12, 1, 0, 0, 0).unwrap();
-        let nov = query_events_by_range(kv.as_ref(), nov_from, nov_to).await.unwrap();
-        assert_eq!(nov.len(), 1, "跨月事件命中 11 月视图（start<to 且 end>=from");
+        let nov = query_events_by_range(kv.as_ref(), nov_from, nov_to)
+            .await
+            .unwrap();
+        assert_eq!(
+            nov.len(),
+            1,
+            "跨月事件命中 11 月视图（start<to 且 end>=from"
+        );
         assert_eq!(nov[0].title, "跨月通宵");
 
         // 9 月事件不在 10 月
@@ -261,6 +276,11 @@ mod event_tests {
             freq: RepeatFreq::Weekly,
             interval: 1,
             until: None,
+            by_weekday: None,
+            day_of_month: None,
+            count: None,
+            lunar_month: None,
+            lunar_day: None,
         });
         let id = create_event(kv.as_ref(), &e).await.unwrap();
         let all = list_events(kv.as_ref()).await.unwrap();

@@ -1213,10 +1213,9 @@ impl UniffiAppCore {
         let Some(core) = &self.core else {
             return "[]".into();
         };
-        match self
-            .runtime
-            .block_on(aurora_core::event_store::list_events(core.kv_store.as_ref()))
-        {
+        match self.runtime.block_on(aurora_core::event_store::list_events(
+            core.kv_store.as_ref(),
+        )) {
             Ok(events) => serde_json::to_string(&events).unwrap_or_else(|_| "[]".into()),
             Err(e) => {
                 tracing::warn!(error = %e, "list_events failed");
@@ -1236,10 +1235,12 @@ impl UniffiAppCore {
             tracing::warn!(raw = %event_json, "upsert_event json parse failed");
             return String::new();
         };
-        match self.runtime.block_on(aurora_core::event_store::upsert_event(
-            core.kv_store.as_ref(),
-            &ev,
-        )) {
+        match self
+            .runtime
+            .block_on(aurora_core::event_store::upsert_event(
+                core.kv_store.as_ref(),
+                &ev,
+            )) {
             Ok(id) => id,
             Err(e) => {
                 tracing::warn!(error = %e, "upsert_event failed");
@@ -1254,7 +1255,10 @@ impl UniffiAppCore {
             return false;
         };
         self.runtime
-            .block_on(aurora_core::event_store::delete_event(core.kv_store.as_ref(), event_id))
+            .block_on(aurora_core::event_store::delete_event(
+                core.kv_store.as_ref(),
+                event_id,
+            ))
             .is_ok()
     }
 
@@ -1269,11 +1273,13 @@ impl UniffiAppCore {
         let (Some(from), Some(to)) = (from, to) else {
             return "[]".into();
         };
-        match self.runtime.block_on(aurora_core::event_store::query_events_by_range(
-            core.kv_store.as_ref(),
-            from,
-            to,
-        )) {
+        match self
+            .runtime
+            .block_on(aurora_core::event_store::query_events_by_range(
+                core.kv_store.as_ref(),
+                from,
+                to,
+            )) {
             Ok(events) => serde_json::to_string(&events).unwrap_or_else(|_| "[]".into()),
             Err(e) => {
                 tracing::warn!(error = %e, "query_events failed");
@@ -1851,7 +1857,10 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeListEvents(
 ) -> jstring {
     let core = unsafe { core_from_handle(handle) };
     let json = core.list_events_json();
-    dk49_json_to_jstring(&mut env, &serde_json::from_str(&json).unwrap_or(serde_json::Value::Array(vec![])))
+    dk49_json_to_jstring(
+        &mut env,
+        &serde_json::from_str(&json).unwrap_or(serde_json::Value::Array(vec![])),
+    )
 }
 
 #[no_mangle]
@@ -1889,7 +1898,10 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeQueryEvents(
 ) -> jstring {
     let core = unsafe { core_from_handle(handle) };
     let json = core.query_events_range_json(from_ms, to_ms);
-    dk49_json_to_jstring(&mut env, &serde_json::from_str(&json).unwrap_or(serde_json::Value::Array(vec![])))
+    dk49_json_to_jstring(
+        &mut env,
+        &serde_json::from_str(&json).unwrap_or(serde_json::Value::Array(vec![])),
+    )
 }
 
 /// DK-49 函数 4：待处理冲突合并视图 JSON 数组（ConflictDto 同构）。
@@ -3038,11 +3050,7 @@ mod tests {
         // ③ restore → 回收站空 + 笔记列表回归
         assert!(core.clone().restore_note(id1.clone()));
         assert!(core.clone().list_trashed().is_empty());
-        assert!(core
-            .clone()
-            .list_notes()
-            .iter()
-            .any(|n| n.id == id1));
+        assert!(core.clone().list_notes().iter().any(|n| n.id == id1));
 
         // ④ 幂等重删无害 + purge 永久（恢复后再删→彻底删）
         core.clone().delete_note(id1.clone()).unwrap();

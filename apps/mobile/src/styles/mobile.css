@@ -380,6 +380,36 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 .ev-color:active { transform: scale(0.92); }
 .ev-color.sel { border-color: var(--text-primary); box-shadow: 0 0 0 2px var(--bg-primary); }
+.ev-freq-seg {
+  flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+}
+.ev-freq {
+  padding: 6px 4px; border-radius: 8px; font-size: 12px;
+  background: var(--bg-secondary); color: var(--text-secondary);
+  border: 1px solid transparent; cursor: pointer;
+}
+.ev-freq.sel {
+  background: var(--accent-soft, rgba(59, 130, 246, 0.15));
+  color: var(--accent, #2563eb); border-color: var(--accent, #2563eb);
+}
+.ev-interval input {
+  width: 52px; padding: 4px 6px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg-secondary);
+  color: var(--text-primary); text-align: center; font-size: 13px;
+}
+.ev-weekdays { flex: 1; display: flex; gap: 6px; }
+.ev-wd {
+  width: 30px; height: 30px; border-radius: 50%; font-size: 12px;
+  background: var(--bg-secondary); color: var(--text-secondary);
+  border: 1px solid var(--border); cursor: pointer;
+}
+.ev-wd.sel {
+  background: var(--accent, #2563eb); color: #fff; border-color: var(--accent, #2563eb);
+}
+.ev-lunar-hint {
+  margin-top: 8px; font-size: 12px; color: var(--text-tertiary);
+  background: var(--bg-secondary); border-radius: 8px; padding: 8px 10px;
+}
 
 .result-section-title {
   font-size: 13px; font-weight: 500; color: var(--text-secondary);

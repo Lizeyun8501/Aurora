@@ -25,15 +25,16 @@ pub use write_path::{
     set_daily_mode, set_daily_template, update_rule, DailyNoteMode, DailyNoteRef, FilterRule,
     NoteKind, TreeNode, DAILY_TEMPLATE_KEY, DEFAULT_DAILY_TEMPLATE,
 };
+pub mod event_store; // DK-CALENDAR-02: 日程事件 KV 存储（Event 一等公民;repeat 03 占位）
 pub mod l3_domain;
 pub mod links; // DK-双向链接S1: wiki链接提取+边索引(出链/反链倒排)
 pub mod mcp_registry; // V23-I5: MCP 数据中枢工具契约（稳定层）
 pub mod mirror; // V23-I2: Mirror 单向导出
 pub mod pinyin; // DK-3.3: 拼音首字母折叠（中文标题模糊召回）
+pub mod repeat_engine;
 pub mod time_machine; // V23-I4: 时间机器快照回溯
 pub mod traits;
-pub mod write_path; // V26 I2/DK-01W: 唯一写入入口（load→apply→原子保存→派生→发事件）
-pub mod event_store; // DK-CALENDAR-02: 日程事件 KV 存储（Event 一等公民;repeat 03 占位）
+pub mod write_path; // V26 I2/DK-01W: 唯一写入入口（load→apply→原子保存→派生→发事件） // DK-CALENDAR-03: 重复日程展开引擎（公历子集;农历=前端 lunar-typescript 反推）
 
 use thiserror::Error;
 

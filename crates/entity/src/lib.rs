@@ -180,7 +180,8 @@ impl Event {
     }
 }
 
-/// 重复规则（CALENDAR-03 引擎入参;02 序列化面占位——字段冻结防 03 破坏性变更）。
+/// 重复规则（CALENDAR-03 引擎入参;02 序列化面占位——字段冻结防 03 破坏性变更。
+/// 03 扩展全 Optional+serde default——旧 JSON（三字段）向后兼容非破坏。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RepeatRule {
     pub freq: RepeatFreq,
@@ -188,6 +189,22 @@ pub struct RepeatRule {
     pub interval: u32,
     /// 截止（None=无限）。
     pub until: Option<DateTime<Utc>>,
+    /// Weekly: 周几集合（0=周一…6=周日;空/None=锚点周几）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by_weekday: Option<Vec<u8>>,
+    /// Monthly: 锚日（1-31;None=锚点日。短月钳制到月末——行业 RRULE 惯例）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub day_of_month: Option<u8>,
+    /// 结束次数（与 until 先到为准）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    /// 农历锚月（1-13;Some+freq=yearly = 农历生日模式——Rust 引擎不展开，
+    /// 由前端 lunar-typescript 反推公历（闰月策略:目标年无对应闰月→次月同日）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lunar_month: Option<u8>,
+    /// 农历锚日（1-30）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lunar_day: Option<u8>,
 }
 
 /// 重复频率（农历生日=Yearly+农历锚点,03 卡落）。
