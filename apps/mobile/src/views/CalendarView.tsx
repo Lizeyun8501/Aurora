@@ -91,10 +91,10 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
 
   // 农历/节假日 — lunar-typescript（6tail, 含法定节假日+调休数据随库更新）
   /** 格子副标: 法定假日名 > 农历节日 > 公历节日 > 节气 > 初一显月名 > 农历日。 */
-  const lunarSub = (d: number): { sub: string; isStat: boolean; isWork: boolean } => {
-    const solar = Solar.fromYmd(y, m + 1, d);
+  const lunarSub = (d: number, yy = y, mm = m): { sub: string; isStat: boolean; isWork: boolean } => {
+    const solar = Solar.fromYmd(yy, mm + 1, d);
     const lunar = solar.getLunar();
-    const h = HolidayUtil.getHoliday(y, m + 1, d);
+    const h = HolidayUtil.getHoliday(yy, mm + 1, d);
     let sub: string;
     if (h) sub = h.getName();
     else if (lunar.getFestivals().length) sub = lunar.getFestivals()[0];
@@ -195,12 +195,21 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
     <div className="view">
       <div className="card">
         <div className="cal-head">
-          <button className="icon-btn" onClick={() => setMonthOffset((o) => o - 1)} aria-label="上月">{I.back}</button>
-          <span className="cal-title" role="button" aria-label="查看年视图"
-            onClick={() => setMode('year')}><span className="cal-title-y">{y}</span> 年 <b className="cal-title-m">{m + 1}</b> 月</span>
-          <button className="icon-btn" onClick={() => setMonthOffset((o) => o + 1)} aria-label="下月">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-          </button>
+          {mode !== 'year' ? (
+            <button className="icon-btn" onClick={() => setMonthOffset((o) => o - 1)} aria-label="上月">{I.back}</button>
+          ) : <span className="cal-head-spacer" />}
+          {mode === 'year' ? (
+            <span className="cal-title cal-title-year" role="button" aria-label="返回月视图"
+              onClick={() => setMode('month')}><span className="cal-title-y">{String(y).slice(0, 2)}</span><b className="cal-title-m">{String(y).slice(2)}</b></span>
+          ) : (
+            <span className="cal-title" role="button" aria-label="查看年视图"
+              onClick={() => setMode('year')}><span className="cal-title-y">{y}</span> 年 <b className="cal-title-m">{m + 1}</b> 月</span>
+          )}
+          {mode !== 'year' ? (
+            <button className="icon-btn" onClick={() => setMonthOffset((o) => o + 1)} aria-label="下月">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+          ) : <span className="cal-head-spacer" />}
           <div className="cal-mode-seg" role="tablist" aria-label="日历视图切换">
             <button className={`nt-seg ${mode === 'year' ? 'on' : ''}`} role="tab" aria-selected={mode === 'year'} onClick={() => setMode('year')}>年</button>
             <button className={`nt-seg ${mode === 'month' ? 'on' : ''}`} role="tab" aria-selected={mode === 'month'} onClick={() => setMode('month')}>月</button>
@@ -285,24 +294,55 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
           );
         })()}
         {mode === 'year' && (() => {
-          /** DK-CALENDAR-04 任务 2: 年视图——12 月缩略格（月名+密度微标）。
+          /** DK-CALENDAR-04 任务 2 + CALENDAR-VIVO 复刻（10-31 11:33 用户单图再报）:
+           * 年视图=12 个真·迷你月历格（月标题 01..12 粗+周日开头星期行+日期数字
+           * 网格+事件红下划线+节日红数字+当月标题红）——vivo 规格书级复刻。
            * 点月格→monthOffset 定位+切月视图。 */
           const y2 = view.getFullYear();
+          const nowLunar = Lunar.fromDate(new Date());
           return (
-            <div className="year-grid" key={y2}>
-              {Array.from({ length: 12 }, (_, i) => {
-                const mFrom = new Date(y2, i, 1);
-                const mTo = new Date(y2, i + 1, 0, 23, 59, 59);
-                const cnt = expandAll(events, mFrom, mTo).length;
-                return (
-                  <button key={i} className={`year-month ${y2 === now.getFullYear() && i === now.getMonth() ? 'cur' : ''}`}
-                    aria-label={`进入 ${y2} 年 ${i + 1} 月`}
-                    onClick={() => { setMonthOffset((y2 - now.getFullYear()) * 12 + i - now.getMonth()); setMode('month'); }}>
-                    <span className="ym-name">{i + 1} 月</span>
-                    <span className="ym-dots">{cnt > 0 && Array.from({ length: Math.min(cnt, 6) }, (_, j) => <i key={j} className="ym-dot" />)}</span>
-                  </button>
-                );
-              })}
+            <div className="year-vivo" key={y2}>
+              <div className="year-lunar-band">
+                — {nowLunar.getYearInGanZhi()}{nowLunar.getYearShengXiao()}年 — 农历{nowLunar.getDayInChinese()} —
+              </div>
+              <div className="year-grid">
+                {Array.from({ length: 12 }, (_, i) => {
+                  const mFrom = new Date(y2, i, 1);
+                  const mTo = new Date(y2, i + 1, 0, 23, 59, 59);
+                  const dim = mTo.getDate();
+                  const lead = mFrom.getDay(); // 周日开头（vivo 规格书——区别月视图的周一开头）
+                  /** 事件日集合（红下划线标）——expandAll 覆盖整月。 */
+                  const evDays = new Set<number>();
+                  for (const inst of expandAll(events, mFrom, mTo)) {
+                    const ds = inst.start instanceof Date ? inst.start : new Date(inst.start);
+                    if (ds.getFullYear() === y2 && ds.getMonth() === i) evDays.add(ds.getDate());
+                  }
+                  const isCur = y2 === now.getFullYear() && i === now.getMonth();
+                  return (
+                    <button key={i} className={`year-month ${isCur ? 'cur' : ''}`}
+                      aria-label={`进入 ${y2} 年 ${i + 1} 月`}
+                      onClick={() => { setMonthOffset((y2 - now.getFullYear()) * 12 + i - now.getMonth()); setMode('month'); }}>
+                      <span className="ym-name">{String(i + 1).padStart(2, '0')}</span>
+                      <span className="ym-week">
+                        {['日', '一', '二', '三', '四', '五', '六'].map((w) => <i key={w}>{w}</i>)}
+                      </span>
+                      <span className="ym-dates">
+                        {Array.from({ length: lead }, (_, k) => <i key={`e${k}`} />)}
+                        {Array.from({ length: dim }, (_, k) => {
+                          const d = k + 1;
+                          const ls = lunarSub(d, y2, i);
+                          const hasEv = evDays.has(d);
+                          const isToday = isCur && d === now.getDate();
+                          return (
+                            <i key={d} className={`${hasEv ? 'ev' : ''} ${ls.isStat ? 'fest' : ''} ${isToday ? 'today' : ''}`}
+                            >{d}</i>
+                          );
+                        })}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           );
         })()}

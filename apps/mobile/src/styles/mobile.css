@@ -1267,3 +1267,58 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   border: 1.5px solid var(--cal-accent); font-weight: 500;
 }
 .view:has(.cal-head) .btn-primary:active { background: var(--cal-accent-soft); }
+
+/* ============================================================
+   CALENDAR-VIVO 年视图复刻（11:33 用户单图再报——规格书级）
+   12 真迷你月历: 白卡 16px 圆角+周日开头星期行+日期数字网格
+   +事件红下划线+节日红数字+当月标题红+顶部农历红带+年大字。
+   ============================================================ */
+/* 年大字（20 黑+26 红 34px） */
+.cal-title-year { font-weight: 200; }
+.cal-title-year .cal-title-y { font-size: 24px; color: var(--text-primary); font-weight: 400; }
+.cal-title-year .cal-title-m { font-size: 34px; font-weight: 800; letter-spacing: 1px; }
+.cal-head-spacer { flex: 0 0 36px; }
+
+/* 农历红带（— 丙午马年 — 农历初一 —） */
+.year-lunar-band {
+  text-align: center; color: var(--cal-accent); font-size: 12.5px;
+  letter-spacing: 1px; padding: 6px 0 4px; font-weight: 500;
+}
+
+.year-vivo .year-grid { gap: 10px; margin-top: 4px; }
+.year-vivo .year-month {
+  background: var(--bg-primary); border: none; outline: none;
+  border-radius: 12px; padding: 10px 8px 8px;
+  gap: 3px; box-shadow: none;
+}
+[data-theme='dark'] .year-vivo .year-month { background: var(--bg-secondary); box-shadow: none; }
+.year-vivo .ym-name {
+  font-size: 15px; font-weight: 700; color: var(--text-primary);
+  font-variant-numeric: tabular-nums; letter-spacing: 0.5px;
+}
+.year-vivo .year-month.cur .ym-name { color: var(--cal-accent); }
+
+/* 迷你星期行+日期网格（7 列） */
+.ym-week, .ym-dates { display: grid; grid-template-columns: repeat(7, 1fr); width: 100%; }
+.ym-week i {
+  font-style: normal; font-size: 8.5px; color: var(--text-tertiary);
+  text-align: center; padding: 1px 0; font-weight: 500;
+}
+.ym-dates { margin-top: 2px; }
+.ym-dates i {
+  font-style: normal; font-size: 10.5px; color: var(--text-secondary);
+  text-align: center; line-height: 1.7; min-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+/* 事件日: vivo 红下划线（贴数字底） */
+.ym-dates i.ev {
+  color: var(--text-primary); font-weight: 600;
+  text-decoration: underline; text-decoration-color: var(--cal-accent);
+  text-decoration-thickness: 1.5px; text-underline-offset: 2px;
+}
+/* 节日红数字 */
+.ym-dates i.fest { color: var(--cal-accent); }
+/* 今日（vivo: 隐晦红提示） */
+.ym-dates i.today { color: var(--cal-accent); font-weight: 800; }
+/* 事件红下划线补强（VLM 对拍: 纯红字→红下划线——thick+offset 已设,补非事件日不可红字防混淆） */
+.ym-dates i.ev:not(.fest) { color: var(--text-primary); }
