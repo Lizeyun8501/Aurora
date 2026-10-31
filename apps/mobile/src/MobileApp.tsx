@@ -446,8 +446,8 @@ export default function App() {
             )}
           </main>
 
-          {/* 悬浮捕获 — 永不隐藏 */}
-          <button className="fab" onClick={() => setCaptureOpen(true)} aria-label="捕获">
+          {/* 悬浮捕获 — 永不隐藏（日历页 vivo 红域限定） */}
+          <button className={`fab ${view === 'calendar' ? 'fab-cal' : ''}`} onClick={() => setCaptureOpen(true)} aria-label="捕获">
             {I.plus}
           </button>
 

@@ -9,7 +9,7 @@
  * 无模块顶层执行依赖）——环安全（MobileApp ↔ views 双向 import 的
  * React 组件环是既有生态常见形态）。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Solar, HolidayUtil, Lunar } from 'lunar-typescript';
 import {
   type Task, TASK_GROUPS, I, listNotesTitled, NoteCard, EmptyState,
@@ -45,6 +45,12 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   /** DK-CALENDAR-04 任务 3: 列表页筛选+搜索。 */
   const [listFilter, setListFilter] = useState<'all' | 'linked' | 'birthday'>('all');
   const [listQuery, setListQuery] = useState('');
+  /** CALENDAR-VIVO（10-31）: 当前时刻分钟数——日视图红时间线（30s 刷新;480/1320=08:00/22:00 轴界。 */
+  const [nowMin, setNowMin] = useState(() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); });
+  useEffect(() => {
+    const t = setInterval(() => { const d = new Date(); setNowMin(d.getHours() * 60 + d.getMinutes()); }, 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   const view = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   const y = view.getFullYear();
@@ -191,15 +197,16 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
         <div className="cal-head">
           <button className="icon-btn" onClick={() => setMonthOffset((o) => o - 1)} aria-label="上月">{I.back}</button>
           <span className="cal-title" role="button" aria-label="查看年视图"
-            onClick={() => setMode('year')}>{y} 年 {m + 1} 月</span>
+            onClick={() => setMode('year')}><span className="cal-title-y">{y}</span> 年 <b className="cal-title-m">{m + 1}</b> 月</span>
           <button className="icon-btn" onClick={() => setMonthOffset((o) => o + 1)} aria-label="下月">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
           </button>
           <div className="cal-mode-seg" role="tablist" aria-label="日历视图切换">
+            <button className={`nt-seg ${mode === 'year' ? 'on' : ''}`} role="tab" aria-selected={mode === 'year'} onClick={() => setMode('year')}>年</button>
             <button className={`nt-seg ${mode === 'month' ? 'on' : ''}`} role="tab" aria-selected={mode === 'month'} onClick={() => setMode('month')}>月</button>
             <button className={`nt-seg ${mode === 'week' ? 'on' : ''}`} role="tab" aria-selected={mode === 'week'} onClick={() => setMode('week')}>周</button>
             <button className={`nt-seg ${mode === 'day' ? 'on' : ''}`} role="tab" aria-selected={mode === 'day'} onClick={() => setMode('day')}>日</button>
-            <button className={`nt-seg ${mode === 'list' ? 'on' : ''}`} role="tab" aria-selected={mode === 'list'} onClick={() => setMode('list')}>列表</button>
+            <button className={`nt-seg ${mode === 'list' ? 'on' : ''}`} role="tab" aria-selected={mode === 'list'} onClick={() => setMode('list')}>日程</button>
           </div>
         </div>
         {mode === 'month' && (
@@ -288,7 +295,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 const mTo = new Date(y2, i + 1, 0, 23, 59, 59);
                 const cnt = expandAll(events, mFrom, mTo).length;
                 return (
-                  <button key={i} className="year-month"
+                  <button key={i} className={`year-month ${y2 === now.getFullYear() && i === now.getMonth() ? 'cur' : ''}`}
                     aria-label={`进入 ${y2} 年 ${i + 1} 月`}
                     onClick={() => { setMonthOffset((y2 - now.getFullYear()) * 12 + i - now.getMonth()); setMode('month'); }}>
                     <span className="ym-name">{i + 1} 月</span>
@@ -388,8 +395,13 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 </div>
               );
             })()}
-            {/* 08-22 时段 */}
-            {Array.from({ length: 15 }, (_, i) => i + 8).map((h) => {
+            {/* 08-22 时段（CALENDAR-VIVO: 红当前时间线——今日贯穿） */}
+            <div className="day-axis-hours">
+              {nowMin >= 480 && nowMin <= 1320 && selected === todayStr && (
+                <span className="day-now-line" aria-hidden="true"
+                  style={{ top: `calc((100% / 960) * ${nowMin - 480} + 4px)` }} />
+              )}
+              {Array.from({ length: 15 }, (_, i) => i + 8).map((h) => {
               const items = dayAxis.get(h) ?? [];
               return (
                 <div key={h} className="day-axis-row">
@@ -407,7 +419,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                   </div>
                 </div>
               );
-            })}
+              })}
+            </div>
             {/* 轴外兜底区（8 点前/22 点后/无时刻解析失败）——Leo 10-29 合并为单「更早」/单「更晚」行 */}
             {(() => {
               const early: Array<{ kind: 'task' | 'note' | 'diary' | 'event'; label: string; id: string; key: string; ev?: CalEvent }> = [];

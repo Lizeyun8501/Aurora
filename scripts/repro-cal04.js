@@ -49,7 +49,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   }
 
   // ① 周视图: 7 列+今日列高亮+事件块
-  await page.click('.cal-mode-seg .nt-seg:nth-child(2)'); // 周
+  await page.click('.cal-mode-seg .nt-seg:nth-child(3)'); // 周
   await page.waitForTimeout(400);
   const week = await page.evaluate(() => ({
     cols: document.querySelectorAll('.week-col').length,
@@ -64,7 +64,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   await page.waitForTimeout(400);
   const dayAxis = await page.evaluate(() => ({
     axis: !!document.querySelector('.day-axis'),
-    dayOn: document.querySelectorAll('.cal-mode-seg .nt-seg')[2]?.classList.contains('on'),
+    dayOn: document.querySelectorAll('.cal-mode-seg .nt-seg')[3]?.classList.contains('on'),
   }));
   record('② 周列头→日视图', dayAxis.axis && dayAxis.dayOn, `axis=${dayAxis.axis} 日tab=${dayAxis.dayOn}`);
 
@@ -81,7 +81,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   record('③ 年视图 12 月+点月切月', months12 && backMonth, `月格=${year.months} 回月=${backMonth}`);
 
   // ④ 列表: 分组+筛选+搜索
-  await page.click('.cal-mode-seg .nt-seg:nth-child(4)'); // 列表
+  await page.click('.cal-mode-seg .nt-seg:nth-child(5)'); // 日程
   await page.waitForTimeout(400);
   const list = await page.evaluate(() => ({
     groups: [...document.querySelectorAll('.ev-list-head')].map((e) => e.textContent),
@@ -104,7 +104,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   await page.fill('input[aria-label="日程搜索"]', '');
 
   // ⑤ sheet 提醒段: 勾选 30 分钟+闹钟级+落库往返
-  await page.click('.cal-mode-seg .nt-seg:nth-child(1)'); // 月
+  await page.click('.cal-mode-seg .nt-seg:nth-child(2)'); // 月
   await page.waitForTimeout(300);
   await page.click('.cal-day.today');
   await page.waitForTimeout(200);

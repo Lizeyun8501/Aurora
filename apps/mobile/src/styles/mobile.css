@@ -1157,3 +1157,113 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .sync-item-err { font-size: 12px; color: var(--danger); margin-top: 4px; }
 .sync-mono { font-family: ui-monospace, monospace; font-size: 12px; }
 .sync-fail { color: var(--danger); font-size: 12px; line-height: 1.6; margin-top: 6px; }
+
+/* ============================================================
+   CALENDAR-VIVO 视觉对齐（10-31 用户五图裁决——Leo UI 快修）
+   原则: 日历域局部 OriginOS 风（红 accent/白卡大圆角/胶囊分段/
+   农历节日红/时间线）;app 主体品牌蓝不动。
+   覆盖层策略: 追加不改旧段——回退=删本段。
+   ============================================================ */
+
+/* --- 1 顶栏大标题: 年小灰+月大红（vivo「2026/10」层级） --- */
+.cal-title { font-size: 21px; font-weight: 300; letter-spacing: 0.5px; }
+.cal-title-y { font-size: 16px; color: var(--text-secondary); font-weight: 400; margin-right: 1px; }
+.cal-title-m { font-weight: 700; color: var(--cal-accent); font-size: 24px; margin: 0 1px; }
+
+/* --- 2 分段控制器: 胶囊化+白底选中浮起（vivo 胶囊分段） --- */
+.cal-mode-seg {
+  gap: 0; background: var(--cal-accent-soft); border-radius: 999px; padding: 3px;
+}
+.cal-mode-seg .nt-seg {
+  border-radius: 999px; min-width: 0; padding: 5px 10px; font-size: 12px;
+  color: var(--text-secondary); background: transparent; border: none; box-shadow: none;
+  transition: background 0.18s, box-shadow 0.18s;
+}
+.cal-mode-seg .nt-seg.on {
+  background: var(--bg-primary); color: var(--cal-accent); font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.10);
+}
+
+/* --- 3 月格: 今日红数字大号+事件点贴底+农历灰小字 --- */
+.cal-day-btn { min-height: 52px; padding-top: 5px; }
+.cal-day-btn .cal-num { font-size: 16px; line-height: 1.15; transition: color 0.15s; }
+.cal-day-btn.today .cal-num {
+  color: var(--cal-accent); font-weight: 700; font-size: 18px;
+}
+.cal-day-btn.today::after {
+  content: ''; position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+  width: 4px; height: 4px; border-radius: 50%; background: var(--cal-accent);
+}
+.cal-day-btn.sel .cal-num {
+  background: var(--cal-accent); color: #fff; width: 28px; height: 28px;
+  border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+}
+.cal-day-btn.sel .cal-lunar { display: none; }
+.cal-lunar { font-size: 9.5px; }
+.cal-lunar.fest { color: var(--cal-accent); }
+.cal-ev-dots { margin-top: 1px; }
+.cal-ev-dot { width: 5px; height: 5px; }
+
+/* --- 4 日视图: 定行高容器+红当前时间线（vivo 时间轴红线） --- */
+.day-axis-hours { position: relative; }
+.day-axis-row { min-height: 48px; }
+.day-now-line {
+  position: absolute; left: 46px; right: 4px; height: 0;
+  border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
+}
+.day-now-line::before {
+  content: ''; position: absolute; left: -5px; top: -4px;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--cal-accent);
+  box-shadow: 0 0 0 2px var(--bg-primary);
+}
+.day-axis-time { color: var(--text-tertiary); }
+
+/* --- 5 周视图: 今日列红描边+红周数字 --- */
+.week-col.today { outline: 1.5px solid var(--cal-accent); border-radius: 8px; }
+.week-col.today .week-num { color: var(--cal-accent); font-weight: 700; }
+.week-col-head { border-radius: 8px 8px 0 0; }
+
+/* --- 6 年视图: 月格呼吸+今日月红 --- */
+.year-month { border-radius: 10px; transition: background 0.15s; }
+.year-month:active { background: var(--cal-accent-soft); }
+.year-month.cur .ym-name { color: var(--cal-accent); font-weight: 700; }
+
+/* --- 7 日程列表: 白卡大圆角+阴影+左彩条粗+分组头层级 --- */
+.ev-list-group { margin-top: 14px; }
+.ev-list-head {
+  font-size: 12px; font-weight: 600; color: var(--text-secondary);
+  padding: 0 4px 6px;
+}
+.ev-list-item {
+  background: var(--bg-primary); border-radius: 14px; margin-bottom: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05); border: none;
+  padding: 12px 14px; position: relative; overflow: hidden;
+  align-items: center;
+}
+.ev-list-item::before {
+  content: ''; position: absolute; left: 0; top: 14px; bottom: 14px;
+  width: 4px; border-radius: 0 4px 4px 0; background: var(--cal-accent);
+}
+.ev-list-item .ev-list-time { font-variant-numeric: tabular-nums; color: var(--cal-accent); font-weight: 500; }
+[data-theme='dark'] .ev-list-item { background: var(--bg-secondary); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28); }
+
+/* --- 8 日历页 FAB 红（域限定: view 内含 cal-head 时兄弟 fab——由 tsx 挂类） --- */
+.fab.fab-cal { background: var(--cal-accent); }
+.fab.fab-cal:active { background: var(--cal-accent-pressed); }
+
+/* --- 9 日历卡底色: 浅灰白底衬托白卡（vivo 层次） --- */
+.view:has(.cal-head) { background: var(--cal-bg); }
+
+/* --- 10 VLM 复评 8.5→微调三件（今日蓝底清除/农历呼吸/FAB 红投影+域内主钮白底红字） --- */
+.cal-day.today {
+  background: transparent; color: inherit; width: auto; margin: 0;
+  border-radius: 0; font-weight: 400;
+}
+.cal-day.today.has::after { background: var(--cal-accent); }
+.cal-lunar { font-size: 10px; letter-spacing: 0.3px; }
+.fab.fab-cal { box-shadow: 0 4px 12px rgba(255, 77, 79, 0.3), 0 2px 4px rgba(0, 0, 0, 0.12); }
+.view:has(.cal-head) .btn-primary {
+  background: var(--bg-primary); color: var(--cal-accent);
+  border: 1.5px solid var(--cal-accent); font-weight: 500;
+}
+.view:has(.cal-head) .btn-primary:active { background: var(--cal-accent-soft); }
