@@ -195,7 +195,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   })();
 
   return (
-    <div className="view">
+    <div className={'view' + (mode === 'year' ? ' cal-year-fill' : '')}>
       <div className="card">
         <div className="cal-head">
           {mode !== 'year' ? (
@@ -571,7 +571,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
 
       {/* CALENDAR-VIVO 11-01 20:39 用户修订: FAB 与其他页同位（16/72）+**仅日程**
           （任务菜单已拆——FAB 直开 EventEditorSheet 选中日 09:00 预填）;sheet 开时隐藏。 */}
-      {!eventEditor && (
+      {/* 11-02 07:12: 年模式隐藏 FAB（浏览年语境无创建入口——v27.3 双入口在月/日语境）;sheet 开时隐藏依旧。 */}
+      {!eventEditor && mode !== 'year' && (
         <button
           className="fab fab-cal"
           onClick={() => setEventEditor({

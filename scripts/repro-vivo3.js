@@ -108,6 +108,16 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   await swipe(100); await page.waitForTimeout(400);
   ok('⑤ 下滑→过去一年', (await page.evaluate(() => document.querySelector('.cal-title-year')?.textContent)) === '2026');
 
+  // 11-02 07:12: 年模式 FAB 隐藏+grid 弹性填满（零溢出保持）
+  const fabY = await page.$('.fab-cal');
+  const fill = await page.evaluate(() => {
+    const c = document.querySelector('.content');
+    const view = document.querySelector('.view');
+    return { free: c.scrollHeight <= c.clientHeight + 1, viewH: Math.round(view.getBoundingClientRect().height), fillClass: view.classList.contains('cal-year-fill') };
+  });
+  ok(`⑦ 年模式 FAB 隐藏（fabNull=${!fabY}）+填满类（fill=${fill.fillClass}）`, !fabY && fill.fillClass);
+  ok(`⑦ 年 grid 弹性填满零溢出（viewH=${fill.viewH}, free=${fill.free}）`, fill.free && fill.viewH > 600);
+
   // 22:57 深修终版: 框=定尺寸（42×48 物理解耦）+回今天跨月归位
   await page.click('.cal-mode-seg .nt-seg:nth-child(2)'); await page.waitForTimeout(400);
   await page.click('.cal-day-btn >> nth=10'); await page.waitForTimeout(250);
@@ -120,7 +130,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`⑥ 回今天跨月归位（=${rt}）`, /11 月/.test(rt || '') || /1 月|2 月|3 月/.test(rt || ''));
   await page.click('.cal-day-btn.today'); await page.waitForTimeout(250);
 
-  console.log(`\n=== CALENDAR-VIVO3 验收: ${14 - fail.length}/14 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
+  console.log(`\n=== CALENDAR-VIVO3 验收: ${16 - fail.length}/16 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
   await page.screenshot({ path: '/tmp/vivo3.png' });
   await browser.close();
   process.exit(fail.length || errors.length ? 1 : 0);
