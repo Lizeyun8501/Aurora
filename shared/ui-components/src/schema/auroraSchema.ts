@@ -334,6 +334,74 @@ const baseMarks: Record<string, MarkSpec> = {
       },
     ],
   },
+  /**
+   * 文字颜色标记（VIVO 原子笔记对标·2026-11-01）— 前景色六色板。
+   * 旧文档无该 mark 零影响（mark 追加向后兼容）;与 highlight（背景）正交。
+   * 注: 回读色值经 jsdom/浏览器归一（#dc2626→rgb(220,38,38)）——视觉等价。
+   */
+  fontColor: {
+    attrs: { color: { default: '#dc2626' } },
+    toDOM: (mark: Mark) => [
+      'span',
+      { style: `color: ${mark.attrs.color}` },
+      0,
+    ],
+    parseDOM: [
+      {
+        // style*="color" 兼 fontSize-only span?否——getAttrs 拒空色兜底
+        tag: 'span[style*="color"]',
+        getAttrs: (dom: HTMLElement) => {
+          const c = dom.style.color;
+          return c ? { color: c } : false;
+        },
+      },
+    ],
+  },
+  /**
+   * 字号标记（VIVO 原子笔记对标·2026-11-01）— 四档相对字号。
+   * px 直存（14/17/20/24）;与标题块（heading）正交——行内局部放大。
+   */
+  fontSize: {
+    attrs: { size: { default: '17' } },
+    toDOM: (mark: Mark) => [
+      'span',
+      { style: `font-size: ${mark.attrs.size}px` },
+      0,
+    ],
+    parseDOM: [
+      {
+        tag: 'span[style*="font-size"]',
+        getAttrs: (dom: HTMLElement) => {
+          const px = dom.style.fontSize;
+          const m = px && /^(\d+)px$/.exec(px);
+          return m ? { size: m[1] } : false; // 非 px 字号不识别
+        },
+      },
+    ],
+  },
+  /**
+   * 标记样式（VIVO 原子笔记·Aa 面板「尖括号标记」预设）— ‹ › 包裹+下划线。
+   * toDOM 用 ::before/::after 不可（PM spec DOM 直接节点）——首尾实字+style。
+   */
+  tagMark: {
+    toDOM: () => [
+      'span',
+      { class: 'tag-mark', style: 'text-decoration: underline; font-weight: 600;' },
+      0,
+    ],
+    parseDOM: [{ tag: 'span.tag-mark' }],
+  },
+  /**
+   * 引语样式（VIVO 原子笔记·Aa 面板「双引号引语」预设）— “ ” 包裹+蓝色斜体。
+   */
+  quoteMark: {
+    toDOM: () => [
+      'span',
+      { class: 'quote-mark', style: 'color: #2563eb; font-style: italic;' },
+      0,
+    ],
+    parseDOM: [{ tag: 'span.quote-mark' }],
+  },
 };
 
 // addListNodes: 注入 bullet_list/ordered_list/list_item（要求 OrderedMap）

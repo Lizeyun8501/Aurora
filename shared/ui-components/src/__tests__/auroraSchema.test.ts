@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest';
+import { DOMParser, DOMSerializer } from 'prosemirror-model';
 import { auroraSchema, AURORA_BLOCK_TYPES } from '../schema/auroraSchema';
+
+/** PM HTML 往返工具（doc→HTML→doc）。 */
+const proseDocToHtml = (doc: import('prosemirror-model').Node): string => {
+  const frag = DOMSerializer.fromSchema(auroraSchema).serializeFragment(doc.content);
+  const div = document.createElement('div');
+  div.appendChild(frag);
+  return div.innerHTML;
+};
+const proseHtmlToDoc = (html: string): import('prosemirror-model').Node => {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  return DOMParser.fromSchema(auroraSchema).parse(div);
+};
 
 // DK-0F schema 合并版断言（2026-09-25 editor-uplift）：
 // 实战语义（mobile 版）为基线 —— code_block/horizontal_rule/strong/em
@@ -101,6 +115,87 @@ describe('auroraSchema', () => {
     const highlight = auroraSchema.marks.highlight;
     expect(highlight).toBeDefined();
     expect(highlight?.spec.attrs).toHaveProperty('color');
+  });
+
+  // ── VIVO 原子笔记对标（2026-11-01）────────────────────────────
+
+  it('fontColor mark: 定义+HTML 往返（VIVO 原子笔记·文字颜色）', () => {
+    const fc = auroraSchema.marks.fontColor;
+    expect(fc).toBeDefined();
+    expect(fc?.spec.attrs).toHaveProperty('color');
+    // toDOM: span+style color
+    const doc = auroraSchema.node('doc', null, [
+      auroraSchema.node('paragraph', null, [
+        auroraSchema.text('红色重点', [auroraSchema.mark('fontColor', { color: '#dc2626' })]),
+      ]),
+    ]);
+    const html = proseDocToHtml(doc);
+    // jsdom/浏览器 style 归一: #dc2626 → rgb(220, 38, 38)（视觉等价）
+    expect(html).toContain('color: rgb(220, 38, 38)');
+    // parseDOM: 回读同色（rgb 归一形态）
+    const back = proseHtmlToDoc(html);
+    const mark = back.firstChild?.firstChild?.marks.find((m) => m.type.name === 'fontColor');
+    expect(mark?.attrs.color).toBe('rgb(220, 38, 38)');
+  });
+
+  it('fontSize mark: 定义+HTML 往返（VIVO 原子笔记·字号调节）', () => {
+    const fs = auroraSchema.marks.fontSize;
+    expect(fs).toBeDefined();
+    expect(fs?.spec.attrs).toHaveProperty('size');
+    const doc = auroraSchema.node('doc', null, [
+      auroraSchema.node('paragraph', null, [
+        auroraSchema.text('大字', [auroraSchema.mark('fontSize', { size: '24' })]),
+      ]),
+    ]);
+    const html = proseDocToHtml(doc);
+    expect(html).toContain('font-size: 24px');
+    const back = proseHtmlToDoc(html);
+    const mark = back.firstChild?.firstChild?.marks.find((m) => m.type.name === 'fontSize');
+    expect(mark?.attrs.size).toBe('24');
+  });
+
+  it('fontSize parseDOM: 非 px 字号不误判（false 拒收）', () => {
+    const html = '<p><span style="font-size: 2em">em 字号</span> 后文</p>';
+    const back = proseHtmlToDoc(html);
+    const spanNode = back.firstChild?.firstChild;
+    expect(spanNode?.marks.find((m) => m.type.name === 'fontSize')).toBeUndefined();
+  });
+
+  it('fontColor+fontSize+highlight 可叠加（三 mark 正交）', () => {
+    const doc = auroraSchema.node('doc', null, [
+      auroraSchema.node('paragraph', null, [
+        auroraSchema.text('复合', [
+          auroraSchema.mark('fontColor', { color: '#2563eb' }),
+          auroraSchema.mark('fontSize', { size: '20' }),
+          auroraSchema.mark('highlight', { color: '#fef08a' }),
+        ]),
+      ]),
+    ]);
+    const html = proseDocToHtml(doc);
+    const back = proseHtmlToDoc(html);
+    const marks = back.firstChild?.firstChild?.marks ?? [];
+    expect(marks.map((m) => m.type.name).sort()).toEqual(['fontColor', 'fontSize', 'highlight']);
+  });
+
+  it('旧文档零影响: 无新 mark 的 doc 正常解析（向后兼容）', () => {
+    const html = '<p>普通文本</p>';
+    const back = proseHtmlToDoc(html);
+    const marks = back.firstChild?.firstChild?.marks ?? [];
+    expect(marks.length).toBe(0);
+  });
+
+  it('tagMark/quoteMark（Aa 面板预设）: class 往返', () => {
+    expect(auroraSchema.marks.tagMark).toBeDefined();
+    expect(auroraSchema.marks.quoteMark).toBeDefined();
+    const doc = auroraSchema.node('doc', null, [
+      auroraSchema.node('paragraph', null, [
+        auroraSchema.text('标记词', [auroraSchema.mark('tagMark')]),
+      ]),
+    ]);
+    const html = proseDocToHtml(doc);
+    expect(html).toContain('tag-mark');
+    const back = proseHtmlToDoc(html);
+    expect(back.firstChild?.firstChild?.marks.find((m) => m.type.name === 'tagMark')).toBeDefined();
   });
 
   it('code_block carries language attr (dk05mv 数据链)', () => {

@@ -6,6 +6,10 @@
  *         pageerror + console.error 双监听 0 错误。
  */
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
+const FS = require('fs');
+const BASE_R19 = FS.existsSync('/home/z/my-project/repos/Aurora/apps/mobile/dist-r19/r19-lab.html')
+  ? 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist-r19/r19-lab.html'
+  : 'file:///home/z/my-project/Aurora/apps/mobile/dist-r19/r19-lab.html';
 
 (async () => {
   const browser = await chromium.launch();
@@ -24,7 +28,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     console.log(`${pass ? 'PASS' : 'FAIL'} ${name}: ${detail}`);
   };
 
-  await page.goto('file:///home/z/my-project/repos/Aurora/apps/mobile/dist-r19/r19-lab.html');
+  await page.goto(BASE_R19);
   await page.waitForFunction(() => window.__editorStatus === 'rich', null, { timeout: 15000 });
   record('lab rich 态加载', true, 'editorStatus=rich');
 

@@ -665,17 +665,74 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 .editor-toolbar::-webkit-scrollbar { display: none; }
 
-.tb-btn {
-  flex: 0 0 auto;
-  min-width: 40px; height: 40px;
-  display: flex; align-items: center; justify-content: center;
-  border: none; border-radius: 8px;
-  background: transparent; color: var(--text-secondary);
-  font-size: 14px; cursor: pointer;
-}
+.tb-btn { flex: 0 0 auto; min-width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 14px; cursor: pointer; }
 .tb-btn:active { background: var(--bg-secondary); }
 .tb-btn.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
 .tb-sep { flex: 0 0 1px; height: 20px; margin: 0 6px; background: var(--border); }
+
+/* ============================================================
+   VIVO 原子笔记对标（2026-11-01）— 文字色/字号/高亮弹出组
+   ============================================================ */
+.tb-pop-wrap { position: relative; flex: 0 0 auto; display: flex; }
+.tb-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
+  display: flex; gap: 4px; align-items: center;
+  padding: 6px; border-radius: 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+.tb-swatch {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.1); cursor: pointer;
+}
+.tb-swatch:active { transform: scale(0.88); }
+.tb-pop-reset {
+  min-width: 28px; height: 24px; padding: 0 6px;
+  border-radius: 12px; border: 1px solid var(--border);
+  background: var(--bg-secondary); color: var(--text-tertiary);
+  font-size: 11px; cursor: pointer;
+}
+.tb-size {
+  min-width: 30px; height: 28px; padding: 0 4px;
+  border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg-secondary); color: var(--text-secondary);
+  font-size: 12px; cursor: pointer;
+}
+.tb-size:active { background: var(--brand-soft); color: var(--brand); }
+
+/* Aa 面板预设样式块（原子笔记·样式预设渲染态） */
+span.tag-mark::before { content: '‹'; color: var(--text-tertiary); margin-right: 1px; }
+span.tag-mark::after { content: '›'; color: var(--text-tertiary); margin-left: 1px; }
+span.quote-mark::before { content: '“'; margin-right: 1px; }
+span.quote-mark::after { content: '”'; margin-left: 1px; }
+
+/* 样式预设面板（Aa 弹组） */
+.tb-style-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  padding: 6px; border-radius: 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+.tb-style-btn {
+  min-width: 64px; height: 34px; padding: 0 8px;
+  border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg-secondary); cursor: pointer;
+  font-size: 11px; color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+}
+.tb-style-btn:active { border-color: var(--brand); color: var(--brand); }
+.tb-style-btn.blockquote-prev { border-left: 3px solid #dc2626; }
+.tb-style-btn.tag-prev { text-decoration: underline; font-weight: 600; }
+.tb-style-btn.tag-prev::before { content: '‹'; }
+.tb-style-btn.tag-prev::after { content: '›'; }
+.tb-style-btn.quote-prev { color: #2563eb; font-style: italic; }
+.tb-style-btn.quote-prev::before { content: '“'; }
+.tb-style-btn.quote-prev::after { content: '”'; }
+.tb-style-btn.hl-prev { background: #fef08a; color: var(--text-primary); border: none; }
+.tb-style-btn.red-prev { color: #dc2626; font-weight: 800; }
 
 /* ============================================================
    编辑画布 — V19 §1.2 字号层级（正文 15px/1.5）

@@ -468,12 +468,44 @@ function FloatingMenu({ view }: { view: EditorView | null }) {
         runCmd(view, setBlockType(auroraSchema.nodes.heading, { level: 2 })))}
       {btn('</>', '代码', () =>
         runCmd(view, toggleMark(auroraSchema.marks.code)))}
+      {/* 原子笔记对标: 选中即高亮（默认黄） */}
+      <button
+        title="高亮"
+        aria-label="高亮"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => runCmd(view, toggleMark(auroraSchema.marks.highlight, { color: '#fef08a' }))}
+        style={{ fontWeight: 700, boxShadow: 'inset 0 -0.45em #fef08a' }}
+      >
+        ▮
+      </button>
+      {/* 原子笔记对标: 选中即红色 */}
+      <button
+        title="红色文字"
+        aria-label="红色文字"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => runCmd(view, toggleMark(auroraSchema.marks.fontColor, { color: '#dc2626' }))}
+        style={{ color: '#dc2626', fontWeight: 800, textDecoration: 'underline' }}
+      >
+        A
+      </button>
     </div>
   );
 }
 
 export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: number }) {
   const { marks, blocks, canUndo, canRedo } = useToolbarState(view, tick);
+  // VIVO 原子笔记对标（2026-11-01）：文字色/字号/高亮三弹出组。
+  const [pop, setPop] = useState<'color' | 'size' | 'hl' | 'style' | null>(null);
+  const FONT_COLORS = ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#2563eb', '#7c3aed', '#475569'];
+  const HL_COLORS = ['#fef08a', '#bbf7d0', '#bae6fd', '#fbcfe8', '#fed7aa', '#e9d5ff'];
+  const SIZES: Array<[string, string]> = [['14', 'S'], ['17', 'M'], ['20', 'L'], ['24', 'XL']];
+  /** 正法清 mark：removeMark（选区范围）;空选区清 storedMarks 由 PM next 命令态兜底。 */
+  const clearMark = (markName: 'fontColor' | 'highlight') => {
+    if (!view) return;
+    const { from, to } = view.state.selection;
+    view.dispatch(view.state.tr.removeMark(from, to, auroraSchema.marks[markName]));
+    setPop(null);
+  };
 
   const btn = (
     label: string,
@@ -525,6 +557,105 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                   : undefined,
         ),
       )}
+      <span className="tb-sep" />
+      {/* 原子笔记对标：文字色（A 红）/字号（A⁺）/高亮（▮）三弹出组。 */}
+      <div className="tb-pop-wrap">
+        {btn('A', '文字颜色', marks.has('fontColor'), () => setPop(pop === 'color' ? null : 'color'),
+          { color: '#dc2626', fontWeight: 800, textDecoration: 'underline' })}
+        {pop === 'color' && (
+          <div className="tb-pop" role="menu" aria-label="文字色板">
+            <button className="tb-pop-reset" title="清除颜色"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => clearMark('fontColor')}>无</button>
+            {FONT_COLORS.map((c) => (
+              <button key={c} className="tb-swatch" title={`文字色 ${c}`} aria-label={`文字色 ${c}`}
+                style={{ background: c }}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.fontColor, { color: c })); setPop(null); }} />
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="tb-pop-wrap">
+        {btn('A⁺', '字号', marks.has('fontSize'), () => setPop(pop === 'size' ? null : 'size'),
+          { fontSize: 15, fontWeight: 700 })}
+        {pop === 'size' && (
+          <div className="tb-pop" role="menu" aria-label="字号档位">
+            {SIZES.map(([px, label]) => (
+              <button key={px} className="tb-size" title={`${px}px`}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  if (!view) return;
+                  const { from, to } = view.state.selection;
+                  view.dispatch(view.state.tr.removeMark(from, to, auroraSchema.marks.fontSize));
+                  runCmd(view, toggleMark(auroraSchema.marks.fontSize, { size: px }));
+                  setPop(null);
+                }}>{label}</button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="tb-pop-wrap">
+        {btn('▮', '高亮', marks.has('highlight'), () => setPop(pop === 'hl' ? null : 'hl'),
+          { background: 'linear-gradient(transparent 55%, #fef08a 55%)' })}
+        {pop === 'hl' && (
+          <div className="tb-pop" role="menu" aria-label="高亮色板">
+            <button className="tb-pop-reset" title="清除高亮"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => clearMark('highlight')}>无</button>
+            {HL_COLORS.map((c) => (
+              <button key={c} className="tb-swatch" title={`高亮 ${c}`} aria-label={`高亮 ${c}`}
+                style={{ background: c }}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.highlight, { color: c })); setPop(null); }} />
+            ))}
+          </div>
+        )}
+      </div>
+      {/* 原子笔记 Aa 面板对标: 六样式预设（普通/引用/标记/引语/高亮/红强调）。 */}
+      <div className="tb-pop-wrap">
+        {btn('Aa', '样式预设', false, () => setPop(pop === 'style' ? null : 'style'),
+          { fontSize: 13, fontWeight: 700 })}
+        {pop === 'style' && (
+          <div className="tb-style-pop" role="menu" aria-label="样式预设面板">
+            <button className="tb-style-btn" title="普通文本"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                if (!view) return;
+                const { from, to } = view.state.selection;
+                const tr = view.state.tr;
+                ['fontColor', 'highlight', 'tagMark', 'quoteMark'].forEach((n) =>
+                  tr.removeMark(from, to, auroraSchema.marks[n]));
+                view.dispatch(tr);
+                setPop(null);
+              }}>普通</button>
+            <button className="tb-style-btn blockquote-prev" title="引用块（红竖线）"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { runCmd(view, wrapIn(auroraSchema.nodes.blockquote)); setPop(null); }}>引用</button>
+            <button className="tb-style-btn tag-prev" title="标记（‹› 包裹+下划线）"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.tagMark)); setPop(null); }}>标记</button>
+            <button className="tb-style-btn quote-prev" title="引语（“” 蓝色斜体）"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.quoteMark)); setPop(null); }}>引语</button>
+            <button className="tb-style-btn hl-prev" title="高亮背景（黄）"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.highlight, { color: '#fef08a' })); setPop(null); }}>高亮</button>
+            <button className="tb-style-btn red-prev" title="红色强调（红+粗）"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                if (!view) return;
+                const { from, to } = view.state.selection;
+                const tr = view.state.tr;
+                tr.removeMark(from, to, auroraSchema.marks.fontColor);
+                tr.addMark(from, to, auroraSchema.mark('fontColor', { color: '#dc2626' }));
+                tr.addMark(from, to, auroraSchema.mark('strong'));
+                view.dispatch(tr);
+                setPop(null);
+              }}>红强调</button>
+          </div>
+        )}
+      </div>
       <span className="tb-sep" />
       {LIST_BTNS.map((b) => btn(b.label, b.title, blocks.has(b.key), () => runCmd(view, b.cmd)))}
       <span className="tb-sep" />
