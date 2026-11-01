@@ -514,7 +514,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
           </div>
         )}
         {mode === 'month' && (selected !== todayStr || yearDelta !== 0) && (
-          <button className="btn btn-text btn-block" style={{ marginTop: 4 }} onClick={() => { setSelected(todayStr); setYearDelta(0); }}>
+          <button className="btn btn-text btn-block" style={{ marginTop: 4 }} onClick={() => { setSelected(todayStr); setYearDelta(0); setMonthOffset(0); }}>
             回到今天
           </button>
         )}

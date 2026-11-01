@@ -108,7 +108,19 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   await swipe(100); await page.waitForTimeout(400);
   ok('⑤ 下滑→过去一年', (await page.evaluate(() => document.querySelector('.cal-title-year')?.textContent)) === '2026');
 
-  console.log(`\n=== CALENDAR-VIVO3 验收: ${12 - fail.length}/12 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
+  // 22:57 深修终版: 框=定尺寸（42×48 物理解耦）+回今天跨月归位
+  await page.click('.cal-mode-seg .nt-seg:nth-child(2)'); await page.waitForTimeout(400);
+  await page.click('.cal-day-btn >> nth=10'); await page.waitForTimeout(250);
+  const bfs = await page.evaluate(() => { const bf = getComputedStyle(document.querySelector('.cal-day-btn.sel'), '::before'); return { w: bf.width, h: bf.height }; });
+  ok(`⑥ 框定尺寸居中（${bfs.w}×${bfs.h}——任何 DPR/格浮点零漂移）`, bfs.w === '42px' && bfs.h === '48px');
+  await page.click('button[aria-label="下月"]'); await page.waitForTimeout(350);
+  await page.click('.cal-day-btn >> nth=3'); await page.waitForTimeout(250);
+  await page.click('button:has-text("回到今天")'); await page.waitForTimeout(400);
+  const rt = await page.evaluate(() => document.querySelector('.cal-title')?.textContent);
+  ok(`⑥ 回今天跨月归位（=${rt}）`, /11 月/.test(rt || '') || /1 月|2 月|3 月/.test(rt || ''));
+  await page.click('.cal-day-btn.today'); await page.waitForTimeout(250);
+
+  console.log(`\n=== CALENDAR-VIVO3 验收: ${14 - fail.length}/14 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
   await page.screenshot({ path: '/tmp/vivo3.png' });
   await browser.close();
   process.exit(fail.length || errors.length ? 1 : 0);

@@ -1444,10 +1444,13 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   border: none; width: 100%; min-width: 0; margin: 0;
   box-shadow: none; min-height: 52px;
 }
-/* 21:40 修订③: 伪元素描框——不占布局/几何全格统一（真机 border 计入+行高浮动的双保险;
-   配 .cal-grid grid-auto-rows 定行高,任何 DPR 下红框绝对等大） */
+/* 22:57 深修终版: 伪元素描框改**定尺寸居中**——与格浮点几何彻底解耦。
+   真源: 用户真机 360dp×DPR3,格宽 (360-32)/7=46.857 非整数,物理像素 140/141
+   逐格取整漂移;inset 相对格=框随格浮点。定宽 42×48+left 50% 平移居中
+   → 42×3=126 物理px 整数,每格绝对同大,任何 DPR/viewport 零漂移。 */
 .cal-day-btn.sel::before {
-  content: ''; position: absolute; inset: 2px 1px;
+  content: ''; position: absolute; left: 50%; top: 2px; transform: translateX(-50%);
+  width: 42px; height: 48px;
   border: 1px solid var(--cal-accent); border-radius: 12px;
   pointer-events: none;
 }
