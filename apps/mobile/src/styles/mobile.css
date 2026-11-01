@@ -267,6 +267,8 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   border-radius: 8px; min-height: 36px; padding: 0 14px; font-size: 13px; font-weight: 500;
 }
 /* VIVO 原子笔记对标（NOTEBOOK-OPT-01）: 右滑收藏——绿色态+左侧钮位。 */
+.note-card.dragging { opacity: 0.55; transform: scale(0.97); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16); z-index: 5; position: relative; }
+.note-card.drag-over { border-top: 2px solid var(--brand); }
 .note-card.swiped-fav { background: var(--brand); border-color: transparent; }
 .note-card.swiped-fav .note-title, .note-card.swiped-fav .note-snippet, .note-card.swiped-fav .note-meta { color: #fff; }
 .swipe-fav {

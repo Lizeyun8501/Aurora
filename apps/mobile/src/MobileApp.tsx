@@ -164,6 +164,28 @@ function saveList<T>(k: string, v: T[]) {
 const K_FAVS = 'aurora.favs';
 const K_RECENT = 'aurora.recent';
 const K_TRASH = 'aurora.trash';
+/** 手动排序 overlay（VIVO 原子笔记 v4·长按拖拽排序对标）——
+ * core list_notes 返回 updated_at 序（3a8545 冻结面不可动）;
+ * localStorage 覆盖层存 id 序列,非命中项按 core 序垫底。
+ * 同 title overlay 惯例（Rust 元数据表落地后迁移）。 */
+const K_ORDER = 'aurora.noteOrder';
+function loadOrder(): string[] {
+  try { return JSON.parse(localStorage.getItem(K_ORDER) ?? '[]') as string[]; } catch { return []; }
+}
+function saveOrder(ids: string[]) {
+  try { localStorage.setItem(K_ORDER, JSON.stringify(ids)); } catch { /* 防御 */ }
+}
+/** 应用手动序: order 命中段按 overlay 序前置,余项按原序垫底。 */
+export function applyManualOrder<T extends { id: string }>(notes: T[], order: string[]): T[] {
+  if (!order.length) return notes;
+  const pos = new Map(order.map((id, i) => [id, i]));
+  return [...notes].sort((a, b) => {
+    const pa = pos.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+    const pb = pos.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+    if (pa !== pb) return pa - pb;
+    return 0; // 同未命中保 stable sort 原序
+  });
+}
 
 /** 任务 — GTD2.0 四分区（V19 §二页面1）。localStorage 演示级存储，
  *  Rust 侧任务表落地后切换 platform API。 */
@@ -1100,6 +1122,11 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
   const [query, setQuery] = useState('');
   const [swipingId, setSwipingId] = useState<string | null>(null);
   const [mode, setMode] = useState<'tree' | 'list'>('tree');
+  /** v4 长按拖拽排序（VIVO 原子笔记对标）: 拖起 id / 落点索引 / 长按定时器 / 手动序 overlay。 */
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [order, setOrder] = useState<string[]>(() => loadOrder());
 
   const refresh = useCallback(() => setNotes(listNotesTitled()), []);
   useEffect(refresh, [refresh]);
@@ -1129,15 +1156,57 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
     );
   }
 
+  const ordered = applyManualOrder(notes, order); // v4 手动序（搜索态保持过滤后原序——手动序仅主导无搜索态）
   const shown = query.trim()
     ? notes.filter((n) => n.title.includes(query.trim()))
-    : notes;
+    : ordered;
 
   const onMove = (e: React.TouchEvent, id: string) => {
     if (!cardTouch.current) return;
     const dx = e.touches[0].clientX - cardTouch.current.x;
     if (dx < -64) setSwipingId(id); // 左滑露删除/加密（既有语义）
     if (dx > 64) setSwipingId(`fav:${id}`); // 右滑露收藏（VIVO 原子笔记·右滑设重要度对标）
+  };
+
+  /** v4 长按拖拽: touchstart 起 350ms 定时器（未到期 touchmove=滑动取消）;拖起后 touchmove 换落点索引。 */
+  const onCardTouchStart = (e: React.TouchEvent, id: string) => {
+    cardTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+    pressTimer.current = setTimeout(() => { setDragId(id); showToast('拖动调整顺序'); }, 350);
+  };
+  const onCardTouchMove = (e: React.TouchEvent, id: string, idx: number) => {
+    if (!cardTouch.current) return;
+    const dx = e.touches[0].clientX - cardTouch.current.x;
+    const dy = e.touches[0].clientY - cardTouch.current.y;
+    if (dragId === null) {
+      // 非拖动态: 位移>10 即取消长按判定（滑动 vs 长按二分）
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+        if (dx < -64) setSwipingId(id);
+        if (dx > 64) setSwipingId(`fav:${id}`);
+      }
+      return;
+    }
+    // 拖动态: 记落点
+    if (dragId !== id) setDragOverIdx(idx);
+  };
+  const onCardTouchEnd = () => {
+    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+    cardTouch.current = null;
+    if (dragId !== null) {
+      // 落定: 以 dragOverIdx 为目标位重建序（未记录落点=原位取消）
+      if (dragOverIdx !== null && dragOverIdx >= 0) {
+        const ids = applyManualOrder(notes, order).map((n) => n.id);
+        const arr = ids.filter((x) => x !== dragId);
+        const to = Math.min(dragOverIdx, arr.length);
+        arr.splice(to, 0, dragId);
+        setOrder(arr);
+        saveOrder(arr);
+        showToast('顺序已保存');
+      }
+      setDragId(null);
+      setDragOverIdx(null);
+    }
   };
 
   return (
@@ -1166,13 +1235,13 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
         </div>
       ) : (
         <div className="note-list">
-          {shown.map((n) => (
+          {shown.map((n, idx) => (
             <div
               key={n.id}
-              className={`note-card ${swipingId === n.id || swipingId === `fav:${n.id}` ? 'swiped' : ''} ${swipingId === `fav:${n.id}` ? 'swiped-fav' : ''}`}
-              onTouchStart={(e) => { cardTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
-              onTouchMove={(e) => onMove(e, n.id)}
-              onTouchEnd={() => { cardTouch.current = null; }}
+              className={`note-card ${swipingId === n.id || swipingId === `fav:${n.id}` ? 'swiped' : ''} ${swipingId === `fav:${n.id}` ? 'swiped-fav' : ''} ${dragId === n.id ? 'dragging' : ''} ${dragOverIdx === idx && dragId !== null && dragId !== n.id ? 'drag-over' : ''}`}
+              onTouchStart={(e) => onCardTouchStart(e, n.id)}
+              onTouchMove={(e) => onCardTouchMove(e, n.id, idx)}
+              onTouchEnd={onCardTouchEnd}
               onClick={() => {
                 // 滑动态: 点 body=收菜单（原子笔记语义）;非滑动态=进编辑器。
                 if (swipingId === n.id || swipingId === `fav:${n.id}`) { setSwipingId(null); return; }
