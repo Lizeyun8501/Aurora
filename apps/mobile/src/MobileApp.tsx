@@ -446,10 +446,13 @@ export default function App() {
             )}
           </main>
 
-          {/* 悬浮捕获 — 永不隐藏（日历页 vivo 红域限定） */}
-          <button className={`fab ${view === 'calendar' ? 'fab-cal' : ''}`} onClick={() => setCaptureOpen(true)} aria-label="捕获">
-            {I.plus}
-          </button>
+          {/* 悬浮捕获 — 永不隐藏（**日历页除外**——CALENDAR-VIVO 11-01: 日历 FAB 属日历域,
+              由 CalendarView 渲染（日程+任务双入口——不吃笔记捕获流）;其余页保持笔记捕获。 */}
+          {view !== 'calendar' && (
+            <button className="fab" onClick={() => setCaptureOpen(true)} aria-label="捕获">
+              {I.plus}
+            </button>
+          )}
 
           <TabBar current={view} onChange={(v) => setView(v as ViewId)} />
 

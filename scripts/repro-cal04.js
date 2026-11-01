@@ -108,8 +108,9 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   await page.waitForTimeout(300);
   await page.click('.cal-day.today');
   await page.waitForTimeout(200);
-  await page.click('.btn.btn-primary.btn-block:has-text("为这一天添加日程")');
-  await page.waitForTimeout(400);
+  // CALENDAR-VIVO 11-01: 散入口已整合进日历域 FAB 双入口——锚迁移（语义等价）
+  await page.click('.fab.fab-cal'); await page.waitForTimeout(300);
+  await page.click('.fab-mini-ev'); await page.waitForTimeout(400);
   await page.fill('input[aria-label="日程标题"]', '提醒测试日程');
   await page.click('.ev-rem-btn:has-text("30 分钟")');
   await page.waitForTimeout(200);
