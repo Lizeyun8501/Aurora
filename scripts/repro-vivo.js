@@ -32,11 +32,13 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   const segLen = await page.$$eval('.cal-mode-seg .nt-seg', (els) => els.length).catch(() => 0);
   record('② 胶囊分段+五态', segR.includes('999') && segLen === 5, `radius=${segR} 段数=${segLen}`);
 
-  // ③ 选中红圈（今日默认选中——vivo 红底白字圈）
+  // ③ 选中样式（20:39 修订: 红圈→透明底红边框方框,数字黑粗可见）
+  const selCell = await page.$('.cal-day-btn.sel');
+  const sBg = selCell ? await selCell.evaluate((el) => getComputedStyle(el).backgroundColor) : 'none';
+  const sBd = selCell ? await selCell.evaluate((el) => getComputedStyle(el).border) : 'none';
   const selNum = await page.$('.cal-day-btn.sel .cal-num');
-  const sBg = selNum ? await selNum.evaluate((el) => getComputedStyle(el).backgroundColor) : 'none';
-  const sRad = selNum ? await selNum.evaluate((el) => getComputedStyle(el).borderRadius) : 'none';
-  record('③ 选中红圈（今日默认）', sBg === 'rgb(255, 77, 79)' && sRad.includes('50%'), `bg=${sBg} rad=${sRad}`);
+  const sBgc = selNum ? await selNum.evaluate((el) => getComputedStyle(el).backgroundColor) : 'none';
+  record('③ 选中=透明底红边框方框', /rgba\(0, 0, 0, 0\)|transparent/.test(sBg) && /255, 77, 79/.test(sBd) && sBgc === 'rgba(0, 0, 0, 0)', `bg=${sBg} bd=${(sBd ?? '').slice(0, 26)} numBg=${sBgc}`);
 
   // ④ 日视图红当前时间线（今日 08-22 内应渲染）
   await page.click('.cal-mode-seg .nt-seg:nth-child(4)'); // 日

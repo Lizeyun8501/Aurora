@@ -18,29 +18,21 @@ const path = require('path');
   ok(`日历页单 FAB（fab-cal 域内,=${fabN}）`, fabN === 1);
   ok('FAB 为日历红 fab-cal', await page.locator('.fab.fab-cal').count() === 1);
 
-  // 2) 展开双菜单
-  await page.click('.fab.fab-cal'); await page.waitForTimeout(350);
-  ok('展开: mask+双 mini 出现', await page.locator('.fab-mini').count() === 2 && await page.locator('.fab-mask').count() === 1);
-  ok('菜单=日程+任务', (await page.locator('.fab-mini-tx').allTextContents()).join('/') === '日程/任务');
+  // 20:39 修订: FAB 直连日程（双菜单已拆——任务入口取消）
+  await page.click('.fab.fab-cal'); await page.waitForTimeout(450);
+  ok('直开: 无菜单无任务入口', await page.locator('.fab-mini').count() === 0 && await page.locator('.fab-mask').count() === 0);
 
-  // 3) 点「日程」→ EventEditorSheet（09:00 预填）
-  await page.click('.fab-mini-ev'); await page.waitForTimeout(450);
   const evOpen = await page.locator('.sheet-title:has-text("日程")').count() + await page.locator('.sheet:has(input[datetime-local])').count();
   ok('日程→EventEditorSheet 开', evOpen > 0 || /日程/.test(await page.locator('.sheet-title').first().textContent() || ''));
   const dtVal = await page.locator('.sheet input[type="datetime-local"]').first().inputValue().catch(() => '');
   ok(`日程预填 09:00（=${dtVal}）`, /T09:00/.test(dtVal));
   await page.locator('.sheet .icon-btn[aria-label="关闭"]').first().click().catch(() => {}); await page.waitForTimeout(300);
 
-  // 4) 重开点「任务」→ CaptureSheet（due 预填——非空 due 分支）
-  await page.click('.fab.fab-cal'); await page.waitForTimeout(300);
-  await page.click('.fab-mini-tk'); await page.waitForTimeout(450);
+  // 4) 20:39 修订: 任务入口已取消——FAB 只出日程 sheet（不开捕获流）
+  await page.click('.fab.fab-cal'); await page.waitForTimeout(450);
   const capTitle = await page.locator('.sheet-title').first().textContent().catch(() => '');
-  ok(`任务→捕获 sheet due 流（=${capTitle}）`, /快速捕获|任务/.test(capTitle || ''));
+  ok(`FAB 仅日程（标题=${capTitle}, 无任务/捕获流）`, /日程/.test(capTitle || '') && !/快速捕获/.test(capTitle || ''));
   await page.locator('.sheet .icon-btn[aria-label="关闭"]').first().click().catch(() => {}); await page.waitForTimeout(250);
-  // mask 点击收起
-  await page.click('.fab.fab-cal'); await page.waitForTimeout(200);
-  await page.click('.fab-mask').catch(() => {}); await page.waitForTimeout(250);
-  ok('mask 点击收起菜单', await page.locator('.fab-mini').count() === 0);
 
   // 5) 底部散入口已移除
   const oldBtns = await page.locator('button:has-text("为这一天添加任务"), button:has-text("为这一天添加日程")').count();

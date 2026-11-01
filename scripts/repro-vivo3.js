@@ -16,10 +16,16 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     const el = document.querySelector('.cal-day-btn.sel');
     if (!el) return null;
     const cs = getComputedStyle(el);
-    return { bg: cs.backgroundColor, radius: cs.borderRadius, shadow: cs.boxShadow.slice(0, 30) };
+    return { bg: cs.backgroundColor, radius: cs.borderRadius, border: cs.border, shadow: cs.boxShadow.slice(0, 30) };
   });
-  ok(`① 选中=白底方块（bg=${sel?.bg}, r=${sel?.radius}）`, !!sel && /255, 255, 255/.test(sel.bg) && sel.radius === '12px');
-  ok(`① 轻投影浮起（${sel?.shadow}）`, !!sel && /rgba\(0, 0, 0, 0\.14\)/.test(sel?.shadow ?? ""));
+  const num = await page.evaluate(() => {
+    const el = document.querySelector('.cal-day-btn.sel .cal-num');
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    return { bg: cs.backgroundColor, color: cs.color, r: cs.borderRadius, txt: el.textContent };
+  });
+  ok(`① 选中=透明底红边框方框（bg=${sel?.bg}, border=${sel?.border?.slice(0, 24)}）`, !!sel && /rgba\(0, 0, 0, 0\)|transparent/.test(sel.bg) && /255, 77, 79/.test(sel?.border ?? ""));
+  ok(`① 数字黑粗可见（color=${num?.color}, 无红圈 bg=${num?.bg}）`, !!num && num.bg === 'rgba(0, 0, 0, 0)' && num.color === 'rgb(31, 41, 55)' && !!num.txt?.trim());
   const today = await page.evaluate(() => {
     const el = document.querySelector('.cal-day.today, .cal-day-btn.today');
     if (!el) return null;
@@ -37,9 +43,8 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`② 胶囊独立行（inHead=${seg?.inHead}, 宽=${Math.round(seg?.width ?? 0)}px 通栏）`, !!seg && !seg.inHead && (seg.width ?? 0) > 200);
   ok(`② 位置=年月行下方（Δ=${Math.round((seg?.segTop ?? 0) - (seg?.headBottom ?? 0))}px）`, !!seg && (seg.segTop - seg.headBottom) > 0);
 
-  // ③ FAB → 日程 → 全屏 sheet+FAB 消失
-  await page.click('.fab.fab-cal'); await page.waitForTimeout(300);
-  await page.click('.fab-mini-ev'); await page.waitForTimeout(500);
+  // ③ FAB 直连日程（20:39 修订: 无任务菜单）→ 全屏 sheet+FAB 消失
+  await page.click('.fab.fab-cal'); await page.waitForTimeout(500);
   const fs = await page.evaluate(() => {
     const sh = document.querySelector('.sheet.sheet-full');
     if (!sh) return null;
@@ -50,6 +55,15 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`③ 全屏时 FAB 消失（=${fs?.fabN}）`, fs?.fabN === 0);
   await page.locator('.sheet .icon-btn[aria-label="关闭"]').first().click().catch(() => {}); await page.waitForTimeout(350);
   ok('③ 关闭后 FAB 回归', await page.locator('.fab.fab-cal').count() === 1);
+  // ④ FAB 与全局同位+任务菜单已拆
+  const fabPos = await page.evaluate(() => {
+    const f = document.querySelector('.fab.fab-cal');
+    if (!f) return null;
+    const r = f.getBoundingClientRect();
+    return { right: Math.round(390 - r.right), bottom: Math.round(844 - r.bottom) };
+  });
+  ok(`④ FAB 同位全局（right=${fabPos?.right}, bottom=${fabPos?.bottom}）`, !!fabPos && fabPos.right === 16 && fabPos.bottom === 72);
+  ok('④ 无任务菜单/无 mini/无 mask', (await page.locator('.fab-mini').count()) === 0 && (await page.locator('.fab-mask').count()) === 0);
 
   console.log(`\n=== CALENDAR-VIVO3 验收: ${7 - fail.length}/7 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
   await page.screenshot({ path: '/tmp/vivo3.png' });

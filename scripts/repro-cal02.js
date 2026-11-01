@@ -44,9 +44,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   // ② 日历域 FAB 双入口（11-01 整合——原散入口 btn-block 已移除）
   {
     const fab = await page.$('.fab.fab-cal');
-    if (fab) { await fab.click(); await page.waitForTimeout(300); }
-    const evMini = await page.$('.fab-mini-ev');
-    if (evMini) { await evMini.click(); await page.waitForTimeout(400); }
+    if (fab) { await fab.click(); await page.waitForTimeout(400); }
     const sheet = await page.$('.sheet');
     const titleInput = await page.$('.sheet input[aria-label="日程标题"]');
     if (titleInput) { await titleInput.fill('端到端测试日程'); }

@@ -42,8 +42,6 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   const [mode, setMode] = useState<'month' | 'week' | 'day' | 'list' | 'year'>('month');
   /** DK-CALENDAR-02：事件编辑器（null=关;编辑/新建共用 sheet）。 */
   const [eventEditor, setEventEditor] = useState<CalEvent | null>(null);
-  /** CALENDAR-VIVO 11-01 19:48: 日历域 FAB 双入口展开态（日程/任务——不吃笔记捕获流）。 */
-  const [fabOpen, setFabOpen] = useState(false);
   /** DK-CALENDAR-04 任务 3: 列表页筛选+搜索。 */
   const [listFilter, setListFilter] = useState<'all' | 'linked' | 'birthday'>('all');
   const [listQuery, setListQuery] = useState('');
@@ -546,29 +544,17 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
         </div>
       )}
 
-      {/* CALENDAR-VIVO 11-01 19:48 用户指令: 日历域 FAB（右下加号）只做日程+任务——
-          整合原底部散入口（btn-block 两块——已移除）;不吃笔记捕获流。
-          FAB 点击展开双菜单（日程红/任务红→选中日预填）;sheet 打开时收起。 */}
+      {/* CALENDAR-VIVO 11-01 20:39 用户修订: FAB 与其他页同位（16/72）+**仅日程**
+          （任务菜单已拆——FAB 直开 EventEditorSheet 选中日 09:00 预填）;sheet 开时隐藏。 */}
       {!eventEditor && (
-      <button
-        className={`fab fab-cal ${fabOpen ? 'fab-open' : ''}`}
-        onClick={() => { setFabOpen((o) => !o); }}
-        aria-label={fabOpen ? '收起' : '添加日程或任务'} aria-expanded={fabOpen}
-      >{fabOpen ? I.x : I.plus}</button>
-      )}
-      {fabOpen && (
-        <>
-          <div className="fab-mask" onClick={() => setFabOpen(false)} />
-          <button className="fab-mini fab-mini-ev" onClick={() => { setFabOpen(false); setEventEditor({
+        <button
+          className="fab fab-cal"
+          onClick={() => setEventEditor({
             id: '', title: '', start: `${selected}T09:00:00`, end: null,
             all_day: false, location: null, note_id: null, color: 1,
-          }); }} aria-label={`为 ${selected} 添加日程`}>
-            <span className="fab-mini-ic">{I.calendar}</span><span className="fab-mini-tx">日程</span>
-          </button>
-          <button className="fab-mini fab-mini-tk" onClick={() => { setFabOpen(false); onNewTask(selected); }} aria-label={`为 ${selected} 添加任务`}>
-            <span className="fab-mini-ic">{I.check}</span><span className="fab-mini-tx">任务</span>
-          </button>
-        </>
+          })}
+          aria-label={`为 ${selected} 添加日程`}
+        >{I.plus}</button>
       )}
 
       {/* DK-CALENDAR-02：事件编辑 sheet（新建/编辑共用——存/删/关联笔记跳转）。 */}
