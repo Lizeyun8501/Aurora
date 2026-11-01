@@ -1136,7 +1136,8 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
   const onMove = (e: React.TouchEvent, id: string) => {
     if (!cardTouch.current) return;
     const dx = e.touches[0].clientX - cardTouch.current.x;
-    if (dx < -64) setSwipingId(id);
+    if (dx < -64) setSwipingId(id); // 左滑露删除/加密（既有语义）
+    if (dx > 64) setSwipingId(`fav:${id}`); // 右滑露收藏（VIVO 原子笔记·右滑设重要度对标）
   };
 
   return (
@@ -1168,10 +1169,15 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
           {shown.map((n) => (
             <div
               key={n.id}
-              className={`note-card ${swipingId === n.id ? 'swiped' : ''}`}
+              className={`note-card ${swipingId === n.id || swipingId === `fav:${n.id}` ? 'swiped' : ''} ${swipingId === `fav:${n.id}` ? 'swiped-fav' : ''}`}
               onTouchStart={(e) => { cardTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
               onTouchMove={(e) => onMove(e, n.id)}
-              onClick={() => swipingId !== n.id && onOpen(n.id, n.title)}
+              onTouchEnd={() => { cardTouch.current = null; }}
+              onClick={() => {
+                // 滑动态: 点 body=收菜单（原子笔记语义）;非滑动态=进编辑器。
+                if (swipingId === n.id || swipingId === `fav:${n.id}`) { setSwipingId(null); return; }
+                onOpen(n.id, n.title);
+              }}
             >
               <div className="note-card-body">
                 <div className="note-title">
@@ -1222,6 +1228,18 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
                     }}
                   >{n.encryption === 'aes256gcm' ? '解锁' : '加密'}</button>
                 </>
+              )}
+              {swipingId === `fav:${n.id}` && (
+                <button
+                  className="swipe-fav"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFav(n.id);
+                    setSwipingId(null);
+                    showToast(favs.includes(n.id) ? '已取消收藏' : '★ 已收藏');
+                  }}
+                  aria-label={favs.includes(n.id) ? '取消收藏' : '收藏'}
+                >{favs.includes(n.id) ? '取消收藏' : '★ 收藏'}</button>
               )}
             </div>
           ))}
