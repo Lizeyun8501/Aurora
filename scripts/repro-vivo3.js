@@ -81,9 +81,21 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`④ FAB 同位全局（right=${fabPos?.right}, bottom=${fabPos?.bottom}）`, !!fabPos && fabPos.right === 16 && fabPos.bottom === 72);
   ok('④ 无任务菜单/无 mini/无 mask', (await page.locator('.fab-mini').count()) === 0 && (await page.locator('.fab-mask').count()) === 0);
 
-  // 21:40 三修: 年视图面板隐藏/滑动切年
+  // 21:40 三修 + 22:23 深修: 年视图面板隐藏/滑动切年/结构证
   await page.click('.cal-mode-seg .nt-seg:nth-child(1)'); await page.waitForTimeout(400);
   ok('⑤ 年视图无聚合面板', await page.evaluate(() => !!document.querySelector('.year-grid') && !document.querySelector('.almanac') && !document.querySelector('.result-section-title')));
+  // 22:23 深修结构证: 零溢出（滚动容器无 pan 可抢→pointerup 必达）+touch-action none
+  const struct = await page.evaluate(() => {
+    const c = document.querySelector('.content') || document.querySelector('main');
+    const yv = document.querySelector('.year-vivo');
+    return { free: c.scrollHeight <= c.clientHeight + 1, ta: getComputedStyle(yv).touchAction };
+  });
+  ok(`⑤ 年页零溢出+touch-action none（free=${struct.free}, ta=${struct.ta}）`, struct.free && struct.ta === 'none');
+  // 月格点击仍可用（touch-action none 与 click 共存）
+  await page.click('.year-vivo .year-month >> nth=0'); await page.waitForTimeout(350);
+  const backToMonth = await page.evaluate(() => document.querySelector('.cal-mode-seg .nt-seg.on')?.textContent);
+  ok(`⑤ 年页月格点击仍切月（=${backToMonth}）`, backToMonth === '月');
+  await page.click('.cal-mode-seg .nt-seg:nth-child(1)'); await page.waitForTimeout(350);
   const swipe = (dy) => page.evaluate((dy) => {
     const el = document.querySelector('.year-vivo');
     const b = el.getBoundingClientRect();
@@ -96,7 +108,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   await swipe(100); await page.waitForTimeout(400);
   ok('⑤ 下滑→过去一年', (await page.evaluate(() => document.querySelector('.cal-title-year')?.textContent)) === '2026');
 
-  console.log(`\n=== CALENDAR-VIVO3 验收: ${10 - fail.length}/10 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
+  console.log(`\n=== CALENDAR-VIVO3 验收: ${12 - fail.length}/12 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
   await page.screenshot({ path: '/tmp/vivo3.png' });
   await browser.close();
   process.exit(fail.length || errors.length ? 1 : 0);

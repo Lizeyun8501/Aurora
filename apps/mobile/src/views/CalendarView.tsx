@@ -315,6 +315,15 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 yearTouch.current = null;
                 if (Math.abs(dy) > 64 && Math.abs(dx) < 60) setYearDelta((d) => d + (dy < 0 ? 1 : -1));
               }}
+              onPointerCancel={() => { yearTouch.current = null; }}
+              onTouchEnd={(e) => {
+                /* 双通道兜底: touch-action:none 下 touchend 必达（pointer 流个别 ROM 被吞时保底） */
+                const t = yearTouch.current; if (!t) return;
+                const tc = e.changedTouches[0]; if (!tc) return;
+                const dx = tc.clientX - t.x, dy = tc.clientY - t.y;
+                yearTouch.current = null;
+                if (Math.abs(dy) > 64 && Math.abs(dx) < 60) setYearDelta((d) => d + (dy < 0 ? 1 : -1));
+              }}
             >
               <div className="year-lunar-band">
                 — {nowLunar.getYearInGanZhi()}{nowLunar.getYearShengXiao()}年 — 农历{nowLunar.getDayInChinese()} —
