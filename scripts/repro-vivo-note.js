@@ -171,6 +171,25 @@ const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobi
   record('⑦ Aa 预设面板（六块）+标记应用', styleBtns.panel && styleBtns.six === 6 && tagHtml !== 'NONE',
     `面板=${styleBtns.panel} 六块=${styleBtns.six} 标记span="${tagHtml}"`);
 
+  // ⑧ v2 符号 tab: 切 tab→符号 grid 16 项→插入 ✓
+  await page.click('.editor-toolbar button[title="样式预设"]');
+  await page.waitForTimeout(300);
+  const tabState = await page.evaluate(() => ({
+    tabs: document.querySelectorAll('.tb-style-tab').length,
+    styleOn: document.querySelector('.tb-style-tab.on')?.textContent,
+  }));
+  await page.click('.tb-style-tab:has-text("符号")');
+  await page.waitForTimeout(200);
+  const symCount = await page.evaluate(() => document.querySelectorAll('.tb-symbol').length);
+  await page.click('.ProseMirror');
+  await page.keyboard.press('End');
+  await page.click('.tb-symbol[aria-label="插入符号 ★"]');
+  await page.waitForTimeout(300);
+  const starInDoc = await page.evaluate(() =>
+    document.querySelector('.ProseMirror p')?.textContent?.includes('★') || false);
+  record('⑧ 符号 tab（16 项+插入 ★）', tabState.tabs === 2 && symCount === 16 && starInDoc,
+    `tab=${tabState.tabs}/${tabState.styleOn} 符号=${symCount} ★入文=${starInDoc}`);
+
   record('⑥ 零错误', errors.length === 0, errors.length ? errors.slice(0, 2).join(' | ') : '双监听 0');
 
   const failed = results.filter((r) => !r.pass).length;

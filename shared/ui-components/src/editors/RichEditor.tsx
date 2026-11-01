@@ -495,7 +495,9 @@ function FloatingMenu({ view }: { view: EditorView | null }) {
 export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: number }) {
   const { marks, blocks, canUndo, canRedo } = useToolbarState(view, tick);
   // VIVO 原子笔记对标（2026-11-01）：文字色/字号/高亮三弹出组。
-  const [pop, setPop] = useState<'color' | 'size' | 'hl' | 'style' | null>(null);
+  const [pop, setPop] = useState<'color' | 'size' | 'hl' | 'style' | 'symbol' | null>(null);
+  /** Aa 面板内 tab（v2: 文字样式|符号——原子笔记面板结构对标）。 */
+  const [styleTab, setStyleTab] = useState<'style' | 'symbol'>('style');
   const FONT_COLORS = ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#2563eb', '#7c3aed', '#475569'];
   const HL_COLORS = ['#fef08a', '#bbf7d0', '#bae6fd', '#fbcfe8', '#fed7aa', '#e9d5ff'];
   const SIZES: Array<[string, string]> = [['14', 'S'], ['17', 'M'], ['20', 'L'], ['24', 'XL']];
@@ -612,12 +614,35 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
           </div>
         )}
       </div>
-      {/* 原子笔记 Aa 面板对标: 六样式预设（普通/引用/标记/引语/高亮/红强调）。 */}
+      {/* 原子笔记 Aa 面板对标: 「样式|符号」双 tab（v2 符号=图标化分点插入）。 */}
       <div className="tb-pop-wrap">
-        {btn('Aa', '样式预设', false, () => setPop(pop === 'style' ? null : 'style'),
+        {btn('Aa', '样式预设', false, () => { setStyleTab('style'); setPop(pop === 'style' || pop === 'symbol' ? null : 'style'); },
           { fontSize: 13, fontWeight: 700 })}
-        {pop === 'style' && (
+        {(pop === 'style' || pop === 'symbol') && (
           <div className="tb-style-pop" role="menu" aria-label="样式预设面板">
+            <div className="tb-style-tabs" role="tablist">
+              <button className={`tb-style-tab ${styleTab === 'style' ? 'on' : ''}`} role="tab" aria-selected={styleTab === 'style'}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setStyleTab('style')}>文字样式</button>
+              <button className={`tb-style-tab ${styleTab === 'symbol' ? 'on' : ''}`} role="tab" aria-selected={styleTab === 'symbol'}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setStyleTab('symbol')}>符号</button>
+            </div>
+            {styleTab === 'symbol' ? (
+              <div className="tb-symbol-grid">
+                {['✓', '✗', '★', '☆', '♥', '♦', '●', '◆', '■', '▸', '▹', '▪', '☑', '☒', '✦', '※'].map((sym) => (
+                  <button key={sym} className="tb-symbol" title={`插入 ${sym}`} aria-label={`插入符号 ${sym}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      if (!view) return;
+                      const { from, to } = view.state.selection;
+                      view.dispatch(view.state.tr.insertText(sym, from, to));
+                      setPop(null);
+                    }}>{sym}</button>
+                ))}
+              </div>
+            ) : (
+              <div className="tb-style-grid-btns">
             <button className="tb-style-btn" title="普通文本"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
@@ -653,6 +678,8 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                 view.dispatch(tr);
                 setPop(null);
               }}>红强调</button>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -718,7 +718,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* 样式预设面板（Aa 弹组） */
 .tb-style-pop {
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  display: flex; flex-direction: column; gap: 4px; /* v2: tab 头+内容块纵排 */
   padding: 6px; border-radius: 10px;
   background: var(--bg-primary);
   border: 1px solid var(--border);
@@ -741,6 +741,23 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .tb-style-btn.quote-prev::after { content: '”'; }
 .tb-style-btn.hl-prev { background: #fef08a; color: var(--text-primary); border: none; }
 .tb-style-btn.red-prev { color: #dc2626; font-weight: 800; }
+
+/* Aa 面板 v2: tab 头+符号 grid（原子笔记「符号」tab 对标） */
+.tb-style-tabs { display: flex; gap: 4px; margin-bottom: 4px; }
+.tb-style-tab {
+  flex: 1; height: 26px; border-radius: 6px; border: none;
+  background: var(--bg-secondary); color: var(--text-tertiary);
+  font-size: 11px; cursor: pointer;
+}
+.tb-style-tab.on { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+.tb-style-grid-btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.tb-symbol-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.tb-symbol {
+  width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg-secondary); color: var(--text-primary);
+  font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.tb-symbol:active { border-color: var(--brand); color: var(--brand); }
 
 /* ============================================================
    编辑画布 — V19 §1.2 字号层级（正文 15px/1.5）
