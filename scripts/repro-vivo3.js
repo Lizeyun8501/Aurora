@@ -16,7 +16,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     const el = document.querySelector('.cal-day-btn.sel');
     if (!el) return null;
     const cs = getComputedStyle(el);
-    return { bg: cs.backgroundColor, radius: cs.borderRadius, border: cs.border, shadow: cs.boxShadow.slice(0, 30) };
+    return { bg: cs.backgroundColor, radius: cs.borderRadius, border: cs.border, shadow: cs.boxShadow.slice(0, 30), w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) };
   });
   const num = await page.evaluate(() => {
     const el = document.querySelector('.cal-day-btn.sel .cal-num');
@@ -26,6 +26,21 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   });
   ok(`① 选中=透明底红边框方框（bg=${sel?.bg}, border=${sel?.border?.slice(0, 24)}）`, !!sel && /rgba\(0, 0, 0, 0\)|transparent/.test(sel.bg) && /255, 77, 79/.test(sel?.border ?? ""));
   ok(`① 数字黑粗可见（color=${num?.color}, 无红圈 bg=${num?.bg}）`, !!num && num.bg === 'rgba(0, 0, 0, 0)' && num.color === 'rgb(31, 41, 55)' && !!num.txt?.trim());
+  // 21:21 修订①: 等大——另选不同日,方框 w/h 须全等
+  const sizes = [{ w: sel?.w, h: sel?.h }];
+  for (const nth of [5, 18, 28]) {
+    await page.click(`.cal-day-btn >> nth=${nth}`); await page.waitForTimeout(220);
+    sizes.push(await page.evaluate(() => { const r = document.querySelector('.cal-day-btn.sel')?.getBoundingClientRect(); return { w: Math.round(r?.width ?? 0), h: Math.round(r?.height ?? 0) }; }));
+  }
+  const ws = sizes.map((x) => x.w), hs = sizes.map((x) => x.h);
+  const lun = await page.evaluate(() => { const l = document.querySelector('.cal-day-btn.sel .cal-lunar'); return l ? getComputedStyle(l).display : 'none-el'; });
+  ok(`① 方框等大（w=${[...new Set(ws)].join('/')} h=${[...new Set(hs)].join('/')}）`, new Set(ws).size === 1 && new Set(hs).size === 1);
+  ok(`① 农历/节日显示（display=${lun}）`, lun === 'block');
+  // 21:21 修订③: 五段平铺均分
+  const segW = await page.evaluate(() => Array.from(document.querySelectorAll('.cal-mode-seg .nt-seg')).map((b) => Math.round(b.getBoundingClientRect().width)));
+  const spread = Math.max(...segW) - Math.min(...segW);
+  ok(`③ 五段均分（${segW.join(',')} 差=${spread}）`, segW.length === 5 && spread <= 2);
+  await page.click('.cal-day-btn.today'); await page.waitForTimeout(250);
   const today = await page.evaluate(() => {
     const el = document.querySelector('.cal-day.today, .cal-day-btn.today');
     if (!el) return null;

@@ -1267,7 +1267,10 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* --- 2 分段控制器: 胶囊化+白底选中浮起（vivo 胶囊分段） --- */
 .cal-mode-seg {
   gap: 0; background: var(--cal-accent-soft); border-radius: 999px; padding: 3px;
+  display: flex; align-items: stretch;
 }
+/* 21:21 修订③: 五段平铺均分通栏（原内容宽不均——年/日程差远） */
+.cal-mode-seg .nt-seg { flex: 1 1 0; min-width: 0; padding: 5px 0; text-align: center; }
 .cal-mode-seg .nt-seg {
   border-radius: 999px; min-width: 0; padding: 5px 10px; font-size: 12px;
   color: var(--text-secondary); background: transparent; border: none; box-shadow: none;
@@ -1433,20 +1436,24 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
    ============================================================ */
 .cal-day-btn.sel {
   background: transparent; color: var(--text-primary);
-  border: 1.5px solid var(--cal-accent);
-  border-radius: 12px; width: auto; min-width: 40px; margin: 0 1px;
-  box-shadow: none;
+  border: 1.5px solid var(--cal-accent); box-sizing: border-box;
+  border-radius: 12px; width: 100%; min-width: 0; margin: 0;
+  box-shadow: none; height: 52px; min-height: 52px;
 }
 .cal-day-btn.sel .cal-num {
   background: transparent; color: var(--text-primary); font-weight: 700;
   width: auto; height: auto; border-radius: 0; display: revert;
 }
+/* 21:21 修订②: 选中日恢复农历/节日显示（v27.1 红圈时代藏字——方框全格后正常展示） */
+.cal-day-btn.sel .cal-lunar { display: block; }
+/* 21:21 补: 今日被选中时数字仍红（sel 黑字覆盖 today 红的特异性补丁） */
+.cal-day-btn.today.sel .cal-num { color: var(--cal-accent); }
 .cal-day-btn.sel::after { background: var(--cal-accent); }
 .cal-day.today {
   background: transparent; color: inherit; font-weight: 600;
   border-radius: 0; width: auto; margin: 0;
 }
-/* ② 胶囊条: 独立行（年月下通栏） */
+/* ② 胶囊条: 独立行（年月下通栏;21:21 ③ 平铺均分） */
 .cal-mode-seg { margin: 2px 0 6px; padding: 3px; }
 /* ③ 全屏 sheet */
 .sheet.sheet-full {
