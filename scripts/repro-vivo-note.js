@@ -211,6 +211,38 @@ const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobi
   record('⑨ 图文模板 tab（四卡+待办模板结构）', tab3 === 3 && tmplCount === 4 && tmplDoc.h2 && tmplDoc.tasks >= 3,
     `tab=${tab3} 模板卡=${tmplCount} h2=${tmplDoc.h2} 任务=${tmplDoc.tasks} 块=[${tmplDoc.blocks}]`);
 
+  // ⑩ E1 工具栏分组整改: ☰ 块组/＋插入组弹出+功能保活
+  await page.click('.editor-toolbar button[title="块类型"]');
+  await page.waitForTimeout(300);
+  const blockPanel = await page.evaluate(() => ({
+    panel: !!document.querySelector('.tb-style-pop'),
+    items: document.querySelectorAll('.tb-style-pop .tb-style-btn').length,
+  }));
+  await page.click('.tb-style-pop .tb-style-btn[title="标题 1"]');
+  await page.waitForTimeout(400);
+  const h1After = await page.evaluate(() => !!document.querySelector('.ProseMirror h1'));
+  record('⑩a ☰ 块组面板（6 项+H1 应用）', blockPanel.panel && blockPanel.items >= 6 && h1After,
+    `面板=${blockPanel.panel} 项=${blockPanel.items} H1=${h1After}`);
+
+  await page.click('.editor-toolbar button[title="插入"]');
+  await page.waitForTimeout(300);
+  const insPanel = await page.evaluate(() => ({
+    panel: !!document.querySelector('.tb-style-pop'),
+    items: document.querySelectorAll('.tb-style-pop .tb-style-btn').length,
+  }));
+  await page.click('.tb-style-pop .tb-style-btn[title="无序列表"]');
+  await page.waitForTimeout(400);
+  const ulAfter = await page.evaluate(() => !!document.querySelector('.ProseMirror ul'));
+  record('⑩b ＋ 插入组面板（列表+HR/公式/流程图收纳）+无序列表应用', insPanel.panel && insPanel.items >= 6 && ulAfter,
+    `面板=${insPanel.panel} 项=${insPanel.items} ul=${ulAfter}`);
+
+  // ⑩c 平铺残留清零断言: 旧平铺钮（H1/分割线等）不再直接在 editor-toolbar 层
+  const flatResidue = await page.evaluate(() => {
+    const bars = Array.from(document.querySelectorAll('.editor-toolbar > .tb-btn'));
+    return bars.filter((b) => ['标题 1', '分割线', '插入公式'].includes(b.title)).length;
+  });
+  record('⑩c 平铺残留清零（30+ 钮→9 钮分组）', flatResidue === 0, `残留=${flatResidue}`);
+
   record('⑥ 零错误', errors.length === 0, errors.length ? errors.slice(0, 2).join(' | ') : '双监听 0');
 
   const failed = results.filter((r) => !r.pass).length;

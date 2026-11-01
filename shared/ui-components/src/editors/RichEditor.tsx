@@ -544,7 +544,7 @@ function FloatingMenu({ view }: { view: EditorView | null }) {
 export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: number }) {
   const { marks, blocks, canUndo, canRedo } = useToolbarState(view, tick);
   // VIVO 原子笔记对标（2026-11-01）：文字色/字号/高亮三弹出组。
-  const [pop, setPop] = useState<'color' | 'size' | 'hl' | 'style' | 'symbol' | 'template' | null>(null);
+  const [pop, setPop] = useState<'color' | 'size' | 'hl' | 'style' | 'symbol' | 'template' | 'block' | 'insert' | null>(null);
   /** Aa 面板内 tab（v2: 文字样式|符号;v3: +图文模板——原子笔记面板四 tab 对标三落）。 */
   const [styleTab, setStyleTab] = useState<'style' | 'symbol' | 'template'>('style');
   const FONT_COLORS = ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#2563eb', '#7c3aed', '#475569'];
@@ -582,14 +582,27 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
       {btn('↶', '撤销', canUndo, () => runCmd(view, undo))}
       {btn('↷', '重做', canRedo, () => runCmd(view, redo))}
       <span className="tb-sep" />
-      {BLOCK_BTNS.map((b) => btn(b.label, b.title, blocks.has(b.key), () => runCmd(view, b.cmd)))}
-      {/* DK-2.7 切片三：表格上下文组——光标在 table 内才渲染 */}
-      {view && inTable(view.state) && (
-        <>
-          <span className="tb-sep" />
-          {TABLE_BTNS.map((b) => btn(b.label, b.title, false, () => runCmd(view, b.cmd)))}
-        </>
-      )}
+      {/* 原子笔记对标 E1: ☰ 块组——平铺 6 钮收纳为弹面板（H1-H3/代码块/任务/表格+表内行列手术） */}
+      <div className="tb-pop-wrap">
+        {btn('☰', '块类型', BLOCK_BTNS.some((b) => blocks.has(b.key)), () => setPop(pop === 'block' ? null : 'block'),
+          { fontSize: 15 })}
+        {pop === 'block' && (
+          <div className="tb-style-pop" role="menu" aria-label="块类型面板">
+            <div className="tb-style-grid-btns">
+              {BLOCK_BTNS.map((b) => (
+                <button key={b.key} className={`tb-style-btn ${blocks.has(b.key) ? 'hl-prev' : ''}`} title={b.title}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { runCmd(view, b.cmd); setPop(null); }}>{b.label}</button>
+              ))}
+              {view && inTable(view.state) && TABLE_BTNS.map((b) => (
+                <button key={b.title} className="tb-style-btn" title={b.title}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { runCmd(view, b.cmd); setPop(null); }}>{b.label}</button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
       <span className="tb-sep" />
       {MARK_BTNS.map((b) =>
         btn(
@@ -746,18 +759,31 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
           </div>
         )}
       </div>
-      <span className="tb-sep" />
-      {LIST_BTNS.map((b) => btn(b.label, b.title, blocks.has(b.key), () => runCmd(view, b.cmd)))}
-      <span className="tb-sep" />
-      {btn('—', '分割线', false, () => insertHorizontalRule(view))}
-      {btn('ƒx', '插入公式', false, () => {
-        if (!view) return false;
-        return insertMathBlock(view);
-      })}
-      {btn('❋', '插入流程图', false, () => {
-        if (!view) return false;
-        return insertMermaidBlock(view);
-      })}
+      {/* 原子笔记对标 E1: ＋ 插入组——列表/分割线/公式/流程图收纳为弹面板 */}
+      <div className="tb-pop-wrap">
+        {btn('＋', '插入', false, () => setPop(pop === 'insert' ? null : 'insert'),
+          { fontSize: 16 })}
+        {pop === 'insert' && (
+          <div className="tb-style-pop" role="menu" aria-label="插入面板">
+            <div className="tb-style-grid-btns">
+              {LIST_BTNS.map((b) => (
+                <button key={b.key} className={`tb-style-btn ${blocks.has(b.key) ? 'hl-prev' : ''}`} title={b.title}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { runCmd(view, b.cmd); setPop(null); }}>{b.label}</button>
+              ))}
+              <button className="tb-style-btn" title="分割线"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { insertHorizontalRule(view); setPop(null); }}>—</button>
+              <button className="tb-style-btn" title="插入公式"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { if (view) insertMathBlock(view); setPop(null); }}>ƒx</button>
+              <button className="tb-style-btn" title="插入流程图"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { if (view) insertMermaidBlock(view); setPop(null); }}>❋</button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
