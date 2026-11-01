@@ -1412,3 +1412,30 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   from { transform: translateY(16px) scale(0.8); opacity: 0; }
   to { transform: translateY(0) scale(1); opacity: 1; }
 }
+
+/* ============================================================
+   CALENDAR-VIVO 11-01 20:22 用户三连改:
+   ① 选中日=白底圆角方块浮起（清蓝红同心双圈——1006 旧蓝圆
+      v16 残留+983 today 蓝圆均为 vivo 化漏网,此处统一覆盖）
+   ② 年|月|周|日|日程 胶囊条移到年月下一行（原挤在标题行右）
+   ③ 日程编辑页全屏+sheet 开时日历域 FAB 隐藏
+   ============================================================ */
+.cal-day-btn.sel {
+  background: var(--bg-primary); color: var(--text-primary);
+  border-radius: 12px; width: auto; min-width: 40px; margin: 0 1px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+}
+.cal-day-btn.sel .cal-num { font-weight: 700; }
+.cal-day.today {
+  background: transparent; color: inherit; font-weight: 600;
+  border-radius: 0; width: auto; margin: 0;
+}
+/* ② 胶囊条: 独立行（年月下通栏） */
+.cal-mode-seg { margin: 2px 0 6px; padding: 3px; }
+/* ③ 全屏 sheet */
+.sheet.sheet-full {
+  top: 0; bottom: 0; left: 0; right: 0; width: 100%;
+  max-height: 100vh; height: 100vh; border-radius: 0;
+  transform: none; animation: sheetFullIn 0.22s ease both;
+}
+@keyframes sheetFullIn { from { transform: translateY(24px); opacity: 0.4; } to { transform: none; opacity: 1; } }

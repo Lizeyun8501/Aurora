@@ -212,13 +212,14 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
             </button>
           ) : <span className="cal-head-spacer" />}
-          <div className="cal-mode-seg" role="tablist" aria-label="日历视图切换">
-            <button className={`nt-seg ${mode === 'year' ? 'on' : ''}`} role="tab" aria-selected={mode === 'year'} onClick={() => setMode('year')}>年</button>
-            <button className={`nt-seg ${mode === 'month' ? 'on' : ''}`} role="tab" aria-selected={mode === 'month'} onClick={() => setMode('month')}>月</button>
-            <button className={`nt-seg ${mode === 'week' ? 'on' : ''}`} role="tab" aria-selected={mode === 'week'} onClick={() => setMode('week')}>周</button>
-            <button className={`nt-seg ${mode === 'day' ? 'on' : ''}`} role="tab" aria-selected={mode === 'day'} onClick={() => setMode('day')}>日</button>
-            <button className={`nt-seg ${mode === 'list' ? 'on' : ''}`} role="tab" aria-selected={mode === 'list'} onClick={() => setMode('list')}>日程</button>
-          </div>
+        </div>
+        {/* ② CALENDAR-VIVO 11-01 20:22: 年|月|周|日|日程 胶囊条独立行（年月下通栏——原挤标题行右侧） */}
+        <div className="cal-mode-seg" role="tablist" aria-label="日历视图切换">
+          <button className={`nt-seg ${mode === 'year' ? 'on' : ''}`} role="tab" aria-selected={mode === 'year'} onClick={() => setMode('year')}>年</button>
+          <button className={`nt-seg ${mode === 'month' ? 'on' : ''}`} role="tab" aria-selected={mode === 'month'} onClick={() => setMode('month')}>月</button>
+          <button className={`nt-seg ${mode === 'week' ? 'on' : ''}`} role="tab" aria-selected={mode === 'week'} onClick={() => setMode('week')}>周</button>
+          <button className={`nt-seg ${mode === 'day' ? 'on' : ''}`} role="tab" aria-selected={mode === 'day'} onClick={() => setMode('day')}>日</button>
+          <button className={`nt-seg ${mode === 'list' ? 'on' : ''}`} role="tab" aria-selected={mode === 'list'} onClick={() => setMode('list')}>日程</button>
         </div>
         {mode === 'month' && (
           <div className="cal-grid" key={monthOffset}>
@@ -548,11 +549,13 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
       {/* CALENDAR-VIVO 11-01 19:48 用户指令: 日历域 FAB（右下加号）只做日程+任务——
           整合原底部散入口（btn-block 两块——已移除）;不吃笔记捕获流。
           FAB 点击展开双菜单（日程红/任务红→选中日预填）;sheet 打开时收起。 */}
+      {!eventEditor && (
       <button
         className={`fab fab-cal ${fabOpen ? 'fab-open' : ''}`}
         onClick={() => { setFabOpen((o) => !o); }}
         aria-label={fabOpen ? '收起' : '添加日程或任务'} aria-expanded={fabOpen}
       >{fabOpen ? I.x : I.plus}</button>
+      )}
       {fabOpen && (
         <>
           <div className="fab-mask" onClick={() => setFabOpen(false)} />
@@ -666,7 +669,8 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
   return (
     <>
       <div className="sheet-mask" onClick={onClose} />
-      <div className="sheet">
+      {/* ③ 11-01 20:22 用户指令: 日程编辑页全屏 */}
+      <div className="sheet sheet-full">
         <div className="sheet-grab" />
         <div className="sheet-head">
           <span className="sheet-title">{isNew ? '新建日程' : '编辑日程'}</span>
