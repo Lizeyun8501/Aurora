@@ -380,6 +380,14 @@ export default function App() {
       saveList(K_TRASH, next);
       return next;
     });
+    // mock 桥对称（S2-B）: aurora.trash Dto 侧同步落（真机 bridge 时 deleteNote core 自落——此写幂等无害）
+    try {
+      const dtos = JSON.parse(localStorage.getItem('aurora.trash') ?? '[]') as Array<{ noteId: string; title?: string; deletedAtMs?: number; originPath?: string | null }>;
+      if (!dtos.some((d) => d.noteId === id)) {
+        dtos.unshift({ noteId: id, title, deletedAtMs: Date.now(), originPath: null });
+        localStorage.setItem('aurora.trash', JSON.stringify(dtos));
+      }
+    } catch { /* 防御 */ }
     setFavs((prev) => { const n = prev.filter((x) => x !== id); saveList(K_FAVS, n); return n; });
     setRecents((prev) => { const n = prev.filter((r) => r.id !== id); saveList(K_RECENT, n); return n; });
     platform.deleteNote(id);
@@ -1900,38 +1908,62 @@ function TrashView({ trash, onTrash, showToast }: {
   onTrash: React.Dispatch<React.SetStateAction<TrashItem[]>>;
   showToast: (m: string) => void;
 }) {
-  const restore = (t: TrashItem) => {
-    const id = platform.createNote(t.title);
-    if (!id) return;
-    if (t.text) platform.saveNoteContent(id, t.text);
-    onTrash((prev) => { const n = prev.filter((x) => x.id !== t.id); saveList(K_TRASH, n); return n; });
-    showToast('已恢复');
+  /** S2-B 真源（2026-11-01）: 渲染序取 platform.listTrashed()（bridge/core 或 mock aurora.trash）——
+   * K_TRASH 演示态与 Dto 态并集渲染（旧数据兼容）;恢复/彻底删走真桥命令。 */
+  const [dtoList, setDtoList] = useState(() => platform.listTrashed());
+  useEffect(() => { setDtoList(platform.listTrashed()); }, [trash.length]);
+  // 合并去重（K_TRASH 旧项 + Dto 项——noteId=id 语义同源）
+  const dtoIds = new Set(dtoList.map((d) => d.noteId));
+  const merged: Array<{ id: string; title: string; text: string; deletedAt: number }> = [
+    ...trash.filter((t) => !dtoIds.has(t.id)).map((t) => ({ id: t.id, title: t.title, text: t.text, deletedAt: t.deletedAt })),
+    ...dtoList.map((d) => ({ id: d.noteId, title: d.title, text: '', deletedAt: d.deletedAtMs })),
+  ];
+  merged.sort((a, b) => b.deletedAt - a.deletedAt);
+  // S2-B 切真桥（2026-11-01）: restore 走 platform.restoreNote——保 id/时间戳/树位
+  // （createNote 新 id=演示级旧路——丢收藏/最近/树位映射）;purge 同理。
+  const restore = (t: { id: string; title: string; text: string; deletedAt: number }) => {
+    const ok = platform.restoreNote(t.id);
+    if (ok) {
+      onTrash((prev) => { const n = prev.filter((x) => x.id !== t.id); saveList(K_TRASH, n); return n; });
+      setDtoList(platform.listTrashed());
+      showToast('已恢复（原位）');
+    } else {
+      showToast('恢复失败——已在回收站外');
+    }
   };
-  const purge = (t: TrashItem) => {
-    onTrash((prev) => { const n = prev.filter((x) => x.id !== t.id); saveList(K_TRASH, n); return n; });
-    showToast('已彻底删除');
+  const purge = (t: { id: string; title: string; text: string; deletedAt: number }) => {
+    const ok = platform.purgeNote(t.id);
+    if (ok) {
+      onTrash((prev) => { const n = prev.filter((x) => x.id !== t.id); saveList(K_TRASH, n); return n; });
+      setDtoList(platform.listTrashed());
+      showToast('已彻底删除');
+    } else {
+      showToast('删除失败——不在回收站');
+    }
   };
   const clearAll = () => {
+    platform.purgeExpired(0); // 0=全清（core 语义 days=0 即时过期）
     onTrash(() => { saveList(K_TRASH, []); return []; });
+    setDtoList(platform.listTrashed());
     showToast('回收站已清空');
   };
 
   return (
     <div className="view">
-      {trash.length === 0 ? (
+      {merged.length === 0 ? (
         <EmptyState text="回收站是空的。删除的笔记会在这里保留，可随时恢复。" />
       ) : (
         <>
           <button className="btn btn-text btn-block" style={{ marginBottom: 8 }} onClick={clearAll}>
-            清空回收站（{trash.length}）
+            清空回收站（{merged.length}）
           </button>
           <div className="note-list">
-            {trash.map((t) => (
+            {merged.map((t) => (
               <div key={t.id} className="note-card">
                 <div className="note-card-body">
                   <div className="note-title">{t.title}</div>
                   <div className="note-snippet">{t.text.slice(0, 50) || '（无文本内容）'}</div>
-                  <div className="note-meta">删除于 {relativeTime(new Date(t.deletedAt).toISOString())}</div>
+                  <div className="note-meta">删除于 {relativeTime(new Date(t.deletedAt || Date.now()).toISOString())}</div>
                 </div>
                 <div className="trash-actions">
                   <button className="btn btn-secondary btn-sm" onClick={() => restore(t)}>

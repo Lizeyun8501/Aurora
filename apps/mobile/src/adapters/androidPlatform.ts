@@ -341,6 +341,15 @@ export const platform = {
   deleteNote(noteId: string): boolean {
     const b = bridge();
     if (b) return b.deleteNote(noteId) === 0;
+    // mock 软删快照（S2-B）: 恢复面保原 id/内容
+    try {
+      const n = mockNotes().find((x) => x.id === noteId);
+      if (n) {
+        const snaps = JSON.parse(localStorage.getItem('aurora.trashSnap') ?? '{}') as Record<string, { title: string; content: string; updatedAt: string }>;
+        snaps[noteId] = { title: (n as { title?: string }).title ?? '', content: (n as { content?: string }).content ?? '', updatedAt: String(Date.now()) };
+        localStorage.setItem('aurora.trashSnap', JSON.stringify(snaps));
+      }
+    } catch { /* 防御 */ }
     mockSave(mockNotes().filter((n) => n.id !== noteId));
     return true;
   },
@@ -573,12 +582,24 @@ export const platform = {
   restoreNote(noteId: string): boolean {
     const b = bridge();
     if (b) return b.restoreNote(noteId);
+    // mock 真恢复（S2-B）: 软删前快照（notes 快照 aurora.trashTrashSnap）重建原 id 笔记
     const trashed = this.listTrashed();
-    if (!trashed.some((t) => t.noteId === noteId)) return false;
-    localStorage.setItem(
-      'aurora.trash',
-      JSON.stringify(trashed.filter((t) => t.noteId !== noteId)),
-    );
+    const hit = trashed.find((t) => t.noteId === noteId);
+    if (!hit) return false;
+    try {
+      const snaps = JSON.parse(localStorage.getItem('aurora.trashSnap') ?? '{}') as Record<string, { title: string; content: string; updatedAt: string }>;
+      const snap = snaps[noteId];
+      if (snap) {
+        const notes = mockNotes();
+        if (!notes.some((n) => n.id === noteId)) {
+          notes.push({ id: noteId, title: snap.title, content: snap.content, updatedAt: snap.updatedAt } as never);
+          mockSave(notes);
+        }
+        delete snaps[noteId];
+        localStorage.setItem('aurora.trashSnap', JSON.stringify(snaps));
+      }
+    } catch { /* 防御——快照缺失时仅清列表 */ }
+    localStorage.setItem('aurora.trash', JSON.stringify(trashed.filter((t) => t.noteId !== noteId)));
     return true;
   },
 
