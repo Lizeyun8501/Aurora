@@ -759,6 +759,18 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 }
 .tb-symbol:active { border-color: var(--brand); color: var(--brand); }
 
+/* Aa 面板 v3: 图文模板 tab（原子笔记「图文模板」对标——卡片式） */
+.tb-tmpl-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; }
+.tb-tmpl {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; min-width: 76px; height: 54px;
+  border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg-secondary); cursor: pointer;
+}
+.tb-tmpl:active { border-color: var(--brand); }
+.tb-tmpl-icon { font-size: 18px; line-height: 1; }
+.tb-tmpl-name { font-size: 11px; color: var(--text-secondary); }
+
 /* ============================================================
    编辑画布 — V19 §1.2 字号层级（正文 15px/1.5）
    ============================================================ */

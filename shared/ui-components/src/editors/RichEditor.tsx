@@ -188,6 +188,55 @@ export function useToolbarState(view: EditorView | null, _tick: number) {
   return { marks, blocks, canUndo, canRedo };
 }
 
+// ---------------------------------------------------------------------------
+// 图文模板（VIVO 原子笔记对标 v3·2026-11-01）— 预设块序列光标前插入
+// ---------------------------------------------------------------------------
+
+type TemplateKey = 'diary' | 'meeting' | 'todo' | 'reading';
+
+const TEMPLATES: Array<{ key: TemplateKey; icon: string; title: string }> = [
+  { key: 'diary', icon: '📅', title: '日记' },
+  { key: 'meeting', icon: '🗓️', title: '会议纪要' },
+  { key: 'todo', icon: '✅', title: '待办清单' },
+  { key: 'reading', icon: '📚', title: '读书笔记' },
+];
+
+/** 模板 → 块节点序列（p/h2/task/blockquote/hr 组合——纯 schema 既有能力零新面）。 */
+function templateNodes(key: TemplateKey, schema: typeof auroraSchema): Array<import('prosemirror-model').Node> {
+  const { nodes } = schema;
+  // text 不可 destructure 出同名箭头再调用——遮蔽后 t 无 .nodes（self-call trap 实证）。
+  // 直接捕获 schema.text（Schema.text(text, marks) 造 text node）。
+  const p = (t: string) => nodes.paragraph.create(null, schema.text(t));
+  const h2 = (t: string) => nodes.heading.create({ level: 2 }, schema.text(t));
+  const task = (t: string) => nodes.task_block.create({ checked: false, task_id: null }, schema.text(t));
+  switch (key) {
+    case 'diary':
+      return [h2('📅 日记'), p('天气 / 心情：'), p('今日记录：'), nodes.horizontal_rule.create(), task('今日一件小事')];
+    case 'meeting':
+      return [h2('🗓️ 会议纪要'), p('参会人：'), p('议题：'), p('结论：'), nodes.horizontal_rule.create(), task('行动项 1'), task('行动项 2')];
+    case 'todo':
+      return [h2('✅ 待办清单'), task('事项 1'), task('事项 2'), task('事项 3')];
+    case 'reading':
+      return [h2('📚 读书笔记'), p('书名 / 作者：'), nodes.blockquote.create(null, nodes.paragraph.create(null, schema.text('摘录…'))), p('笔记：'), p('★ 评分：')];
+  }
+}
+
+/** 模板插入：光标所在块前整序列插入（insertMathBlock 同位语义——$from.before）。 */
+export function insertTemplate(view: EditorView | null, key: TemplateKey): boolean {
+  if (!view) return false;
+  const { state } = view;
+  const { $from } = state.selection;
+  const pos = $from.before($from.depth);
+  const frags = templateNodes(key, view.state.schema as typeof auroraSchema);
+  if (!frags.length) return false;
+  const tr = state.tr;
+  let at = pos;
+  for (const n of frags) { tr.insert(at, n); at += n.nodeSize; }
+  view.dispatch(tr.scrollIntoView());
+  view.focus();
+  return true;
+}
+
 // 工具栏按钮定义
 type TBCmd = PMCommand;
 
@@ -495,9 +544,9 @@ function FloatingMenu({ view }: { view: EditorView | null }) {
 export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: number }) {
   const { marks, blocks, canUndo, canRedo } = useToolbarState(view, tick);
   // VIVO 原子笔记对标（2026-11-01）：文字色/字号/高亮三弹出组。
-  const [pop, setPop] = useState<'color' | 'size' | 'hl' | 'style' | 'symbol' | null>(null);
-  /** Aa 面板内 tab（v2: 文字样式|符号——原子笔记面板结构对标）。 */
-  const [styleTab, setStyleTab] = useState<'style' | 'symbol'>('style');
+  const [pop, setPop] = useState<'color' | 'size' | 'hl' | 'style' | 'symbol' | 'template' | null>(null);
+  /** Aa 面板内 tab（v2: 文字样式|符号;v3: +图文模板——原子笔记面板四 tab 对标三落）。 */
+  const [styleTab, setStyleTab] = useState<'style' | 'symbol' | 'template'>('style');
   const FONT_COLORS = ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#2563eb', '#7c3aed', '#475569'];
   const HL_COLORS = ['#fef08a', '#bbf7d0', '#bae6fd', '#fbcfe8', '#fed7aa', '#e9d5ff'];
   const SIZES: Array<[string, string]> = [['14', 'S'], ['17', 'M'], ['20', 'L'], ['24', 'XL']];
@@ -616,9 +665,9 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
       </div>
       {/* 原子笔记 Aa 面板对标: 「样式|符号」双 tab（v2 符号=图标化分点插入）。 */}
       <div className="tb-pop-wrap">
-        {btn('Aa', '样式预设', false, () => { setStyleTab('style'); setPop(pop === 'style' || pop === 'symbol' ? null : 'style'); },
+        {btn('Aa', '样式预设', false, () => { setStyleTab('style'); setPop(pop === 'style' || pop === 'symbol' || pop === 'template' ? null : 'style'); },
           { fontSize: 13, fontWeight: 700 })}
-        {(pop === 'style' || pop === 'symbol') && (
+        {(pop === 'style' || pop === 'symbol' || pop === 'template') && (
           <div className="tb-style-pop" role="menu" aria-label="样式预设面板">
             <div className="tb-style-tabs" role="tablist">
               <button className={`tb-style-tab ${styleTab === 'style' ? 'on' : ''}`} role="tab" aria-selected={styleTab === 'style'}
@@ -627,6 +676,9 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
               <button className={`tb-style-tab ${styleTab === 'symbol' ? 'on' : ''}`} role="tab" aria-selected={styleTab === 'symbol'}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => setStyleTab('symbol')}>符号</button>
+              <button className={`tb-style-tab ${styleTab === 'template' ? 'on' : ''}`} role="tab" aria-selected={styleTab === 'template'}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setStyleTab('template')}>图文模板</button>
             </div>
             {styleTab === 'symbol' ? (
               <div className="tb-symbol-grid">
@@ -639,6 +691,17 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                       view.dispatch(view.state.tr.insertText(sym, from, to));
                       setPop(null);
                     }}>{sym}</button>
+                ))}
+              </div>
+            ) : styleTab === 'template' ? (
+              <div className="tb-tmpl-grid">
+                {TEMPLATES.map((t) => (
+                  <button key={t.key} className="tb-tmpl" title={t.title} aria-label={`模板 ${t.title}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { insertTemplate(view, t.key); setPop(null); }}>
+                    <span className="tb-tmpl-icon">{t.icon}</span>
+                    <span className="tb-tmpl-name">{t.title}</span>
+                  </button>
                 ))}
               </div>
             ) : (

@@ -187,8 +187,29 @@ const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobi
   await page.waitForTimeout(300);
   const starInDoc = await page.evaluate(() =>
     document.querySelector('.ProseMirror p')?.textContent?.includes('★') || false);
-  record('⑧ 符号 tab（16 项+插入 ★）', tabState.tabs === 2 && symCount === 16 && starInDoc,
+  record('⑧ 符号 tab（16 项+插入 ★）', tabState.tabs === 3 && symCount === 16 && starInDoc,
     `tab=${tabState.tabs}/${tabState.styleOn} 符号=${symCount} ★入文=${starInDoc}`);
+
+  // ⑨ v3 图文模板 tab: 三 tab→模板四卡→插「待办清单」→块结构断言
+  await page.click('.editor-toolbar button[title="样式预设"]');
+  await page.waitForTimeout(300);
+  const tab3 = await page.evaluate(() => document.querySelectorAll('.tb-style-tab').length);
+  await page.click('.tb-style-tab:has-text("图文模板")');
+  await page.waitForTimeout(200);
+  const tmplCount = await page.evaluate(() => document.querySelectorAll('.tb-tmpl').length);
+  await page.click('.tb-tmpl[aria-label="模板 待办清单"]');
+  await page.waitForTimeout(400);
+  const tmplDoc = await page.evaluate(() => {
+    const pm = document.querySelector('.ProseMirror');
+    const kids = Array.from(pm.children).map((c) => c.tagName + (c.className ? '.' + String(c.className).split(' ')[0] : ''));
+    return {
+      h2: !!pm.querySelector('h2') && pm.querySelector('h2').textContent.includes('待办'),
+      tasks: pm.querySelectorAll('.task-block').length,
+      blocks: kids.join(',').slice(0, 120),
+    };
+  });
+  record('⑨ 图文模板 tab（四卡+待办模板结构）', tab3 === 3 && tmplCount === 4 && tmplDoc.h2 && tmplDoc.tasks >= 3,
+    `tab=${tab3} 模板卡=${tmplCount} h2=${tmplDoc.h2} 任务=${tmplDoc.tasks} 块=[${tmplDoc.blocks}]`);
 
   record('⑥ 零错误', errors.length === 0, errors.length ? errors.slice(0, 2).join(' | ') : '双监听 0');
 
