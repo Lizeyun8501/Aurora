@@ -35,7 +35,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   // ③ 选中样式（20:39 修订: 红圈→透明底红边框方框,数字黑粗可见）
   const selCell = await page.$('.cal-day-btn.sel');
   const sBg = selCell ? await selCell.evaluate((el) => getComputedStyle(el).backgroundColor) : 'none';
-  const sBd = selCell ? await selCell.evaluate((el) => getComputedStyle(el).border) : 'none';
+  const sBd = selCell ? await selCell.evaluate((el) => getComputedStyle(el, '::before').border) : 'none';
   const selNum = await page.$('.cal-day-btn.sel .cal-num');
   const sBgc = selNum ? await selNum.evaluate((el) => getComputedStyle(el).backgroundColor) : 'none';
   record('③ 选中=透明底红边框方框', /rgba\(0, 0, 0, 0\)|transparent/.test(sBg) && /255, 77, 79/.test(sBd) && sBgc === 'rgba(0, 0, 0, 0)', `bg=${sBg} bd=${(sBd ?? '').slice(0, 26)} numBg=${sBgc}`);

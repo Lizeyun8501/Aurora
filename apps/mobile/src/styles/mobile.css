@@ -354,7 +354,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 /* 任务 3：月历按压+翻月动效（无 FLIP——key 重挂触发） */
 .cal-day-btn { transition: transform 0.18s ease; }
 .cal-day-btn:active { transform: scale(0.96); }
-.cal-grid { animation: calAxisIn 0.2s ease both; }
+.cal-grid { animation: calAxisIn 0.2s ease both; grid-auto-rows: 52px; }
 /* 任务 3：节假日红/调休金暗色模式可读性（亮度抬升） */
 [data-theme='dark'] .cal-lunar.fest { color: #F08A8A; }
 [data-theme='dark'] .cal-day.workday .cal-lunar { color: #EAC36A; border-color: #EAC36A; }
@@ -1438,9 +1438,15 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
    ============================================================ */
 .cal-day-btn.sel {
   background: transparent; color: var(--text-primary);
-  border: 1.5px solid var(--cal-accent); box-sizing: border-box;
-  border-radius: 12px; width: 100%; min-width: 0; margin: 0;
-  box-shadow: none; height: 52px; min-height: 52px;
+  border: none; width: 100%; min-width: 0; margin: 0;
+  box-shadow: none; min-height: 52px;
+}
+/* 21:40 修订③: 伪元素描框——不占布局/几何全格统一（真机 border 计入+行高浮动的双保险;
+   配 .cal-grid grid-auto-rows 定行高,任何 DPR 下红框绝对等大） */
+.cal-day-btn.sel::before {
+  content: ''; position: absolute; inset: 2px 1px;
+  border: 1.5px solid var(--cal-accent); border-radius: 12px;
+  pointer-events: none;
 }
 .cal-day-btn.sel .cal-num {
   background: transparent; color: var(--text-primary); font-weight: 700;

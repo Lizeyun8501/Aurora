@@ -16,7 +16,8 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     const el = document.querySelector('.cal-day-btn.sel');
     if (!el) return null;
     const cs = getComputedStyle(el);
-    return { bg: cs.backgroundColor, radius: cs.borderRadius, border: cs.border, shadow: cs.boxShadow.slice(0, 30), w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) };
+    const bf = getComputedStyle(el, '::before');
+    return { bg: cs.backgroundColor, radius: cs.borderRadius, border: bf.border, shadow: bf.borderTopWidth, w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) };
   });
   const num = await page.evaluate(() => {
     const el = document.querySelector('.cal-day-btn.sel .cal-num');
@@ -80,8 +81,24 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`④ FAB 同位全局（right=${fabPos?.right}, bottom=${fabPos?.bottom}）`, !!fabPos && fabPos.right === 16 && fabPos.bottom === 72);
   ok('④ 无任务菜单/无 mini/无 mask', (await page.locator('.fab-mini').count()) === 0 && (await page.locator('.fab-mask').count()) === 0);
 
-  console.log(`\n=== CALENDAR-VIVO3 验收: ${7 - fail.length}/7 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
+  // 21:40 三修: 年视图面板隐藏/滑动切年
+  await page.click('.cal-mode-seg .nt-seg:nth-child(1)'); await page.waitForTimeout(400);
+  ok('⑤ 年视图无聚合面板', await page.evaluate(() => !!document.querySelector('.year-grid') && !document.querySelector('.almanac') && !document.querySelector('.result-section-title')));
+  const swipe = (dy) => page.evaluate((dy) => {
+    const el = document.querySelector('.year-vivo');
+    const b = el.getBoundingClientRect();
+    const pd = (type, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: b.x + b.width / 2, clientY: y, pointerId: 1, pointerType: 'touch', isPrimary: true }));
+    pd('pointerdown', b.y + 120);
+    pd('pointerup', b.y + 120 + dy);
+  }, dy);
+  await swipe(-100); await page.waitForTimeout(400);
+  ok('⑤ 上滑→下一年', (await page.evaluate(() => document.querySelector('.cal-title-year')?.textContent)) === '2027');
+  await swipe(100); await page.waitForTimeout(400);
+  ok('⑤ 下滑→过去一年', (await page.evaluate(() => document.querySelector('.cal-title-year')?.textContent)) === '2026');
+
+  console.log(`\n=== CALENDAR-VIVO3 验收: ${10 - fail.length}/10 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
   await page.screenshot({ path: '/tmp/vivo3.png' });
   await browser.close();
   process.exit(fail.length || errors.length ? 1 : 0);
 })();
+/* 21:40 三修追加: 年视图无聚合面板/滑动切年/伪元素框等大（由 dbg-fin 精编——正式断言入卡尾） */

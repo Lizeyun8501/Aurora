@@ -9,7 +9,7 @@
  * 无模块顶层执行依赖）——环安全（MobileApp ↔ views 双向 import 的
  * React 组件环是既有生态常见形态）。
  */
-import { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Solar, HolidayUtil, Lunar } from 'lunar-typescript';
 import {
   type Task, TASK_GROUPS, I, listNotesTitled, NoteCard, EmptyState,
@@ -42,6 +42,9 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   const [mode, setMode] = useState<'month' | 'week' | 'day' | 'list' | 'year'>('month');
   /** DK-CALENDAR-02：事件编辑器（null=关;编辑/新建共用 sheet）。 */
   const [eventEditor, setEventEditor] = useState<CalEvent | null>(null);
+  /** 21:40 用户指令②: 年视图滑动切年（上滑=下一年/下滑=过去一年）。 */
+  const [yearDelta, setYearDelta] = useState(0);
+  const yearTouch = useRef<{ x: number; y: number } | null>(null);
   /** DK-CALENDAR-04 任务 3: 列表页筛选+搜索。 */
   const [listFilter, setListFilter] = useState<'all' | 'linked' | 'birthday'>('all');
   const [listQuery, setListQuery] = useState('');
@@ -200,7 +203,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
           ) : <span className="cal-head-spacer" />}
           {mode === 'year' ? (
             <span className="cal-title cal-title-year" role="button" aria-label="返回月视图"
-              onClick={() => setMode('month')}><span className="cal-title-y">{String(y).slice(0, 2)}</span><b className="cal-title-m">{String(y).slice(2)}</b></span>
+              onClick={() => setMode('month')}><span className="cal-title-y">{String(y + yearDelta).slice(0, 2)}</span><b className="cal-title-m">{String(y + yearDelta).slice(2)}</b></span>
           ) : (
             <span className="cal-title" role="button" aria-label="查看年视图"
               onClick={() => setMode('year')}><span className="cal-title-y">{y}</span> 年 <b className="cal-title-m">{m + 1}</b> 月</span>
@@ -299,10 +302,20 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
            * 年视图=12 个真·迷你月历格（月标题 01..12 粗+周日开头星期行+日期数字
            * 网格+事件红下划线+节日红数字+当月标题红）——vivo 规格书级复刻。
            * 点月格→monthOffset 定位+切月视图。 */
-          const y2 = view.getFullYear();
+          const y2 = view.getFullYear() + yearDelta;
           const nowLunar = Lunar.fromDate(new Date());
           return (
-            <div className="year-vivo" key={y2}>
+            <div
+              className="year-vivo" key={y2}
+              onPointerDown={(e) => { yearTouch.current = { x: e.clientX, y: e.clientY }; }}
+              onPointerUp={(e) => {
+                const t = yearTouch.current; if (!t) return;
+                const dx = e.clientX - t.x;
+                const dy = e.clientY - t.y;
+                yearTouch.current = null;
+                if (Math.abs(dy) > 64 && Math.abs(dx) < 60) setYearDelta((d) => d + (dy < 0 ? 1 : -1));
+              }}
+            >
               <div className="year-lunar-band">
                 — {nowLunar.getYearInGanZhi()}{nowLunar.getYearShengXiao()}年 — 农历{nowLunar.getDayInChinese()} —
               </div>
@@ -491,14 +504,15 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             })()}
           </div>
         )}
-        {mode === 'month' && selected !== todayStr && (
-          <button className="btn btn-text btn-block" style={{ marginTop: 4 }} onClick={() => setSelected(todayStr)}>
+        {mode === 'month' && (selected !== todayStr || yearDelta !== 0) && (
+          <button className="btn btn-text btn-block" style={{ marginTop: 4 }} onClick={() => { setSelected(todayStr); setYearDelta(0); }}>
             回到今天
           </button>
         )}
       </div>
 
-      {/* 当日聚合 */}
+      {/* 当日聚合（21:40 用户指令①: 年视图不显示——红框面板=黄历宜忌+空态提示+FAB 引导,年页仅纯 12 月格） */}
+      {mode !== 'year' && (<>
       <div className="result-section-title" style={{ marginTop: 12 }}>
         {selected.replace(/^(\d+)-(\d+)-(\d+)$/, '$1 年 $2 月 $3 日')}
         <span style={{ marginLeft: 8, fontSize: 13, fontWeight: 400, opacity: 0.7 }}>
@@ -542,6 +556,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             <NoteCard key={n.id} note={n} onOpen={onOpenNote} />
           ))}
         </div>
+      )}
+      </>
       )}
 
       {/* CALENDAR-VIVO 11-01 20:39 用户修订: FAB 与其他页同位（16/72）+**仅日程**
