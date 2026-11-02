@@ -203,7 +203,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
           ) : <span className="cal-head-spacer" />}
           {mode === 'year' ? (
             <span className="cal-title cal-title-year" role="button" aria-label="返回月视图"
-              onClick={() => setMode('month')}><span className="cal-title-y">{String(y + yearDelta).slice(0, 2)}</span><b className="cal-title-m">{String(y + yearDelta).slice(2)}</b></span>
+              onClick={() => setMode('month')}><span className="cal-title-y">{String(y + yearDelta).slice(0, 2)}</span><b className={'cal-title-m' + (y + yearDelta === now.getFullYear() ? ' cur' : '')}>{String(y + yearDelta).slice(2)}</b></span>
           ) : (
             <span className="cal-title" role="button" aria-label="查看年视图"
               onClick={() => { setYearDelta(0); setMode('year'); }}><span className="cal-title-y">{y}</span> 年 <b className="cal-title-m">{m + 1}</b> 月</span>

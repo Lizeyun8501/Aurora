@@ -118,6 +118,19 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`⑦ 年模式 FAB 隐藏（fabNull=${!fabY}）+填满类（fill=${fill.fillClass}）`, !fabY && fill.fillClass);
   ok(`⑦ 年 grid 弹性填满零溢出（viewH=${fill.viewH}, free=${fill.free}）`, fill.free && fill.viewH > 600);
 
+  // 11-02 16:33 报障: 年标题 4 数字等大 34px;后两位仅当前年红,他年同前两位色
+  const titleChk = () => page.evaluate(() => {
+    const y = document.querySelector('.cal-title-year .cal-title-y');
+    const m = document.querySelector('.cal-title-year .cal-title-m');
+    return { t: y.textContent + m.textContent, sy: getComputedStyle(y).fontSize, sm: getComputedStyle(m).fontSize, cy: getComputedStyle(y).color, cm: getComputedStyle(m).color };
+  });
+  const t0 = await titleChk();
+  await swipe(-120); await page.waitForTimeout(400);
+  const t1 = await titleChk();
+  await swipe(120); await page.waitForTimeout(400);
+  ok(`⑩ 年标题 4 字等大（${t0.t}: ${t0.sy}/${t0.sm}）+当前年后两红（${t0.cm}）`, t0.sy === t0.sm && t0.cm.includes('255, 77, 79'));
+  ok(`⑩ 他年后两位同前两位灰（${t1.t}: ${t1.cm}）`, t1.cy === t1.cm);
+
   // 11-02 11:32 报障: 年红带干支/生肖随滑年联动（y2 年中点定,农历日保持今天）
   const band0 = await page.evaluate(() => document.querySelector('.year-lunar-band')?.textContent.trim());
   const bandOf = () => page.evaluate(() => document.querySelector('.year-lunar-band')?.textContent.trim());
@@ -152,7 +165,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`⑥ 回今天跨月归位（=${rt}）`, /11 月/.test(rt || '') || /1 月|2 月|3 月/.test(rt || ''));
   await page.click('.cal-day-btn.today'); await page.waitForTimeout(250);
 
-  console.log(`\n=== CALENDAR-VIVO3 验收: ${19 - fail.length}/19 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
+  console.log(`\n=== CALENDAR-VIVO3 验收: ${21 - fail.length}/21 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
   await page.screenshot({ path: '/tmp/vivo3.png' });
   await browser.close();
   process.exit(fail.length || errors.length ? 1 : 0);

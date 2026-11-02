@@ -1398,7 +1398,10 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* 年大字（20 黑+26 红 34px） */
 .cal-title-year { font-weight: 200; }
 .cal-title-year .cal-title-y { font-size: 24px; color: var(--text-primary); font-weight: 400; }
-.cal-title-year .cal-title-m { font-size: 34px; font-weight: 800; letter-spacing: 1px; }
+.cal-title-year .cal-title-y { font-size: 34px !important; }
+/* 11-02 16:33 用户修订: 年 4 数字等大（34px）;后两位仅当前年红,其他年同前两位 text-primary。 */
+.cal-title-year .cal-title-m { font-size: 34px; font-weight: 800; letter-spacing: 1px; color: var(--text-primary); }
+.cal-title-year .cal-title-m.cur { color: var(--cal-accent); }
 .cal-head-spacer { flex: 0 0 36px; }
 
 /* 农历红带（— 丙午马年 — 农历初一 —） */
