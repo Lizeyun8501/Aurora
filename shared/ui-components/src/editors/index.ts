@@ -29,6 +29,13 @@ export { insertBlock, moveBlock } from './insertCommands';
 export type { BlockKind } from './insertCommands';
 export { mdToDoc, mdToNodes, docToMd } from './auroraMarkdown';
 export {
+  exportNote,
+  exportNotePdf,
+  importNoteText,
+  pickImportFile,
+} from './noteExport';
+export type { ExportFmt, ExportResult } from './noteExport';
+export {
   focusBlockPlugin,
   focusBlockKey,
   focusTopLevelBlock,

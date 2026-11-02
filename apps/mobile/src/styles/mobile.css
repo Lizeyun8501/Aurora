@@ -643,6 +643,11 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   box-shadow: 0 4px 16px rgba(31, 41, 55, 0.12);
   padding: 4px; animation: fadeIn .12s;
 }
+.menu-group-title {
+  font-size: 11px; color: var(--text-tertiary);
+  padding: 8px 12px 4px; letter-spacing: 0.5px;
+  border-top: 1px solid var(--border); margin-top: 4px;
+}
 .menu-item {
   display: flex; align-items: center; gap: 10px;
   width: 100%; min-height: 42px; padding: 0 12px;

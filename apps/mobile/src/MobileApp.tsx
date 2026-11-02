@@ -1671,6 +1671,24 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
   // 大标题可编辑（参考图布局）— overlay 存储，所有列表同步
   const [docTitle, setDocTitle] = useState(() => getTitleOverlay(noteId) || title);
 
+  /** E6 导入导出 handler——noteExport 模块（lazy 载体为 barrel 稳定导出,直引用性）。 */
+  const doExport = (fmt: 'md' | 'word' | 'txt' | 'pdf') => {
+    import('@aurora/ui-components').then((m) => {
+      const t = (docTitle || title).replace(/[\\/:*?"<>|]/g, '_');
+      const r = fmt === 'pdf' ? m.exportNotePdf(title) : m.exportNote(title, fmt);
+      setStatus(r.ok ? 'saved' : null);
+      if (!r.ok) console.warn('导出失败', r.error);
+    });
+  };
+  const doImport = async () => {
+    const m = await import('@aurora/ui-components');
+    const f = await m.pickImportFile();
+    if (!f) return;
+    const isMd = /\.md$|\.markdown$/i.test(f.name);
+    const ok = m.importNoteText(f.text, isMd);
+    if (!ok) console.warn('导入失败');
+  };
+
   const onTitleChange = (v: string) => {
     setDocTitle(v);
     setTitleOverlay(noteId, v.trim() || title);
@@ -1680,7 +1698,8 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
     <div className={`editor-page ${focusMode ? 'focus' : ''}`}>
       <div className="editor-bar">
         <button className="icon-btn" onClick={onClose} aria-label="返回">{I.back}</button>
-        <span className={`editor-bar-status ${status ?? ''}`}>
+        {/* E6: status 撑中（flex:1）——⋮ 恒最右（TA 22:26 部署令） */}
+        <span className={`editor-bar-status ${status ?? ''}`} style={{ flex: 1 }}>
           {status === 'dirty' ? '保存中…' : status === 'saved' ? '已保存' : ''}
         </span>
         <button className="icon-btn" onClick={() => setMenuOpen(!menuOpen)} aria-label="更多">{I.more}</button>
@@ -1715,6 +1734,23 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
             </button>
             <button className="menu-item" onClick={() => { setFocusMode(!focusMode); setMenuOpen(false); }}>
               {I.focus} {focusMode ? '退出专注模式' : '专注模式'}
+            </button>
+            {/* E6 导入导出（TA 22:33 派单）: Word/PDF/Markdown/TXT 导出 + md/txt 导入 */}
+            <div className="menu-group-title">导入导出</div>
+            <button className="menu-item" onClick={async () => { setMenuOpen(false); await doImport(); }}>
+              {I.sync} 导入笔记（md/txt）
+            </button>
+            <button className="menu-item" onClick={() => { setMenuOpen(false); doExport('md'); }}>
+              {I.sync} 导出 Markdown
+            </button>
+            <button className="menu-item" onClick={() => { setMenuOpen(false); doExport('word'); }}>
+              {I.sync} 导出 Word
+            </button>
+            <button className="menu-item" onClick={() => { setMenuOpen(false); doExport('pdf'); }}>
+              {I.sync} 导出 PDF
+            </button>
+            <button className="menu-item" onClick={() => { setMenuOpen(false); doExport('txt'); }}>
+              {I.sync} 导出 TXT
             </button>
             <button className="menu-item" onClick={() => { setSnapOpen(!snapOpen); setMenuOpen(false); }}>
               {I.note} 版本历史（时间机器）
