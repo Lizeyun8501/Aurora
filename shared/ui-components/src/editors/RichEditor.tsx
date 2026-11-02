@@ -599,7 +599,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
      DOM 移 body 直挂后面板 z-39 与栏 80 顶层平比,栏稳居上可点）+overflow 裁剪免疫（E3 教训） */
   return createPortal(
     <>
-    <div className="editor-toolbar" role="toolbar" aria-label="格式工具栏">
+    <div className={`editor-toolbar ${pop ? 'pop-open' : ''}`} role="toolbar" aria-label="格式工具栏">
       {btn('↶', '撤销', canUndo, () => runCmd(view, undo))}
       {btn('↷', '重做', canRedo, () => runCmd(view, redo))}
       <span className="tb-sep" />
@@ -624,26 +624,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
           </div>
         , document.body)}
       </div>
-      <span className="tb-sep" />
-      {MARK_BTNS.map((b) =>
-        btn(
-          b.label,
-          b.title,
-          marks.has(b.key),
-          () => runCmd(view, b.cmd),
-          b.key === 'strong'
-            ? { fontWeight: 800 }
-            : b.key === 'em'
-              ? { fontStyle: 'italic' }
-              : b.key === 'underline'
-                ? { textDecoration: 'underline' }
-                : b.key === 'strikethrough'
-                  ? { textDecoration: 'line-through' }
-                  : undefined,
-        ),
-      )}
-      <span className="tb-sep" />
-      {/* 原子笔记 Aa 面板对标: 「样式|符号」双 tab（v2 符号=图标化分点插入）。 */}
+      {/* E5 整改: MARK_BTNS 平铺（B/I/U/S/代码）与 Aa「格式」tab 重复——平铺段删,全并入 Aa（TA 19:26 查重令） */}
       <div className="tb-pop-wrap">
         {btn('Aa', '文字格式', marks.has('fontColor') || marks.has('fontSize') || marks.has('highlight') || marks.has('strong') || marks.has('em') || marks.has('underline') || marks.has('strikethrough'),
           () => { if (!(pop === 'style' || pop === 'symbol' || pop === 'template')) hideKbdForPanel(); else restoreKbdAfterPanel(); setStyleTab('fmt'); setPop(pop === 'style' || pop === 'symbol' || pop === 'template' ? null : 'style'); },
@@ -671,6 +652,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                   {btn('I', '斜体', marks.has('em'), () => runCmd(view, toggleMark(auroraSchema.marks.em)), { fontStyle: 'italic' })}
                   {btn('U', '下划线', marks.has('underline'), () => runCmd(view, toggleMark(auroraSchema.marks.underline)), { textDecoration: 'underline' })}
                   {btn('S', '删除线', marks.has('strikethrough'), () => runCmd(view, toggleMark(auroraSchema.marks.strikethrough)), { textDecoration: 'line-through' })}
+                  {btn('</>', '行内代码', marks.has('code'), () => runCmd(view, toggleMark(auroraSchema.marks.code)), { fontFamily: 'monospace', fontSize: 12 })}
                 </div>
                 <div className="tb-pop" role="group" aria-label="字号档位">
                   {SIZES.map(([px, label]) => (

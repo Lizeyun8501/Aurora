@@ -59,16 +59,22 @@ async function ensureAaOpen(page, tab) {
   // ① E2 Aa 五合一组: 一钮弹全部文字格式（B/I/U/S/字号/色/高亮并入「格式」tab）
   await page.click('.editor-toolbar button[title="文字格式"]');
   await page.waitForTimeout(300);
-  const aaPanel = await page.evaluate(() => ({
-    panel: !!document.querySelector('.tb-style-pop'),
-    tabs: Array.from(document.querySelectorAll('.tb-style-tab')).map((t) => t.textContent),
-    fmtBtns: Array.from(document.querySelectorAll('.tb-fmt-row .tb-btn')).map((b) => b.title),
-    sizes: document.querySelectorAll('.tb-fmt-panel .tb-size').length,
-    swatches: document.querySelectorAll('.tb-fmt-panel .tb-swatch').length,
-    residue: !!document.querySelector('.editor-toolbar button[title="文字颜色"]'),
-  }));
-  record('① E2 Aa 五合一（B/I/U/S+字号+色板+高亮）', aaPanel.panel && aaPanel.tabs.includes('格式') && aaPanel.fmtBtns.length === 4 && aaPanel.sizes >= 4 && aaPanel.swatches >= 12 && !aaPanel.residue,
-    `tab=${aaPanel.tabs.join('|')} 格式钮=${aaPanel.fmtBtns.join('|')} 字号=${aaPanel.sizes} 色板=${aaPanel.swatches} 独立钮残留=${aaPanel.residue}`);
+  const aaPanel = await page.evaluate(() => {
+    // E5 平铺重复: 工具栏直层（非弹面板内）的 B/I/U/S/代码钮
+    const barBtns = Array.from(document.querySelectorAll('.editor-toolbar > .tb-btn, .editor-toolbar > .tb-pop-wrap > .tb-btn'));
+    const dupTitles = ['加粗', '斜体', '下划线', '删除线', '行内代码'];
+    return {
+      panel: !!document.querySelector('.tb-style-pop'),
+      tabs: Array.from(document.querySelectorAll('.tb-style-tab')).map((t) => t.textContent),
+      fmtBtns: Array.from(document.querySelectorAll('.tb-fmt-row .tb-btn')).map((b) => b.title),
+      sizes: document.querySelectorAll('.tb-fmt-panel .tb-size').length,
+      swatches: document.querySelectorAll('.tb-fmt-panel .tb-swatch').length,
+      residue: !!document.querySelector('.editor-toolbar button[title="文字颜色"]'),
+      flatDup: barBtns.filter((b) => dupTitles.includes(b.title)).length,
+    };
+  });
+  record('① E2 Aa 五合一（B/I/U/S/代码+字号+色板+高亮·平铺重复清零）', aaPanel.panel && aaPanel.tabs.includes('格式') && aaPanel.fmtBtns.length === 5 && aaPanel.sizes >= 4 && aaPanel.swatches >= 12 && !aaPanel.residue && !aaPanel.flatDup,
+    `tab=${aaPanel.tabs.join('|')} 格式钮=${aaPanel.fmtBtns.join('|')} 字号=${aaPanel.sizes} 色板=${aaPanel.swatches} 独立钮残留=${aaPanel.residue} 平铺重复=${aaPanel.flatDup}`);
 
   // E4 键盘让位（TA 13:53 裁决）: 面板 fixed 向下弹（栏下方）+开面板 blur 收键盘+选定后回焦
   // ① 末面板已开（fmt tab）;不开不关——经 PM API 直接设焦（防点 .ProseMirror 误触面板/焦点抖动）
@@ -90,14 +96,16 @@ async function ensureAaOpen(page, tab) {
     if (!panel || !bar) return null;
     const pr = panel.getBoundingClientRect();
     const br = bar.getBoundingClientRect();
+    const sw = document.querySelector('.tb-fmt-panel .tb-swatch');
+    const swTop = sw ? sw.getBoundingClientRect().top : -1;
     const cs = getComputedStyle(panel);
     return {
       fixed: cs.position === 'fixed',
       width: pr.width,
       vw: window.innerWidth,
       full: pr.width > window.innerWidth * 0.8,
-      atBottom: Math.abs(pr.bottom - br.top) < 4,  // 向下弹实义: 面板底贴栏顶（从钮下方展开,栏 49px 恒可见）
-      barVisible: br.width > 0 && Math.abs(br.bottom - window.innerHeight) < 4, // 栏贴屏底不被面板遮（z 70<80）
+      belowBar: Math.abs(pr.top - br.top) < 8 && Math.abs(pr.bottom - window.innerHeight) < 6,  // E5 真下方: 面板与栏同顶起（栏叠面板顶段49px）,面板体填栏下至屏底——「工具栏下方」
+      barLifted: br.width > 0 && br.top < window.innerHeight * 0.6, // 栏上浮离屏底（E5: bottom=50vh+49——离开底部区）
       blurDone: focusedMidArg && !!ev && !ev.hasFocus(),  // 键盘让位: 开前有焦→开后失焦
     };
   }, focusedMid);
@@ -105,9 +113,9 @@ async function ensureAaOpen(page, tab) {
   await page.click('.tb-fmt-panel .tb-swatch >> nth=0');
   await page.waitForTimeout(300);
   const refocused = await page.evaluate(() => !!window.__editorView && window.__editorView.hasFocus());
-  record('⑪ E4 键盘让位（向下弹+blur 收键盘+选定回焦）',
-    focusedBefore && !!e4 && e4.fixed && e4.full && e4.atBottom && e4.barVisible && e4.blurDone && refocused,
-    `先焦=${focusedBefore} fixed=${e4?.fixed} 宽=${e4?.width}/${e4?.vw} 贴底=${e4?.atBottom} 栏可见=${e4?.barVisible} 让位=${e4?.blurDone} 回焦=${refocused}`);
+  record('⑪ E4 键盘让位（栏下方弹+blur 收键盘+选定回焦）',
+    focusedBefore && !!e4 && e4.fixed && e4.full && e4.belowBar && e4.barLifted && e4.blurDone && refocused,
+    `先焦=${focusedBefore} fixed=${e4?.fixed} 宽=${e4?.width}/${e4?.vw} 栏下方=${e4?.belowBar} 栏上浮=${e4?.barLifted} 让位=${e4?.blurDone} 回焦=${refocused}`);
 
   // ② 选中前 4 字→红
   await page.evaluate(() => {
@@ -238,8 +246,16 @@ async function ensureAaOpen(page, tab) {
   await page.click('.tb-style-tab:has-text("符号")');
   await page.waitForTimeout(200);
   const symCount = await page.evaluate(() => document.querySelectorAll('.tb-symbol').length);
-  await page.click('.ProseMirror');
-  await page.keyboard.press('End');
+  // PM 聚焦走 API（面板开态下点 .ProseMirror 会被面板盖/误关——E5 半屏面板期）
+  await page.evaluate(() => {
+    const ev = window.__editorView;
+    if (ev) {
+      const end = ev.state.doc.content.size - 2;
+      ev.dispatch(ev.state.tr.setSelection(ev.state.selection.constructor.near(ev.state.doc.resolve(end))));
+      ev.focus();
+    }
+  });
+  await page.waitForTimeout(200);
   await page.click('.tb-symbol[aria-label="插入符号 ★"]');
   await page.waitForTimeout(300);
   const starInDoc = await page.evaluate(() =>

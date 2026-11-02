@@ -682,6 +682,15 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   background: var(--bg-primary); flex: 0 0 auto;
 }
 .editor-toolbar::-webkit-scrollbar { display: none; }
+/* E5: 弹面板期栏上浮半屏（面板填栏下至屏底——真「工具栏下方」）;收面板回落。 */
+.editor-toolbar.pop-open {
+  bottom: calc(50vh - 49px);
+  transition: bottom .18s ease-out;
+}
+@keyframes tbPopDown {
+  from { top: 50vh; opacity: 0.4; }
+  to { top: 50vh; opacity: 1; }
+}
 
 .tb-btn { flex: 0 0 auto; min-width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 14px; cursor: pointer; }
 .tb-btn:active { background: var(--bg-secondary); }
@@ -739,12 +748,18 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
      overflow 裁剪防线（E3 教训）: fixed 跳层（toolbar overflow-x: auto 隐含 overflow-y: auto 裁 absolute）。
      E3 的「栏上方」版作废——TA 裁决选键盘让位而非面板让位。 */
   position: fixed;
-  /* 向下弹实义: 面板底=栏顶（栏 49px 恒可见可点）——面板在栏上方区域展开,视觉贴栏上沿;
-     底部 49px 由 bottom: calc(vh-栏高) 表达,内容零遮挡 */
-  bottom: calc(49px + max(var(--kbd-inset, 0px), env(safe-area-inset-bottom)));
+  /* E5 定稿（TA 19:26 裁决·真下方位）: 栏上浮半屏+面板填栏下至屏底——弹窗在工具栏正下方。
+     联动: .editor-toolbar.pop-open 上浮（bottom: calc(50vh - 49px)）;面板 top=50vh 底=屏底。
+     VIVO 半屏 sheet 体量;kbd-inset 已由 blur 让位归零,栏/面板自视口底锚定。 */
+  top: 50vh;
+  bottom: 0;
   left: 8px; right: 8px; z-index: 70; /* 70: >editor-page 60（body 直挂后需压编辑页才可点）<栏 80（栏恒在上可点） */
+  overflow-y: auto;
+  animation: tbPopDown .18s ease-out; /* 自栏位向下展开动画——「向下弹出」视觉锚 */
   display: flex; flex-direction: column; gap: 4px; /* v2: tab 头+内容块纵排 */
   padding: 6px; border-radius: 10px;
+  /* E5 栏让位——必须在 padding: 6px 之后（后写覆盖）: 顶 53=栏 49+隙 4,内容自栏底起 */
+  padding-top: 53px;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);

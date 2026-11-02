@@ -114,6 +114,20 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   await page.waitForTimeout(300);
   const fa = await page.evaluate(() => window.__editorView?.hasFocus());
   console.log('MID: focusedMid=' + fm + ' focusAfterReopen=' + fa);
+  // tab 几何（29 跑拦点复现）
+  const tabGeom = await page.evaluate(() => {
+    const tabs = Array.from(document.querySelectorAll('.tb-style-tab'));
+    const t = tabs.find((x) => x.textContent === '符号');
+    const bar = document.querySelector('.editor-toolbar');
+    if (!t) return null;
+    const r = t.getBoundingClientRect();
+    const br = bar.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const el = document.elementFromPoint(cx, cy);
+    return { tabTop: r.top, tabBottom: r.bottom, barBottom: br.bottom,
+      hit: el ? el.tagName + '.' + String(el.className).split(' ')[0] : null, hitIsTab: el === t };
+  });
+  console.log('TAB:', JSON.stringify(tabGeom));
   console.log('DBG:', JSON.stringify({ hasFocus, ...st, ...hit, errs: errs.slice(0, 3) }));
   await browser.close();
 })();
