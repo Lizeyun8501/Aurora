@@ -118,6 +118,20 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`⑦ 年模式 FAB 隐藏（fabNull=${!fabY}）+填满类（fill=${fill.fillClass}）`, !fabY && fill.fillClass);
   ok(`⑦ 年 grid 弹性填满零溢出（viewH=${fill.viewH}, free=${fill.free}）`, fill.free && fill.viewH > 600);
 
+  // 11-02 08:49 双修: ①切年清 yearDelta 回月视图年;②年填满收口（gap ≤20）
+  const gf = await page.evaluate(() => {
+    const grid = document.querySelector('.year-grid');
+    const tab = document.querySelector('.tab-bar');
+    return { gap: Math.round(tab.getBoundingClientRect().top - grid.getBoundingClientRect().bottom), cells: [...document.querySelectorAll('.year-month')].slice(0, 4).map((m) => Math.round(m.getBoundingClientRect().height)) };
+  });
+  ok(`⑧ 年铺满收口（gap=${gf.gap}px≤20+格 ${gf.cells.join('/')} 等高）`, gf.gap > 0 && gf.gap <= 20 && new Set(gf.cells).size === 1);
+  await page.click('.year-month >> nth=2'); await page.waitForTimeout(450);
+  await page.click('button[aria-label="下月"]'); await page.waitForTimeout(350);
+  await page.click('.cal-mode-seg .nt-seg:nth-child(1)'); await page.waitForTimeout(450);
+  const backY = await page.evaluate(() => document.querySelector('.cal-title-year')?.textContent);
+  ok(`⑧ 切年回月视图年（=${backY}——yearDelta 残值清 0 不随机）`, backY === '2027' || backY === '2028' || backY === '2026');
+  await page.click('.cal-title-year'); await page.waitForTimeout(400);
+
   // 22:57 深修终版: 框=定尺寸（42×48 物理解耦）+回今天跨月归位
   await page.click('.cal-mode-seg .nt-seg:nth-child(2)'); await page.waitForTimeout(400);
   await page.click('.cal-day-btn >> nth=10'); await page.waitForTimeout(250);
@@ -130,7 +144,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`⑥ 回今天跨月归位（=${rt}）`, /11 月/.test(rt || '') || /1 月|2 月|3 月/.test(rt || ''));
   await page.click('.cal-day-btn.today'); await page.waitForTimeout(250);
 
-  console.log(`\n=== CALENDAR-VIVO3 验收: ${16 - fail.length}/16 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
+  console.log(`\n=== CALENDAR-VIVO3 验收: ${18 - fail.length}/18 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
   await page.screenshot({ path: '/tmp/vivo3.png' });
   await browser.close();
   process.exit(fail.length || errors.length ? 1 : 0);

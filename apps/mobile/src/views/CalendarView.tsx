@@ -206,7 +206,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               onClick={() => setMode('month')}><span className="cal-title-y">{String(y + yearDelta).slice(0, 2)}</span><b className="cal-title-m">{String(y + yearDelta).slice(2)}</b></span>
           ) : (
             <span className="cal-title" role="button" aria-label="查看年视图"
-              onClick={() => setMode('year')}><span className="cal-title-y">{y}</span> 年 <b className="cal-title-m">{m + 1}</b> 月</span>
+              onClick={() => { setYearDelta(0); setMode('year'); }}><span className="cal-title-y">{y}</span> 年 <b className="cal-title-m">{m + 1}</b> 月</span>
           )}
           {mode !== 'year' ? (
             <button className="icon-btn" onClick={() => setMonthOffset((o) => o + 1)} aria-label="下月">
@@ -216,7 +216,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
         </div>
         {/* ② CALENDAR-VIVO 11-01 20:22: 年|月|周|日|日程 胶囊条独立行（年月下通栏——原挤标题行右侧） */}
         <div className="cal-mode-seg" role="tablist" aria-label="日历视图切换">
-          <button className={`nt-seg ${mode === 'year' ? 'on' : ''}`} role="tab" aria-selected={mode === 'year'} onClick={() => setMode('year')}>年</button>
+          <button className={`nt-seg ${mode === 'year' ? 'on' : ''}`} role="tab" aria-selected={mode === 'year'} onClick={() => { setYearDelta(0); setMode('year'); }}>年</button>
           <button className={`nt-seg ${mode === 'month' ? 'on' : ''}`} role="tab" aria-selected={mode === 'month'} onClick={() => setMode('month')}>月</button>
           <button className={`nt-seg ${mode === 'week' ? 'on' : ''}`} role="tab" aria-selected={mode === 'week'} onClick={() => setMode('week')}>周</button>
           <button className={`nt-seg ${mode === 'day' ? 'on' : ''}`} role="tab" aria-selected={mode === 'day'} onClick={() => setMode('day')}>日</button>
