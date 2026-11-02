@@ -70,27 +70,44 @@ async function ensureAaOpen(page, tab) {
   record('① E2 Aa 五合一（B/I/U/S+字号+色板+高亮）', aaPanel.panel && aaPanel.tabs.includes('格式') && aaPanel.fmtBtns.length === 4 && aaPanel.sizes >= 4 && aaPanel.swatches >= 12 && !aaPanel.residue,
     `tab=${aaPanel.tabs.join('|')} 格式钮=${aaPanel.fmtBtns.join('|')} 字号=${aaPanel.sizes} 色板=${aaPanel.swatches} 独立钮残留=${aaPanel.residue}`);
 
-  // E3 键盘遮挡修: 面板 fixed 跳层+全宽 sheet+贴工具栏上方（原 absolute top 向下=键盘后）
-  const e3Pos = await page.evaluate(() => {
+  // E4 键盘让位（TA 13:53 裁决）: 面板 fixed 向下弹（栏下方）+开面板 blur 收键盘+选定后回焦
+  // ① 末面板已开（fmt tab）;不开不关——经 PM API 直接设焦（防点 .ProseMirror 误触面板/焦点抖动）
+  await page.evaluate(() => { window.__editorView?.focus(); });
+  await page.waitForTimeout(250);
+  const focusedBefore = await page.evaluate(() => !!window.__editorView && window.__editorView.hasFocus());
+  // 关再开（blur 链重新走——面板关触发 restore,再开触发 blur）
+  await page.click('.editor-toolbar button[title="文字格式"]');  // toggle 关
+  await page.waitForTimeout(250);
+  await page.evaluate(() => { window.__editorView?.focus(); });
+  await page.waitForTimeout(250);
+  const focusedMid = await page.evaluate(() => !!window.__editorView && window.__editorView.hasFocus());
+  await page.click('.editor-toolbar button[title="文字格式"]');  // 开（blur 触发）
+  await page.waitForTimeout(300);
+  const e4 = await page.evaluate((focusedMidArg) => {
     const panel = document.querySelector('.tb-style-pop');
     const bar = document.querySelector('.editor-toolbar');
+    const ev = window.__editorView;
     if (!panel || !bar) return null;
     const pr = panel.getBoundingClientRect();
     const br = bar.getBoundingClientRect();
     const cs = getComputedStyle(panel);
     return {
       fixed: cs.position === 'fixed',
-      barTop: br.top,
-      panelBottom: pr.bottom,
       width: pr.width,
       vw: window.innerWidth,
       full: pr.width > window.innerWidth * 0.8,
-      aboveBar: pr.bottom <= br.top + 2,  // 面板底贴工具栏顶（上方弹）
+      atBottom: Math.abs(pr.bottom - br.top) < 4,  // 向下弹实义: 面板底贴栏顶（从钮下方展开,栏 49px 恒可见）
+      barVisible: br.width > 0 && Math.abs(br.bottom - window.innerHeight) < 4, // 栏贴屏底不被面板遮（z 70<80）
+      blurDone: focusedMidArg && !!ev && !ev.hasFocus(),  // 键盘让位: 开前有焦→开后失焦
     };
-  });
-  record('⑪ E3 键盘遮挡修（面板 fixed 全宽·贴工具栏上方）',
-    !!e3Pos && e3Pos.fixed && e3Pos.full && e3Pos.aboveBar,
-    `fixed=${e3Pos?.fixed} 宽=${e3Pos?.width}/${e3Pos?.vw} 面板底=${e3Pos?.panelBottom?.toFixed(0)}≤栏顶=${e3Pos?.barTop?.toFixed(0)}`);
+  }, focusedMid);
+  // 选定样式（色板）→面板关→回焦恢复键盘
+  await page.click('.tb-fmt-panel .tb-swatch >> nth=0');
+  await page.waitForTimeout(300);
+  const refocused = await page.evaluate(() => !!window.__editorView && window.__editorView.hasFocus());
+  record('⑪ E4 键盘让位（向下弹+blur 收键盘+选定回焦）',
+    focusedBefore && !!e4 && e4.fixed && e4.full && e4.atBottom && e4.barVisible && e4.blurDone && refocused,
+    `先焦=${focusedBefore} fixed=${e4?.fixed} 宽=${e4?.width}/${e4?.vw} 贴底=${e4?.atBottom} 栏可见=${e4?.barVisible} 让位=${e4?.blurDone} 回焦=${refocused}`);
 
   // ② 选中前 4 字→红
   await page.evaluate(() => {

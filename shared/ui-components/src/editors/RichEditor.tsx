@@ -7,6 +7,7 @@
 // 工具栏: V12 — 标题/加粗斜体下划线删除线/行内代码/列表/任务/引用/代码块/分割线
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import type { EditorView } from 'prosemirror-view';
 import type { EditorState } from 'prosemirror-state';
 import { toggleMark, setBlockType, wrapIn } from 'prosemirror-commands';
@@ -550,12 +551,29 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
   const FONT_COLORS = ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#2563eb', '#7c3aed', '#475569'];
   const HL_COLORS = ['#fef08a', '#bbf7d0', '#bae6fd', '#fbcfe8', '#fed7aa', '#e9d5ff'];
   const SIZES: Array<[string, string]> = [['14', 'S'], ['17', 'M'], ['20', 'L'], ['24', 'XL']];
+  /**
+   * E4 键盘让位（TA 13:53 裁决）: 弹面板→隐藏输入法（面板向下弹获全空间）;
+   * 关面板→编辑器曾聚焦则回焦恢复输入法。防重=面板已开不重复 blur。
+   */
+  const kbdWasActive = useRef(false);
+  const hideKbdForPanel = () => {
+    if (!view || kbdWasActive.current) return;
+    kbdWasActive.current = view.hasFocus();
+    if (kbdWasActive.current) view.dom.blur(); // PM EditorView 无 blur()——DOM 正法
+  };
+  const restoreKbdAfterPanel = () => {
+    if (kbdWasActive.current && view) {
+      view.focus();
+      // 聚焦即恢复键盘——不 setSelection（保留用户原选区,样式应用链不破坏）
+    }
+    kbdWasActive.current = false;
+  };
   /** 正法清 mark：removeMark（选区范围）;空选区清 storedMarks 由 PM next 命令态兜底。 */
   const clearMark = (markName: 'fontColor' | 'highlight') => {
     if (!view) return;
     const { from, to } = view.state.selection;
     view.dispatch(view.state.tr.removeMark(from, to, auroraSchema.marks[markName]));
-    setPop(null);
+    setPop(null); restoreKbdAfterPanel();
   };
 
   const btn = (
@@ -577,31 +595,34 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
     </button>
   );
 
-  return (
+  /* E4: portal 跳出 toolbar stacking 语境（栏 z-80 建 context,面板 z 在其内不越级——
+     DOM 移 body 直挂后面板 z-39 与栏 80 顶层平比,栏稳居上可点）+overflow 裁剪免疫（E3 教训） */
+  return createPortal(
+    <>
     <div className="editor-toolbar" role="toolbar" aria-label="格式工具栏">
       {btn('↶', '撤销', canUndo, () => runCmd(view, undo))}
       {btn('↷', '重做', canRedo, () => runCmd(view, redo))}
       <span className="tb-sep" />
       {/* 原子笔记对标 E1: ☰ 块组——平铺 6 钮收纳为弹面板（H1-H3/代码块/任务/表格+表内行列手术） */}
       <div className="tb-pop-wrap">
-        {btn('☰', '块类型', BLOCK_BTNS.some((b) => blocks.has(b.key)), () => setPop(pop === 'block' ? null : 'block'),
+        {btn('☰', '块类型', BLOCK_BTNS.some((b) => blocks.has(b.key)), () => { if (pop !== 'block') hideKbdForPanel(); else restoreKbdAfterPanel(); setPop(pop === 'block' ? null : 'block'); },
           { fontSize: 15 })}
-        {pop === 'block' && (
+        {pop === 'block' && createPortal(
           <div className="tb-style-pop" role="menu" aria-label="块类型面板">
             <div className="tb-style-grid-btns">
               {BLOCK_BTNS.map((b) => (
                 <button key={b.key} className={`tb-style-btn ${blocks.has(b.key) ? 'hl-prev' : ''}`} title={b.title}
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { runCmd(view, b.cmd); setPop(null); }}>{b.label}</button>
+                  onClick={() => { runCmd(view, b.cmd); setPop(null); restoreKbdAfterPanel(); }}>{b.label}</button>
               ))}
               {view && inTable(view.state) && TABLE_BTNS.map((b) => (
                 <button key={b.title} className="tb-style-btn" title={b.title}
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { runCmd(view, b.cmd); setPop(null); }}>{b.label}</button>
+                  onClick={() => { runCmd(view, b.cmd); setPop(null); restoreKbdAfterPanel(); }}>{b.label}</button>
               ))}
             </div>
           </div>
-        )}
+        , document.body)}
       </div>
       <span className="tb-sep" />
       {MARK_BTNS.map((b) =>
@@ -625,9 +646,9 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
       {/* 原子笔记 Aa 面板对标: 「样式|符号」双 tab（v2 符号=图标化分点插入）。 */}
       <div className="tb-pop-wrap">
         {btn('Aa', '文字格式', marks.has('fontColor') || marks.has('fontSize') || marks.has('highlight') || marks.has('strong') || marks.has('em') || marks.has('underline') || marks.has('strikethrough'),
-          () => { setStyleTab('fmt'); setPop(pop === 'style' || pop === 'symbol' || pop === 'template' ? null : 'style'); },
+          () => { if (!(pop === 'style' || pop === 'symbol' || pop === 'template')) hideKbdForPanel(); else restoreKbdAfterPanel(); setStyleTab('fmt'); setPop(pop === 'style' || pop === 'symbol' || pop === 'template' ? null : 'style'); },
           { fontSize: 13, fontWeight: 700 })}
-        {(pop === 'style' || pop === 'symbol' || pop === 'template') && (
+        {(pop === 'style' || pop === 'symbol' || pop === 'template') && createPortal(
           <div className="tb-style-pop" role="menu" aria-label="样式预设面板">
             <div className="tb-style-tabs" role="tablist">
               <button className={`tb-style-tab ${styleTab === 'fmt' ? 'on' : ''}`} role="tab" aria-selected={styleTab === 'fmt'}
@@ -695,7 +716,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                       if (!view) return;
                       const { from, to } = view.state.selection;
                       view.dispatch(view.state.tr.insertText(sym, from, to));
-                      setPop(null);
+                      setPop(null); restoreKbdAfterPanel();
                     }}>{sym}</button>
                 ))}
               </div>
@@ -704,7 +725,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                 {TEMPLATES.map((t) => (
                   <button key={t.key} className="tb-tmpl" title={t.title} aria-label={`模板 ${t.title}`}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => { insertTemplate(view, t.key); setPop(null); }}>
+                    onClick={() => { insertTemplate(view, t.key); setPop(null); restoreKbdAfterPanel(); }}>
                     <span className="tb-tmpl-icon">{t.icon}</span>
                     <span className="tb-tmpl-name">{t.title}</span>
                   </button>
@@ -721,20 +742,20 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                 ['fontColor', 'highlight', 'tagMark', 'quoteMark'].forEach((n) =>
                   tr.removeMark(from, to, auroraSchema.marks[n]));
                 view.dispatch(tr);
-                setPop(null);
+                setPop(null); restoreKbdAfterPanel();
               }}>普通</button>
             <button className="tb-style-btn blockquote-prev" title="引用块（红竖线）"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => { runCmd(view, wrapIn(auroraSchema.nodes.blockquote)); setPop(null); }}>引用</button>
+              onClick={() => { runCmd(view, wrapIn(auroraSchema.nodes.blockquote)); setPop(null); restoreKbdAfterPanel(); }}>引用</button>
             <button className="tb-style-btn tag-prev" title="标记（‹› 包裹+下划线）"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.tagMark)); setPop(null); }}>标记</button>
+              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.tagMark)); setPop(null); restoreKbdAfterPanel(); }}>标记</button>
             <button className="tb-style-btn quote-prev" title="引语（“” 蓝色斜体）"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.quoteMark)); setPop(null); }}>引语</button>
+              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.quoteMark)); setPop(null); restoreKbdAfterPanel(); }}>引语</button>
             <button className="tb-style-btn hl-prev" title="高亮背景（黄）"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.highlight, { color: '#fef08a' })); setPop(null); }}>高亮</button>
+              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.highlight, { color: '#fef08a' })); setPop(null); restoreKbdAfterPanel(); }}>高亮</button>
             <button className="tb-style-btn red-prev" title="红色强调（红+粗）"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
@@ -745,39 +766,41 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                 tr.addMark(from, to, auroraSchema.mark('fontColor', { color: '#dc2626' }));
                 tr.addMark(from, to, auroraSchema.mark('strong'));
                 view.dispatch(tr);
-                setPop(null);
+                setPop(null); restoreKbdAfterPanel();
               }}>红强调</button>
               </div>
             )}
           </div>
-        )}
+        , document.body)}
       </div>
       {/* 原子笔记对标 E1: ＋ 插入组——列表/分割线/公式/流程图收纳为弹面板 */}
       <div className="tb-pop-wrap">
-        {btn('＋', '插入', false, () => setPop(pop === 'insert' ? null : 'insert'),
+        {btn('＋', '插入', false, () => { if (pop !== 'insert') hideKbdForPanel(); else restoreKbdAfterPanel(); setPop(pop === 'insert' ? null : 'insert'); },
           { fontSize: 16 })}
-        {pop === 'insert' && (
+        {pop === 'insert' && createPortal(
           <div className="tb-style-pop" role="menu" aria-label="插入面板">
             <div className="tb-style-grid-btns">
               {LIST_BTNS.map((b) => (
                 <button key={b.key} className={`tb-style-btn ${blocks.has(b.key) ? 'hl-prev' : ''}`} title={b.title}
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { runCmd(view, b.cmd); setPop(null); }}>{b.label}</button>
+                  onClick={() => { runCmd(view, b.cmd); setPop(null); restoreKbdAfterPanel(); }}>{b.label}</button>
               ))}
               <button className="tb-style-btn" title="分割线"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { insertHorizontalRule(view); setPop(null); }}>—</button>
+                onClick={() => { insertHorizontalRule(view); setPop(null); restoreKbdAfterPanel(); }}>—</button>
               <button className="tb-style-btn" title="插入公式"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { if (view) insertMathBlock(view); setPop(null); }}>ƒx</button>
+                onClick={() => { if (view) insertMathBlock(view); setPop(null); restoreKbdAfterPanel(); }}>ƒx</button>
               <button className="tb-style-btn" title="插入流程图"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { if (view) insertMermaidBlock(view); setPop(null); }}>❋</button>
+                onClick={() => { if (view) insertMermaidBlock(view); setPop(null); restoreKbdAfterPanel(); }}>❋</button>
             </div>
           </div>
-        )}
+        , document.body)}
       </div>
     </div>
+    </>,
+    document.body,
   );
 }
 

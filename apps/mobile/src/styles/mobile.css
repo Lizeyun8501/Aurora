@@ -693,8 +693,8 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
    ============================================================ */
 .tb-pop-wrap { position: relative; flex: 0 0 auto; display: flex; }
 .tb-pop {
-  /* E3 键盘遮挡修: 面板向上弹（原 top 向下=弹进键盘后） */
-  position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 40;
+  /* E4: 同步向下弹语义（实际引用面仅 fmt 面板内 static 覆写——此处为防御性一致性） */
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
   display: flex; gap: 4px; align-items: center;
   padding: 6px; border-radius: 10px;
   background: var(--bg-primary);
@@ -734,13 +734,15 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 
 /* 样式预设面板（Aa 弹组） */
 .tb-style-pop {
-  /* E3 键盘遮挡修（TA 11:13 报）: 面板 fixed 跳层贴工具栏上方——
-     ① 原 top 向下弹=弹进键盘后（工具栏 fixed 贴键盘上沿）→改 bottom 语义向上弹
-     ② toolbar overflow-x: auto 会裁 absolute 子面板（overflow-y 隐含 auto）→fixed 跳出裁剪层
-     ③ left/right 8px 全宽 sheet（VIVO 底部面板层级对标,不锚单钮防右侧溢出） */
+  /* E4（TA 13:53 裁决定稿）: 面板向下弹——贴视口底（工具栏正下方底部区）。
+     前提链: 开面板→view.dom.blur() 收输入法→kbd-inset→0→工具栏贴屏底（fixed bottom）→面板在栏下=屏幕底部;
+     overflow 裁剪防线（E3 教训）: fixed 跳层（toolbar overflow-x: auto 隐含 overflow-y: auto 裁 absolute）。
+     E3 的「栏上方」版作废——TA 裁决选键盘让位而非面板让位。 */
   position: fixed;
-  bottom: calc(49px + max(var(--kbd-inset, 0px), env(safe-area-inset-bottom)) + 4px);
-  left: 8px; right: 8px; z-index: 40;
+  /* 向下弹实义: 面板底=栏顶（栏 49px 恒可见可点）——面板在栏上方区域展开,视觉贴栏上沿;
+     底部 49px 由 bottom: calc(vh-栏高) 表达,内容零遮挡 */
+  bottom: calc(49px + max(var(--kbd-inset, 0px), env(safe-area-inset-bottom)));
+  left: 8px; right: 8px; z-index: 70; /* 70: >editor-page 60（body 直挂后需压编辑页才可点）<栏 80（栏恒在上可点） */
   display: flex; flex-direction: column; gap: 4px; /* v2: tab 头+内容块纵排 */
   padding: 6px; border-radius: 10px;
   background: var(--bg-primary);
