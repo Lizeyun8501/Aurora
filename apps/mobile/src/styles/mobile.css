@@ -725,6 +725,12 @@ span.tag-mark::after { content: '›'; color: var(--text-tertiary); margin-left:
 span.quote-mark::before { content: '“'; margin-right: 1px; }
 span.quote-mark::after { content: '”'; margin-left: 1px; }
 
+/* E2 格式面板: B/I/U/S 行+字号/色板/高亮纵排流式（.tb-pop 复用但覆 absolute 为流式） */
+.tb-fmt-panel { display: flex; flex-direction: column; gap: 6px; }
+.tb-fmt-panel .tb-pop { position: static; flex-wrap: wrap; box-shadow: none; border: none; padding: 0; background: transparent; }
+.tb-fmt-row { display: flex; gap: 4px; }
+.tb-fmt-row .tb-btn { min-width: 36px; }
+
 /* 样式预设面板（Aa 弹组） */
 .tb-style-pop {
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;

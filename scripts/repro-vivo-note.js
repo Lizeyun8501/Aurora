@@ -10,6 +10,23 @@ const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobi
   ? 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html'
   : 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
 
+// Aa 面板确保开（toggle 语义防御——面板已开时点 Aa=关）
+async function ensureAaOpen(page, tab) {
+  const open = await page.evaluate(() => !!document.querySelector('.tb-style-pop'));
+  if (!open) {
+    await page.click('.editor-toolbar button[title="文字格式"]');
+    await page.waitForTimeout(300);
+  }
+  if (tab) {
+    await page.evaluate((t) => {
+      const tabs = Array.from(document.querySelectorAll('.tb-style-tab'));
+      tabs.find((x) => x.textContent === t)?.click();
+    }, tab);
+    await page.waitForTimeout(200);
+  }
+}
+
+
 (async () => {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
@@ -39,14 +56,19 @@ const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobi
   await page.keyboard.type('红字重点蓝字普通', { delay: 40 });
   await page.waitForTimeout(300);
 
-  // ① 工具栏三弹钮
-  const tbtns = await page.evaluate(() => ({
-    color: !!document.querySelector('.editor-toolbar button[title="文字颜色"]'),
-    size: !!document.querySelector('.editor-toolbar button[title="字号"]'),
-    hl: !!document.querySelector('.editor-toolbar button[title="高亮"]'),
+  // ① E2 Aa 五合一组: 一钮弹全部文字格式（B/I/U/S/字号/色/高亮并入「格式」tab）
+  await page.click('.editor-toolbar button[title="文字格式"]');
+  await page.waitForTimeout(300);
+  const aaPanel = await page.evaluate(() => ({
+    panel: !!document.querySelector('.tb-style-pop'),
+    tabs: Array.from(document.querySelectorAll('.tb-style-tab')).map((t) => t.textContent),
+    fmtBtns: Array.from(document.querySelectorAll('.tb-fmt-row .tb-btn')).map((b) => b.title),
+    sizes: document.querySelectorAll('.tb-fmt-panel .tb-size').length,
+    swatches: document.querySelectorAll('.tb-fmt-panel .tb-swatch').length,
+    residue: !!document.querySelector('.editor-toolbar button[title="文字颜色"]'),
   }));
-  record('① 工具栏三弹钮存在', tbtns.color && tbtns.size && tbtns.hl,
-    `色=${tbtns.color} 号=${tbtns.size} 亮=${tbtns.hl}`);
+  record('① E2 Aa 五合一（B/I/U/S+字号+色板+高亮）', aaPanel.panel && aaPanel.tabs.includes('格式') && aaPanel.fmtBtns.length === 4 && aaPanel.sizes >= 4 && aaPanel.swatches >= 12 && !aaPanel.residue,
+    `tab=${aaPanel.tabs.join('|')} 格式钮=${aaPanel.fmtBtns.join('|')} 字号=${aaPanel.sizes} 色板=${aaPanel.swatches} 独立钮残留=${aaPanel.residue}`);
 
   // ② 选中前 4 字→红
   await page.evaluate(() => {
@@ -66,9 +88,7 @@ const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobi
     s.addRange(range);
     return s.toString();
   });
-  await page.click('.editor-toolbar button[title="文字颜色"]');
-  await page.waitForTimeout(250);
-  await page.click('.tb-pop .tb-swatch >> nth=0'); // 红 #dc2626
+  await page.click('.tb-fmt-panel .tb-swatch >> nth=0'); // 红 #dc2626（Aa「格式」tab 内色板）
   await page.waitForTimeout(300);
   const redHtml = await page.evaluate(() => document.querySelector('.ProseMirror p span[style*="color"]')?.style.color || 'NONE');
   record('② 文字色: 选中 4 字→红', /rgb\(220,\s*38,\s*38\)|#dc2626/.test(redHtml),
@@ -84,37 +104,35 @@ const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobi
     s.removeAllRanges();
     s.addRange(range);
   });
-  await page.click('.editor-toolbar button[title="字号"]');
-  await page.waitForTimeout(250);
-  await page.click('.tb-pop .tb-size >> nth=2'); // L=20
+  await page.click('.tb-fmt-panel .tb-size >> nth=2'); // L=20（Aa「格式」tab 内字号）
   await page.waitForTimeout(300);
   const sizeHtml = await page.evaluate(() => document.querySelector('.ProseMirror p span[style*="font-size"]')?.style.fontSize || 'NONE');
   record('③ 字号档 L', sizeHtml === '20px', `span字号=${sizeHtml}`);
 
-  // ④ 高亮: 选中「蓝字」
+  // ④ 高亮: 选中「蓝字」（PM TextSelection——DOM Range 会被 PM 失焦重建吞）
   await page.evaluate(() => {
-    const pm = document.querySelector('.ProseMirror');
-    const p = pm.querySelector('p');
-    // 找纯文本「蓝字普通」位置
-    const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
-    let node;
-    while ((node = walker.nextNode())) {
-      const idx = node.textContent.indexOf('蓝字普通');
-      if (idx >= 0) {
-        const range = document.createRange();
-        range.setStart(node, idx);
-        range.setEnd(node, idx + 2);
-        const s = window.getSelection();
-        s.removeAllRanges();
-        s.addRange(range);
-        return true;
+    const pmEl = document.querySelector('.ProseMirror');
+    pmEl.focus();
+    const view = pmEl.pmViewDesc?.view || (window.__pmView);
+    const pm = view || pmEl;
+    // PM head 查询: 直接经 pmViewDesc 链不可靠——用 pmDOM 的 editorView 全局（RichEditor 挂 window.__editorView）
+    const ev = window.__editorView;
+    if (!ev) return 'NO-EV';
+    const { state } = ev;
+    let pos = -1;
+    state.doc.descendants((node, p) => {
+      if (pos < 0 && node.isText && node.textContent.includes('蓝字普通')) {
+        pos = p + node.textContent.indexOf('蓝字普通');
       }
-    }
-    return false;
+      return pos < 0;
+    });
+    if (pos < 0) return 'NO-POS';
+    ev.dispatch(state.tr.setSelection(state.selection.constructor.create(state.doc, pos, pos + 2)));
+    ev.focus();
+    return 'OK';
   });
-  await page.click('.editor-toolbar button[title="高亮"]');
-  await page.waitForTimeout(250);
-  await page.click('.tb-pop .tb-swatch >> nth=0'); // 黄 #fef08a
+  await ensureAaOpen(page, '格式');
+  await page.click('.tb-fmt-panel .tb-swatch[title="高亮 #fef08a"]');
   await page.waitForTimeout(300);
   const hlHtml = await page.evaluate(() => document.querySelector('.ProseMirror p mark, .ProseMirror p span[style*="background"]')?.style?.backgroundColor || document.querySelector('.ProseMirror p mark') ? 'mark 标签命中' : 'NONE');
   record('④ 高亮选中「蓝字」', hlHtml !== 'NONE', `高亮=${hlHtml}`);
@@ -128,7 +146,7 @@ const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobi
     `渲染=${floatBtns.hl}/${floatBtns.red}（视口滚动时 floating-menu 隐藏属 DK-05M 语义）`);
 
   // ⑦ Aa 样式预设面板（图对标: 六预设+tagMark 应用）
-  await page.click('.editor-toolbar button[title="样式预设"]');
+  await ensureAaOpen(page, '文字样式');
   await page.waitForTimeout(300);
   const styleBtns = await page.evaluate(() => ({
     panel: !!document.querySelector('.tb-style-pop'),
@@ -172,7 +190,7 @@ const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobi
     `面板=${styleBtns.panel} 六块=${styleBtns.six} 标记span="${tagHtml}"`);
 
   // ⑧ v2 符号 tab: 切 tab→符号 grid 16 项→插入 ✓
-  await page.click('.editor-toolbar button[title="样式预设"]');
+  await ensureAaOpen(page, '文字样式');
   await page.waitForTimeout(300);
   const tabState = await page.evaluate(() => ({
     tabs: document.querySelectorAll('.tb-style-tab').length,
@@ -187,11 +205,11 @@ const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobi
   await page.waitForTimeout(300);
   const starInDoc = await page.evaluate(() =>
     document.querySelector('.ProseMirror p')?.textContent?.includes('★') || false);
-  record('⑧ 符号 tab（16 项+插入 ★）', tabState.tabs === 3 && symCount === 16 && starInDoc,
+  record('⑧ 符号 tab（16 项+插入 ★）', tabState.tabs === 4 && symCount === 16 && starInDoc,
     `tab=${tabState.tabs}/${tabState.styleOn} 符号=${symCount} ★入文=${starInDoc}`);
 
   // ⑨ v3 图文模板 tab: 三 tab→模板四卡→插「待办清单」→块结构断言
-  await page.click('.editor-toolbar button[title="样式预设"]');
+  await ensureAaOpen(page, '文字样式');
   await page.waitForTimeout(300);
   const tab3 = await page.evaluate(() => document.querySelectorAll('.tb-style-tab').length);
   await page.click('.tb-style-tab:has-text("图文模板")');
@@ -208,7 +226,7 @@ const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobi
       blocks: kids.join(',').slice(0, 120),
     };
   });
-  record('⑨ 图文模板 tab（四卡+待办模板结构）', tab3 === 3 && tmplCount === 4 && tmplDoc.h2 && tmplDoc.tasks >= 3,
+  record('⑨ 图文模板 tab（四卡+待办模板结构）', tab3 === 4 && tmplCount === 4 && tmplDoc.h2 && tmplDoc.tasks >= 3,
     `tab=${tab3} 模板卡=${tmplCount} h2=${tmplDoc.h2} 任务=${tmplDoc.tasks} 块=[${tmplDoc.blocks}]`);
 
   // ⑩ E1 工具栏分组整改: ☰ 块组/＋插入组弹出+功能保活
