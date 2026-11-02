@@ -70,6 +70,28 @@ async function ensureAaOpen(page, tab) {
   record('① E2 Aa 五合一（B/I/U/S+字号+色板+高亮）', aaPanel.panel && aaPanel.tabs.includes('格式') && aaPanel.fmtBtns.length === 4 && aaPanel.sizes >= 4 && aaPanel.swatches >= 12 && !aaPanel.residue,
     `tab=${aaPanel.tabs.join('|')} 格式钮=${aaPanel.fmtBtns.join('|')} 字号=${aaPanel.sizes} 色板=${aaPanel.swatches} 独立钮残留=${aaPanel.residue}`);
 
+  // E3 键盘遮挡修: 面板 fixed 跳层+全宽 sheet+贴工具栏上方（原 absolute top 向下=键盘后）
+  const e3Pos = await page.evaluate(() => {
+    const panel = document.querySelector('.tb-style-pop');
+    const bar = document.querySelector('.editor-toolbar');
+    if (!panel || !bar) return null;
+    const pr = panel.getBoundingClientRect();
+    const br = bar.getBoundingClientRect();
+    const cs = getComputedStyle(panel);
+    return {
+      fixed: cs.position === 'fixed',
+      barTop: br.top,
+      panelBottom: pr.bottom,
+      width: pr.width,
+      vw: window.innerWidth,
+      full: pr.width > window.innerWidth * 0.8,
+      aboveBar: pr.bottom <= br.top + 2,  // 面板底贴工具栏顶（上方弹）
+    };
+  });
+  record('⑪ E3 键盘遮挡修（面板 fixed 全宽·贴工具栏上方）',
+    !!e3Pos && e3Pos.fixed && e3Pos.full && e3Pos.aboveBar,
+    `fixed=${e3Pos?.fixed} 宽=${e3Pos?.width}/${e3Pos?.vw} 面板底=${e3Pos?.panelBottom?.toFixed(0)}≤栏顶=${e3Pos?.barTop?.toFixed(0)}`);
+
   // ② 选中前 4 字→红
   await page.evaluate(() => {
     const pm = document.querySelector('.ProseMirror');
