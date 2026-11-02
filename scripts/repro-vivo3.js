@@ -118,6 +118,14 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`⑦ 年模式 FAB 隐藏（fabNull=${!fabY}）+填满类（fill=${fill.fillClass}）`, !fabY && fill.fillClass);
   ok(`⑦ 年 grid 弹性填满零溢出（viewH=${fill.viewH}, free=${fill.free}）`, fill.free && fill.viewH > 600);
 
+  // 11-02 11:32 报障: 年红带干支/生肖随滑年联动（y2 年中点定,农历日保持今天）
+  const band0 = await page.evaluate(() => document.querySelector('.year-lunar-band')?.textContent.trim());
+  const bandOf = () => page.evaluate(() => document.querySelector('.year-lunar-band')?.textContent.trim());
+  await swipe(-120); await page.waitForTimeout(400);
+  const band1 = await bandOf();
+  await swipe(120); await page.waitForTimeout(400);
+  ok(`⑨ 年红带干支生肖随滑年联动（${band0} → 滑+1: ${band1} 变化）`, band0 !== band1);
+
   // 11-02 08:49 双修: ①切年清 yearDelta 回月视图年;②年填满收口（gap ≤20）
   const gf = await page.evaluate(() => {
     const grid = document.querySelector('.year-grid');
@@ -144,7 +152,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`⑥ 回今天跨月归位（=${rt}）`, /11 月/.test(rt || '') || /1 月|2 月|3 月/.test(rt || ''));
   await page.click('.cal-day-btn.today'); await page.waitForTimeout(250);
 
-  console.log(`\n=== CALENDAR-VIVO3 验收: ${18 - fail.length}/18 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
+  console.log(`\n=== CALENDAR-VIVO3 验收: ${19 - fail.length}/19 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
   await page.screenshot({ path: '/tmp/vivo3.png' });
   await browser.close();
   process.exit(fail.length || errors.length ? 1 : 0);

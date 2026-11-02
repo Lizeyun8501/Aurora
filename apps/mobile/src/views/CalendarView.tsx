@@ -303,7 +303,11 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
            * 网格+事件红下划线+节日红数字+当月标题红）——vivo 规格书级复刻。
            * 点月格→monthOffset 定位+切月视图。 */
           const y2 = view.getFullYear() + yearDelta;
+          /* 11-02 11:32 报障修: 干支/生肖随 y2 变（原固定今天——滑年后红带不变）。
+             取 y2 年中点定干支: 全年稳定一个生肖年（避开 1-2 月春节跨年歧义——vivo 年页语义=整年一个生肖）;
+             农历日部分保持今天（用户今天所处农历日）。 */
           const nowLunar = Lunar.fromDate(new Date());
+          const y2Lunar = Lunar.fromDate(new Date(y2, 5, 1));
           return (
             <div
               className="year-vivo" key={y2}
@@ -326,7 +330,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               }}
             >
               <div className="year-lunar-band">
-                — {nowLunar.getYearInGanZhi()}{nowLunar.getYearShengXiao()}年 — 农历{nowLunar.getDayInChinese()} —
+                — {y2Lunar.getYearInGanZhi()}{y2Lunar.getYearShengXiao()}年 — 农历{nowLunar.getDayInChinese()} —
               </div>
               <div className="year-grid">
                 {Array.from({ length: 12 }, (_, i) => {
