@@ -118,6 +118,14 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`⑦ 年模式 FAB 隐藏（fabNull=${!fabY}）+填满类（fill=${fill.fillClass}）`, !fabY && fill.fillClass);
   ok(`⑦ 年 grid 弹性填满零溢出（viewH=${fill.viewH}, free=${fill.free}）`, fill.free && fill.viewH > 600);
 
+  // 11-02 23:33 指令: 五页签「今」透明圆（加号上方并排;年 solo 72）——滑离显示/点归位/归位隐藏
+  await swipe(-120); await page.waitForTimeout(400); // ⑨ 已滑回当前年——此处再滑走供⑪
+  const todaySel = (sel) => page.evaluate((s2) => { const el = document.querySelector(s2); if (!el) return null; const r = el.getBoundingClientRect(); return { b: Math.round(r.bottom), x: Math.round(r.right), t: el.textContent, col: getComputedStyle(el).color }; }, sel);
+  ok(`⑪ 年-滑走「今」显solo72红字（${JSON.stringify(await todaySel('.fab-today'))}）`, await (async () => { const vp = await page.evaluate(() => ({ h: window.innerHeight, w: window.innerWidth })); const t = await todaySel('.fab-today'); return t && t.b === vp.h - 72 && t.x === vp.w - 16 && t.t === '今' && t.col.includes('255, 77, 79'); })());
+  await page.click('.fab-today'); await page.waitForTimeout(400);
+  const yB2 = await page.evaluate(() => document.querySelector('.cal-title-year')?.textContent);
+  ok(`⑪ 年-点今归当前年+隐藏（=${yB2}）`, yB2 === String(new Date().getFullYear()) && (await todaySel('.fab-today')) === null);
+
   // 11-02 16:33 报障: 年标题 4 数字等大 34px;后两位仅当前年红,他年同前两位色
   const titleChk = () => page.evaluate(() => {
     const y = document.querySelector('.cal-title-year .cal-title-y');
@@ -165,7 +173,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`⑥ 回今天跨月归位（=${rt}）`, /11 月/.test(rt || '') || /1 月|2 月|3 月/.test(rt || ''));
   await page.click('.cal-day-btn.today'); await page.waitForTimeout(250);
 
-  console.log(`\n=== CALENDAR-VIVO3 验收: ${21 - fail.length}/21 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
+  console.log(`\n=== CALENDAR-VIVO3 验收: ${23 - fail.length}/23 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);
   await page.screenshot({ path: '/tmp/vivo3.png' });
   await browser.close();
   process.exit(fail.length || errors.length ? 1 : 0);

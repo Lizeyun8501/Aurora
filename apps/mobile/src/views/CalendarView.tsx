@@ -56,6 +56,14 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   }, []);
 
   const view = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+  /* 11-02 23:33 用户指令: 五页签滑离当前时段→右下「今」透明圆（加号上方并排）——一点全归位。
+     显示条件按模式: 年=yearDelta 残;月=monthOffset 翻走;周/日=selected 非 today（view 由 selected 驱动）;日程=筛选/搜索态。 */
+  const offToday = mode === 'year' ? yearDelta !== 0
+    : mode === 'month' ? monthOffset !== 0
+    : mode === 'week' || mode === 'day' ? selected !== todayStr
+    : mode === 'list' ? (listFilter !== 'all' || listQuery !== '')
+    : false;
+  const goToday = () => { setMonthOffset(0); setSelected(todayStr); setYearDelta(0); setListFilter('all'); setListQuery(''); };
   const y = view.getFullYear();
   const m = view.getMonth();
   const lead = (new Date(y, m, 1).getDay() + 6) % 7; // 周一起始
@@ -575,6 +583,15 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
 
       {/* CALENDAR-VIVO 11-01 20:39 用户修订: FAB 与其他页同位（16/72）+**仅日程**
           （任务菜单已拆——FAB 直开 EventEditorSheet 选中日 09:00 预填）;sheet 开时隐藏。 */}
+      {/* 「今」透明圆: 加号上方并排（年模式加号藏→solo 落原加号位）;sheet 开时隐藏。 */}
+      {offToday && !eventEditor && (
+        <button
+          className={'fab-today' + (mode === 'year' ? ' fab-today-solo' : '')}
+          onClick={goToday}
+          aria-label="回到今天"
+        >今</button>
+      )}
+
       {/* 11-02 07:12: 年模式隐藏 FAB（浏览年语境无创建入口——v27.3 双入口在月/日语境）;sheet 开时隐藏依旧。 */}
       {!eventEditor && mode !== 'year' && (
         <button
