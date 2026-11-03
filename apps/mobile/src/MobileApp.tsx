@@ -424,6 +424,7 @@ export default function App() {
           onDeleted={() => { softDelete(editing.id, editing.title); showToast('已移入回收站'); setEditing(null); }}
           onOpenQueue={() => setQueueOpen(true)}
           onOpenConflicts={() => setConflictOpen(true)}
+          showToast={showToast}
         />
       ) : (
         <>
@@ -1672,7 +1673,7 @@ function SyncPanel({ noteId }: { noteId: string }) {
 // 编辑页 — V19 移动端页面4（全屏沉浸 · 顶部返回+标题+工具菜单 · 专注模式）
 // ===========================================================================
 
-function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onOpenQueue, onOpenConflicts }: {
+function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onOpenQueue, onOpenConflicts, showToast }: {
   noteId: string;
   title: string;
   isFav: boolean;
@@ -1682,6 +1683,7 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
   /** DK-50：编辑态菜单的同步两入口（App 层面板 state 下传） */
   onOpenQueue: () => void;
   onOpenConflicts: () => void;
+  showToast: (t: string) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
@@ -1693,22 +1695,27 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
   // 大标题可编辑（参考图布局）— overlay 存储，所有列表同步
   const [docTitle, setDocTitle] = useState(() => getTitleOverlay(noteId) || title);
 
-  /** E6 导入导出 handler——noteExport 模块（lazy 载体为 barrel 稳定导出,直引用性）。 */
+  /** E6 导入导出 handler——noteExport 模块。E14（TA 18:16）: 全链 toast 反馈+防御——
+   * 真机 WebView 无 DownloadListener 时 blob 静默（「无反应」根因之一）;share 双通道
+   * （noteExport）+toast 保用户可感知;lazy/导出异常 catch 兜底不再静默。 */
   const doExport = (fmt: 'md' | 'word' | 'txt' | 'pdf') => {
     import('@aurora/ui-components').then((m) => {
       const t = (docTitle || title).replace(/[\\/:*?"<>|]/g, '_');
       const r = fmt === 'pdf' ? m.exportNotePdf(title) : m.exportNote(title, fmt);
       setStatus(r.ok ? 'saved' : null);
-      if (!r.ok) console.warn('导出失败', r.error);
-    });
+      if (r.ok) showToast(`已导出 ${r.filename}`);
+      else showToast(`导出失败：${r.error ?? '未知错误'}`);
+    }).catch(() => showToast('导出失败（模块加载异常）'));
   };
   const doImport = async () => {
-    const m = await import('@aurora/ui-components');
-    const f = await m.pickImportFile();
-    if (!f) return;
-    const isMd = /\.md$|\.markdown$/i.test(f.name);
-    const ok = m.importNoteText(f.text, isMd);
-    if (!ok) console.warn('导入失败');
+    try {
+      const m = await import('@aurora/ui-components');
+      const f = await m.pickImportFile();
+      if (!f) return; // 用户取消=静默
+      const isMd = /\.md$|\.markdown$/i.test(f.name);
+      const ok = m.importNoteText(f.text, isMd);
+      showToast(ok ? `已导入 ${f.name}` : '导入失败（内容解析异常）');
+    } catch { showToast('导入失败（模块加载异常）'); }
   };
 
   const onTitleChange = (v: string) => {

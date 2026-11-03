@@ -101,6 +101,16 @@ function docShell(title: string, body: string): string {
 }
 
 function download(filename: string, content: string, mime: string): boolean {
+  // E14 真机修复（TA 18:16）: Web Share 双通道——Android WebView 无 DownloadListener 时
+  // blob a.click() 静默无反应;canShare(files) 真→系统分享/另存面板接管（用户可感知）。
+  // 桌面/headless 无 share→blob 兜底链（既有 PW 断言面不变）。share 取消=用户意图,静默。
+  try {
+    const file = new File([content], filename, { type: mime });
+    if (navigator.canShare?.({ files: [file] })) {
+      void navigator.share({ files: [file], title: filename }).catch(() => { /* 取消/失败静默 */ });
+      return true;
+    }
+  } catch { /* File/canShare 缺失防御 */ }
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
