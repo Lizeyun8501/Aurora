@@ -104,7 +104,7 @@ async function ensureAaOpen(page, tab) {
       width: pr.width,
       vw: window.innerWidth,
       full: pr.width > window.innerWidth * 0.8,
-      compact: pr.width <= 330 && (pr.bottom - pr.top) <= window.innerHeight * 0.42 && pr.right - pr.left < window.innerWidth * 0.9,  // E7 紧凑: 宽≤330+高≤42vh（内容自适应非半屏）
+      fullwidth: pr.left <= 12 && pr.right >= window.innerWidth - 12 && (pr.bottom - pr.top) <= window.innerHeight * 0.44,  // E9 全宽 sheet: 左右 8±4 边距+高自适应≤42vh+栏正上方
       barDocked: br.width > 0 && Math.abs(br.bottom - window.innerHeight) < 6, // E7: 栏恒贴底（紧凑 popover 无半屏让位）
       blurDone: focusedMidArg && !!ev && !ev.hasFocus(),  // 键盘让位: 开前有焦→开后失焦
     };
@@ -113,9 +113,9 @@ async function ensureAaOpen(page, tab) {
   await page.click('.tb-fmt-panel .tb-swatch >> nth=0');
   await page.waitForTimeout(300);
   const refocused = await page.evaluate(() => !!window.__editorView && window.__editorView.hasFocus());
-  record('⑪ E7 紧凑 popover（自适应高度+栏贴底+键盘让位链）',
-    focusedBefore && !!e4 && e4.fixed && e4.compact && e4.barDocked && e4.blurDone && refocused,
-    `先焦=${focusedBefore} fixed=${e4?.fixed} 紧凑=${e4?.compact} 栏贴底=${e4?.barDocked} 让位=${e4?.blurDone} 回焦=${refocused}`);
+  record('⑪ E9 全宽 sheet（栏正上方+自适应高度+键盘让位链）',
+    focusedBefore && !!e4 && e4.fixed && e4.fullwidth && e4.barDocked && e4.blurDone && refocused,
+    `先焦=${focusedBefore} fixed=${e4?.fixed} 全宽=${e4?.fullwidth} 栏贴底=${e4?.barDocked} 让位=${e4?.blurDone} 回焦=${refocused}`);
 
   // ② 选中前 4 字→红
   await page.evaluate(() => {
@@ -326,6 +326,22 @@ async function ensureAaOpen(page, tab) {
   await page.evaluate(() => { const v = window.__editorView; if (v) v.focus(); });
   record('⑩d E7 插入组补齐（链接/图片/表格）', e7Titles.hasLink && e7Titles.hasImage && e7Titles.hasTable,
     `链接=${e7Titles.hasLink} 图片=${e7Titles.hasImage} 表格=${e7Titles.hasTable} 面板项=${e7Titles.titles.length}`);
+  // ⑩e E9 分区卡+头（TA 13:03 图1 对标: tb-sec 独立圆角块+左上小标题——⑩d 后面板已开,直查免 toggle 误关）
+  await page.waitForTimeout(300);
+  const e9Sec = await page.evaluate(() => {
+    const sec = document.querySelector('.tb-style-pop .tb-sec');
+    const title = document.querySelector('.tb-style-pop .tb-sec-title');
+    const pop = document.querySelector('.tb-style-pop');
+    const gs = sec ? getComputedStyle(sec) : null;
+    return {
+      hasSec: !!sec, hasTitle: !!title, titleText: title?.textContent ?? '',
+      secRadius: gs?.borderRadius ?? '', popWidth: pop ? pop.getBoundingClientRect().width : 0,
+      vw: window.innerWidth,
+    };
+  });
+  await page.evaluate(() => { window.__editorView?.focus(); });
+  record('⑩e E9 分区卡+头（图1 对标）', e9Sec.hasSec && !!e9Sec.titleText && e9Sec.popWidth >= e9Sec.vw - 20,
+    `sec=${e9Sec.hasSec} 头=${e9Sec.titleText} 圆角=${e9Sec.secRadius} 面板宽=${e9Sec.popWidth}/${e9Sec.vw}`);
 
   record('⑥ 零错误', errors.length === 0, errors.length ? errors.slice(0, 2).join(' | ') : '双监听 0');
 

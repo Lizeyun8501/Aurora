@@ -610,6 +610,8 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
           { fontSize: 15 })}
         {pop === 'block' && createPortal(
           <div className="tb-style-pop" role="menu" aria-label="块类型面板">
+            <div className="tb-sec">
+            <div className="tb-sec-title">块类型</div>
             <div className="tb-style-grid-btns">
               {BLOCK_BTNS.map((b) => (
                 <button key={b.key} className={`tb-style-btn ${blocks.has(b.key) ? 'hl-prev' : ''}`} title={b.title}
@@ -621,6 +623,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => { runCmd(view, b.cmd); setPop(null); restoreKbdAfterPanel(); }}>{b.label}</button>
               ))}
+            </div>
             </div>
           </div>
         , document.body)}
@@ -648,6 +651,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
             </div>
             {styleTab === 'fmt' ? (
               <div className="tb-fmt-panel">
+                <div className="tb-sec">
                 <div className="tb-fmt-row" role="group" aria-label="基础格式">
                   {btn('B', '加粗', marks.has('strong'), () => runCmd(view, toggleMark(auroraSchema.marks.strong)), { fontWeight: 800 })}
                   {btn('I', '斜体', marks.has('em'), () => runCmd(view, toggleMark(auroraSchema.marks.em)), { fontStyle: 'italic' })}
@@ -655,6 +659,9 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                   {btn('S', '删除线', marks.has('strikethrough'), () => runCmd(view, toggleMark(auroraSchema.marks.strikethrough)), { textDecoration: 'line-through' })}
                   {btn('</>', '行内代码', marks.has('code'), () => runCmd(view, toggleMark(auroraSchema.marks.code)), { fontFamily: 'monospace', fontSize: 12 })}
                 </div>
+                </div>
+                <div className="tb-sec">
+                <div className="tb-sec-title">字号</div>
                 <div className="tb-pop" role="group" aria-label="字号档位">
                   {SIZES.map(([px, label]) => (
                     <button key={px} className="tb-size" title={`${px}px`}
@@ -667,6 +674,9 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                       }}>{label}</button>
                   ))}
                 </div>
+                </div>
+                <div className="tb-sec">
+                <div className="tb-sec-title">文字颜色</div>
                 <div className="tb-pop" role="group" aria-label="文字色板">
                   <button className="tb-pop-reset" title="清除颜色"
                     onMouseDown={(e) => e.preventDefault()}
@@ -678,6 +688,9 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                       onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.fontColor, { color: c })); }} />
                   ))}
                 </div>
+                </div>
+                <div className="tb-sec">
+                <div className="tb-sec-title">高亮</div>
                 <div className="tb-pop" role="group" aria-label="高亮色板">
                   <button className="tb-pop-reset" title="清除高亮"
                     onMouseDown={(e) => e.preventDefault()}
@@ -688,6 +701,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.highlight, { color: c })); }} />
                   ))}
+                </div>
                 </div>
               </div>
             ) : styleTab === 'symbol' ? (
@@ -762,6 +776,8 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
           { fontSize: 16 })}
         {pop === 'insert' && createPortal(
           <div className="tb-style-pop" role="menu" aria-label="插入面板">
+            <div className="tb-sec">
+            <div className="tb-sec-title">插入</div>
             <div className="tb-style-grid-btns">
               {LIST_BTNS.map((b) => (
                 <button key={b.key} className={`tb-style-btn ${blocks.has(b.key) ? 'hl-prev' : ''}`} title={b.title}
@@ -787,6 +803,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
               <button className="tb-style-btn" title="插入表格"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { if (view) insertBlock(view, 'table'); setPop(null); restoreKbdAfterPanel(); }}>▦</button>
+            </div>
             </div>
           </div>
         , document.body)}

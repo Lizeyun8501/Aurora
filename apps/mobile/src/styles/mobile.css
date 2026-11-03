@@ -761,9 +761,9 @@ span.quote-mark::before { content: '“'; margin-right: 1px; }
 span.quote-mark::after { content: '”'; margin-left: 1px; }
 
 /* E2 格式面板: B/I/U/S 行+字号/色板/高亮纵排流式（.tb-pop 复用但覆 absolute 为流式） */
-.tb-fmt-panel { display: flex; flex-direction: column; gap: 6px; }
+.tb-fmt-panel { display: flex; flex-direction: column; gap: 10px; }
 .tb-fmt-panel .tb-pop { position: static; flex-wrap: wrap; box-shadow: none; border: none; padding: 0; background: transparent; }
-.tb-fmt-row { display: flex; gap: 4px; }
+.tb-fmt-row { display: flex; gap: 6px; }
 .tb-fmt-row .tb-btn { min-width: 36px; }
 
 /* 样式预设面板（Aa 弹组） */
@@ -773,24 +773,21 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
      overflow 裁剪防线（E3 教训）: fixed 跳层（toolbar overflow-x: auto 隐含 overflow-y: auto 裁 absolute）。
      E3 的「栏上方」版作废——TA 裁决选键盘让位而非面板让位。 */
   position: fixed;
-  /* E7 定稿（TA 08:46 美学令）: 紧凑自适应 popover——内容多少占多少（max 40vh 限高滚收）,
-     宽度自适应内容（min 200/max 320——不再全宽铺陈遮内容）;锚=栏正下方（栏回落贴底,
-     面板底=栏顶上浮位——KBD 让位链保留）。右侧对齐触发钮侧,行内编辑可视区最大化保留。 */
+  /* E9 定稿（TA 13:03 图1 对标·VIVO sheet 式）: 全宽 8 边距+栏正上方+高内容自适应≤42vh。
+     撤 E7 右下小气泡（「向上弹+这么小」否决）与 E5 恒半屏——中道=宽度满幅分区化观感,
+     高度弹开即合身（内容多少占多少,上限 42vh 滚收）;栏恒贴底可点,kbd 让位链保留。 */
   bottom: calc(49px + max(var(--kbd-inset, 0px), env(safe-area-inset-bottom)) + 4px);
+  left: 8px;
   right: 8px;
-  left: auto;
-  width: max-content;
-  min-width: 200px;
-  max-width: 320px;
-  max-height: 40vh;
+  max-height: 42vh;
   z-index: 70; /* 70: >editor-page 60（body 直挂后需压编辑页才可点）<栏 80（栏恒在上可点） */
   overflow-y: auto;
-  animation: tbPopDown .18s ease-out; /* 向下弹出视觉锚 */
-  display: flex; flex-direction: column; gap: 4px; /* v2: tab 头+内容块纵排 */
-  padding: 8px; border-radius: 12px;
-  box-shadow: 0 6px 24px rgba(31, 41, 55, 0.18); /* 浮层阴影——「弹窗」体感（E7 美学） */
-  backdrop-filter: blur(4px);
-  background: var(--bg-primary);
+  animation: tbPopDown .18s ease-out;
+  display: flex; flex-direction: column; gap: 10px; /* 分区间呼吸（图1: 分区堆叠+均匀小距） */
+  padding: 12px; border-radius: 16px; /* 大圆角 sheet 体感（图1 目标形） */
+  background: color-mix(in srgb, var(--bg-primary) 93%, transparent); /* 半透磨砂（图1 质感） */
+  backdrop-filter: blur(14px);
+  box-shadow: 0 -2px 32px rgba(31, 41, 55, 0.2);
   border: 1px solid var(--border);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
 }
@@ -812,6 +809,22 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .tb-style-btn.hl-prev { background: #fef08a; color: var(--text-primary); border: none; }
 .tb-style-btn.red-prev { color: #dc2626; font-weight: 800; }
 
+/* E9（TA 13:03 图1 对标）: 分区卡——独立圆角块+左上小标题（sheet 内三段分区化观感） */
+.tb-sec {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  padding: 8px 10px 10px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.tb-sec-title {
+  font-size: 11px; color: var(--text-tertiary);
+  letter-spacing: 0.04em; font-weight: 600;
+}
+/* E9: 钮群等分呼吸（图1 第一行 6 列等宽——fmt 行/插入 grid 统一 flex:1） */
+.tb-fmt-row .tb-btn { min-width: 36px; flex: 1; height: 40px; border-radius: 10px; font-size: 15px; }
+.tb-style-grid-btns { grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.tb-style-grid-btns .tb-style-btn { height: 40px; border-radius: 10px; font-size: 15px; }
+
 /* Aa 面板 v2: tab 头+符号 grid（原子笔记「符号」tab 对标） */
 .tb-style-tabs { display: flex; gap: 4px; margin-bottom: 4px; }
 .tb-style-tab {
@@ -820,7 +833,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   font-size: 11px; cursor: pointer;
 }
 .tb-style-tab.on { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
-.tb-style-grid-btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.tb-style-grid-btns { display: grid; } /* 列数/间距在 E9 分区块统一定义 */
 .tb-symbol-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
 .tb-symbol {
   width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--border);
