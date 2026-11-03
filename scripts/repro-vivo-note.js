@@ -105,7 +105,7 @@ async function ensureAaOpen(page, tab) {
       vw: window.innerWidth,
       full: pr.width > window.innerWidth * 0.8,
       fullwidth: pr.left <= 12 && pr.right >= window.innerWidth - 12 && (pr.bottom - pr.top) <= window.innerHeight * 0.44,  // E9 全宽 sheet: 左右 8±4 边距+高自适应≤42vh+栏正上方
-      barDocked: br.width > 0 && Math.abs(br.bottom - window.innerHeight) < 6, // E7: 栏恒贴底（紧凑 popover 无半屏让位）
+      barAbovePanel: br.width > 0 && pr.width > 0 && pr.top >= br.bottom - 1 && Math.abs(pr.bottom - window.innerHeight) < 4, // E11（TA 16:19）: 面板在栏正下方——栏底≤面板顶+面板贴屏底
       blurDone: focusedMidArg && !!ev && !ev.hasFocus(),  // 键盘让位: 开前有焦→开后失焦
     };
   }, focusedMid);
@@ -113,9 +113,9 @@ async function ensureAaOpen(page, tab) {
   await page.click('.tb-fmt-panel .tb-swatch >> nth=0');
   await page.waitForTimeout(300);
   const refocused = await page.evaluate(() => !!window.__editorView && window.__editorView.hasFocus());
-  record('⑪ E9 全宽 sheet（栏正上方+自适应高度+键盘让位链）',
-    focusedBefore && !!e4 && e4.fixed && e4.fullwidth && e4.barDocked && e4.blurDone && refocused,
-    `先焦=${focusedBefore} fixed=${e4?.fixed} 全宽=${e4?.fullwidth} 栏贴底=${e4?.barDocked} 让位=${e4?.blurDone} 回焦=${refocused}`);
+  record('⑪ E11 弹窗置栏下方（栏上浮动态+面板贴底+键盘让位链）',
+    focusedBefore && !!e4 && e4.fixed && e4.fullwidth && e4.barAbovePanel && e4.blurDone && refocused,
+    `先焦=${focusedBefore} fixed=${e4?.fixed} 全宽=${e4?.fullwidth} 栏上面板下=${e4?.barAbovePanel} 让位=${e4?.blurDone} 回焦=${refocused}`);
 
   // ② 选中前 4 字→红
   await page.evaluate(() => {

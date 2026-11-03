@@ -6,7 +6,7 @@
 // 降级:   无 Android 桥（浏览器 mock）→ textarea 纯文本编辑
 // 工具栏: V12 — 标题/加粗斜体下划线删除线/行内代码/列表/任务/引用/代码块/分割线
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import type { EditorView } from 'prosemirror-view';
 import type { EditorState } from 'prosemirror-state';
@@ -549,6 +549,19 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
   const [pop, setPop] = useState<'color' | 'size' | 'hl' | 'style' | 'symbol' | 'template' | 'block' | 'insert' | null>(null);
   /** Aa 面板 tab（v4 E2: A/A⁺/▮ 三独立组+B·I·U·S 并入「格式」tab——VIVO Aa 一钮弹全部文字格式对标）。 */
   const [styleTab, setStyleTab] = useState<'fmt' | 'style' | 'symbol' | 'template'>('fmt');
+  // E11（TA 16:19 裁决「弹窗置于工具栏下方」）: 弹期栏动态上浮——bottom=面板实际高+4 隙;
+  // ResizeObserver 随 tab 切换面板高变实时跟（Aa 四 tab 高各异）。
+  const [popH, setPopH] = useState(0);
+  const popRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const el = popRef.current;
+    if (!el) { setPopH(0); return; }
+    const measure = () => setPopH(el.offsetHeight); // offsetHeight=layout 高（scaleY 动画首帧 rect.height=0.72x 会测小——D19 实证 110 vs 153）
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pop, styleTab]);
   const FONT_COLORS = ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#2563eb', '#7c3aed', '#475569'];
   const HL_COLORS = ['#fef08a', '#bbf7d0', '#bae6fd', '#fbcfe8', '#fed7aa', '#e9d5ff'];
   const SIZES: Array<[string, string]> = [['14', 'S'], ['17', 'M'], ['20', 'L'], ['24', 'XL']];
@@ -615,7 +628,11 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
      DOM 移 body 直挂后面板 z-39 与栏 80 顶层平比,栏稳居上可点）+overflow 裁剪免疫（E3 教训） */
   return createPortal(
     <>
-    <div className={`editor-toolbar ${pop ? 'pop-open' : ''}`} role="toolbar" aria-label="格式工具栏">
+    <div
+      className={`editor-toolbar ${pop ? 'pop-open' : ''}`}
+      role="toolbar" aria-label="格式工具栏"
+      style={pop && popH > 0 ? { bottom: `calc(${popH}px + max(var(--kbd-inset, 0px), env(safe-area-inset-bottom)) + 4px)` } : undefined}
+    > {/* E11: 弹期栏上浮至面板顶（面板恒在栏正下方——TA 16:19 裁决）;kbd/safe 基线保留 */}
       {btn('↶', '撤销', canUndo, () => runCmd(view, undo))}
       {btn('↷', '重做', canRedo, () => runCmd(view, redo))}
       <span className="tb-sep" />
@@ -624,7 +641,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
         {btn('☰', '块类型', BLOCK_BTNS.some((b) => blocks.has(b.key)), () => { if (pop !== 'block') hideKbdForPanel(); else restoreKbdAfterPanel(); setPop(pop === 'block' ? null : 'block'); },
           { fontSize: 15 })}
         {pop === 'block' && createPortal(
-          <div className="tb-style-pop" role="menu" aria-label="块类型面板">
+          <div ref={popRef} className="tb-style-pop" role="menu" aria-label="块类型面板">
             <div className="tb-sec">
             <div className="tb-sec-title">块类型</div>
             <div className="tb-style-grid-btns">
@@ -649,7 +666,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
           () => { if (!(pop === 'style' || pop === 'symbol' || pop === 'template')) hideKbdForPanel(); else restoreKbdAfterPanel(); setStyleTab('fmt'); setPop(pop === 'style' || pop === 'symbol' || pop === 'template' ? null : 'style'); },
           { fontSize: 13, fontWeight: 700 })}
         {(pop === 'style' || pop === 'symbol' || pop === 'template') && createPortal(
-          <div className="tb-style-pop" role="menu" aria-label="样式预设面板">
+          <div ref={popRef} className="tb-style-pop" role="menu" aria-label="样式预设面板">
             <div className="tb-style-tabs" role="tablist">
               <button className={`tb-style-tab ${styleTab === 'fmt' ? 'on' : ''}`} role="tab" aria-selected={styleTab === 'fmt'}
                 onMouseDown={(e) => e.preventDefault()}
@@ -790,7 +807,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
         {btn('＋', '插入', false, () => { if (pop !== 'insert') hideKbdForPanel(); else restoreKbdAfterPanel(); setPop(pop === 'insert' ? null : 'insert'); },
           { fontSize: 16 })}
         {pop === 'insert' && createPortal(
-          <div className="tb-style-pop" role="menu" aria-label="插入面板">
+          <div ref={popRef} className="tb-style-pop" role="menu" aria-label="插入面板">
             <div className="tb-sec">
             <div className="tb-sec-title">插入</div>
             <div className="tb-style-grid-btns">

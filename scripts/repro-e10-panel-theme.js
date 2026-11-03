@@ -70,7 +70,7 @@ const BASE = 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html
     after.cursorTop < (after.popTop ?? after.vh) && after.popTop !== null,
     `光标 top=${after.cursorTop} 面板 top=${after.popTop}（避让前 top=${before.top}/${before.vh}）`);
   // ② 生长动画锚
-  record('② 自栏生长锚（origin=底边）', after.popH > 0 && Math.abs(after.originY - after.popH) < 2, `originY=${after.originY} 面板高=${after.popH}（origin=${after.origin}）`);
+  record('② 自栏位生长锚（origin=顶边——E11 面板在栏下方）', after.popH > 0 && after.originY < 3, `originY=${after.originY}（origin=${after.origin}）`);
   await page.evaluate(() => { window.__editorView?.focus(); });
 
   // ③ 主题三态: 返回→菜单抽屉→设置

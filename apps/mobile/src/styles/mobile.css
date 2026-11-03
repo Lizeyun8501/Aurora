@@ -713,8 +713,8 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   /* 栏保持贴底（kbd/安全区公式同基线）——面板悬于栏上方右侧,编辑区可视化最大化 */
 }
 @keyframes tbPopDown {
-  /* E10a: 自工具栏底边向上生长——transform-origin bottom+scaleY 展（TA 14:03「从工具栏弹出」语感） */
-  from { opacity: 0; transform: scaleY(0.72) translateY(4px); }
+  /* E11: 自工具栏位向下生长（面板在栏下） */
+  from { opacity: 0; transform: scaleY(0.72) translateY(-4px); }
   to { opacity: 1; transform: scaleY(1) translateY(0); }
 }
 
@@ -777,14 +777,14 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   /* E9 定稿（TA 13:03 图1 对标·VIVO sheet 式）: 全宽 8 边距+栏正上方+高内容自适应≤42vh。
      撤 E7 右下小气泡（「向上弹+这么小」否决）与 E5 恒半屏——中道=宽度满幅分区化观感,
      高度弹开即合身（内容多少占多少,上限 42vh 滚收）;栏恒贴底可点,kbd 让位链保留。 */
-  bottom: calc(49px + max(var(--kbd-inset, 0px), env(safe-area-inset-bottom)) + 4px);
+  bottom: 0; /* E11（TA 16:19 裁决）: 面板贴屏底——弹期栏上浮（JS 动态 bottom=面板高+隙）,面板恒在栏正下方 */
   left: 8px;
   right: 8px;
-  max-height: 42vh;
+  max-height: 46vh;
   z-index: 70; /* 70: >editor-page 60（body 直挂后需压编辑页才可点）<栏 80（栏恒在上可点） */
   overflow-y: auto;
   animation: tbPopDown .2s cubic-bezier(.2, .9, .3, 1);
-  transform-origin: bottom center; /* E10a: 自栏底边生长锚 */
+  transform-origin: top center; /* E11: 面板在栏下方——自栏位向下生长 */
   display: flex; flex-direction: column; gap: 10px; /* 分区间呼吸（图1: 分区堆叠+均匀小距） */
   padding: 12px; border-radius: 16px; /* 大圆角 sheet 体感（图1 目标形） */
   background: color-mix(in srgb, var(--bg-primary) 93%, transparent); /* 半透磨砂（图1 质感） */
