@@ -557,6 +557,16 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
     dom.addEventListener('click', onEditClick);
     return () => dom.removeEventListener('click', onEditClick);
   }, [view, pop]);
+  // E19（TA 20:51 深扫 S10）: Escape 键盘通道关面板——桌面键盘用户预期;粘性面板
+  // 的第三关闭路径（点击编辑区/栏钮/Escape）。
+  useEffect(() => {
+    if (!pop) return;
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setPop(null); restoreKbdAfterPanel(); }
+    };
+    document.addEventListener('keydown', onEsc);
+    return () => document.removeEventListener('keydown', onEsc);
+  }, [pop]);
   // E11（TA 16:19 裁决「弹窗置于工具栏下方」）: 弹期栏动态上浮——bottom=面板实际高+4 隙;
   // ResizeObserver 随 tab 切换面板高变实时跟（Aa 四 tab 高各异）。
   const [popH, setPopH] = useState(0);
