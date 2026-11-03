@@ -209,9 +209,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
     <div className={'view' + (mode === 'year' ? ' cal-year-fill' : '')}>
       <div className="card">
         <div className="cal-head">
-          {mode !== 'year' ? (
-            <button className="icon-btn" onClick={() => setMonthOffset((o) => o - 1)} aria-label="上月">{I.back}</button>
-          ) : <span className="cal-head-spacer" />}
+          {/* 11-03 17:05 ④: 左右箭头已删——月/年变换统一上下滑（cal-grid/year-vivo 双通道滑绑）。 */}
           {mode === 'year' ? (
             <span className="cal-title cal-title-year" role="button" aria-label="返回月视图"
               onClick={() => setMode('month')}><span className="cal-title-y">{String(y + yearDelta).slice(0, 2)}</span><b className={'cal-title-m' + (y + yearDelta === now.getFullYear() ? ' cur' : '')}>{String(y + yearDelta).slice(2)}</b></span>
@@ -219,11 +217,6 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             <span className="cal-title" role="button" aria-label="查看年视图"
               onClick={() => { setYearDelta(0); setMode('year'); }}><span className="cal-title-y">{y}</span> 年 <b className="cal-title-m">{m + 1}</b> 月</span>
           )}
-          {mode !== 'year' ? (
-            <button className="icon-btn" onClick={() => setMonthOffset((o) => o + 1)} aria-label="下月">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-            </button>
-          ) : <span className="cal-head-spacer" />}
         </div>
         {/* ② CALENDAR-VIVO 11-01 20:22: 年|月|周|日|日程 胶囊条独立行（年月下通栏——原挤标题行右侧） */}
         <div className="cal-mode-seg" role="tablist" aria-label="日历视图切换">

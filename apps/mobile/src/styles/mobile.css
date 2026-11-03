@@ -1111,12 +1111,12 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 
 /* 日历（日记本） */
 .cal-head {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: center;
   margin-bottom: 8px;
 }
 .cal-title { font-size: 15px; font-weight: 600; }
 .cal-grid {
-  display: grid; grid-template-columns: repeat(7, 1fr);
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 2px; text-align: center;
 }
 .cal-week { font-size: 12px; color: var(--text-tertiary); padding: 4px 0; }
@@ -1125,6 +1125,9 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   height: 40px; font-size: 14px; color: var(--text-primary);
   border-radius: 8px;
+  /* 11-03 17:05 ③: minmax(0,1fr) 轨道锁+min-width 0——长节日名（万圣节前夜 5 字）不再撑轨
+     道挤整历;轨道恒 (360-32)/7,月历任何选择状态几何恒定。 */
+  min-width: 0; overflow: hidden;
 }
 /* 农历/节假日副标 — V23-I5（lunar-typescript 数据随库更新） */
 .cal-num { line-height: 1.1; }
@@ -1192,9 +1195,10 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .cal-day-btn {
   background: none; border: none; cursor: pointer;
   position: relative; font-family: inherit;
+  /* 11-03 17:05 ③: 恒格宽——按钮任何状态（含选中）都占满格宽,节日副标恒全显,月历整体固定不挤压。 */
+  width: 100%; box-sizing: border-box;
 }
-.cal-day-btn.sel { background: var(--brand); color: #fff; border-radius: 50%; width: 36px; margin: 0 auto; }
-.cal-day-btn.sel::after { background: #fff; }
+/* 旧蓝圆 36 收缩+::after 已删（v27.14 框体系接管选中视觉: ::before 42×48 定尺寸描边框）。 */
 
 /* ============================================================
    v16 — 编辑器参考图布局 + 顶栏/Tab 优化
@@ -1359,8 +1363,9 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 
 /* --- 1 顶栏大标题: 年小灰+月大红（vivo「2026/10」层级） --- */
 .cal-title { font-size: 21px; font-weight: 300; letter-spacing: 0.5px; }
-.cal-title-y { font-size: 16px; color: var(--text-secondary); font-weight: 400; margin-right: 1px; }
-.cal-title-m { font-weight: 700; color: var(--cal-accent); font-size: 24px; margin: 0 1px; }
+.cal-title-y { font-size: 21px; color: var(--text-secondary); font-weight: 600; margin-right: 1px; }
+/* 11-03 17:05 ④: 月页标题年/月数字大小粗细一致（21px/600）——月数字红保留。 */
+.cal-title-m { font-weight: 600; color: var(--cal-accent); font-size: 21px; margin: 0 1px; }
 
 /* --- 2 分段控制器: 胶囊化+白底选中浮起（vivo 胶囊分段） --- */
 .cal-mode-seg {
@@ -1389,12 +1394,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   content: ''; position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
   width: 4px; height: 4px; border-radius: 50%; background: var(--cal-accent);
 }
-.cal-day-btn.sel .cal-num {
-  background: var(--cal-accent); color: #fff; width: 28px; height: 28px;
-  border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
-}
-.cal-day-btn.sel .cal-lunar { display: none; }
-.cal-lunar { font-size: 9.5px; }
+.cal-lunar { font-size: 9px; letter-spacing: -0.1px; }
 .cal-lunar.fest { color: var(--cal-accent); }
 .cal-ev-dots { margin-top: 1px; }
 .cal-ev-dot { width: 5px; height: 5px; }
@@ -1473,11 +1473,11 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
    +事件红下划线+节日红数字+当月标题红+顶部农历红带+年大字。
    ============================================================ */
 /* 年大字（20 黑+26 红 34px） */
-.cal-title-year { font-weight: 200; }
-.cal-title-year .cal-title-y { font-size: 24px; color: var(--text-primary); font-weight: 400; }
-.cal-title-year .cal-title-y { font-size: 34px !important; }
+.cal-title-year { font-weight: 600; }
+/* 11-03 17:05 ②: 年页年数字大小一致（34px）+粗细一致（600,比 cur 红体 800 略细）;cur 仅红色不变粗。 */
+.cal-title-year .cal-title-y { font-size: 34px; color: var(--text-primary); font-weight: 600; }
 /* 11-02 16:33 用户修订: 年 4 数字等大（34px）;后两位仅当前年红,其他年同前两位 text-primary。 */
-.cal-title-year .cal-title-m { font-size: 34px; font-weight: 800; letter-spacing: 1px; color: var(--text-primary); }
+.cal-title-year .cal-title-m { font-size: 34px; font-weight: 600; letter-spacing: 1px; color: var(--text-primary); }
 .cal-title-year .cal-title-m.cur { color: var(--cal-accent); }
 .cal-head-spacer { flex: 0 0 36px; }
 

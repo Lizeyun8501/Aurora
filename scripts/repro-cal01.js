@@ -20,7 +20,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     console.log(`${pass ? 'PASS' : 'FAIL'} ${name}: ${detail}`);
   };
 
-  const BASE01 = require('fs').existsSync('/home/z/my-project/Aurora/apps/mobile/dist/index.html') ? 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html' : 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
+  const BASE01 = 'file://' + require('path').resolve(__dirname, '../apps/mobile/dist/index.html');
   await page.goto(BASE01);
   await page.waitForTimeout(800);
 
@@ -58,9 +58,10 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     const monthTab = await page.$('.cal-mode-seg button:has-text("月")');
     if (monthTab) { await monthTab.click(); await page.waitForTimeout(300); }
     const grid = await page.$('.cal-grid');
-    const next = await page.$('[aria-label="下月"]');
-    if (next) { await next.click(); await page.waitForTimeout(300); }
-    record('⑤ 月视图回切+翻月', !!grid, 'cal-grid 回归+翻月无错');
+    /* 11-03 17:05: 箭头已删——改月滑（上滑=下月）。 */
+    await page.evaluate(() => { const el = document.querySelector('.cal-grid'); if (el) { const r = el.getBoundingClientRect(); el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + 120, pointerId: 1, pointerType: 'touch', isPrimary: true })); el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + 30, pointerId: 1, pointerType: 'touch', isPrimary: true })); } });
+    await page.waitForTimeout(300);
+    record('⑤ 月视图回切+滑翻月', !!grid, 'cal-grid 回归+滑翻月无错');
   }
 
   // ⑥ errors === 0

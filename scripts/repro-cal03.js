@@ -6,9 +6,7 @@
  *    （闰月年用例: 2025 闰六月/2026 无闰——Lunar 反推正确性）
  * ③ 短月钳制: 月末 31 重复事件 2 月角标在 28/29
  */
-const BASE = require('fs').existsSync('/home/z/my-project/Aurora/apps/mobile/dist/index.html')
-  ? 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html'
-  : 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
+const BASE = 'file://' + require('path').resolve(__dirname, '../apps/mobile/dist/index.html');
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
 
 (async () => {
@@ -44,7 +42,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     return todayBtn ? todayBtn.querySelectorAll('.cal-ev-dot').length : -1;
   });
   // 翻到下月数两个周五角标（近似:任意 2+ 周期格有 dot）
-  await page.click('[aria-label="下月"]');
+  await page.evaluate(() => { const el = document.querySelector('.cal-grid'); const r = el.getBoundingClientRect(); el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + 120, pointerId: 1, pointerType: 'touch', isPrimary: true })); el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + 30, pointerId: 1, pointerType: 'touch', isPrimary: true })); });
   await page.waitForTimeout(400);
   const nextMonthDots = await page.evaluate(() =>
     document.querySelectorAll('.cal-day .cal-ev-dots').length);
@@ -72,7 +70,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     let cur = await page.textContent('.cal-title');
     let guard = 0;
     while (!cur.includes(label) && guard < 40) {
-      await page.click(monthNum(cur) < target ? '[aria-label="下月"]' : '[aria-label="上月"]');
+      await page.evaluate((up) => { const el = document.querySelector('.cal-grid'); const r = el.getBoundingClientRect(); const y1 = up ? r.y + 120 : r.y + 30, y2 = up ? r.y + 30 : r.y + 120; el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: y1, pointerId: 2, pointerType: 'touch', isPrimary: true })); el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: y2, pointerId: 2, pointerType: 'touch', isPrimary: true })); }, monthNum(cur) < target);
       await page.waitForTimeout(150);
       cur = await page.textContent('.cal-title');
       guard += 1;

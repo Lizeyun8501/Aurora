@@ -6,9 +6,7 @@
  */
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
 const FS = require('fs');
-const BASE = FS.existsSync('/home/z/my-project/Aurora/apps/mobile/dist/index.html')
-  ? 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html'
-  : 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
+const BASE = 'file://' + require('path').resolve(__dirname, '../apps/mobile/dist/index.html');
 
 (async () => {
   const browser = await chromium.launch();

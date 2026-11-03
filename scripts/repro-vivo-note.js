@@ -6,7 +6,7 @@
  * ⑥ 零错误。 ⑦ schema 往返由 vitest 17/17 承担（jsdom）。
  */
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
-const BASE = 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
+const BASE = 'file://' + require('path').resolve(__dirname, '../apps/mobile/dist/index.html');
 
 // Aa 面板确保开（toggle 语义防御——面板已开时点 Aa=关）
 async function ensureAaOpen(page, tab) {
