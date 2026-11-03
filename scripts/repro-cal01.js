@@ -60,7 +60,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     });
     await page.waitForTimeout(500);
     const empty = await page.evaluate(() => document.body.textContent?.includes('没有任务或笔记记录') ?? false);
-    record('④b 空日 EmptyState（月页·v27.23 语义）', empty, '月页空态文案在案');)
+    record('④b 空日 EmptyState（月页·v27.23 语义）', empty, '月页空态文案在案');
   }
 
   // ⑤ 日→月回切（翻月动效面 key 重挂无错）

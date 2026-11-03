@@ -7,7 +7,7 @@
  * ⑤ 桌面 pdf（无 content）→纯文本 toast 无钮
  */
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
-const BASE = 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
+const BASE = 'file://' + require('path').resolve(__dirname, '../apps/mobile/dist/index.html');
 
 (async () => {
   const browser = await chromium.launch();
