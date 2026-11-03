@@ -7,7 +7,7 @@
  * ⑤ 引用品牌杆+衬底
  */
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
-const BASE = 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
+const BASE = 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html';
 
 (async () => {
   const browser = await chromium.launch();
