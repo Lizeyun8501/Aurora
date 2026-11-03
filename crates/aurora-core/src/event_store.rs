@@ -308,18 +308,26 @@ mod reminder_compat_tests {
     #[tokio::test]
     async fn reminders_roundtrip_and_validation() {
         let kv: std::sync::Arc<MemoryKVStore> = std::sync::Arc::new(MemoryKVStore::default());
-        let mut e = Event::new("", "带提醒", chrono::Utc.with_ymd_and_hms(2026, 10, 31, 9, 0, 0).unwrap());
-        e.reminders = Some(vec![
-            entity_reminder(30, 0),
-            entity_reminder(1440, 1),
-        ]);
+        let mut e = Event::new(
+            "",
+            "带提醒",
+            chrono::Utc.with_ymd_and_hms(2026, 10, 31, 9, 0, 0).unwrap(),
+        );
+        e.reminders = Some(vec![entity_reminder(30, 0), entity_reminder(1440, 1)]);
         let id = create_event(kv.as_ref(), &e).await.unwrap();
         let back = get_event(kv.as_ref(), &id).await.unwrap().unwrap();
         assert_eq!(back.reminders.as_ref().unwrap().len(), 2);
-        assert_eq!(back.reminders.as_ref().unwrap()[1].alarm_level, 1, "闹钟级档往返无损");
+        assert_eq!(
+            back.reminders.as_ref().unwrap()[1].alarm_level,
+            1,
+            "闹钟级档往返无损"
+        );
     }
 
     fn entity_reminder(offset_min: i64, level: u8) -> aurora_entity::ReminderRule {
-        aurora_entity::ReminderRule { offset_min, alarm_level: level }
+        aurora_entity::ReminderRule {
+            offset_min,
+            alarm_level: level,
+        }
     }
 }

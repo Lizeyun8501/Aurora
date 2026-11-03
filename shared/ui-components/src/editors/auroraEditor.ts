@@ -23,6 +23,7 @@ import { mermaidNodeViews } from './mermaidNodeView';
 import { injectMathStyle } from './mathStyle';
 import { injectMermaidStyle } from './mermaidStyle';
 import { mathInputRules } from './mathInputRules';
+import { markdownInputRules } from './markdownInputRules'; // E8: Bear/思源系 markdown 快捷输入
 import { tokenizeCode } from './codeHighlight';
 import { injectHighlightStyle } from './editorHighlightStyle';
 import {
@@ -150,6 +151,7 @@ export function createAuroraEditor(
       highlightPlugin, // DK-2.7 切片一：code_block 语法着色
       focusBlockPlugin, // DK-Zoom / R8：块级聚焦（zoom-in）装饰
       mathInputRules(), // DK-2.7 切片七：$..$ / $$ live 转换
+      ...markdownInputRules(), // E8: #/>/-/1./[]/``/---/内联 marks——markdown 快捷输入（[engine, spaceKey] 双插件展开）
     ],
   });
 

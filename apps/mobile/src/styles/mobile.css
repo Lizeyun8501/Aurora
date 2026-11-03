@@ -255,17 +255,22 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 
 .note-list { display: flex; flex-direction: column; }
 .note-card {
-  display: flex; align-items: center; gap: 10px;
-  padding: 12px;
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  margin-bottom: 8px;
+  border-radius: 14px;
+  margin-bottom: 10px;
   cursor: pointer;
   position: relative;
+  box-shadow: 0 1px 3px rgba(31, 41, 55, 0.04);
+  transition: background .14s, border-color .14s, box-shadow .18s, transform .12s;
   box-shadow: 0 1px 2px rgba(31, 41, 55, 0.04);
 }
-.note-card:active { background: var(--bg-secondary); }
+.note-card:active {
+  background: var(--bg-secondary);
+  transform: scale(0.985); /* E8 按压微缩——触觉反馈（Apple HIG 轻触感） */
+}
 .note-card.swiped { background: var(--danger); border-color: transparent; }
 .note-card.swiped .note-title, .note-card.swiped .note-snippet, .note-card.swiped .note-meta { color: #fff; }
 .note-card-body { flex: 1; min-width: 0; }
@@ -853,26 +858,35 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 
 .ProseMirror {
   min-height: 100%;
-  padding: 16px;
+  /* E8 排版精修（优质软件调研: Bear/Notion 17px 正文黄金值+1.75 优雅行距——长文阅读舒适度最佳实践） */
+  padding: 20px 24px 120px; /* 底垫 120: 工具栏/键盘不压末行——尾部内容常可见（Bear 同款尾部呼吸） */
   outline: none;
-  font-size: 15px;
-  line-height: 1.5;
+  font-size: 17px;
+  line-height: 1.75;
   color: var(--text-primary);
   word-break: break-word;
+  max-width: 34em; /* 长行帽 ≤75ch 可读性铁律（30-75 字符研究区间中上位——中文 34em 等效） */
+  margin: 0 auto; /* 窄内容居中——宽屏/平板优雅降级 */
+  caret-color: var(--brand);
 }
-.ProseMirror > * { margin: 0 0 8px; }
-.ProseMirror h1 { font-size: 24px; font-weight: 600; line-height: 1.3; margin: 20px 0 12px; }
-.ProseMirror h2 { font-size: 20px; font-weight: 600; line-height: 1.3; margin: 18px 0 10px; }
-.ProseMirror h3 { font-size: 18px; font-weight: 500; line-height: 1.3; margin: 16px 0 8px; }
+.ProseMirror > * { margin: 0 0 12px; } /* 段距 12: 1.75 行距配套呼吸 */
+.ProseMirror h1 { font-size: 27px; font-weight: 700; line-height: 1.25; margin: 28px 0 14px; letter-spacing: -0.02em; }
+.ProseMirror h2 { font-size: 23px; font-weight: 700; line-height: 1.25; margin: 24px 0 12px; letter-spacing: -0.015em; }
+.ProseMirror h3 { font-size: 19px; font-weight: 600; line-height: 1.3; margin: 20px 0 10px; }
+.ProseMirror h1:first-child, .ProseMirror h2:first-child, .ProseMirror h3:first-child { margin-top: 4px; }
 .ProseMirror blockquote {
-  border-left: 3px solid var(--border);
-  margin: 8px 0; padding: 4px 12px; color: var(--text-secondary);
+  border-left: 3px solid var(--brand); /* 品牌色引用杆——Bear 式强调（原 border 灰→品牌 3px） */
+  margin: 14px 0; padding: 6px 14px; color: var(--text-secondary);
+  background: color-mix(in srgb, var(--brand) 4%, transparent); /* 微衬底——引用体感分层 */
+  border-radius: 0 8px 8px 0;
 }
 .ProseMirror pre {
   background: var(--bg-secondary); border: 1px solid var(--border);
-  border-radius: 8px; padding: 12px;
-  font-size: 13px; line-height: 1.5; overflow-x: auto;
+  border-radius: 10px; padding: 14px 16px; margin: 14px 0;
+  font-size: 13.5px; line-height: 1.6; overflow-x: auto;
   font-family: 'SFMono-Regular', Consolas, monospace;
+  /* E8: tab-size 2+滚动圆角——代码块现代观感 */
+  tab-size: 2;
 }
 .ProseMirror code {
   background: var(--bg-secondary); border-radius: 4px;
@@ -1170,10 +1184,10 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
    ============================================================ */
 
 /* 编辑页大标题区 — 参考图: 独立行 + 24px 粗体 + 分割线 */
-.editor-head { padding: 14px 20px 10px; }
+.editor-head { padding: 16px 24px 12px; border-bottom: 1px solid var(--border); }
 .editor-title-input {
   width: 100%; border: none; background: transparent;
-  font-size: 24px; font-weight: 600; line-height: 1.3;
+  font-size: 28px; font-weight: 700; line-height: 1.25; letter-spacing: -0.02em;
   color: var(--text-primary); font-family: inherit;
   padding: 0; outline: none;
 }

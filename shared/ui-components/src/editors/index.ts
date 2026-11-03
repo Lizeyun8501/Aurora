@@ -28,6 +28,7 @@ export { MobileEditorDock, BlockInsertPanel, injectMobileDockStyle } from './Mob
 export { insertBlock, moveBlock } from './insertCommands';
 export type { BlockKind } from './insertCommands';
 export { mdToDoc, mdToNodes, docToMd } from './auroraMarkdown';
+export { markdownInputRules } from './markdownInputRules';
 export {
   exportNote,
   exportNotePdf,
