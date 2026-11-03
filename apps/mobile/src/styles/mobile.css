@@ -215,7 +215,66 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .task-item.done .task-text { color: var(--text-tertiary); text-decoration: line-through; }
 .task-meta { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 12px; color: var(--text-tertiary); }
 .task-due { color: var(--warning); }
-.task-due.overdue { color: var(--danger); }
+.task-due.overdue { color: var(--danger); font-weight: 700; }
+
+/* ===== E17 任务中心增强（TA 19:30）===== */
+/* 统计头: 完成率环+三数位 */
+.task-stats-row {
+  display: flex; gap: 10px; align-items: center;
+  padding: 14px 4px 6px;
+}
+.task-stat {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 6px;
+}
+.task-stat-ring {
+  width: 46px; height: 46px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.task-stat-ring::after {
+  content: ''; position: absolute; inset: 5px; border-radius: 50%; background: var(--bg-card);
+}
+.task-stat-ring-num { position: relative; font-size: 12px; font-weight: 700; color: var(--text-primary); }
+.task-stat-num { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+.task-stat-label { font-size: 11px; color: var(--text-tertiary); }
+.chip-row-sep { flex: 0 0 1px; height: 22px; background: var(--border); margin: 0 4px; align-self: center; }
+
+/* 日期分组: 组头+计数 */
+.task-group { margin-bottom: 10px; }
+.task-group-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 600; color: var(--text-secondary);
+  padding: 8px 8px 6px;
+}
+.task-group-head.danger { color: var(--danger); }
+.task-group-count {
+  font-size: 11px; color: var(--text-tertiary);
+  background: var(--bg-secondary); border-radius: 99px; padding: 1px 7px;
+}
+.task-sub-prog { font-size: 11px; color: var(--brand); font-weight: 600; }
+
+/* 优先级: 色点行内件+捕获三段 */
+.task-prio-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  vertical-align: middle;
+}
+.task-prio-dot-btn {
+  border: none; background: transparent; padding: 6px 2px; cursor: pointer;
+  display: flex; align-items: center;
+}
+.task-prio-dot-btn .task-prio-dot { width: 10px; height: 10px; box-shadow: 0 0 0 3px var(--bg-card); }
+.task-prio-row {
+  display: flex; gap: 6px; margin-bottom: 10px;
+}
+.task-prio-seg {
+  flex: 1; height: 34px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg-secondary); color: var(--text-secondary);
+  font-size: 12px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.task-prio-seg.on { border-color: var(--brand); background: var(--brand-soft); color: var(--text-primary); font-weight: 600; }
 .task-note-link { color: var(--brand); display: inline-flex; align-items: center; gap: 2px; }
 .task-swipe-del {
   position: absolute; right: 0; top: 8px; bottom: 8px; width: 0;
