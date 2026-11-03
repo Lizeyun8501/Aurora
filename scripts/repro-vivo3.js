@@ -168,9 +168,11 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   ok(`⑥ 框定尺寸居中（${bfs.w}×${bfs.h}——任何 DPR/格浮点零漂移）`, bfs.w === '42px' && bfs.h === '48px');
   await page.click('button[aria-label="下月"]'); await page.waitForTimeout(350);
   await page.click('.cal-day-btn >> nth=3'); await page.waitForTimeout(250);
-  await page.click('button:has-text("回到今天")'); await page.waitForTimeout(400);
+  /* 11-03 08:42: 下方「回到今天」已删——改走右下角「今」FAB */
+  await page.click('.fab-today'); await page.waitForTimeout(400);
   const rt = await page.evaluate(() => document.querySelector('.cal-title')?.textContent);
-  ok(`⑥ 回今天跨月归位（=${rt}）`, /11 月/.test(rt || '') || /1 月|2 月|3 月/.test(rt || ''));
+  const rb = await page.evaluate(() => ![...document.querySelectorAll('button')].some(b => b.textContent.trim() === '回到今天') && !document.querySelector('.fab-today'));
+  ok(`⑥ 回今天今 FAB 归位+按钮已删（=${rt}）`, (/11 月/.test(rt || '') || /1 月|2 月|3 月/.test(rt || '')) && rb);
   await page.click('.cal-day-btn.today'); await page.waitForTimeout(250);
 
   console.log(`\n=== CALENDAR-VIVO3 验收: ${23 - fail.length}/23 ${fail.length ? 'FAIL: ' + fail.join('|') : 'PASS'}（控制台错 ${errors.length}）===`);

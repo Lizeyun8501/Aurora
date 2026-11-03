@@ -60,8 +60,9 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   const view = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   /* 11-02 23:33 用户指令: 五页签滑离当前时段→右下「今」透明圆（加号上方并排）——一点全归位。
      显示条件按模式: 年=yearDelta 残;月=monthOffset 翻走;周/日=selected 非 today（view 由 selected 驱动）;日程=筛选/搜索态。 */
+  /* 11-03 08:42: 月页点远日期（含同月远日）也显「今」——下方「回到今天」按钮已删,右下角成唯一返回今天入口。 */
   const offToday = mode === 'year' ? yearDelta !== 0
-    : mode === 'month' ? monthOffset !== 0
+    : mode === 'month' ? monthOffset !== 0 || selected !== todayStr
     : mode === 'week' || mode === 'day' ? selected !== todayStr
     : mode === 'list' ? (listFilter !== 'all' || listQuery !== '')
     : false;
@@ -544,11 +545,6 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               return <>{row('更早', early)}{row('更晚', late)}</>;
             })()}
           </div>
-        )}
-        {mode === 'month' && (selected !== todayStr || yearDelta !== 0) && (
-          <button className="btn btn-text btn-block" style={{ marginTop: 4 }} onClick={() => { setSelected(todayStr); setYearDelta(0); setMonthOffset(0); }}>
-            回到今天
-          </button>
         )}
       </div>
 
