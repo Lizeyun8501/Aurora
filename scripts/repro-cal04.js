@@ -68,8 +68,8 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     weekOn: document.querySelectorAll('.cal-mode-seg .nt-seg')[2]?.classList.contains('on'),
     selCol: !!document.querySelector('.week-col.sel'),
   }));
-  /* 11-03 13:47 用户修订: 周列头只选中不跳日——留周页+选中列高亮+下方聚合该日内容。 */
-  record('② 周列头选中留周页', !dayAxis.axis && dayAxis.weekOn && dayAxis.selCol, `axis=${dayAxis.axis} 周tab=${dayAxis.weekOn} 选列=${dayAxis.selCol}`);
+  /* 11-03 13:47 留周页+选列;19:52 起周页下方=day-axis 24h 轴（下方该日内容的现行形态）。 */
+  record('② 周列头选中留周页+24h 轴', dayAxis.axis && dayAxis.weekOn && dayAxis.selCol, `axis=${dayAxis.axis} 周tab=${dayAxis.weekOn} 选列=${dayAxis.selCol}`);
 
   // ③ 年视图: 12 月+点月切月
   await page.click('.cal-title'); // 年月标题进年

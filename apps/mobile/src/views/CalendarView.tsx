@@ -370,7 +370,14 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                   return (
                     <button key={i} className={`year-month ${isCur ? 'cur' : ''}`}
                       aria-label={`进入 ${y2} 年 ${i + 1} 月`}
-                      onClick={() => { setMonthOffset((y2 - now.getFullYear()) * 12 + i - now.getMonth()); setMode('month'); }}>
+                      onClick={() => {
+                        /* 深检 BUG2: selected 旧日脱节——目标月含今选今,否则该月 1 号（聚合/高亮与视图一致）。 */
+                        const tInM = y2 === now.getFullYear() && i === now.getMonth();
+                        const selKey = tInM ? todayStr : `${y2}-${String(i + 1).padStart(2, '0')}-01`;
+                        setMonthOffset((y2 - now.getFullYear()) * 12 + i - now.getMonth());
+                        setSelected(selKey);
+                        setMode('month');
+                      }}>
                       <span className="ym-name">{String(i + 1).padStart(2, '0')}</span>
                       <span className="ym-week">
                         {['日', '一', '二', '三', '四', '五', '六'].map((w) => <i key={w}>{w}</i>)}
@@ -564,8 +571,29 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
         </div>
       )}
 
-      {isSelInMonth && (selData.dayTasks.length > 0 || (selData.dayNotes.length + selData.dayDiary.length) > 0) === false && (
+      {/* 深检 BUG1: 原 (B||C)===false 对 number 恒 false（严格等 0===false 不成立）——空日提示死码,复活。 */}
+      {isSelInMonth && selData.dayTasks.length === 0 && selData.dayNotes.length === 0 && selData.dayDiary.length === 0 && selEvents.length === 0 && (
         <EmptyState text="这一天没有任务或笔记记录。点右下角 + 捕获。" />
+      )}
+
+      {/* 深检 BUG4: 月页聚合区从未渲染事件（selEvents 只进日轴）——选中含日程日下方看不到任何日程。
+          补事件卡（色点+标题+时刻,点击开编辑）;含事件的日不再误显空态。 */}
+      {selEvents.length > 0 && (
+        <div className="card" style={{ padding: 4, marginBottom: 8 }}>
+          {selEvents.map((inst) => (
+            <div key={`${inst.ev.id}@${inst.offsetDays}`} className="task-item" role="button"
+              style={{ cursor: 'pointer' }} onClick={() => setEventEditor(inst.ev)}>
+              <span className="day-axis-item event"
+                style={{ background: `rgba(${parseInt(EV_COLORS[inst.ev.color % 6].slice(1, 3), 16)}, ${parseInt(EV_COLORS[inst.ev.color % 6].slice(3, 5), 16)}, ${parseInt(EV_COLORS[inst.ev.color % 6].slice(5, 7), 16)}, 0.15)`, color: EV_COLORS[inst.ev.color % 6] }}>
+                {inst.ev.all_day ? '全天' : `${String(inst.start.getHours()).padStart(2, '0')}:${String(inst.start.getMinutes()).padStart(2, '0')}`}
+              </span>
+              <div className="task-body">
+                <div className="task-text">{inst.ev.title}</div>
+                {inst.ev.location && <div className="task-meta"><span>{inst.ev.location}</span></div>}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {selData.dayTasks.length > 0 && (
@@ -608,7 +636,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
         <button
           className="fab fab-cal"
           onClick={() => setEventEditor({
-            id: '', title: '', start: `${selected}T09:00:00`, end: null,
+            id: '', title: '', start: `${isSelInMonth ? selected : `${y}-${String(m + 1).padStart(2, '0')}-01`}T09:00:00`, end: null,
             all_day: false, location: null, note_id: null, color: 1,
           })}
           aria-label={`为 ${selected} 添加日程`}
