@@ -9,7 +9,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
 const FS = require('fs');
 const BASE_R19 = FS.existsSync('/home/z/my-project/repos/Aurora/apps/mobile/dist-r19/r19-lab.html')
   ? 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist-r19/r19-lab.html'
-  : 'file:///home/z/my-project/Aurora/apps/mobile/dist-r19/r19-lab.html';
+  : 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist-r19/r19-lab.html';
 
 (async () => {
   const browser = await chromium.launch();

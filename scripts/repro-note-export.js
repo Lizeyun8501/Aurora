@@ -4,7 +4,7 @@
  * ④ 导出 word(.doc HTML MIME)/txt 同链;⑤ 导入 md→正文替换;⑥ pdf 走 print 通道（pw mock）
  */
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
-const BASE = 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
+const BASE = 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html';
 
 (async () => {
   const browser = await chromium.launch();

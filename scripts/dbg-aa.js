@@ -6,7 +6,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   const errs = [];
   page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 200)); });
   page.on('pageerror', (e) => errs.push(String(e).slice(0, 200)));
-  await page.goto('file:///home/z/my-project/Aurora/apps/mobile/dist/index.html');
+  await page.goto('file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html');
   await page.waitForTimeout(1200);
   await page.click('.tab-bar .tab-item:has-text("知识库")');
   await page.waitForTimeout(700);

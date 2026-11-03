@@ -8,7 +8,7 @@
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
 const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobile/dist/index.html')
   ? 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html'
-  : 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
+  : 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html';
 
 // Aa 面板确保开（toggle 语义防御——面板已开时点 Aa=关）
 async function ensureAaOpen(page, tab) {
