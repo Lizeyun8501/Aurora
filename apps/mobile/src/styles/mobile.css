@@ -1545,7 +1545,9 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* 年大字（20 黑+26 红 34px） */
 .cal-title-year { font-weight: 600; }
 /* 11-03 17:05 ②: 年页年数字大小一致（34px）+粗细一致（600,比 cur 红体 800 略细）;cur 仅红色不变粗。 */
-.cal-title-year .cal-title-y { font-size: 21px; color: var(--text-primary); font-weight: 600; letter-spacing: 0.5px; }
+.cal-title-year .cal-title-y { font-size: 21px; color: var(--text-primary); font-weight: 600; letter-spacing: 0.5px; margin: 0; }
+/* 11-03 20:25: 年页 2026 四字三隙相等——y/m 的 1px margin 只在跨元素边界生效（0|2）→实测隙 [0,2,0]。年页拼接场景清零;月页 m margin 保留（年/月汉字旁呼吸）。 */
+.cal-title-year .cal-title-m { margin: 0; }
 /* 11-03 18:30 ③: 年数字 21px（与月页标题年数字同大,跨页签零跳动）;后两位仅当前年红。 */
 .cal-title-year .cal-title-m { font-size: 21px; font-weight: 600; letter-spacing: 0.5px; color: var(--text-primary); }
 .cal-title-year .cal-title-m.cur { color: var(--cal-accent); }
