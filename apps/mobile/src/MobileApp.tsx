@@ -136,7 +136,7 @@ const VIEW_TITLES: Record<ViewId, string> = {
  *  search 视图无主 Tab 高亮（搜索是全局动作，不属于任何主 Tab 语境）。 */
 const TAB_OF_VIEW: Record<ViewId, string> = {
   today: 'today', notes: 'notes', agent: 'agent', settings: 'settings',
-  calendar: 'calendar', favorites: 'notes', recent: 'notes', diary: 'notes', trash: 'notes', tasks: 'today', search: '',
+  calendar: 'calendar', favorites: 'notes', recent: 'notes', diary: 'notes', trash: 'notes', tasks: 'tasks', search: '',
 };
 
 /** 笔记标题 overlay — 编辑页改标题时覆盖显示（Rust rename API 落地前的前端方案）。 */
@@ -433,6 +433,7 @@ export default function App() {
             fallback={fallback}
             onMenu={() => setDrawerOpen(true)}
             onSearch={() => goto('search')}
+            onAgent={() => goto('agent')}
             syncBadge={
               <SyncStatusBadge
                 onOpenQueue={() => setQueueOpen(true)}
@@ -574,8 +575,10 @@ export default function App() {
 // AppBar — 汉堡 + 标题 + 搜索
 // ===========================================================================
 
-function AppBar({ title, fallback, onMenu, onSearch, syncBadge }: {
+function AppBar({ title, fallback, onMenu, onSearch, onAgent, syncBadge }: {
   title: string; fallback: boolean; onMenu: () => void; onSearch: () => void;
+  /** E16（TA 19:13）: Agent 入口上移 app-bar（搜索旁）——底部 nav 位让给「待办」 */
+  onAgent: () => void;
   /** DK-50：同步状态徽标（app-bar 常驻，不破现有布局） */
   syncBadge?: React.ReactNode;
 }) {
@@ -585,6 +588,7 @@ function AppBar({ title, fallback, onMenu, onSearch, syncBadge }: {
       <h1 className="app-bar-title">{title}</h1>
       {fallback && <span className="app-bar-warn">内存模式</span>}
       {syncBadge}
+      <button className="icon-btn" onClick={onAgent} aria-label="Agent">{I.agent}</button>
       <button className="icon-btn" onClick={onSearch} aria-label="搜索">{I.search}</button>
     </header>
   );
@@ -603,7 +607,7 @@ function TabBar({ current, onChange }: { current: ViewId; onChange: (v: ViewId) 
   const items: Array<{ id: ViewId; icon: React.ReactNode; label: string }> = [
     { id: 'today', icon: I.today, label: '今日' },
     { id: 'notes', icon: I.notes, label: '知识库' },
-    { id: 'agent', icon: I.agent, label: 'Agent' },
+    { id: 'tasks', icon: I.taskSquare, label: '待办' },
     { id: 'calendar', icon: I.calendar, label: '日历' },
   ];
   return (
