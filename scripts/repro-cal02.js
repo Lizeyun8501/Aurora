@@ -7,9 +7,9 @@
  *
  * 链路: 新建事件 → 月历角标 → 日视图事件块 → 编辑 → 删除。
  */
-const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobile/dist/index.html')
-  ? 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html'
-  : 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html';
+const BASE = require('fs').existsSync('/home/z/my-project/Aurora/apps/mobile/dist/index.html')
+  ? 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html'
+  : 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
 
 (async () => {

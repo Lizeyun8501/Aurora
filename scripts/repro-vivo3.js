@@ -5,7 +5,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto('file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html');
+  await page.goto('file:///home/z/my-project/Aurora/apps/mobile/dist/index.html');
   await page.waitForTimeout(1100);
   await page.click('.tab-item:has-text("日历")'); await page.waitForTimeout(500);
   const fail = []; const ok = (n, c) => { (c ? console.log('  ✓ ' + n) : (console.log('  ✗ ' + n), fail.push(n))); };

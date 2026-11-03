@@ -6,9 +6,9 @@
  *    （闰月年用例: 2025 闰六月/2026 无闰——Lunar 反推正确性）
  * ③ 短月钳制: 月末 31 重复事件 2 月角标在 28/29
  */
-const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobile/dist/index.html')
-  ? 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html'
-  : 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html';
+const BASE = require('fs').existsSync('/home/z/my-project/Aurora/apps/mobile/dist/index.html')
+  ? 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html'
+  : 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
 
 (async () => {

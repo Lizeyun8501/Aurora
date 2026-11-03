@@ -549,6 +549,15 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
   const [pop, setPop] = useState<'color' | 'size' | 'hl' | 'style' | 'symbol' | 'template' | 'block' | 'insert' | null>(null);
   /** Aa 面板 tab（v4 E2: A/A⁺/▮ 三独立组+B·I·U·S 并入「格式」tab——VIVO Aa 一钮弹全部文字格式对标）。 */
   const [styleTab, setStyleTab] = useState<'fmt' | 'style' | 'symbol' | 'template'>('fmt');
+  // E12（TA 16:36）: 粘性面板——内容点击不关（连续应用）;编辑区点击/栏钮 toggle 才关。
+  // PM dom click 关面板+restore（撤光标避让垫+回焦恢复输入法）。
+  useEffect(() => {
+    if (!view || !pop) return;
+    const dom = view.dom;
+    const onEditClick = () => { setPop(null); restoreKbdAfterPanel(); };
+    dom.addEventListener('click', onEditClick);
+    return () => dom.removeEventListener('click', onEditClick);
+  }, [view, pop]);
   // E11（TA 16:19 裁决「弹窗置于工具栏下方」）: 弹期栏动态上浮——bottom=面板实际高+4 隙;
   // ResizeObserver 随 tab 切换面板高变实时跟（Aa 四 tab 高各异）。
   const [popH, setPopH] = useState(0);
@@ -602,7 +611,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
     if (!view) return;
     const { from, to } = view.state.selection;
     view.dispatch(view.state.tr.removeMark(from, to, auroraSchema.marks[markName]));
-    setPop(null); restoreKbdAfterPanel();
+   
   };
 
   const btn = (
@@ -648,12 +657,12 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
               {BLOCK_BTNS.map((b) => (
                 <button key={b.key} className={`tb-style-btn ${blocks.has(b.key) ? 'hl-prev' : ''}`} title={b.title}
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { runCmd(view, b.cmd); setPop(null); restoreKbdAfterPanel(); }}>{b.label}</button>
+                  onClick={() => { runCmd(view, b.cmd); }}>{b.label}</button>
               ))}
               {view && inTable(view.state) && TABLE_BTNS.map((b) => (
                 <button key={b.title} className="tb-style-btn" title={b.title}
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { runCmd(view, b.cmd); setPop(null); restoreKbdAfterPanel(); }}>{b.label}</button>
+                  onClick={() => { runCmd(view, b.cmd); }}>{b.label}</button>
               ))}
             </div>
             </div>
@@ -745,7 +754,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                       if (!view) return;
                       const { from, to } = view.state.selection;
                       view.dispatch(view.state.tr.insertText(sym, from, to));
-                      setPop(null); restoreKbdAfterPanel();
+                     
                     }}>{sym}</button>
                 ))}
               </div>
@@ -754,7 +763,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                 {TEMPLATES.map((t) => (
                   <button key={t.key} className="tb-tmpl" title={t.title} aria-label={`模板 ${t.title}`}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => { insertTemplate(view, t.key); setPop(null); restoreKbdAfterPanel(); }}>
+                    onClick={() => { insertTemplate(view, t.key); }}>
                     <span className="tb-tmpl-icon">{t.icon}</span>
                     <span className="tb-tmpl-name">{t.title}</span>
                   </button>
@@ -771,20 +780,20 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                 ['fontColor', 'highlight', 'tagMark', 'quoteMark'].forEach((n) =>
                   tr.removeMark(from, to, auroraSchema.marks[n]));
                 view.dispatch(tr);
-                setPop(null); restoreKbdAfterPanel();
+               
               }}>普通</button>
             <button className="tb-style-btn blockquote-prev" title="引用块（红竖线）"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => { runCmd(view, wrapIn(auroraSchema.nodes.blockquote)); setPop(null); restoreKbdAfterPanel(); }}>引用</button>
+              onClick={() => { runCmd(view, wrapIn(auroraSchema.nodes.blockquote)); }}>引用</button>
             <button className="tb-style-btn tag-prev" title="标记（‹› 包裹+下划线）"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.tagMark)); setPop(null); restoreKbdAfterPanel(); }}>标记</button>
+              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.tagMark)); }}>标记</button>
             <button className="tb-style-btn quote-prev" title="引语（“” 蓝色斜体）"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.quoteMark)); setPop(null); restoreKbdAfterPanel(); }}>引语</button>
+              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.quoteMark)); }}>引语</button>
             <button className="tb-style-btn hl-prev" title="高亮背景（黄）"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.highlight, { color: '#fef08a' })); setPop(null); restoreKbdAfterPanel(); }}>高亮</button>
+              onClick={() => { runCmd(view, toggleMark(auroraSchema.marks.highlight, { color: '#fef08a' })); }}>高亮</button>
             <button className="tb-style-btn red-prev" title="红色强调（红+粗）"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
@@ -795,7 +804,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                 tr.addMark(from, to, auroraSchema.mark('fontColor', { color: '#dc2626' }));
                 tr.addMark(from, to, auroraSchema.mark('strong'));
                 view.dispatch(tr);
-                setPop(null); restoreKbdAfterPanel();
+               
               }}>红强调</button>
               </div>
             )}
@@ -814,27 +823,27 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
               {LIST_BTNS.map((b) => (
                 <button key={b.key} className={`tb-style-btn ${blocks.has(b.key) ? 'hl-prev' : ''}`} title={b.title}
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { runCmd(view, b.cmd); setPop(null); restoreKbdAfterPanel(); }}>{b.label}</button>
+                  onClick={() => { runCmd(view, b.cmd); }}>{b.label}</button>
               ))}
               <button className="tb-style-btn" title="分割线"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { insertHorizontalRule(view); setPop(null); restoreKbdAfterPanel(); }}>—</button>
+                onClick={() => { insertHorizontalRule(view); }}>—</button>
               <button className="tb-style-btn" title="插入公式"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { if (view) insertMathBlock(view); setPop(null); restoreKbdAfterPanel(); }}>ƒx</button>
+                onClick={() => { if (view) insertMathBlock(view); }}>ƒx</button>
               <button className="tb-style-btn" title="插入流程图"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { if (view) insertMermaidBlock(view); setPop(null); restoreKbdAfterPanel(); }}>❋</button>
+                onClick={() => { if (view) insertMermaidBlock(view); }}>❋</button>
               {/* E7 补齐（思源对标·TA 08:46）: 链接/图片/表格——「＋」插入组缺项 */}
               <button className="tb-style-btn" title="插入链接"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { if (view) { const href = window.prompt('链接地址', 'https://'); if (href) { const { empty } = view.state.selection; if (!empty) { const linkMark = auroraSchema.marks.link; view.dispatch(view.state.tr.addStoredMark(linkMark.create({ href }))); view.focus(); } } } setPop(null); restoreKbdAfterPanel(); }}>🔗</button>
+                onClick={() => { if (view) { const href = window.prompt('链接地址', 'https://'); if (href) { const { empty } = view.state.selection; if (!empty) { const linkMark = auroraSchema.marks.link; view.dispatch(view.state.tr.addStoredMark(linkMark.create({ href }))); view.focus(); } } } }}>🔗</button>
               <button className="tb-style-btn" title="插入图片（URL）"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { if (view) { const url = window.prompt('图片地址', 'https://'); if (url) { const embed = auroraSchema.nodes.embed.create({ embed_type: 'image', url, title: '' }); const pos = view.state.selection.$from.before(1); view.dispatch(view.state.tr.insert(pos, embed)); view.focus(); } } setPop(null); restoreKbdAfterPanel(); }}>🖼</button>
+                onClick={() => { if (view) { const url = window.prompt('图片地址', 'https://'); if (url) { const embed = auroraSchema.nodes.embed.create({ embed_type: 'image', url, title: '' }); const pos = view.state.selection.$from.before(1); view.dispatch(view.state.tr.insert(pos, embed)); view.focus(); } } }}>🖼</button>
               <button className="tb-style-btn" title="插入表格"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { if (view) insertBlock(view, 'table'); setPop(null); restoreKbdAfterPanel(); }}>▦</button>
+                onClick={() => { if (view) insertBlock(view, 'table'); }}>▦</button>
             </div>
             </div>
           </div>

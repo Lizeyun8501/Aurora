@@ -6,9 +6,7 @@
  * ⑥ 零错误。 ⑦ schema 往返由 vitest 17/17 承担（jsdom）。
  */
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
-const BASE = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobile/dist/index.html')
-  ? 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html'
-  : 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html';
+const BASE = 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
 
 // Aa 面板确保开（toggle 语义防御——面板已开时点 Aa=关）
 async function ensureAaOpen(page, tab) {
@@ -316,7 +314,9 @@ async function ensureAaOpen(page, tab) {
   });
   record('⑩c 平铺残留清零（30+ 钮→9 钮分组）', flatResidue === 0, `残留=${flatResidue}`);
   // ⑩d E7 补齐（思源对标·TA 08:46）: ＋ 插入组含 链接/图片/表格 三补项
-  await page.click('.editor-toolbar button[title="插入"]');
+  // E12 粘性适配: 面板可能仍开（⑩b 粘）——已开直查,未开才点钮（免 toggle 误关）
+  const popOpenNow = await page.evaluate(() => !!document.querySelector('.tb-style-pop'));
+  if (!popOpenNow) await page.click('.editor-toolbar button[title="插入"]');
   await page.waitForTimeout(300);
   const e7Titles = await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll('.tb-style-pop .tb-style-btn'));
@@ -326,7 +326,7 @@ async function ensureAaOpen(page, tab) {
   await page.evaluate(() => { const v = window.__editorView; if (v) v.focus(); });
   record('⑩d E7 插入组补齐（链接/图片/表格）', e7Titles.hasLink && e7Titles.hasImage && e7Titles.hasTable,
     `链接=${e7Titles.hasLink} 图片=${e7Titles.hasImage} 表格=${e7Titles.hasTable} 面板项=${e7Titles.titles.length}`);
-  // ⑩e E9 分区卡+头（TA 13:03 图1 对标: tb-sec 独立圆角块+左上小标题——⑩d 后面板已开,直查免 toggle 误关）
+  // ⑩e E9 分区卡+头（⑩d 面板态直查）
   await page.waitForTimeout(300);
   const e9Sec = await page.evaluate(() => {
     const sec = document.querySelector('.tb-style-pop .tb-sec');

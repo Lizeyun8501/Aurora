@@ -15,7 +15,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
-  await page.goto('file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html');
+  await page.goto('file:///home/z/my-project/Aurora/apps/mobile/dist/index.html');
   await page.waitForTimeout(1200);
   await page.click('text=日历');
   await page.waitForTimeout(600);

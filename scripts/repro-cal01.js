@@ -20,7 +20,7 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
     console.log(`${pass ? 'PASS' : 'FAIL'} ${name}: ${detail}`);
   };
 
-  const BASE01 = require('fs').existsSync('/home/z/my-project/repos/Aurora/apps/mobile/dist/index.html') ? 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html' : 'file:///home/z/my-project/repos/Aurora/apps/mobile/dist/index.html';
+  const BASE01 = require('fs').existsSync('/home/z/my-project/Aurora/apps/mobile/dist/index.html') ? 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html' : 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
   await page.goto(BASE01);
   await page.waitForTimeout(800);
 
