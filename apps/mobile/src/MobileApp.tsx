@@ -1698,14 +1698,15 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
   /** E6 导入导出 handler——noteExport 模块。E14（TA 18:16）: 全链 toast 反馈+防御——
    * 真机 WebView 无 DownloadListener 时 blob 静默（「无反应」根因之一）;share 双通道
    * （noteExport）+toast 保用户可感知;lazy/导出异常 catch 兜底不再静默。 */
-  const doExport = (fmt: 'md' | 'word' | 'txt' | 'pdf') => {
-    import('@aurora/ui-components').then((m) => {
+  const doExport = async (fmt: 'md' | 'word' | 'txt' | 'pdf') => {
+    try {
+      const m = await import('@aurora/ui-components');
       const t = (docTitle || title).replace(/[\\/:*?"<>|]/g, '_');
-      const r = fmt === 'pdf' ? m.exportNotePdf(title) : m.exportNote(title, fmt);
+      const r = await (fmt === 'pdf' ? m.exportNotePdf(title) : m.exportNote(title, fmt));
       setStatus(r.ok ? 'saved' : null);
       if (r.ok) showToast(`已导出 ${r.filename}`);
       else showToast(`导出失败：${r.error ?? '未知错误'}`);
-    }).catch(() => showToast('导出失败（模块加载异常）'));
+    } catch { showToast('导出失败（模块加载异常）'); }
   };
   const doImport = async () => {
     try {

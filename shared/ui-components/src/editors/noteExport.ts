@@ -100,26 +100,40 @@ function docShell(title: string, body: string): string {
 </head><body>${body}</body></html>`;
 }
 
-function download(filename: string, content: string, mime: string): boolean {
-  // E14 真机修复（TA 18:16）: Web Share 双通道——Android WebView 无 DownloadListener 时
-  // blob a.click() 静默无反应;canShare(files) 真→系统分享/另存面板接管（用户可感知）。
-  // 桌面/headless 无 share→blob 兜底链（既有 PW 断言面不变）。share 取消=用户意图,静默。
-  try {
-    const file = new File([content], filename, { type: mime });
-    if (navigator.canShare?.({ files: [file] })) {
-      void navigator.share({ files: [file], title: filename }).catch(() => { /* 取消/失败静默 */ });
-      return true;
-    }
-  } catch { /* File/canShare 缺失防御 */ }
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 3000);
-  return true;
+/** E15 真机判据: Android WebView（pdf print 死机/下载面差异的分流锚） */
+function isAndroidWebView(): boolean {
+  return /Android/.test(navigator.userAgent) && !/Firefox/.test(navigator.userAgent);
+}
+
+/**
+ * E15 双通道 v2（TA 18:58）: share **await**——失败/取消不再静默假成功
+ * （word「显示导出未见文件」根因: share reject 被吞→用户以为成了）;reject→blob 真兜底。
+ * 桌面/headless 无 share→blob（既有 PW 断言面稳定）。
+ */
+function download(filename: string, content: string, mime: string): Promise<boolean> {
+  return (async () => {
+    try {
+      const file = new File([content], filename, { type: mime });
+      if (navigator.canShare?.({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: filename });
+          return true; // 用户经系统面板保存/分享（真机文件落 Download/所选位置）
+        } catch (e) {
+          if (e instanceof Error && e.name === 'AbortError') return true; // 用户取消=意图,非失败
+          // 真失败（无组件/组件拒绝）→blob 兜底不吞
+        }
+      }
+    } catch { /* File/canShare 缺失防御 */ }
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    return true;
+  })();
 }
 
 /* ============================================================
@@ -156,7 +170,7 @@ function getView(): EditorView | null {
   return (w.__editorView as EditorView | undefined) ?? null;
 }
 
-export function exportNote(title: string, fmt: Exclude<ExportFmt, 'pdf'>): ExportResult {
+export async function exportNote(title: string, fmt: Exclude<ExportFmt, 'pdf'>): Promise<ExportResult> {
   const view = getView();
   if (!view) return { ok: false, fmt, filename: '', size: 0, error: '编辑器未就绪' };
   const safeName = (title.trim() || '未命名笔记').replace(/[\\/:*?"<>|]/g, '_');
@@ -164,28 +178,37 @@ export function exportNote(title: string, fmt: Exclude<ExportFmt, 'pdf'>): Expor
     const doc = view.state.doc;
     if (fmt === 'md') {
       const md = docToMd(doc) + '\n';
-      download(`${safeName}.md`, md, 'text/markdown;charset=utf-8');
+      await download(`${safeName}.md`, md, 'text/markdown;charset=utf-8');
       return { ok: true, fmt, filename: `${safeName}.md`, size: md.length };
     }
     if (fmt === 'txt') {
       const txt = doc.textContent + '\n';
-      download(`${safeName}.txt`, txt, 'text/plain;charset=utf-8');
+      await download(`${safeName}.txt`, txt, 'text/plain;charset=utf-8');
       return { ok: true, fmt, filename: `${safeName}.txt`, size: txt.length };
     }
     const html = docShell(safeName, blockToHtml(doc));
-    download(`${safeName}.doc`, html, 'application/msword;charset=utf-8');
+    await download(`${safeName}.doc`, html, 'application/msword;charset=utf-8');
     return { ok: true, fmt: 'word', filename: `${safeName}.doc`, size: html.length };
   } catch (e) {
     return { ok: false, fmt, filename: '', size: 0, error: String(e) };
   }
 }
 
-/** PDF: 印式窗口（WebView 系统另存 PDF 通路） */
-export function exportNotePdf(title: string): ExportResult {
+/** PDF（E15 · TA 18:58 死机修复）: Android WebView 撤 window.open+print——新 WebView
+ *  窗口无 navigation 绑定=全屏死窗（「App 死掉无法退出」根因）;print 主线程阻塞雪上加霜。
+ *  真机改走 share 印式 HTML（.html 真文件,系统面板保存;浏览器/印式打开即可另存 PDF）;
+ *  桌面保 window.open+print 链（Chromium 印式面板存 PDF——语义不变）。 */
+export async function exportNotePdf(title: string): Promise<ExportResult> {
   const view = getView();
   if (!view) return { ok: false, fmt: 'pdf', filename: '', size: 0, error: '编辑器未就绪' };
   const safeName = (title.trim() || '未命名笔记').replace(/[\\/:*?"<>|]/g, '_');
   try {
+    const html = docShell(safeName, blockToHtml(view.state.doc));
+    if (isAndroidWebView()) {
+      const filename = `${safeName}.html`;
+      await download(filename, html, 'text/html;charset=utf-8');
+      return { ok: true, fmt: 'pdf', filename, size: html.length };
+    }
     const w = window.open('', '_blank');
     if (!w) return { ok: false, fmt: 'pdf', filename: '', size: 0, error: '弹出窗口被拦截' };
     w.document.write(docShell(safeName, blockToHtml(view.state.doc)));
