@@ -139,6 +139,49 @@ const TAB_OF_VIEW: Record<ViewId, string> = {
   calendar: 'calendar', favorites: 'notes', recent: 'notes', diary: 'notes', trash: 'notes', tasks: 'tasks', search: '',
 };
 
+// ===== E21（TA 21:57）: VIVO 风格图标集 — 彩色圆角块+白字形;overlay 持久可换 =====
+export interface IconDef { id: string; label: string; color: string; glyph: string }
+export const BOOK_ICONS: IconDef[] = [
+  { id: 'book-red', label: '红本', color: '#ef4444', glyph: '📖' },
+  { id: 'book-blue', label: '蓝本', color: '#3b82f6', glyph: '📖' },
+  { id: 'book-green', label: '绿本', color: '#10b981', glyph: '📖' },
+  { id: 'book-amber', label: '橙本', color: '#f59e0b', glyph: '📖' },
+  { id: 'book-purple', label: '紫本', color: '#8b5cf6', glyph: '📖' },
+  { id: 'book-slate', label: '灰本', color: '#64748b', glyph: '📁' },
+  { id: 'book-rose', label: '粉本', color: '#f43f5e', glyph: '📚' },
+  { id: 'box-brown', label: '档案盒', color: '#a16207', glyph: '🗂' },
+];
+export const DOC_ICONS: IconDef[] = [
+  { id: 'doc-plain', label: '文档', color: '#94a3b8', glyph: '📄' },
+  { id: 'doc-note', label: '笔记', color: '#0ea5e9', glyph: '📝' },
+  { id: 'doc-star', label: '星标', color: '#f59e0b', glyph: '⭐' },
+  { id: 'doc-idea', label: '灵感', color: '#a855f7', glyph: '💡' },
+  { id: 'doc-task', label: '待办', color: '#10b981', glyph: '☑' },
+  { id: 'doc-diary', label: '日记', color: '#f43f5e', glyph: '📔' },
+  { id: 'doc-code', label: '代码', color: '#334155', glyph: '⌨' },
+  { id: 'doc-chart', label: '图表', color: '#6366f1', glyph: '📊' },
+];
+const ALL_ICONS = [...BOOK_ICONS, ...DOC_ICONS];
+function getIconDef(kind: 'book' | 'doc', id: string): IconDef {
+  try {
+    const saved = localStorage.getItem(`aurora.icon.${id}`);
+    if (saved) { const hit = ALL_ICONS.find((x) => x.id === saved); if (hit) return hit; }
+  } catch { /* 防御 */ }
+  return kind === 'book' ? BOOK_ICONS[0] : DOC_ICONS[0];
+}
+function setIconDef(id: string, iconId: string) {
+  try { localStorage.setItem(`aurora.icon.${id}`, iconId); } catch { /* 防御 */ }
+}
+/** VIVO 图标块: 圆角方底色+白字形（16-22px 视觉等效 emoji 但可控配色） */
+function VivoIcon({ def, size = 22 }: { def: IconDef; size?: number }) {
+  return (
+    <span className="vivo-icon" aria-label={def.label} title={def.label}
+      style={{ width: size, height: size, background: def.color, fontSize: Math.round(size * 0.58) }}>
+      {def.glyph}
+    </span>
+  );
+}
+
 /** 笔记标题 overlay — 编辑页改标题时覆盖显示（Rust rename API 落地前的前端方案）。 */
 function getTitleOverlay(id: string): string | null {
   try { return localStorage.getItem(`aurora.title.${id}`); } catch { return null; }
@@ -1079,16 +1122,34 @@ function saveTree(t: TreeNodeMeta[]) {
 function initialTree(): TreeNodeMeta[] {
   return [{ id: `b${Date.now()}`, kind: 'book', title: '我的笔记本', parentId: null }];
 }
+/** E21 修: 初始树立即落盘（K_TREE）——否则 tab 切换 NodeTree 重挂→loadTree() 空→
+ *  initialTree 生成新 b<ts> id,图标 overlay（aurora.icon.<id>）与旧 id 失联=换图标不持久。 */
+function initialTreePersisted(): TreeNodeMeta[] {
+  const t = initialTree();
+  saveTree(t);
+  return t;
+}
 
-/** 文档树组件 — 展开折叠 + ＋新建子文档 + 孤儿笔记收入。 */
+/** 文档树组件 — 展开折叠 + ＋新建子文档 + 孤儿笔记收入 + E21 图标更换。 */
 function NodeTree({ notes, onOpen, showToast }: {
   notes: NoteSummary[];
   onOpen: (id: string, title: string) => void;
   showToast: (m: string) => void;
 }) {
+  // E21: 图标选择器（sheet: 全集 16 格;选中落 overlay 持久,树行即时刷新）
+  const [pick, setPick] = useState<{ id: string; kind: 'book' | 'doc' } | null>(null);
+  const [, setIconTick] = useState(0);
+  const onPickIcon = (id: string, kind: 'book' | 'doc') => setPick({ id, kind });
+  const applyIcon = (iconId: string) => {
+    if (!pick) return;
+    setIconDef(pick.id, iconId);
+    setIconTick((t) => t + 1); // 树行重读 overlay
+    setPick(null);
+    showToast('图标已更换');
+  };
   const [tree, setTree] = useState<TreeNodeMeta[]>(() => {
     const t = loadTree();
-    return t.length ? t : initialTree();
+    return t.length ? t : initialTreePersisted();
   });
   const persist = (t: TreeNodeMeta[]) => { saveTree(t); setTree(t); };
   const [open, setOpen] = useState<Set<string>>(() => new Set(loadTree().filter((x) => x.kind === 'book').map((x) => x.id)));
@@ -1129,7 +1190,9 @@ function NodeTree({ notes, onOpen, showToast }: {
           {hasKids || t.kind === 'book' ? (
             <button className="nt-arrow" onClick={() => toggle(t.id)} aria-label={isOpen ? '折叠' : '展开'}>{isOpen ? '▾' : '▸'}</button>
           ) : <span className="nt-arrow nt-arrow-ph" />}
-          <span className="nt-icon">{t.kind === 'book' ? '📕' : hasKids ? '📄' : '📄'}</span>
+          {/* E21: VIVO 图标块——点击开选择器换图标（overlay 持久） */}
+          <button className="nt-icon-btn" aria-label="更换图标" title="更换图标"
+            onClick={() => onPickIcon?.(t.id, t.kind)}><VivoIcon def={getIconDef(t.kind, t.id)} /></button>
           <button className="nt-title" onClick={() => t.kind === 'doc' && onOpen(t.id, displayTitle(t))}>
             {displayTitle(t)}
             {t.kind === 'doc' && hasKids && <span className="nt-count">{kids.length}</span>}
@@ -1157,11 +1220,37 @@ function NodeTree({ notes, onOpen, showToast }: {
           {orphans.map((n) => (
             <div key={n.note_id} className="nt-row" style={{ paddingLeft: 8 }}>
               <span className="nt-arrow nt-arrow-ph" />
-              <span className="nt-icon">📄</span>
+              <button className="nt-icon-btn" aria-label="更换图标" title="更换图标"
+                onClick={() => onPickIcon?.(n.note_id, 'doc')}><VivoIcon def={getIconDef('doc', n.note_id)} /></button>
               <button className="nt-title" onClick={() => onOpen(n.note_id, n.title)}>{n.title}</button>
               <button className="nt-add" style={{ fontSize: 12 }} onClick={() => adopt(n)}>收入</button>
             </div>
           ))}
+        </>
+      )}
+
+      {/* E21 图标选择器 sheet: 16 格全集（book/doc 8+8）;点击即换+toast */}
+      {pick && (
+        <>
+          <div className="sheet-mask" onClick={() => setPick(null)} />
+          <div className="sheet" style={{ paddingBottom: 14 }}>
+            <div className="sheet-grab" />
+            <div className="sheet-head">
+              <span className="sheet-title">更换图标</span>
+              <button className="icon-btn" onClick={() => setPick(null)} aria-label="关闭">{I.x}</button>
+            </div>
+            <div style={{ padding: '6px 12px 0' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 8 }}>{pick.kind === 'book' ? '笔记本' : '文档'}图标</div>
+              <div className="vivo-icon-grid">
+                {(pick.kind === 'book' ? BOOK_ICONS : DOC_ICONS).map((ic) => (
+                  <button key={ic.id} className="vivo-icon-cell" title={ic.label} aria-label={ic.label}
+                    onClick={() => applyIcon(ic.id)}>
+                    <VivoIcon def={ic} size={34} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         </>
       )}
     </div>

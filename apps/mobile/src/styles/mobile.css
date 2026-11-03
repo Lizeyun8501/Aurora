@@ -1239,6 +1239,12 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   color: var(--text-tertiary); background: none; border: none; font-size: 12px;
 }
 .nt-arrow-ph { visibility: hidden; }
+/* ===== E21（TA 21:57）: VIVO 图标块 — 彩色圆角方+字形 ===== */
+.nt-icon-btn { border: none; background: transparent; padding: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; border-radius: 6px; }
+.vivo-icon { display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; color: #fff; line-height: 1; box-shadow: inset 0 -1px 0 rgba(0,0,0,0.12); }
+.vivo-icon-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.vivo-icon-cell { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-secondary); cursor: pointer; padding: 8px; display: flex; align-items: center; justify-content: center; }
+.vivo-icon-cell:active { transform: scale(0.94); border-color: var(--brand); }
 .nt-icon { display: flex; font-size: 15px; }
 .nt-title {
   flex: 1; min-width: 0; text-align: left;
