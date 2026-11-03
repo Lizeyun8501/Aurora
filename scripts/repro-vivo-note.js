@@ -107,13 +107,22 @@ async function ensureAaOpen(page, tab) {
       blurDone: focusedMidArg && !!ev && !ev.hasFocus(),  // 键盘让位: 开前有焦→开后失焦
     };
   }, focusedMid);
-  // 选定样式（色板）→面板关→回焦恢复键盘
+  // 选定样式（色板）→E12/E13 语义: 粘性不关+不抢焦（输入法不跳）;编辑区点击才关+回焦
   await page.click('.tb-fmt-panel .tb-swatch >> nth=0');
   await page.waitForTimeout(300);
-  const refocused = await page.evaluate(() => !!window.__editorView && window.__editorView.hasFocus());
+  const stickyState = await page.evaluate(() => ({
+    hasPop: !!document.querySelector('.tb-style-pop'),
+    focused: window.__editorView.hasFocus(),
+  }));
+  const stickyOk = stickyState.hasPop && !stickyState.focused;
+  // 编辑区点击→面板关+回焦（输入法出——TA 17:56 关面板链）
+  await page.click('.ProseMirror', { position: { x: 30, y: 18 } });
+  await page.waitForTimeout(400);
+  const refocused = await page.evaluate(() => !document.querySelector('.tb-style-pop') && window.__editorView.hasFocus());
+  void stickyOk;
   record('⑪ E11 弹窗置栏下方（栏上浮动态+面板贴底+键盘让位链）',
     focusedBefore && !!e4 && e4.fixed && e4.fullwidth && e4.barAbovePanel && e4.blurDone && refocused,
-    `先焦=${focusedBefore} fixed=${e4?.fixed} 全宽=${e4?.fullwidth} 栏上面板下=${e4?.barAbovePanel} 让位=${e4?.blurDone} 回焦=${refocused}`);
+    `先焦=${focusedBefore} fixed=${e4?.fixed} 全宽=${e4?.fullwidth} 栏上面板下=${e4?.barAbovePanel} 让位=${e4?.blurDone} 粘性不抢焦=${stickyOk} 编辑区回焦=${refocused}`);
 
   // ② 选中前 4 字→红
   await page.evaluate(() => {
@@ -133,6 +142,7 @@ async function ensureAaOpen(page, tab) {
     s.addRange(range);
     return s.toString();
   });
+  await ensureAaOpen(page, '格式'); // ⑪ 尾编辑区点击已关面板——② 前重开（E12 粘性适配）
   await page.click('.tb-fmt-panel .tb-swatch >> nth=0'); // 红 #dc2626（Aa「格式」tab 内色板）
   await page.waitForTimeout(300);
   const redHtml = await page.evaluate(() => document.querySelector('.ProseMirror p span[style*="color"]')?.style.color || 'NONE');

@@ -108,16 +108,16 @@ type PMCommand = (
 
 function runCmd(view: EditorView | null, cmd: PMCommand) {
   if (!view) return;
-  const ok = cmd(view.state, view.dispatch);
-  if (ok) view.focus();
+  cmd(view.state, view.dispatch);
+  // E13（TA 17:56）: 撤 OK→focus——面板项应用命令不抢焦点（输入法不跳）;dispatch 即生效,
+  // 恢复输入法仅发生在「关面板」链（restoreKbdAfterPanel: 编辑区点击/栏钮 toggle）。
 }
 
 function insertHorizontalRule(view: EditorView | null) {
   if (!view) return;
   const { state } = view;
   const tr = state.tr.replaceSelectionWith(auroraSchema.nodes.horizontal_rule.create());
-  view.dispatch(tr);
-  view.focus();
+  view.dispatch(tr); // E13: 不 focus——插入命令不弹输入法
 }
 // 注: hr 按钮经 btn() 的 onClick 调 insertHorizontalRule(view)，与 runCmd 分离
 
@@ -234,8 +234,7 @@ export function insertTemplate(view: EditorView | null, key: TemplateKey): boole
   const tr = state.tr;
   let at = pos;
   for (const n of frags) { tr.insert(at, n); at += n.nodeSize; }
-  view.dispatch(tr.scrollIntoView());
-  view.focus();
+  view.dispatch(tr.scrollIntoView()); // E13: 不 focus——模板插入不弹输入法
   return true;
 }
 
@@ -837,10 +836,10 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
               {/* E7 补齐（思源对标·TA 08:46）: 链接/图片/表格——「＋」插入组缺项 */}
               <button className="tb-style-btn" title="插入链接"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { if (view) { const href = window.prompt('链接地址', 'https://'); if (href) { const { empty } = view.state.selection; if (!empty) { const linkMark = auroraSchema.marks.link; view.dispatch(view.state.tr.addStoredMark(linkMark.create({ href }))); view.focus(); } } } }}>🔗</button>
+                onClick={() => { if (view) { const href = window.prompt('链接地址', 'https://'); if (href) { const { empty } = view.state.selection; if (!empty) { const linkMark = auroraSchema.marks.link; view.dispatch(view.state.tr.addStoredMark(linkMark.create({ href }))); } } } }}>🔗</button>
               <button className="tb-style-btn" title="插入图片（URL）"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { if (view) { const url = window.prompt('图片地址', 'https://'); if (url) { const embed = auroraSchema.nodes.embed.create({ embed_type: 'image', url, title: '' }); const pos = view.state.selection.$from.before(1); view.dispatch(view.state.tr.insert(pos, embed)); view.focus(); } } }}>🖼</button>
+                onClick={() => { if (view) { const url = window.prompt('图片地址', 'https://'); if (url) { const embed = auroraSchema.nodes.embed.create({ embed_type: 'image', url, title: '' }); const pos = view.state.selection.$from.before(1); view.dispatch(view.state.tr.insert(pos, embed)); } } }}>🖼</button>
               <button className="tb-style-btn" title="插入表格"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { if (view) insertBlock(view, 'table'); }}>▦</button>

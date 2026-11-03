@@ -54,14 +54,14 @@ function insertSiblingBlock(view: EditorView, node: import('prosemirror-model').
   const tr = state.tr.insert(pos, node);
   tr.setSelection(TextSelection.near(tr.doc.resolve(pos + 1)));
   view.dispatch(tr.scrollIntoView());
-  view.focus();
+  // E13: 不 focus——插入命令不弹输入法
   return true;
 }
 
 /** PMCommand 包装：派发+回焦（面板关闭后编辑器焦点恢复兜底）。 */
 function run(view: EditorView, cmd: (state: EditorView['state'], dispatch?: (tr: Transaction) => void, view?: EditorView) => boolean): boolean {
   const ok = cmd(view.state, view.dispatch, view);
-  if (ok) view.focus();
+  // E13: 不 focus——命令应用不弹输入法（TA 17:56）
   return ok;
 }
 
@@ -144,7 +144,7 @@ function insertTable(view: EditorView): boolean {
 function insertDivider(view: EditorView): boolean {
   const { state } = view;
   view.dispatch(state.tr.replaceSelectionWith(auroraSchema.nodes.horizontal_rule.create()));
-  view.focus();
+  // E13: 不 focus——插入命令不弹输入法
   return true;
 }
 
@@ -185,6 +185,6 @@ export function moveBlock(view: EditorView, dir: -1 | 1): boolean {
   const newSelfPos = dir === 1 ? rangeStart + hi.node.nodeSize : rangeStart;
   tr.setSelection(TextSelection.near(tr.doc.resolve(newSelfPos)));
   view.dispatch(tr.scrollIntoView());
-  view.focus();
+  // E13: 不 focus——插入命令不弹输入法
   return true;
 }
