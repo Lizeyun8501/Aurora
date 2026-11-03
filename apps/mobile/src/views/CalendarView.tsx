@@ -45,6 +45,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   /** 21:40 用户指令②: 年视图滑动切年（上滑=下一年/下滑=过去一年）。 */
   const [yearDelta, setYearDelta] = useState(0);
   const yearTouch = useRef<{ x: number; y: number } | null>(null);
+  /* 11-03 08:31 报障①: 月页签无滑动翻月（用户滑了无反应→「今」永不出现）——补双通道绑（pointer+touchend 兜底,同年页模式）。 */
+  const monthTouch = useRef<{ x: number; y: number } | null>(null);
   /** DK-CALENDAR-04 任务 3: 列表页筛选+搜索。 */
   const [listFilter, setListFilter] = useState<'all' | 'linked' | 'birthday'>('all');
   const [listQuery, setListQuery] = useState('');
@@ -231,7 +233,25 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
           <button className={`nt-seg ${mode === 'list' ? 'on' : ''}`} role="tab" aria-selected={mode === 'list'} onClick={() => setMode('list')}>日程</button>
         </div>
         {mode === 'month' && (
-          <div className="cal-grid" key={monthOffset}>
+          <div
+            className="cal-grid" key={monthOffset}
+            onPointerDown={(e) => { monthTouch.current = { x: e.clientX, y: e.clientY }; }}
+            onPointerUp={(e) => {
+              const t = monthTouch.current; if (!t) return;
+              const dx = e.clientX - t.x, dy = e.clientY - t.y;
+              monthTouch.current = null;
+              if (Math.abs(dy) > 64 && Math.abs(dx) < 60) setMonthOffset((o) => o + (dy < 0 ? 1 : -1));
+            }}
+            onPointerCancel={() => { monthTouch.current = null; }}
+            onTouchEnd={(e) => {
+              /* 双通道兜底: pointer 流个别 ROM 被吞时 touchend 保底（同年页） */
+              const t = monthTouch.current; if (!t) return;
+              const tc = e.changedTouches[0]; if (!tc) return;
+              const dx = tc.clientX - t.x, dy = tc.clientY - t.y;
+              monthTouch.current = null;
+              if (Math.abs(dy) > 64 && Math.abs(dx) < 60) setMonthOffset((o) => o + (dy < 0 ? 1 : -1));
+            }}
+          >
             {['一', '二', '三', '四', '五', '六', '日'].map((w) => (
               <span key={w} className="cal-week">{w}</span>
             ))}

@@ -99,19 +99,20 @@ button, .note-card, .drawer-item, .tab-item { transition: background .14s, color
 }
 .fab:active { background: var(--brand-pressed); }
 /* 11-02 23:33: 「今」透明圆——VLM 读图规格: 半透明底+红今字,垂直叠于 FAB 上方（136=FAB顶+12）;年模式 solo 落 FAB 原位。 */
+/* 11-03 08:31 报障②③: 真·描边透明圆（bg 0.24+1.5px 边,弃 blur 与 0.72 实底）;间距 12→20（144=FAB 顶 124+20,离加号更远。 */
 .fab-today {
-  position: fixed; right: 16px; bottom: 136px; z-index: 55;
+  position: fixed; right: 16px; bottom: 144px; z-index: 55;
   width: 52px; height: 52px; border-radius: 50%;
-  background: rgba(255, 255, 255, 0.72); backdrop-filter: blur(4px);
-  color: var(--cal-accent); border: none; cursor: pointer;
+  background: rgba(255, 255, 255, 0.24);
+  border: 1.5px solid rgba(31, 41, 55, 0.32);
+  color: var(--cal-accent); cursor: pointer;
   font-size: 17px; font-weight: 700; line-height: 1;
-  box-shadow: 0 2px 8px rgba(31, 41, 55, 0.10);
   display: flex; align-items: center; justify-content: center;
   animation: fab-today-in 0.18s ease;
 }
-.fab-today:active { background: rgba(255, 255, 255, 0.95); }
+.fab-today:active { background: rgba(255, 255, 255, 0.42); }
 .fab-today-solo { bottom: 72px; }
-[data-theme='dark'] .fab-today { background: rgba(31, 41, 55, 0.66); color: var(--cal-accent); }
+[data-theme='dark'] .fab-today { background: rgba(15, 23, 42, 0.30); border-color: rgba(255, 255, 255, 0.38); color: var(--cal-accent); }
 @keyframes fab-today-in { from { opacity: 0; transform: scale(0.7); } }
 
 /* ============================================================
