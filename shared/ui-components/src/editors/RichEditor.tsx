@@ -560,9 +560,24 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
   const hideKbdForPanel = () => {
     if (!view || kbdWasActive.current) return;
     kbdWasActive.current = view.hasFocus();
+    // E10a 光标避让（TA 14:03）: 开面板前把光标行滚到面板上方安全区——面板 max 42vh+栏 49px
+    // ≈ 底部 47vh 占位;coordsAtPos 判光标视觉位,落底半区则滚 host 使其进入上 53vh 可视带。
+    // E10a 双保: ①光标贴底段物理滚不上（滚容器已尽）→PM 尾垫临时加 260px 拉出滚动余量;
+    // ②差量精准滚——光标滚至 host 上 30% 带（面板≤42vh+栏 49=底 47vh 占位恒在下方）
+    try {
+      view.dom.classList.add('e10-cursor-pad');
+      const head = view.state.selection.head;
+      const host = view.dom.closest('.rich-editor-host') ?? view.dom.parentElement;
+      const coords = view.coordsAtPos(head);
+      const hostRect = (host as HTMLElement).getBoundingClientRect();
+      const target = hostRect.top + hostRect.height * 0.3;
+      const delta = coords.top - target;
+      if (delta > 0) (host as HTMLElement).scrollTop += delta;
+    } catch { /* 空选区防御 */ }
     if (kbdWasActive.current) view.dom.blur(); // PM EditorView 无 blur()——DOM 正法
   };
   const restoreKbdAfterPanel = () => {
+    if (view) view.dom.classList.remove('e10-cursor-pad'); // E10a: 撤光标避让尾垫
     if (kbdWasActive.current && view) {
       view.focus();
       // 聚焦即恢复键盘——不 setSelection（保留用户原选区,样式应用链不破坏）

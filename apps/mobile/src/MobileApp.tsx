@@ -319,8 +319,20 @@ export default function App() {
   const [conflictOpen, setConflictOpen] = useState(false);
   // DK-50.1：面板决策时间戳（bump 触发 badge 即刷——联动打通）
   const [syncChangedAt, setSyncChangedAt] = useState(0);
-  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
-    (localStorage.getItem('aurora.theme') as 'light' | 'dark') ?? 'light');
+  // E10b（TA 14:03）: 主题三态——light/dark/system（跟随系统）
+  type ThemeMode = 'light' | 'dark' | 'system';
+  const [theme, setTheme] = useState<ThemeMode>(() =>
+    (localStorage.getItem('aurora.theme') as ThemeMode) ?? 'light');
+  const [sysDark, setSysDark] = useState(() =>
+    window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false);
+  // 系统切换实时随（matchMedia 监听——system 模式即时生效）
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!mq) return;
+    const onChange = (e: MediaQueryListEvent) => setSysDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
   const [tasks, setTasks] = useState<Task[]>(loadTasks);
   // DK-CALENDAR-02：日程事件（mock/真桥双路径——platform.listEvents）
   const [events, setEvents] = useState<CalEvent[]>([]);
@@ -331,8 +343,9 @@ export default function App() {
 
   useEffect(() => {
     try { localStorage.setItem('aurora.theme', theme); } catch { /* 防御 */ }
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
+    // E10b: system→按 matchMedia 解析（CSS data-theme 面恒二态,兼容既有暗色覆写零改）
+    document.documentElement.dataset.theme = theme === 'system' ? (sysDark ? 'dark' : 'light') : theme;
+  }, [theme, sysDark]);
 
   useEffect(() => {
     const ok = platform.init('/data/aurora');
@@ -1494,8 +1507,8 @@ function WifiOnlyRow({ showToast }: { showToast: (t: string) => void }) {
 }
 
 function SettingsView({ theme, onTheme, showToast }: {
-  theme: 'light' | 'dark';
-  onTheme: (t: 'light' | 'dark') => void;
+  theme: 'light' | 'dark' | 'system';
+  onTheme: (t: 'light' | 'dark' | 'system') => void;
   showToast: (t: string) => void;
 }) {
   const [syncOpen, setSyncOpen] = useState(false);
@@ -1506,10 +1519,19 @@ function SettingsView({ theme, onTheme, showToast }: {
       <div className="settings-group">
         <div className="settings-group-title">外观</div>
         <div className="settings-card">
-          <div className="settings-row">
-            <span className="settings-row-icon">{theme === 'dark' ? I.moon : I.sun}</span>
-            <span className="settings-row-label">深色模式</span>
-            <Switch checked={theme === 'dark'} onChange={(v) => onTheme(v ? 'dark' : 'light')} />
+          <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span className="settings-row-icon">{theme === 'dark' ? I.moon : I.sun}</span>
+              <span className="settings-row-label">外观模式</span>
+            </div>
+            {/* E10b: 三段选择——浅色/深色/跟随系统（TA 14:03） */}
+            <div style={{ display: 'flex', gap: 6 }}>
+              {([['light', '☀️ 浅色'], ['dark', '🌙 深色'], ['system', '⚙️ 跟随系统']] as const).map(([val, label]) => (
+                <button key={val} className={`nt-seg ${theme === val ? 'on' : ''}`}
+                  style={{ flex: 1, height: 34, borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12 }}
+                  onClick={() => onTheme(val)}>{label}</button>
+              ))}
+            </div>
           </div>
         </div>
       </div>

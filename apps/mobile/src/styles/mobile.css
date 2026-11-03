@@ -713,8 +713,9 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   /* 栏保持贴底（kbd/安全区公式同基线）——面板悬于栏上方右侧,编辑区可视化最大化 */
 }
 @keyframes tbPopDown {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  /* E10a: 自工具栏底边向上生长——transform-origin bottom+scaleY 展（TA 14:03「从工具栏弹出」语感） */
+  from { opacity: 0; transform: scaleY(0.72) translateY(4px); }
+  to { opacity: 1; transform: scaleY(1) translateY(0); }
 }
 
 .tb-btn { flex: 0 0 auto; min-width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 14px; cursor: pointer; }
@@ -782,7 +783,8 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   max-height: 42vh;
   z-index: 70; /* 70: >editor-page 60（body 直挂后需压编辑页才可点）<栏 80（栏恒在上可点） */
   overflow-y: auto;
-  animation: tbPopDown .18s ease-out;
+  animation: tbPopDown .2s cubic-bezier(.2, .9, .3, 1);
+  transform-origin: bottom center; /* E10a: 自栏底边生长锚 */
   display: flex; flex-direction: column; gap: 10px; /* 分区间呼吸（图1: 分区堆叠+均匀小距） */
   padding: 12px; border-radius: 16px; /* 大圆角 sheet 体感（图1 目标形） */
   background: color-mix(in srgb, var(--bg-primary) 93%, transparent); /* 半透磨砂（图1 质感） */
@@ -911,6 +913,8 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .ProseMirror ul, .ProseMirror ol { padding-left: 24px; }
 .ProseMirror li { margin-bottom: 4px; }
 .ProseMirror a { color: var(--brand); }
+/* E10a 光标避让尾垫: 面板期 PM 底垫 120→300——贴底段拉出滚动余量可滚入面板上方安全带 */
+.ProseMirror.e10-cursor-pad { padding-bottom: 300px; }
 .ProseMirror .task-block-row { display: flex; gap: 8px; align-items: flex-start; }
 .ProseMirror p.is-empty::before, .ProseMirror p:only-child:empty::before {
   content: '开始写作…'; color: var(--text-tertiary); pointer-events: none;
@@ -1212,6 +1216,8 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* 正文内边距 — 参考图 20px 呼吸感 */
 .editor-page .rich-editor-host .ProseMirror,
 .rich-editor-host .ProseMirror { padding: 4px 20px 40px !important; }
+/* E10a 光标避让尾垫: 垫底 !important 覆盖链——面板期底垫 40→300（贴底段拉出滚动余量滚入面板上方安全带） */
+.rich-editor-host .ProseMirror.e10-cursor-pad { padding: 4px 20px 300px !important; }
 
 /* 工具栏底部化 — 贴键盘、上边框分隔 */
 .rich-editor-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
