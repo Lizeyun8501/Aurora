@@ -48,9 +48,19 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
       Array.from(document.querySelectorAll('.day-axis-time')).slice(0, 3).map((el) => el.textContent));
     const has8 = hours.includes('08:00');
     record('③ 日视图时间轴', !!axis && has8, `axis=${!!axis} 首3槽=${hours.join(',')}`);
-    // ④ 空态（零桥无聚合）
+    // ④ 空态（E20 适配 v27.23: Alpha 20:00 聚合区限月页——日页纯 24h 轴无空态;
+    // 空态断言移月页: 回月+点空日（非今日无聚合日）
+    const segM = await page.$('.cal-mode-seg button:has-text("月")');
+    if (segM) { await segM.click(); await page.waitForTimeout(400); }
+    await page.evaluate(() => {
+      const cells = Array.from(document.querySelectorAll('.cal-day'));
+      // 选未来无标记日（15 号起找 textContent 纯数字）
+      const emptyCell = cells.find((c) => { const t = c.textContent?.trim() ?? ''; return /^\d+$/.test(t) && Number(t) > 14; });
+      emptyCell?.click();
+    });
+    await page.waitForTimeout(500);
     const empty = await page.evaluate(() => document.body.textContent?.includes('没有任务或笔记记录') ?? false);
-    record('④ 空日 EmptyState', empty, '空态文案在案');
+    record('④ 空日 EmptyState（月页聚合区·v27.23 语义）', empty, '月页空态文案在案');
   }
 
   // ⑤ 日→月回切（翻月动效面 key 重挂无错）
