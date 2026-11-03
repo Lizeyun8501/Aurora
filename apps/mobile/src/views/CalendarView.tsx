@@ -304,9 +304,9 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 const insts = expandAll(events, new Date(`${k}T00:00:00`), new Date(`${k}T23:59:59`));
                 const isToday = k === todayStr;
                 return (
-                  <div key={k} className={`week-col ${isToday ? 'today' : ''}`}>
-                    <button className="week-col-head" aria-label={`查看 ${k}`}
-                      onClick={() => { setSelected(k); setMode('day'); }}>
+                  <div key={k} className={`week-col ${isToday ? 'today' : ''} ${k === selected ? 'sel' : ''}`}>
+                    <button className="week-col-head" aria-label={`选中 ${k}`}
+                      onClick={() => setSelected(k)}>
                       <span className="week-wd">{WD[i]}</span>
                       <span className="week-num">{d.getDate()}</span>
                     </button>

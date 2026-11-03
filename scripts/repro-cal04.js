@@ -65,8 +65,11 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   const dayAxis = await page.evaluate(() => ({
     axis: !!document.querySelector('.day-axis'),
     dayOn: document.querySelectorAll('.cal-mode-seg .nt-seg')[3]?.classList.contains('on'),
+    weekOn: document.querySelectorAll('.cal-mode-seg .nt-seg')[2]?.classList.contains('on'),
+    selCol: !!document.querySelector('.week-col.sel'),
   }));
-  record('② 周列头→日视图', dayAxis.axis && dayAxis.dayOn, `axis=${dayAxis.axis} 日tab=${dayAxis.dayOn}`);
+  /* 11-03 13:47 用户修订: 周列头只选中不跳日——留周页+选中列高亮+下方聚合该日内容。 */
+  record('② 周列头选中留周页', !dayAxis.axis && dayAxis.weekOn && dayAxis.selCol, `axis=${dayAxis.axis} 周tab=${dayAxis.weekOn} 选列=${dayAxis.selCol}`);
 
   // ③ 年视图: 12 月+点月切月
   await page.click('.cal-title'); // 年月标题进年

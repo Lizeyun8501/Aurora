@@ -1410,6 +1410,10 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* --- 5 周视图: 今日列红描边+红周数字 --- */
 .week-col.today { outline: 1.5px solid var(--cal-accent); border-radius: 8px; }
 .week-col.today .week-num { color: var(--cal-accent); font-weight: 700; }
+/* 11-03 13:47: 周页选中列轻描（灰蓝,与今日红框区分）——列头点击只选中不跳日,下方聚合区显示该日任务/日程。 */
+.week-col.sel { outline: 1.5px solid rgba(100, 116, 139, 0.45); border-radius: 8px; }
+.week-col.sel .week-num { font-weight: 700; }
+[data-theme='dark'] .week-col.sel { outline-color: rgba(148, 163, 184, 0.55); }
 .week-col-head { border-radius: 8px 8px 0 0; }
 
 /* --- 6 年视图: 月格呼吸+今日月红 --- */
