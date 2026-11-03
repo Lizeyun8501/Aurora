@@ -31,6 +31,7 @@ import {
   AuroraEditorHandle,
 } from './auroraEditor';
 import { insertMathBlock, insertMermaidBlock } from './mathInputRules';
+import { insertBlock } from './insertCommands';
 import { auroraSchema } from '../schema/auroraSchema';
 import { MobileEditorDock } from './MobileEditorDock';
 
@@ -776,6 +777,16 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
               <button className="tb-style-btn" title="插入流程图"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { if (view) insertMermaidBlock(view); setPop(null); restoreKbdAfterPanel(); }}>❋</button>
+              {/* E7 补齐（思源对标·TA 08:46）: 链接/图片/表格——「＋」插入组缺项 */}
+              <button className="tb-style-btn" title="插入链接"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { if (view) { const href = window.prompt('链接地址', 'https://'); if (href) { const { empty } = view.state.selection; if (!empty) { const linkMark = auroraSchema.marks.link; view.dispatch(view.state.tr.addStoredMark(linkMark.create({ href }))); view.focus(); } } } setPop(null); restoreKbdAfterPanel(); }}>🔗</button>
+              <button className="tb-style-btn" title="插入图片（URL）"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { if (view) { const url = window.prompt('图片地址', 'https://'); if (url) { const embed = auroraSchema.nodes.embed.create({ embed_type: 'image', url, title: '' }); const pos = view.state.selection.$from.before(1); view.dispatch(view.state.tr.insert(pos, embed)); view.focus(); } } setPop(null); restoreKbdAfterPanel(); }}>🖼</button>
+              <button className="tb-style-btn" title="插入表格"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { if (view) insertBlock(view, 'table'); setPop(null); restoreKbdAfterPanel(); }}>▦</button>
             </div>
           </div>
         , document.body)}

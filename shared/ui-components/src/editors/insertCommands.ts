@@ -25,7 +25,8 @@ import { makeToggleListCmd } from './RichEditor';
 export type BlockKind =
   | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'
   | 'bullet' | 'ordered' | 'task' | 'quote' | 'code'
-  | 'table' | 'divider';
+  | 'table' | 'divider'
+  | 'link' | 'image'; // E7 补齐（思源对标）: 链接/图片
 
 /** 光标是否在列表内（bullet_list/ordered_list 祖先）。 */
 function inList(state: EditorView['state']): boolean {
@@ -115,6 +116,15 @@ export function insertBlock(view: EditorView, kind: BlockKind): boolean {
       return insertTable(view);
     case 'divider':
       return insertDivider(view);
+    case 'link': {
+      // E7: 链接——选区非空即适用（mark 应用在 RichEditor 层,这里做前置校验语义）
+      return !view.state.selection.empty;
+    }
+    case 'image': {
+      // E7: 图片 embed——embed_type=image（URL 由 UI 层 prompt/选图注入 attrs）
+      const embed = nodes.embed.create({ embed_type: 'image', url: '', title: '' });
+      return insertSiblingBlock(view, embed);
+    }
   }
 }
 

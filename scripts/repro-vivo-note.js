@@ -104,8 +104,8 @@ async function ensureAaOpen(page, tab) {
       width: pr.width,
       vw: window.innerWidth,
       full: pr.width > window.innerWidth * 0.8,
-      belowBar: Math.abs(pr.top - br.top) < 8 && Math.abs(pr.bottom - window.innerHeight) < 6,  // E5 真下方: 面板与栏同顶起（栏叠面板顶段49px）,面板体填栏下至屏底——「工具栏下方」
-      barLifted: br.width > 0 && br.top < window.innerHeight * 0.6, // 栏上浮离屏底（E5: bottom=50vh+49——离开底部区）
+      compact: pr.width <= 330 && (pr.bottom - pr.top) <= window.innerHeight * 0.42 && pr.right - pr.left < window.innerWidth * 0.9,  // E7 紧凑: 宽≤330+高≤42vh（内容自适应非半屏）
+      barDocked: br.width > 0 && Math.abs(br.bottom - window.innerHeight) < 6, // E7: 栏恒贴底（紧凑 popover 无半屏让位）
       blurDone: focusedMidArg && !!ev && !ev.hasFocus(),  // 键盘让位: 开前有焦→开后失焦
     };
   }, focusedMid);
@@ -113,9 +113,9 @@ async function ensureAaOpen(page, tab) {
   await page.click('.tb-fmt-panel .tb-swatch >> nth=0');
   await page.waitForTimeout(300);
   const refocused = await page.evaluate(() => !!window.__editorView && window.__editorView.hasFocus());
-  record('⑪ E4 键盘让位（栏下方弹+blur 收键盘+选定回焦）',
-    focusedBefore && !!e4 && e4.fixed && e4.full && e4.belowBar && e4.barLifted && e4.blurDone && refocused,
-    `先焦=${focusedBefore} fixed=${e4?.fixed} 宽=${e4?.width}/${e4?.vw} 栏下方=${e4?.belowBar} 栏上浮=${e4?.barLifted} 让位=${e4?.blurDone} 回焦=${refocused}`);
+  record('⑪ E7 紧凑 popover（自适应高度+栏贴底+键盘让位链）',
+    focusedBefore && !!e4 && e4.fixed && e4.compact && e4.barDocked && e4.blurDone && refocused,
+    `先焦=${focusedBefore} fixed=${e4?.fixed} 紧凑=${e4?.compact} 栏贴底=${e4?.barDocked} 让位=${e4?.blurDone} 回焦=${refocused}`);
 
   // ② 选中前 4 字→红
   await page.evaluate(() => {
@@ -315,6 +315,17 @@ async function ensureAaOpen(page, tab) {
     return bars.filter((b) => ['标题 1', '分割线', '插入公式'].includes(b.title)).length;
   });
   record('⑩c 平铺残留清零（30+ 钮→9 钮分组）', flatResidue === 0, `残留=${flatResidue}`);
+  // ⑩d E7 补齐（思源对标·TA 08:46）: ＋ 插入组含 链接/图片/表格 三补项
+  await page.click('.editor-toolbar button[title="插入"]');
+  await page.waitForTimeout(300);
+  const e7Titles = await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('.tb-style-pop .tb-style-btn'));
+    const titles = btns.map((b) => b.getAttribute('title') || '');
+    return { titles, hasLink: titles.includes('插入链接'), hasImage: titles.includes('插入图片（URL）'), hasTable: titles.includes('插入表格') };
+  });
+  await page.evaluate(() => { const v = window.__editorView; if (v) v.focus(); });
+  record('⑩d E7 插入组补齐（链接/图片/表格）', e7Titles.hasLink && e7Titles.hasImage && e7Titles.hasTable,
+    `链接=${e7Titles.hasLink} 图片=${e7Titles.hasImage} 表格=${e7Titles.hasTable} 面板项=${e7Titles.titles.length}`);
 
   record('⑥ 零错误', errors.length === 0, errors.length ? errors.slice(0, 2).join(' | ') : '双监听 0');
 
