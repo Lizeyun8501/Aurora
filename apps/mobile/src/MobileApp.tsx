@@ -256,16 +256,19 @@ function saveTasks(ts: Task[]) {
   try { localStorage.setItem('aurora.tasks', JSON.stringify(ts)); } catch { /* 配额满/隐私模式 */ }
 }
 
+export interface ToastAction { text: string; actionLabel: string; onAction: () => void }
 function useToast() {
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | ToastAction | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const show = useCallback((t: string) => {
+  const show = useCallback((t: string | ToastAction) => {
     setMsg(t);
     clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => setMsg(null), 2200);
+    // E18: action 版长驻 5s（留点击窗）;纯文本 2.2s 原节奏
+    timerRef.current = setTimeout(() => setMsg(null), typeof t === 'string' ? 2200 : 5000);
   }, []);
   useEffect(() => () => clearTimeout(timerRef.current), []);
-  return { msg, show };
+  const dismiss = useCallback(() => { clearTimeout(timerRef.current); setMsg(null); }, []);
+  return { msg, show, dismiss };
 }
 
 // ===========================================================================
@@ -347,7 +350,7 @@ export default function App() {
   const [favs, setFavs] = useState<string[]>(() => loadList<string>(K_FAVS));
   const [recents, setRecents] = useState<RecentItem[]>(() => loadList<RecentItem>(K_RECENT));
   const [trash, setTrash] = useState<TrashItem[]>(() => loadList<TrashItem>(K_TRASH));
-  const { msg: toastMsg, show: showToast } = useToast();
+  const { msg: toastMsg, show: showToast, dismiss: dismissToast } = useToast();
 
   useEffect(() => {
     try { localStorage.setItem('aurora.theme', theme); } catch { /* 防御 */ }
@@ -577,7 +580,16 @@ export default function App() {
         />
       )}
 
-      {toastMsg && <div className="toast">{toastMsg}</div>}
+      {toastMsg && (
+        <div className={`toast ${typeof toastMsg !== 'string' ? 'toast-action' : ''}`}>
+          {typeof toastMsg === 'string' ? toastMsg : (
+            <>
+              <span className="toast-action-text">{toastMsg.text}</span>
+              <button className="toast-action-btn" onClick={() => { toastMsg.onAction(); dismissToast(); }}>{toastMsg.actionLabel}</button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1708,7 +1720,7 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
   /** DK-50：编辑态菜单的同步两入口（App 层面板 state 下传） */
   onOpenQueue: () => void;
   onOpenConflicts: () => void;
-  showToast: (t: string) => void;
+  showToast: (t: string | ToastAction) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
@@ -1723,14 +1735,20 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
   /** E6 导入导出 handler——noteExport 模块。E14（TA 18:16）: 全链 toast 反馈+防御——
    * 真机 WebView 无 DownloadListener 时 blob 静默（「无反应」根因之一）;share 双通道
    * （noteExport）+toast 保用户可感知;lazy/导出异常 catch 兜底不再静默。 */
+  // E18（TA 20:24）: 导出产物内存存+查看链——toast 短暂显示[查看],点击直开内容预览
+  // （「未见导出文档」根除:内容 App 内可开,不赌系统下载/share 落盘可见性）
+  const [exportPreview, setExportPreview] = useState(false);
+  const [lastExport, setLastExport] = useState<{ filename: string; content: string; mime: string } | null>(null);
   const doExport = async (fmt: 'md' | 'word' | 'txt' | 'pdf') => {
     try {
       const m = await import('@aurora/ui-components');
       const t = (docTitle || title).replace(/[\\/:*?"<>|]/g, '_');
       const r = await (fmt === 'pdf' ? m.exportNotePdf(title) : m.exportNote(title, fmt));
       setStatus(r.ok ? 'saved' : null);
-      if (r.ok) showToast(`已导出 ${r.filename}`);
-      else showToast(`导出失败：${r.error ?? '未知错误'}`);
+      if (r.ok) {
+        if (r.content) { setLastExport({ filename: r.filename, content: r.content, mime: r.mime ?? 'text/plain' }); showToast({ text: `已导出 ${r.filename}`, actionLabel: '查看', onAction: () => setExportPreview(true) }); }
+        else showToast(`已导出 ${r.filename}`); // 桌面 print 链无内存产物
+      } else showToast(`导出失败：${r.error ?? '未知错误'}`);
     } catch { showToast('导出失败（模块加载异常）'); }
   };
   const doImport = async () => {
@@ -1863,6 +1881,27 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
           onSaved={() => setStatus('saved')}
         />
       </React.Suspense>
+
+      {/* E18 导出查看 Sheet: 内容直开（html→iframe 渲染/md·txt→pre 文本） */}
+      {exportPreview && lastExport && (
+        <>
+          <div className="sheet-mask" onClick={() => { setExportPreview(false); setLastExport(null); }} />
+          <div className="sheet export-preview-sheet">
+            <div className="sheet-grab" />
+            <div className="sheet-head">
+              <span className="sheet-title">{lastExport.filename}</span>
+              <button className="icon-btn" onClick={() => { setExportPreview(false); setLastExport(null); }} aria-label="关闭">{I.x}</button>
+            </div>
+            <div className="sheet-body export-preview-body">
+              {/text\/html/.test(lastExport.mime) ? (
+                <iframe title="导出预览" srcDoc={lastExport.content} style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8, background: '#fff' }} />
+              ) : (
+                <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.7, fontFamily: 'inherit' }}>{lastExport.content}</pre>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

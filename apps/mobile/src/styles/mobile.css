@@ -1013,7 +1013,20 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   background: rgba(31, 41, 55, 0.92); color: #fff;
   font-size: 13px; padding: 8px 16px; border-radius: 8px;
   animation: fadeIn .15s;
-  max-width: 80%; text-align: center;
+  max-width: 80%;
+  display: flex; align-items: center; gap: 10px; /* E18: action 版行内 */
+}
+.toast-action { padding: 6px 8px 6px 14px; }
+.toast-action-btn {
+  border: none; background: var(--brand); color: #fff;
+  font-size: 12px; font-weight: 600; padding: 5px 14px; border-radius: 6px;
+  cursor: pointer; flex: 0 0 auto;
+}
+.toast-action-text { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.export-preview-sheet { max-height: 76vh; display: flex; flex-direction: column; }
+.export-preview-body { flex: 1; min-height: 40vh; overflow-y: auto; background: var(--bg-secondary); border-radius: 8px; padding: 12px; }
+
+/* 以下原 toast 尾段（text-align center 等）由 flex 版接管 */
 }
 [data-theme='dark'] .toast { background: rgba(229, 231, 235, 0.95); color: #111827; }
 

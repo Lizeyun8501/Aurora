@@ -163,7 +163,9 @@ export function pickImportFile(): Promise<{ name: string; text: string } | null>
 
 export type ExportFmt = 'md' | 'word' | 'txt' | 'pdf';
 
-export interface ExportResult { ok: boolean; fmt: ExportFmt; filename: string; size: number; error?: string }
+export interface ExportResult { ok: boolean; fmt: ExportFmt; filename: string; size: number; error?: string
+  /** E18（TA 20:24）: 导出产物内容——App 内「查看」直开（不依赖系统下载/share 落盘可见性） */
+  content?: string; mime?: string; }
 
 function getView(): EditorView | null {
   const w = window as unknown as Record<string, unknown>;
@@ -179,16 +181,16 @@ export async function exportNote(title: string, fmt: Exclude<ExportFmt, 'pdf'>):
     if (fmt === 'md') {
       const md = docToMd(doc) + '\n';
       await download(`${safeName}.md`, md, 'text/markdown;charset=utf-8');
-      return { ok: true, fmt, filename: `${safeName}.md`, size: md.length };
+      return { ok: true, fmt, filename: `${safeName}.md`, size: md.length, content: md, mime: 'text/markdown' };
     }
     if (fmt === 'txt') {
       const txt = doc.textContent + '\n';
       await download(`${safeName}.txt`, txt, 'text/plain;charset=utf-8');
-      return { ok: true, fmt, filename: `${safeName}.txt`, size: txt.length };
+      return { ok: true, fmt, filename: `${safeName}.txt`, size: txt.length, content: txt, mime: 'text/plain' };
     }
     const html = docShell(safeName, blockToHtml(doc));
     await download(`${safeName}.doc`, html, 'application/msword;charset=utf-8');
-    return { ok: true, fmt: 'word', filename: `${safeName}.doc`, size: html.length };
+    return { ok: true, fmt: 'word', filename: `${safeName}.doc`, size: html.length, content: html, mime: 'text/html' };
   } catch (e) {
     return { ok: false, fmt, filename: '', size: 0, error: String(e) };
   }
@@ -207,7 +209,7 @@ export async function exportNotePdf(title: string): Promise<ExportResult> {
     if (isAndroidWebView()) {
       const filename = `${safeName}.html`;
       await download(filename, html, 'text/html;charset=utf-8');
-      return { ok: true, fmt: 'pdf', filename, size: html.length };
+      return { ok: true, fmt: 'pdf', filename, size: html.length, content: html, mime: 'text/html' };
     }
     const w = window.open('', '_blank');
     if (!w) return { ok: false, fmt: 'pdf', filename: '', size: 0, error: '弹出窗口被拦截' };
