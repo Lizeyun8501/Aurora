@@ -31,6 +31,7 @@ import {
   AuroraEditorHandle,
 } from './auroraEditor';
 import { insertMathBlock, insertMermaidBlock } from './mathInputRules';
+import { slashItems, type SlashItem } from './slashMenu'; // E23: 思源 UX——斜杠菜单自研
 import { insertBlock } from './insertCommands';
 import { auroraSchema } from '../schema/auroraSchema';
 import { MobileEditorDock } from './MobileEditorDock';
@@ -557,6 +558,8 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
     dom.addEventListener('click', onEditClick);
     return () => dom.removeEventListener('click', onEditClick);
   }, [view, pop]);
+  // E23: 斜杠菜单态（/ 触发——query 过滤;选即插+删语法字符）
+  const [slash, setSlash] = useState<{ open: boolean; query: string; pos: number }>({ open: false, query: '', pos: 0 });
   // E19（TA 20:51 深扫 S10）: Escape 键盘通道关面板——桌面键盘用户预期;粘性面板
   // 的第三关闭路径（点击编辑区/栏钮/Escape）。
   useEffect(() => {
@@ -567,6 +570,60 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
     document.addEventListener('keydown', onEsc);
     return () => document.removeEventListener('keydown', onEsc);
   }, [pop]);
+  // E23: 斜杠菜单触发——keydown '/' 在行首/空格后开;面板同容器（E11 栏上浮体系复用）
+  useEffect(() => {
+    if (!view) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (slash.open) {
+        if (e.key === 'Escape') { setSlash((v) => ({ ...v, open: false })); return; }
+        return; // 过滤由 input 事件链更新
+      }
+      if (e.key !== '/') return;
+      const { $cursor } = view.state.selection as unknown as { $cursor?: { parentOffset: number; parent: { textBetween: (a: number, b: number) => string; type: { spec: { code?: boolean } } } } };
+      if (!$cursor) return;
+      if ($cursor.parent.type.spec.code) return;
+      const before = $cursor.parent.textBetween(0, $cursor.parentOffset);
+      if (before.length === 0 || /\s$/.test(before)) {
+        // '/' 尚未入 doc——open 等下一拍（doc 更新后 query 从 doc 读）
+        setTimeout(() => setSlash({ open: true, query: '', pos: view.state.selection.from }), 0);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [view, slash.open]);
+  // E23: slash 开期 query 更新——view.dispatch 覆写（PM 权威订阅,DOM input 在合成输入下不达）
+  useEffect(() => {
+    if (!view || !slash.open) return;
+    const v = view as unknown as { dispatch: (tr: unknown) => void };
+    const orig = v.dispatch.bind(v);
+    const check = () => {
+      try {
+        // 光标位读（slash.pos=触发时 '/' 后位——输入 query 后光标在更右,读 slash.pos 只截 '/'）
+        const from = view.state.selection.from;
+        const $from = view.state.doc.resolve(Math.max(0, from));
+        const text = $from.parent.textBetween(Math.max(0, $from.parentOffset - 200), $from.parentOffset, null, '\uFFFC');
+        const m = /(?:^|\s)\/([^\s/]*)$/.exec(text);
+        if (!m) { setSlash((x) => ({ ...x, open: false })); return; }
+        setSlash((x) => (x.query === (m[1] ?? '') ? x : { ...x, query: m[1] ?? '' }));
+      } catch { setSlash((x) => ({ ...x, open: false })); }
+    };
+    v.dispatch = (tr) => { orig(tr); check(); };
+    check();
+    return () => { v.dispatch = orig; };
+  }, [view, slash.open, slash.pos]);
+  const slashFiltered = slash.open
+    ? slashItems().filter((it) => !slash.query || it.label.includes(slash.query) || it.id.includes(slash.query.toLowerCase()))
+    : [];
+  const slashApply = (it: SlashItem) => {
+    if (!view) return;
+    // 删语法: 从 '/' 起到光标（slash.pos-1..selection.from）
+    const from = Math.max(0, slash.pos - 1);
+    const to = view.state.selection.from;
+    if (to > from) view.dispatch(view.state.tr.delete(from, to));
+    // 下一拍插入（删后 selection 稳定）
+    setTimeout(() => { it.apply(view); view.focus(); }, 0);
+    setSlash((v) => ({ ...v, open: false }));
+  };
   // E11（TA 16:19 裁决「弹窗置于工具栏下方」）: 弹期栏动态上浮——bottom=面板实际高+4 隙;
   // ResizeObserver 随 tab 切换面板高变实时跟（Aa 四 tab 高各异）。
   const [popH, setPopH] = useState(0);
@@ -820,6 +877,23 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
           </div>
         , document.body)}
       </div>
+      {/* E23: 斜杠菜单（/ 触发——思源 UX;portal body+栏上浮联动同面板体系） */}
+      {slash.open && slashFiltered.length > 0 && createPortal(
+        <div className="tb-style-pop slash-menu" role="menu" aria-label="斜杠菜单">
+          <div className="tb-sec">
+          <div className="tb-sec-title">插入块{slash.query ? ` · ${slash.query}` : ''}</div>
+          <div className="slash-grid">
+            {slashFiltered.map((it) => (
+              <button key={it.id} className="slash-cell" role="menuitem" title={it.hint}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => slashApply(it)}>
+                <span className="slash-glyph">{it.glyph}</span>
+                <span className="slash-label">{it.label}</span>
+              </button>
+            ))}
+          </div>
+          </div>
+        </div>, document.body)}
       {/* 原子笔记对标 E1: ＋ 插入组——列表/分割线/公式/流程图收纳为弹面板 */}
       <div className="tb-pop-wrap">
         {btn('＋', '插入', false, () => { if (pop !== 'insert') hideKbdForPanel(); else restoreKbdAfterPanel(); setPop(pop === 'insert' ? null : 'insert'); },

@@ -976,6 +976,21 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .ProseMirror ul, .ProseMirror ol { padding-left: 24px; }
 .ProseMirror li { margin-bottom: 4px; }
 .ProseMirror a { color: var(--brand); }
+/* ===== E23 斜杠菜单（思源 UX） ===== */
+.slash-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.slash-cell {
+  display: flex; align-items: center; gap: 10px;
+  border: none; background: var(--bg-secondary); border-radius: 10px;
+  padding: 8px 10px; cursor: pointer; text-align: left;
+}
+.slash-cell:active { border-color: var(--brand); transform: scale(0.98); }
+.slash-glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 7px; flex: 0 0 auto;
+  background: var(--brand-soft); color: var(--brand); font-size: 15px; font-weight: 700;
+}
+.slash-label { font-size: 13px; color: var(--text-primary); }
+
 /* E10a 光标避让尾垫: 面板期 PM 底垫 120→300——贴底段拉出滚动余量可滚入面板上方安全带 */
 .ProseMirror.e10-cursor-pad { padding-bottom: 300px; }
 .ProseMirror .task-block-row { display: flex; gap: 8px; align-items: flex-start; }
