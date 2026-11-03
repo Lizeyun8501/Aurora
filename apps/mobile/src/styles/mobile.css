@@ -513,11 +513,18 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   gap: 4px; margin-top: 8px;
   overflow-x: auto;
 }
+/* 11-04 07:39 ①②: 列=纯表头（事件片退役归 24h 轴）——灰底+180px 空高同删,今日列灰框根除。 */
 .week-col {
-  min-width: 46px; border-radius: 8px; background: var(--bg-secondary);
-  display: flex; flex-direction: column; min-height: 180px;
+  min-width: 46px; display: flex; flex-direction: column;
 }
-.week-col.today { outline: 1.5px solid var(--accent, #2563eb); }
+.week-col.today { outline: 1.5px solid var(--accent, #2563eb); border-radius: 8px; }
+/* ③ 选中日下边线 V 形内凹小三角: 底线 accent+中央缺口（clip-path V 填页面底色盖线）。 */
+.week-col.sel { border-bottom: 1.5px solid var(--cal-accent); position: relative; }
+.week-col.sel::after {
+  content: ''; position: absolute; bottom: -1.5px; left: 50%;
+  transform: translateX(-50%); width: 10px; height: 5px;
+  background: var(--bg-primary); clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
 .week-col-head {
   display: flex; flex-direction: column; align-items: center;
   padding: 6px 0 4px; gap: 2px; cursor: pointer; background: transparent;
@@ -1041,8 +1048,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .export-preview-sheet { max-height: 76vh; display: flex; flex-direction: column; }
 .export-preview-body { flex: 1; min-height: 40vh; overflow-y: auto; background: var(--bg-secondary); border-radius: 8px; padding: 12px; }
 
-/* 以下原 toast 尾段（text-align center 等）由 flex 版接管 */
-}
+/* E18 toast flex 版接管尾段（11-04 07:39 Leo: E18 遗留孤立闭括修——CSS 大括号配平铁律） */
 [data-theme='dark'] .toast { background: rgba(229, 231, 235, 0.95); color: #111827; }
 
 /* 骨架屏 — V19 §1.4 加载优先骨架 */

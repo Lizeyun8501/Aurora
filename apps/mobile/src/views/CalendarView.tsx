@@ -298,21 +298,13 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 const isToday = k === todayStr;
                 return (
                   <div key={k} className={`week-col ${isToday ? 'today' : ''} ${k === selected ? 'sel' : ''}`}>
+                    {/* 11-04 07:39 ①: 列内事件片退役——事件归下方 24h 轴（19:52 语义）,
+                        消双重显示+无事件列 180px 灰空框（用户红圈空白）。insts 仅留头部判空。 */}
                     <button className="week-col-head" aria-label={`选中 ${k}`}
                       onClick={() => setSelected(k)}>
                       <span className="week-wd">{WD[i]}</span>
                       <span className="week-num">{d.getDate()}</span>
                     </button>
-                    <div className="week-col-items">
-                      {insts.slice(0, 5).map((inst) => (
-                        <span key={`${inst.ev.id}@${inst.offsetDays}`} className="day-axis-item event"
-                          role="button" style={{
-                            background: `rgba(${parseInt(EV_COLORS[inst.ev.color % 6].slice(1, 3), 16)}, ${parseInt(EV_COLORS[inst.ev.color % 6].slice(3, 5), 16)}, ${parseInt(EV_COLORS[inst.ev.color % 6].slice(5, 7), 16)}, 0.15)`,
-                            color: EV_COLORS[inst.ev.color % 6],
-                          }} onClick={() => setEventEditor(inst.ev)}>{inst.ev.title}</span>
-                      ))}
-                      {insts.length > 5 && <span className="week-more">+{insts.length - 5} 更多</span>}
-                    </div>
                   </div>
                 );
               })}
