@@ -1118,6 +1118,10 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .cal-grid {
   display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 2px; text-align: center;
+  /* 11-03 17:36 真机滑不动修: 月页触摸归手势（同年页 22:23 深修①——pan 不交滚动
+     容器→pointerup 保证触发;playwright 合成事件测不出浏览器滚动抢占,此为真机专属坑）。
+     grid 区外的列表区滚动不受影响。 */
+  touch-action: none;
 }
 .cal-week { font-size: 12px; color: var(--text-tertiary); padding: 4px 0; }
 .cal-day {
