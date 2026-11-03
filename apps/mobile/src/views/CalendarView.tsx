@@ -206,8 +206,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   })();
 
   return (
-    <div className={'view' + (mode === 'year' ? ' cal-year-fill' : '')}>
-      <div className="card">
+    <div className={'view cal-fullview' + (mode === 'year' ? ' cal-year-fill' : '')}>
+      <div className="card cal-card">
         <div className="cal-head">
           {/* 11-03 17:05 ④: 左右箭头已删——月/年变换统一上下滑（cal-grid/year-vivo 双通道滑绑）。 */}
           {mode === 'year' ? (

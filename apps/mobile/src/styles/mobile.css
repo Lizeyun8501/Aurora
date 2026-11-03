@@ -23,6 +23,10 @@
 
 .view { padding: 12px 16px 88px; }
 
+/* 11-03 18:30 ②: 日历全页签横向满屏+外围框线取消——view 左右 padding 清零,card 去边框/圆角/投影（背景融页面）。 */
+.view.cal-fullview { padding-left: 0; padding-right: 0; }
+.card.cal-card { border: none; border-radius: 0; box-shadow: none; padding: 8px 8px 12px; margin-bottom: 0; }
+
 /* ============================================================
    V19 §1.4 动效 — 仅基础过渡，无装饰动画
    ============================================================ */
@@ -1479,9 +1483,9 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* 年大字（20 黑+26 红 34px） */
 .cal-title-year { font-weight: 600; }
 /* 11-03 17:05 ②: 年页年数字大小一致（34px）+粗细一致（600,比 cur 红体 800 略细）;cur 仅红色不变粗。 */
-.cal-title-year .cal-title-y { font-size: 34px; color: var(--text-primary); font-weight: 600; }
-/* 11-02 16:33 用户修订: 年 4 数字等大（34px）;后两位仅当前年红,其他年同前两位 text-primary。 */
-.cal-title-year .cal-title-m { font-size: 34px; font-weight: 600; letter-spacing: 1px; color: var(--text-primary); }
+.cal-title-year .cal-title-y { font-size: 21px; color: var(--text-primary); font-weight: 600; }
+/* 11-03 18:30 ③: 年数字 21px（与月页标题年数字同大,跨页签零跳动）;后两位仅当前年红。 */
+.cal-title-year .cal-title-m { font-size: 21px; font-weight: 600; letter-spacing: 0.5px; color: var(--text-primary); }
 .cal-title-year .cal-title-m.cur { color: var(--cal-accent); }
 .cal-head-spacer { flex: 0 0 36px; }
 
