@@ -7,7 +7,7 @@
  * ⑤ 桌面 UA: pdf 仍 window.open+print 链（语义保留）
  */
 const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
-const BASE = 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
+const BASE = 'file://' + require('path').resolve(__dirname, '../apps/mobile/dist/index.html');
 
 (async () => {
   const browser = await chromium.launch();

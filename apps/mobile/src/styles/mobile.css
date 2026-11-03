@@ -1176,6 +1176,8 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .cal-head {
   display: flex; align-items: center; justify-content: center;
   margin-bottom: 8px;
+  /* 11-03 19:52 ②: 定高锁——年 24px/月 28px 标题行高差致胶囊条跳 2px,锁 36px 恒定。 */
+  height: 36px;
 }
 .cal-title { font-size: 15px; font-weight: 600; }
 .cal-grid {
@@ -1430,9 +1432,10 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 
 /* --- 1 顶栏大标题: 年小灰+月大红（vivo「2026/10」层级） --- */
 .cal-title { font-size: 21px; font-weight: 300; letter-spacing: 0.5px; }
-.cal-title-y { font-size: 21px; color: var(--text-secondary); font-weight: 600; margin-right: 1px; }
-/* 11-03 17:05 ④: 月页标题年/月数字大小粗细一致（21px/600）——月数字红保留。 */
-.cal-title-m { font-weight: 600; color: var(--cal-accent); font-size: 21px; margin: 0 1px; }
+.cal-title-y { font-size: 21px; color: var(--text-primary); font-weight: 600; margin-right: 1px; }
+/* 11-03 19:52 ③: 月页标题全主色（黑/白随主题）,仅当前月数字红（cur,翻走月恢复主色）。 */
+.cal-title-m { font-weight: 600; color: var(--text-primary); font-size: 21px; margin: 0 1px; }
+.cal-title-m.cur { color: var(--cal-accent); }
 
 /* --- 2 分段控制器: 胶囊化+白底选中浮起（vivo 胶囊分段） --- */
 .cal-mode-seg {
@@ -1542,7 +1545,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* 年大字（20 黑+26 红 34px） */
 .cal-title-year { font-weight: 600; }
 /* 11-03 17:05 ②: 年页年数字大小一致（34px）+粗细一致（600,比 cur 红体 800 略细）;cur 仅红色不变粗。 */
-.cal-title-year .cal-title-y { font-size: 21px; color: var(--text-primary); font-weight: 600; }
+.cal-title-year .cal-title-y { font-size: 21px; color: var(--text-primary); font-weight: 600; letter-spacing: 0.5px; }
 /* 11-03 18:30 ③: 年数字 21px（与月页标题年数字同大,跨页签零跳动）;后两位仅当前年红。 */
 .cal-title-year .cal-title-m { font-size: 21px; font-weight: 600; letter-spacing: 0.5px; color: var(--text-primary); }
 .cal-title-year .cal-title-m.cur { color: var(--cal-accent); }
@@ -1638,7 +1641,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   border-radius: 0; width: auto; margin: 0;
 }
 /* ② 胶囊条: 独立行（年月下通栏;21:21 ③ 平铺均分） */
-.cal-mode-seg { margin: 2px 0 6px; padding: 3px; }
+.cal-mode-seg { margin: 0 0 6px; padding: 3px; }
 /* ③ 全屏 sheet */
 .sheet.sheet-full {
   top: 0; bottom: 0; left: 0; right: 0; width: 100%;

@@ -215,7 +215,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               onClick={() => setMode('month')}><span className="cal-title-y">{String(y + yearDelta).slice(0, 2)}</span><b className={'cal-title-m' + (y + yearDelta === now.getFullYear() ? ' cur' : '')}>{String(y + yearDelta).slice(2)}</b></span>
           ) : (
             <span className="cal-title" role="button" aria-label="查看年视图"
-              onClick={() => { setYearDelta(0); setMode('year'); }}><span className="cal-title-y">{y}</span> 年 <b className="cal-title-m">{m + 1}</b> 月</span>
+              onClick={() => { setYearDelta(0); setMode('year'); }}><span className="cal-title-y">{y}</span> 年 <b className={'cal-title-m' + (monthOffset === 0 ? ' cur' : '')}>{m + 1}</b> 月</span>
           )}
         </div>
         {/* ② CALENDAR-VIVO 11-01 20:22: 年|月|周|日|日程 胶囊条独立行（年月下通栏——原挤标题行右侧） */}
@@ -461,7 +461,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             </div>
           );
         })()}
-        {mode === 'day' && (
+        {/* 11-03 19:52 ④: 周页签下方=选中日 24 小时任务轴（同日页——去宜忌聚合）。 */}
+        {(mode === 'day' || mode === 'week') && (
           <div className="day-axis" key={selected}>
             {/* 全天区：任务（due 无时刻）+ 全天事件 */}
             {(() => {
@@ -541,8 +542,9 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
         )}
       </div>
 
-      {/* 当日聚合（21:40 用户指令①: 年视图不显示——红框面板=黄历宜忌+空态提示+FAB 引导,年页仅纯 12 月格） */}
-      {mode !== 'year' && (<>
+      {/* 当日聚合（黄历宜忌+空态提示+FAB 引导）: 11-03 19:52 ④ 周日页签改 24h 任务轴——聚合区限月页。
+          21:40 ①: 年视图不显示（年页仅纯 12 月格）。 */}
+      {mode === 'month' && (<>
       <div className="result-section-title" style={{ marginTop: 12 }}>
         {selected.replace(/^(\d+)-(\d+)-(\d+)$/, '$1 年 $2 月 $3 日')}
         <span style={{ marginLeft: 8, fontSize: 13, fontWeight: 400, opacity: 0.7 }}>
