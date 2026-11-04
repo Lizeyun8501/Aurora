@@ -462,7 +462,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
         })()}
         {/* 11-03 19:52 ④: 周页签下方=选中日 24 小时任务轴（同日页——去宜忌聚合）。 */}
         {(mode === 'day' || mode === 'week') && (
-          <div className="day-axis" key={selected}>
+          <div className="day-axis" key={'axis-' + selected}>
+          {/* 11-04 09:4x 多周 BUG 根修: 原裸 key={selected} 与兄弟 week-grid key={dKey(wStart)} 在 selected=周一时撞串——React 同 key reconcile 错乱致 DOM 错挂+多份 week-grid 残留（真机「多个周显示」）。前缀消撞。 */}
             {/* 全天区：任务（due 无时刻）+ 全天事件 */}
             {(() => {
               const items = dayAxis.get(-1) ?? [];
