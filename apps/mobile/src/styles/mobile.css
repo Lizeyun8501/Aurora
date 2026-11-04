@@ -1530,8 +1530,9 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* 11-04 19:20 ①: 24h 轴可上下滑（原 08-22 一屏）——max-height 限高+overflow-y。 */
 .day-axis-hours { position: relative; max-height: 52vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .day-axis-row { min-height: 48px; }
+/* 11-05 00:09: left 46→56 对齐时刻列（52 列宽+4 行 padding——横线与左侧标注对齐）。 */
 .day-now-line {
-  position: absolute; left: 46px; right: 4px; height: 0;
+  position: absolute; left: 56px; right: 4px; height: 0;
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .day-now-line::before {
@@ -1541,7 +1542,8 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 }
 /* 11-04 22:14: 红线挂实时时间标签——精确到分（22:13 可读,不靠猜刻度）。 */
 .day-now-time {
-  position: absolute; left: 4px; top: -8px;
+  /* 11-05 00:09: top -8→4 下置——首小时内（如 00:07 线 top 5.6px）标签上探成负值浮出容器顶=「00:07 在 00:00 上面」。恒置线下方。 */
+  position: absolute; left: 4px; top: 4px;
   background: var(--cal-accent); color: #fff;
   font-size: 9px; font-weight: 600; line-height: 1;
   padding: 2px 5px; border-radius: 4px;
