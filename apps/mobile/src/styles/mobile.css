@@ -517,12 +517,18 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .week-col {
   min-width: 46px; display: flex; flex-direction: column;
 }
-.week-col.today { outline: 1.5px solid var(--accent, #2563eb); border-radius: 8px; }
-/* ③ 选中日下边线 V 形内凹小三角: 底线 accent+中央缺口（clip-path V 填页面底色盖线）。 */
-.week-col.sel { border-bottom: 1.5px solid var(--cal-accent); position: relative; }
+/* 11-04 08:51 ②三令: ①取消日块所有边框（button 原生 outset 黑框根除,today outline 废）
+   ②今日=accent 红字粗（深色 #F08A8A 抬亮,同月历暗节红）
+   ③选中=类月历 sel 描框（accent 1px radius8）+底线加粗+中央 V 内凹三角。 */
+.week-col-head { border: none; outline: none; background: transparent; }
+.week-col, .week-col:focus, .week-col-head:focus { outline: none; }
+.week-col.today .week-num { color: var(--cal-accent); font-weight: 700; }
+[data-theme='dark'] .week-col.today .week-num { color: #F08A8A; }
+.week-col.sel { border: 1px solid var(--cal-accent); border-radius: 8px; position: relative; }
 .week-col.sel::after {
   content: ''; position: absolute; bottom: -1.5px; left: 50%;
-  transform: translateX(-50%); width: 10px; height: 5px;
+  /* 11-04 09:0x 特写复勘后 10×5→12×6: 全图 VLM 难辨,微增可见度仍「小三角」。 */
+  transform: translateX(-50%); width: 12px; height: 6px;
   background: var(--bg-primary); clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 .week-col-head {
@@ -1524,12 +1530,11 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .day-axis-time { color: var(--text-tertiary); }
 
 /* --- 5 周视图: 今日列红描边+红周数字 --- */
-.week-col.today { outline: 1.5px solid var(--cal-accent); border-radius: 8px; }
+/* 11-04 08:51 ②: today outline 废（红字语义接管,见 517 段） */
 .week-col.today .week-num { color: var(--cal-accent); font-weight: 700; }
 /* 11-03 13:47: 周页选中列轻描（灰蓝,与今日红框区分）——列头点击只选中不跳日,下方聚合区显示该日任务/日程。 */
-.week-col.sel { outline: 1.5px solid rgba(100, 116, 139, 0.45); border-radius: 8px; }
+/* 11-04 08:51 ②: sel 灰 outline 废（类月历 accent 描框+V 三角接管,见 517 段） */
 .week-col.sel .week-num { font-weight: 700; }
-[data-theme='dark'] .week-col.sel { outline-color: rgba(148, 163, 184, 0.55); }
 .week-col-head { border-radius: 8px 8px 0 0; }
 
 /* --- 6 年视图: 月格呼吸+今日月红 --- */
