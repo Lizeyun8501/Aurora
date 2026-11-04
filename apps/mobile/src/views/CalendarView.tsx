@@ -291,7 +291,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             })}
           </div>
         )}
-        {mode === 'week' && (() => {
+        {(mode === 'week' || mode === 'day') && (() => {
           /** DK-CALENDAR-04 任务 1: 周视图——7 天并排+当日实例色块列。
            * 周界=selected 所在周一;列头点入切日视图。 */
           const wStart = new Date(`${selected}T00:00:00`);
@@ -319,6 +319,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                       onClick={() => setSelected(k)}>
                       <span className="week-wd">{WD[i]}</span>
                       <span className="week-num">{d.getDate()}</span>
+                      {/* 11-04 23:31 ②: 周条日期带农历（同月历 lunarSub——用 d 实年月防跨月错）。 */}
+                      <span className={`week-lunar${lunarSub(d.getDate(), d.getFullYear(), d.getMonth()).isStat ? ' fest' : ''}`}>{lunarSub(d.getDate(), d.getFullYear(), d.getMonth()).sub}</span>
                     </button>
                   </div>
                 );
