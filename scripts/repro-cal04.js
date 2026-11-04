@@ -51,12 +51,13 @@ const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
   // ① 周视图: 7 列+今日列高亮+事件块
   await page.click('.cal-mode-seg .nt-seg:nth-child(3)'); // 周
   await page.waitForTimeout(400);
+  /* 11-04 07:39 ①口径: 列内事件块退役（归 24h 轴）——断言改为轴上事件块。 */
   const week = await page.evaluate(() => ({
     cols: document.querySelectorAll('.week-col').length,
     todayCol: !!document.querySelector('.week-col.today'),
-    items: document.querySelectorAll('.week-col .day-axis-item.event').length,
+    items: document.querySelectorAll('.day-axis .day-axis-item.event').length,
   }));
-  record('① 周视图 7 列+今日列+事件块', week.cols === 7 && week.todayCol && week.items >= 1,
+  record('① 周视图 7 列+今日列+轴事件块', week.cols === 7 && week.todayCol && week.items >= 1,
     `列=${week.cols} 今日列=${week.todayCol} 块=${week.items}`);
 
   // ② 周列头点入切日视图

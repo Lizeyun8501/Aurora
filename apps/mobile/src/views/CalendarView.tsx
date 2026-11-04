@@ -69,7 +69,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   const goToday = () => { setMonthOffset(0); setSelected(todayStr); setYearDelta(0); setListFilter('all'); setListQuery(''); };
   const y = view.getFullYear();
   const m = view.getMonth();
-  const lead = (new Date(y, m, 1).getDay() + 6) % 7; // 周一起始
+  const lead = new Date(y, m, 1).getDay(); // 11-04 08:03 周日起始（与年页/系统历统一;11 月首行满排消首行大空白）
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   const fmt = (d: number) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
@@ -246,7 +246,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               if (Math.abs(dy) > 64 && Math.abs(dx) < 60) setMonthOffset((o) => o + (dy < 0 ? 1 : -1));
             }}
           >
-            {['一', '二', '三', '四', '五', '六', '日'].map((w) => (
+            {['日', '一', '二', '三', '四', '五', '六'].map((w) => (
               <span key={w} className="cal-week">{w}</span>
             ))}
             {Array.from({ length: lead }, (_, i) => <span key={`e${i}`} />)}
