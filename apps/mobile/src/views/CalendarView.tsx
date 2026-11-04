@@ -504,7 +504,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             <div className="day-axis-hours" ref={axisHoursRef} data-selected={selected}>
               {selected === todayStr && (
                 <span className="day-now-line" aria-hidden="true"
-                  style={{ top: `calc((100% / 1440) * ${nowMin} + 4px)` }} />
+                  /* 11-04 20:41 ①: % 在 overflow 容器=视口高(416)非内容高(1152)——红线错位 2.77 倍。预计算内容坐标纯 px（分/60×行高48）。 */
+                  style={{ top: `${((nowMin * 48) / 60 + 4).toFixed(1)}px` }} />
               )}
               {Array.from({ length: 24 }, (_, i) => i).map((h) => {
               const items = dayAxis.get(h) ?? [];
