@@ -684,6 +684,7 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
   const [title, setTitle] = useState(ev.title);
+  const [delConfirm, setDelConfirm] = useState(false);
   const [start, setStart] = useState(toLocalInput(ev.start));
   const [end, setEnd] = useState(ev.end ? toLocalInput(ev.end) : '');
   const [allDay, setAllDay] = useState(ev.all_day);
@@ -871,7 +872,12 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
                     if (!Number.isNaN(v) && v >= 0) { toggleReminder(v); (e.target as HTMLInputElement).value = ''; }
                   }
                 }} />
-              分钟回车
+              {/* 11-04 21:45 ①: 「分钟回车」→「添加」按钮（从 label 内取输入框,回车快捷保留）。 */}
+              <button type="button" className="ev-rem-add" aria-label="添加自定义提醒"
+                onClick={(e) => {
+                  const inp = (e.currentTarget.closest('.ev-interval') as HTMLElement)?.querySelector('input');
+                  if (inp) { const v = parseInt((inp as HTMLInputElement).value, 10); if (!Number.isNaN(v) && v >= 0) { toggleReminder(v); (inp as HTMLInputElement).value = ''; } }
+                }}>＋ 添加</button>
             </span>
           </label>
           {reminders.length > 0 && (
@@ -890,8 +896,14 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
           </button>
           {!isNew && (
             <button className="btn btn-danger-text btn-block" style={{ marginTop: 8 }}
-              onClick={() => { if (window.confirm('彻底删除该日程？')) onDelete(ev.id); }}>
-              删除日程
+              /* 11-04 21:45 ②: window.confirm 在 Android WebView 无 WebChromeClient 时静默返 false
+                 =删除零反应。改两段式: 首点变「确认删除」3s 窗口,再点真删。 */
+              onClick={() => {
+                if (delConfirm) { onDelete(ev.id); setDelConfirm(false); return; }
+                setDelConfirm(true);
+                window.setTimeout(() => setDelConfirm(false), 3000);
+              }}>
+              {delConfirm ? '再点一次确认删除' : '删除日程'}
             </button>
           )}
         </div>

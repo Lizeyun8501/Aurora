@@ -1516,6 +1516,8 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   width: 4px; height: 4px; border-radius: 50%; background: var(--cal-accent);
 }
 .cal-lunar { font-size: 9px; letter-spacing: -0.1px; }
+/* 11-04 21:45 ①: 自定义提醒「添加」钮——小胶囊。 */
+.ev-rem-add { border: 1px solid var(--bg-secondary); background: transparent; color: var(--cal-accent); font-size: 11px; padding: 3px 10px; border-radius: 99px; cursor: pointer; margin-left: 4px; }
 .cal-lunar.fest { color: var(--cal-accent); }
 .cal-ev-dots { margin-top: 1px; }
 .cal-ev-dot { width: 5px; height: 5px; }
