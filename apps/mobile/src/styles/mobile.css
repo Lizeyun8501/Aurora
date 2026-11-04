@@ -534,13 +534,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   border: 1px solid var(--cal-accent); border-radius: 12px;
   pointer-events: none;
 }
-.week-col.sel::after {
-  /* 11-04 20:41 ②: 非实体三角——SVG 空心描线闭合三角,stroke 与框线同 accent 同宽（框线一体化）。 */
-  content: ''; position: absolute; bottom: 0; left: 50%;
-  transform: translateX(-50%); width: 12px; height: 6px;
-  z-index: 2;
-  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 6'><path d='M1 5.5 L6 0.75 L11 5.5 Z' fill='none' stroke='%23ff4d4f' stroke-width='1.2'/></svg>") no-repeat center / contain;
-}
+/* 11-04 21:22 用户令: 周页三角取消（太难看）——sel 只留 42×48 描框（::before）。 */
 .week-col-head {
   display: flex; flex-direction: column; align-items: center;
   padding: 6px 0 4px; gap: 2px; cursor: pointer; background: transparent;

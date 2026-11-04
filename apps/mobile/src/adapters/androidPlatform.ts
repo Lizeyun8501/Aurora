@@ -648,7 +648,15 @@ export const platform = {
 
   upsertEvent(event: CalEvent): string {
     const b = bridge();
-    if (b) return b.upsertEvent(JSON.stringify(event));
+    if (b) {
+      /* 11-04 21:22 ② 真机保存失败根修: core Event serde 必填 created_at/updated_at——
+         TS 新建日程无这两字段,桥 json 解析直接失败（静默返 ''=UI 无感丢）。
+         桥序列化前补: created_at 保留原值（编辑链）,updated_at 恒新。 */
+      const legacy = (event as unknown as { created_at?: string; updated_at?: string });
+      const nowIso = new Date().toISOString();
+      const full = { ...event, created_at: legacy.created_at ?? nowIso, updated_at: nowIso };
+      return b.upsertEvent(JSON.stringify(full));
+    }
     // mock 与 core::event_store 语义对齐（对向复核补）:
     // 空标题 A04 拒 / end<start 拒 / 幽灵更新 NoteNotFound 拒——均返 ''。
     if (!event.title.trim()) return '';
