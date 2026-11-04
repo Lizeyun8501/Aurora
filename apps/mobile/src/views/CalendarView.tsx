@@ -40,6 +40,14 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   const [selected, setSelected] = useState<string>(initialSelected ?? todayStr);
   /** DK-CALENDAR-01 任务 2 + 04 四态：月/周/日/列表（年视图独立 mode 覆盖月）。 */
   const [mode, setMode] = useState<'month' | 'week' | 'day' | 'list' | 'year'>('month');
+  /* 11-04 19:20 ①: 24h 轴滚动定位——周/日模式+换 selected 时滚到当前时段（今=now-1h,他日=08:00）。 */
+  const axisHoursRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = axisHoursRef.current;
+    if (!el || (mode !== 'week' && mode !== 'day')) return;
+    const anchorHour = selected === todayStr ? Math.max(0, Math.floor(nowMin / 60) - 1) : 8;
+    el.scrollTo({ top: Math.max(0, (anchorHour - 1) * 48), behavior: 'instant' as ScrollBehavior });
+  }, [mode, selected]);
   /** DK-CALENDAR-02：事件编辑器（null=关;编辑/新建共用 sheet）。 */
   const [eventEditor, setEventEditor] = useState<CalEvent | null>(null);
   /** 21:40 用户指令②: 年视图滑动切年（上滑=下一年/下滑=过去一年）。 */
@@ -281,13 +289,14 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
           /** DK-CALENDAR-04 任务 1: 周视图——7 天并排+当日实例色块列。
            * 周界=selected 所在周一;列头点入切日视图。 */
           const wStart = new Date(`${selected}T00:00:00`);
-          wStart.setDate(wStart.getDate() - ((wStart.getDay() + 6) % 7));
+          /* 11-04 19:20 ②: 周日为首（同月历 v27.27 语义统一）。 */
+          wStart.setDate(wStart.getDate() - wStart.getDay());
           const days = Array.from({ length: 7 }, (_, i) => {
             const d = new Date(wStart);
             d.setDate(d.getDate() + i);
             return d;
           });
-          const WD = ['一', '二', '三', '四', '五', '六', '日'];
+          const WD = ['日', '一', '二', '三', '四', '五', '六'];
           const pad = (n: number) => String(n).padStart(2, '0');
           const dKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
           return (
@@ -485,13 +494,13 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 </div>
               );
             })()}
-            {/* 08-22 时段（CALENDAR-VIVO: 红当前时间线——今日贯穿） */}
-            <div className="day-axis-hours">
-              {nowMin >= 480 && nowMin <= 1320 && selected === todayStr && (
+            {/* 11-04 19:20 ①: 24h 全时段轴（原 08-22）——容器可滚（css max-height）;nowline 全天窗 /1440。 */}
+            <div className="day-axis-hours" ref={axisHoursRef} data-selected={selected}>
+              {selected === todayStr && (
                 <span className="day-now-line" aria-hidden="true"
-                  style={{ top: `calc((100% / 960) * ${nowMin - 480} + 4px)` }} />
+                  style={{ top: `calc((100% / 1440) * ${nowMin} + 4px)` }} />
               )}
-              {Array.from({ length: 15 }, (_, i) => i + 8).map((h) => {
+              {Array.from({ length: 24 }, (_, i) => i).map((h) => {
               const items = dayAxis.get(h) ?? [];
               return (
                 <div key={h} className="day-axis-row">

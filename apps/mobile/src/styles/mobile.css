@@ -524,12 +524,20 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .week-col, .week-col:focus, .week-col-head:focus { outline: none; }
 .week-col.today .week-num { color: var(--cal-accent); font-weight: 700; }
 [data-theme='dark'] .week-col.today .week-num { color: #F08A8A; }
-.week-col.sel { border: 1px solid var(--cal-accent); border-radius: 8px; position: relative; }
+/* 11-04 19:20 ③④: sel=月页同款 42×48 定尺寸描框（::before,与 cal-day-btn.sel 完全一致）;
+   底线下实心闭环 accent 三角 16×8（原开口 V 填底色看不出三角——实心+加大+闭环）。 */
+.week-col.sel { position: relative; border: none; border-radius: 0; }
+.week-col.sel::before {
+  content: ''; position: absolute; left: 50%; top: 2px; transform: translateX(-50%);
+  width: 42px; height: 48px;
+  border: 1px solid var(--cal-accent); border-radius: 12px;
+  pointer-events: none;
+}
 .week-col.sel::after {
-  content: ''; position: absolute; bottom: -1.5px; left: 50%;
-  /* 11-04 09:0x 特写复勘后 10×5→12×6: 全图 VLM 难辨,微增可见度仍「小三角」。 */
-  transform: translateX(-50%); width: 12px; height: 6px;
-  background: var(--bg-primary); clip-path: polygon(0 0, 100% 0, 50% 100%);
+  content: ''; position: absolute; bottom: 0; left: 50%;
+  transform: translateX(-50%); width: 16px; height: 8px;
+  background: var(--cal-accent); z-index: 2;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 .week-col-head {
   display: flex; flex-direction: column; align-items: center;
@@ -1517,7 +1525,8 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .cal-ev-dot { width: 5px; height: 5px; }
 
 /* --- 4 日视图: 定行高容器+红当前时间线（vivo 时间轴红线） --- */
-.day-axis-hours { position: relative; }
+/* 11-04 19:20 ①: 24h 轴可上下滑（原 08-22 一屏）——max-height 限高+overflow-y。 */
+.day-axis-hours { position: relative; max-height: 52vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .day-axis-row { min-height: 48px; }
 .day-now-line {
   position: absolute; left: 46px; right: 4px; height: 0;
