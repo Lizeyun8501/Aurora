@@ -1535,6 +1535,14 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   width: 7px; height: 7px; border-radius: 50%; background: var(--cal-accent);
   box-shadow: 0 0 0 2px var(--bg-primary);
 }
+/* 11-04 22:14: 红线挂实时时间标签——精确到分（22:13 可读,不靠猜刻度）。 */
+.day-now-time {
+  position: absolute; left: 4px; top: -8px;
+  background: var(--cal-accent); color: #fff;
+  font-size: 9px; font-weight: 600; line-height: 1;
+  padding: 2px 5px; border-radius: 4px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 .day-axis-time { color: var(--text-tertiary); }
 
 /* --- 5 周视图: 今日列红描边+红周数字 --- */

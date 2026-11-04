@@ -504,8 +504,10 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             <div className="day-axis-hours" ref={axisHoursRef} data-selected={selected}>
               {selected === todayStr && (
                 <span className="day-now-line" aria-hidden="true"
-                  /* 11-04 20:41 ①: % 在 overflow 容器=视口高(416)非内容高(1152)——红线错位 2.77 倍。预计算内容坐标纯 px（分/60×行高48）。 */
-                  style={{ top: `${((nowMin * 48) / 60 + 4).toFixed(1)}px` }} />
+                  /* 11-04 22:14 用户反馈: 线压整点刻度、13 分不显——去 +4 偏移（纯分/60×48）+挂实时时间标签（精确到分、一眼可读）。 */
+                  style={{ top: `${((nowMin * 48) / 60).toFixed(1)}px` }}>
+                  <i className="day-now-time">{String(Math.floor(nowMin / 60)).padStart(2, '0')}:{String(nowMin % 60).padStart(2, '0')}</i>
+                </span>
               )}
               {Array.from({ length: 24 }, (_, i) => i).map((h) => {
               const items = dayAxis.get(h) ?? [];
