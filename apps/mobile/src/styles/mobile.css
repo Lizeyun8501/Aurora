@@ -520,7 +520,8 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 /* 11-04 08:51 ②三令: ①取消日块所有边框（button 原生 outset 黑框根除,today outline 废）
    ②今日=accent 红字粗（深色 #F08A8A 抬亮,同月历暗节红）
    ③选中=类月历 sel 描框（accent 1px radius8）+底线加粗+中央 V 内凹三角。 */
-.week-col-head { border: none; outline: none; background: transparent; }
+/* 11-04 19:51 ①: head min-height 54——原 ~40px 容不下 42×48 框,下边越界被 day-axis 顶部盖住=「下边框没有线」。 */
+.week-col-head { border: none; outline: none; background: transparent; min-height: 54px; }
 .week-col, .week-col:focus, .week-col-head:focus { outline: none; }
 .week-col.today .week-num { color: var(--cal-accent); font-weight: 700; }
 [data-theme='dark'] .week-col.today .week-num { color: #F08A8A; }
@@ -534,10 +535,11 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   pointer-events: none;
 }
 .week-col.sel::after {
+  /* 11-04 19:51 ②: 12×6 尖朝上（指框内数字）,底贴框底内侧。 */
   content: ''; position: absolute; bottom: 0; left: 50%;
-  transform: translateX(-50%); width: 16px; height: 8px;
+  transform: translateX(-50%); width: 12px; height: 6px;
   background: var(--cal-accent); z-index: 2;
-  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  clip-path: polygon(50% 0, 0 100%, 100% 100%);
 }
 .week-col-head {
   display: flex; flex-direction: column; align-items: center;

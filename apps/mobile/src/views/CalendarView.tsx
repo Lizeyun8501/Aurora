@@ -45,7 +45,9 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   useEffect(() => {
     const el = axisHoursRef.current;
     if (!el || (mode !== 'week' && mode !== 'day')) return;
-    const anchorHour = selected === todayStr ? Math.max(0, Math.floor(nowMin / 60) - 1) : 8;
+    const d = new Date(); const liveMin = d.getHours() * 60 + d.getMinutes();
+    if (selected === todayStr) setNowMin(liveMin);
+    const anchorHour = selected === todayStr ? Math.max(0, Math.floor(liveMin / 60) - 1) : 8;
     el.scrollTo({ top: Math.max(0, (anchorHour - 1) * 48), behavior: 'instant' as ScrollBehavior });
   }, [mode, selected]);
   /** DK-CALENDAR-02：事件编辑器（null=关;编辑/新建共用 sheet）。 */
@@ -62,7 +64,11 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   const [nowMin, setNowMin] = useState(() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); });
   useEffect(() => {
     const t = setInterval(() => { const d = new Date(); setNowMin(d.getHours() * 60 + d.getMinutes()); }, 30_000);
-    return () => clearInterval(t);
+    /* 11-04 19:51 ③: 真机 webview 后台冻结 interval——可见性恢复/焦点回归立即刷,红线恒实时。 */
+    const refresh = () => { const d = new Date(); setNowMin(d.getHours() * 60 + d.getMinutes()); };
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('focus', refresh); };
   }, []);
 
   const view = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
