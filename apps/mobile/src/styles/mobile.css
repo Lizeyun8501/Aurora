@@ -1585,7 +1585,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .day-axis-row { min-height: 48px; }
 /* 11-05 00:09: left 46→56 对齐时刻列（52 列宽+4 行 padding——横线与左侧标注对齐）。 */
 .day-now-line {
-  position: absolute; left: 62px; right: 4px; height: 0; /* 11-05 09:33: 行 padding 调 0 4 0 0 后 items 左=52+10=62 */
+  position: absolute; left: 46px; right: 4px; height: 0; /* 11-05 19:06: gap 0 后 items 左=46=time 列宽,同周页首竖线 */
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .day-now-line::before {
@@ -1611,10 +1611,21 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* 11-05 09:18: 行高定死 48（items 灰框令实际 51 → nowline H×48 公式漂 -9px「前上」）。 */
 .day-axis-hours .day-axis-row:not(.all-day) {
   height: 48px; box-sizing: border-box;
-  /* 11-05 09:33 用户令: 灰线重合——去行 padding/行线,行贴行,items 边自画+相邻折叠。 */
-  padding: 0 4px 0 0; gap: 10px; border-bottom: none;
+  /* 11-05 09:33 用户令: 灰线重合——去行 padding/行线,行贴行,items 边自画+相邻折叠。
+     11-05 19:06 用户令: 与周页对齐——gap 0,time 列右缘贴 items 左竖线。 */
+  padding: 0 4px 0 0; gap: 0; border-bottom: none;
 }
-.day-axis-hours .day-axis-row:not(.all-day) .day-axis-time { padding: 3px 0 0 4px; }
+.day-axis-hours .day-axis-row:not(.all-day) .day-axis-time {
+  /* 11-05 19:06 用户令: 仿周页——46 宽右对齐;i translateY(6) 字心=行底分界线（周页同款）。 */
+  flex: 0 0 46px; height: 48px; box-sizing: border-box;
+  display: flex; align-items: flex-end; justify-content: flex-end;
+  padding-right: 6px;
+}
+.day-axis-hours .day-axis-row:not(.all-day) .day-axis-time i {
+  font-style: normal; font-size: 10px; color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums; line-height: 1.3;
+  transform: translateY(6px);
+}
 .day-axis-hours .day-axis-row:not(.all-day) .day-axis-items {
   /* 11-05 09:33 用户令: 时刻线共享——每整点一条灰线（8~9 结束=9~10 开始）。 */
   flex: 1; background: var(--bg-secondary);
@@ -1634,7 +1645,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .slot-plus {
   /* 11-05 09:09 ② 用户令: 加号出现在任务区正中央。 */
   position: absolute; /* 11-05 09:15: 50% 相对整行含时间列——移 52 列+10 gap 后取任务区中心。 */
-  left: calc(62px + (100% - 62px) / 2); top: 50%; transform: translate(-50%, -50%);
+  left: calc(46px + (100% - 46px) / 2); top: 50%; transform: translate(-50%, -50%); /* 11-05 19:06: gap 0 后任务区左=46 */
   width: 24px; height: 24px; border-radius: 50%;
   background: #3B82F6; color: #fff;
   font-size: 16px; line-height: 1; font-weight: 700;

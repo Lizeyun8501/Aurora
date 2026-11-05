@@ -563,7 +563,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               if (items.length === 0) return null;
               return (
                 <div className="day-axis-row all-day">
-                  <span className="day-axis-time">全天</span>
+                  <span className="day-axis-time"><i>全天</i></span>
                   <div className="day-axis-items">
                     {items.map((it) => it.kind === 'event' && it.ev ? (
                       <span key={`e-${it.id}`} className="day-axis-item event" role="button" style={{
@@ -592,7 +592,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               return (
                 <div key={h} className={`day-axis-row${slotSel === h ? ' slot-sel' : ''}`}
                   onClick={() => setSlotSlot(slotSel === h ? null : h)}>
-                  <span className="day-axis-time">{String(h).padStart(2, '0')}:00</span>
+                  <span className="day-axis-time"><i>{String(h).padStart(2, '0')}:00</i></span>
                   {slotSel === h && (
                     <button type="button" className="slot-plus" aria-label={`在 ${String(h).padStart(2, '0')}:00 新建日程`}
                       onClick={(e) => { e.stopPropagation(); setQuickNew(h); setQuickTitle(''); }}>+</button>
