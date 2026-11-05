@@ -331,8 +331,9 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                   <div key={k} className={`week-col ${isToday ? 'today' : ''} ${k === selected ? 'sel' : ''}`}>
                     {/* 11-04 07:39 ①: 列内事件片退役——事件归下方 24h 轴（19:52 语义）,
                         消双重显示+无事件列 180px 灰空框（用户红圈空白）。insts 仅留头部判空。 */}
-                    <button className="week-col-head" aria-label={`选中 ${k}`}
-                      onClick={() => setSelected(k)}>
+                    <button className="week-col-head" aria-label={`查看 ${k}`}
+                      /* 11-05 12:16 ①: 点日→跳对应日页签。 */
+                      onClick={() => { setSelected(k); setMode('day'); }}>
                       <span className="week-wd">{WD[i]}</span>
                       <span className="week-num">{d.getDate()}</span>
                       {/* 11-04 23:31 ②: 周条日期带农历（同月历 lunarSub——用 d 实年月防跨月错）。 */}
@@ -493,8 +494,67 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             </div>
           );
         })()}
+        {/* 11-05 12:16 ②③: 周=天列×24h 横轴网格——事件块按列定位;左竖线=周日列左界,时间刻度右对齐贴线。 */}
+        {mode === 'week' && (() => {
+          const w2 = new Date(`${selected}T00:00:00`);
+          w2.setDate(w2.getDate() - w2.getDay());
+          const days2 = Array.from({ length: 7 }, (_, i) => {
+            const d = new Date(w2); d.setDate(d.getDate() + i); return d;
+          });
+          const w2End = new Date(w2); w2End.setDate(w2End.getDate() + 7);
+          const pad2 = (n: number) => String(n).padStart(2, '0');
+          const kOf = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+          const dayIdx = (d: Date) => Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - w2.getTime()) / 86400000);
+          type WBlock = { id: string; key: string; col: number; topMin: number; hMin: number; label: string; ev?: CalEvent; kind: 'task' | 'note' | 'diary' | 'event' };
+          const blocks: WBlock[] = [];
+          for (const inst of expandAll(events, w2, w2End)) {
+            if (inst.ev.all_day) continue;
+            const c = dayIdx(inst.start);
+            if (c < 0 || c > 6) continue;
+            const sMin = inst.start.getHours() * 60 + inst.start.getMinutes();
+            const eEnd = inst.ev.end ? new Date(inst.ev.end) : inst.start; /* EvInstance 无 end——取 ev.end 解析 */
+            const eMin = Math.min(24 * 60, Math.max(sMin + 15, (eEnd.getHours() * 60 + eEnd.getMinutes()) + (dayIdx(eEnd) !== c ? 24 * 60 : 0)));
+            blocks.push({ id: inst.ev.id, key: `we-${inst.ev.id}-${c}`, col: c, topMin: sMin, hMin: eMin - sMin, label: inst.ev.title, ev: inst.ev, kind: 'event' });
+          }
+          for (const t of tasks) {
+            if (!t.due) continue;
+            const d = new Date(t.due);
+            const c = dayIdx(d);
+            if (c < 0 || c > 6) continue;
+            const sMin = d.getHours() * 60 + d.getMinutes();
+            blocks.push({ id: t.id, key: `wt-${t.id}`, col: c, topMin: sMin, hMin: 30, label: t.text, kind: 'task' });
+          }
+          const todayCol = days2.findIndex((d) => kOf(d) === todayStr);
+          const nowH = now.getHours(), nowM = now.getMinutes();
+          return (
+            <div className="week-axis">
+              <div className="week-times">
+                {Array.from({ length: 24 }, (_, h) => (
+                  <span key={h}>{String(h).padStart(2, '0')}:00</span>
+                ))}
+              </div>
+              <div className="week-days">
+                {days2.map((d, i) => (
+                  <div key={kOf(d)} className="week-day-col">
+                    {blocks.filter((b) => b.col === i).map((b) => (
+                      <button type="button" key={b.key} className={`week-ev ${b.kind}`} style={{ top: `${(b.topMin * 48) / 60}px`, height: `${(b.hMin * 48) / 60 - 4}px` }}
+                        aria-label={b.label}
+                        onClick={() => { if (b.ev) setEventEditor(b.ev); else if (b.kind === 'task') onNewTask(kOf(d)); }}>
+                        {b.label}
+                      </button>
+                    ))}
+                    {todayCol === i && (
+                      <span className="week-now" aria-hidden="true" style={{ top: `${(nowH * 48 + 9 + (nowM * 39) / 60).toFixed(1)}px` }} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* 11-03 19:52 ④: 周页签下方=选中日 24 小时任务轴（同日页——去宜忌聚合）。 */}
-        {(mode === 'day' || mode === 'week') && (
+        {mode === 'day' && (
           <div className="day-axis" key={'axis-' + selected}>
           {/* 11-04 09:4x 多周 BUG 根修: 原裸 key={selected} 与兄弟 week-grid key={dKey(wStart)} 在 selected=周一时撞串——React 同 key reconcile 错乱致 DOM 错挂+多份 week-grid 残留（真机「多个周显示」）。前缀消撞。 */}
             {/* 全天区：任务（due 无时刻）+ 全天事件 */}

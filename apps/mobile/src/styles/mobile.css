@@ -508,6 +508,52 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 /* ============================================================
    DK-CALENDAR-04 — 周/年/列表视图 + 提醒段
    ============================================================ */
+/* 11-05 12:16 ②③: 周=天列×24h 网格——左竖线=周日列左界（时间刻度右对齐贴线）;横线 48px 共享单线。 */
+.week-axis {
+  display: flex; overflow: hidden; margin-top: 4px;
+  max-height: calc(100vh - 320px);
+}
+.week-times {
+  flex: 0 0 46px; display: flex; flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.week-times span {
+  height: 48px; box-sizing: border-box;
+  font-size: 10px; color: var(--text-tertiary);
+  text-align: right; padding: 3px 6px 0 0;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--border);
+}
+.week-times span:last-child { border-bottom: none; }
+.week-days {
+  flex: 1; display: flex; position: relative;
+  border-top: 1px solid var(--border); border-right: 1px solid var(--border);
+  background:
+    repeating-linear-gradient(180deg, transparent 0 47px, var(--border) 47px 48px);
+}
+.week-day-col {
+  flex: 1 1 0; position: relative;
+  border-left: 1px solid var(--border);
+  min-width: 0; overflow: hidden;
+}
+.week-ev {
+  position: absolute; left: 2px; right: 2px;
+  border: none; border-radius: 6px;
+  font-size: 10px; line-height: 1.25; text-align: left;
+  padding: 2px 4px; overflow: hidden;
+  background: var(--bg-secondary); color: var(--text-secondary);
+  white-space: nowrap; text-overflow: ellipsis;
+}
+.week-ev.event {
+  background: rgba(59, 130, 246, 0.13); color: #3B82F6;
+  font-weight: 600;
+}
+.week-ev.task { background: var(--brand-soft); color: var(--cal-accent); }
+.week-now {
+  position: absolute; left: 0; right: 0; height: 0;
+  border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
+}
 .week-grid {
   display: grid; grid-template-columns: repeat(7, 1fr);
   gap: 4px; margin-top: 8px;
