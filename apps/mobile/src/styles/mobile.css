@@ -509,8 +509,10 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
    DK-CALENDAR-04 — 周/年/列表视图 + 提醒段
    ============================================================ */
 /* 11-05 12:16 ②③: 周=天列×24h 网格——左竖线=周日列左界（时间刻度右对齐贴线）;横线 48px 共享单线。 */
+/* 11-05 13:54 根修: 容器限高 480 时 flex 压缩——time span 48→20px、天列拉伸,两组横线完全错乱。
+   改: 整体垂直滚动（time+days 同容器同步滚）+内容定全高 1152（24×48）。 */
 .week-axis {
-  display: flex; overflow: hidden; margin-top: 4px;
+  display: flex; overflow: hidden; overflow-y: auto; margin-top: 4px;
   max-height: calc(100vh - 320px);
 }
 .week-times {
@@ -519,7 +521,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   background: var(--bg-secondary);
 }
 .week-times span {
-  height: 48px; box-sizing: border-box;
+  flex: 0 0 48px; height: 48px; box-sizing: border-box; /* shrink 0——限高不压行 */
   font-size: 10px; color: var(--text-tertiary);
   text-align: right; padding: 3px 6px 0 0;
   font-variant-numeric: tabular-nums;
@@ -528,12 +530,14 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .week-times span:last-child { border-bottom: none; }
 .week-days {
   flex: 1; display: flex; position: relative;
+  min-height: 1152px; /* 24×48 内容全高——gradient 与 time 行 1:1 */
   border-top: 1px solid var(--border); border-right: 1px solid var(--border);
   background:
     repeating-linear-gradient(180deg, transparent 0 47px, var(--border) 47px 48px);
 }
 .week-day-col {
   flex: 1 1 0; position: relative;
+  min-height: 1152px;
   border-left: 1px solid var(--border);
   min-width: 0; overflow: hidden;
 }
