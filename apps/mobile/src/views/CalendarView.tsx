@@ -522,8 +522,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             <div className="day-axis-hours" ref={axisHoursRef} data-selected={selected}>
               {selected === todayStr && (
                 <span className="day-now-line" aria-hidden="true"
-                  /* 11-04 22:14 用户反馈: 线压整点刻度、13 分不显——去 +4 偏移（纯分/60×48）+挂实时时间标签（精确到分、一眼可读）。 */
-                  style={{ top: `${((nowMin * 48) / 60).toFixed(1)}px` }}>
+                  /* 11-05 09:09 ③ 用户令「前上」: 线贴行顶压时间字上方——H×48 定行+9px 字基偏移+39px 分域（48-9）→XX:00 线与字平齐,分针落字下行内。 */
+                  style={{ top: `${(Math.floor(nowMin / 60) * 48 + 9 + ((nowMin % 60) * 39) / 60).toFixed(1)}px` }}>
                   <i className="day-now-time">{String(Math.floor(nowMin / 60)).padStart(2, '0')}:{String(nowMin % 60).padStart(2, '0')}</i>
                 </span>
               )}

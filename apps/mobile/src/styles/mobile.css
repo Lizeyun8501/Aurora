@@ -1550,14 +1550,19 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .day-axis-time {
-  /* 11-05 08:40 ①: 时刻刻度灰框线（浅灰底圆角块,行分隔线呼应成网格感）。 */
-  color: var(--text-tertiary); background: var(--bg-secondary);
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 1px 5px; margin-top: -1px;
-  align-self: flex-start;
+  /* 11-05 09:09 ① 用户修正: 灰框框任务区不框时间——时间回纯文字（参照图1）。 */
+  color: var(--text-tertiary); padding-top: 3px; flex: 0 0 52px;
 }
 /* 11-05 08:40 ②: 点时段→蓝框+中央加号（半透明 accent 长条,同参考图）。 */
 .day-axis-row { position: relative; }
+/* 11-05 09:18: 行高定死 48（items 灰框令实际 51 → nowline H×48 公式漂 -9px「前上」）。 */
+.day-axis-hours .day-axis-row:not(.all-day) { height: 48px; box-sizing: border-box; }
+.day-axis-hours .day-axis-row:not(.all-day) .day-axis-items {
+  /* 11-05 09:09 ①: 任务区域灰线框（浅灰底+边框圆角,占行宽——时间列右侧起）。 */
+  flex: 1; background: var(--bg-secondary);
+  border: 1px solid var(--border); border-radius: 8px;
+  min-height: 32px; padding: 2px 6px; margin-left: 0; height: auto; align-self: stretch;
+}
 /* 11-05 08:40: 时段交互专用蓝（用户参考图蓝框——不动全局 cal-accent 红主题）。 */
 .day-axis-row.slot-sel {
   background: rgba(59, 130, 246, 0.13);
@@ -1566,7 +1571,9 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 }
 .day-axis-row:not(.slot-sel) { cursor: pointer; }
 .slot-plus {
-  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  /* 11-05 09:09 ② 用户令: 加号出现在任务区正中央。 */
+  position: absolute; /* 11-05 09:15: 50% 相对整行含时间列——移 52 列+10 gap 后取任务区中心。 */
+  left: calc(62px + (100% - 62px) / 2); top: 50%; transform: translate(-50%, -50%);
   width: 24px; height: 24px; border-radius: 50%;
   background: #3B82F6; color: #fff;
   font-size: 16px; line-height: 1; font-weight: 700;
