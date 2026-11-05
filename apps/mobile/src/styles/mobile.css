@@ -515,19 +515,22 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   display: flex; overflow: hidden; overflow-y: auto; margin-top: 4px;
   max-height: calc(100vh - 320px);
 }
+/* 11-05 18:13 用户令: 时间列无线（线只在日程区）;刻度数值中心对齐右侧对应横线（行底分界）。
+   字底贴行底+下移半字（i translateY 6）→中心≈47.5=分界线。 */
 .week-times {
   flex: 0 0 46px; display: flex; flex-direction: column;
-  border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
+  padding-top: 1px; background: transparent;
 }
 .week-times span {
   flex: 0 0 48px; height: 48px; box-sizing: border-box; /* shrink 0——限高不压行 */
-  font-size: 10px; color: var(--text-tertiary);
-  text-align: right; padding: 3px 6px 0 0;
-  font-variant-numeric: tabular-nums;
-  border-bottom: 1px solid var(--border);
+  display: flex; align-items: flex-end; justify-content: flex-end;
+  padding-right: 6px;
 }
-.week-times span:last-child { border-bottom: none; }
+.week-times span i {
+  font-style: normal; font-size: 10px; color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums; line-height: 1.3;
+  transform: translateY(6px);
+}
 .week-days {
   flex: 1; display: flex; position: relative;
   min-height: 1152px; /* 24×48 内容全高——gradient 与 time 行 1:1 */

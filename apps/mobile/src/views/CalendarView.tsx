@@ -530,7 +530,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             <div className="week-axis">
               <div className="week-times">
                 {Array.from({ length: 24 }, (_, h) => (
-                  <span key={h}>{String(h).padStart(2, '0')}:00</span>
+                  <span key={h}><i>{String(h).padStart(2, '0')}:00</i></span>
                 ))}
               </div>
               <div className="week-days">
