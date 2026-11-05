@@ -1549,7 +1549,43 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   padding: 2px 5px; border-radius: 4px;
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
-.day-axis-time { color: var(--text-tertiary); }
+.day-axis-time {
+  /* 11-05 08:40 ①: 时刻刻度灰框线（浅灰底圆角块,行分隔线呼应成网格感）。 */
+  color: var(--text-tertiary); background: var(--bg-secondary);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 1px 5px; margin-top: -1px;
+  align-self: flex-start;
+}
+/* 11-05 08:40 ②: 点时段→蓝框+中央加号（半透明 accent 长条,同参考图）。 */
+.day-axis-row { position: relative; }
+/* 11-05 08:40: 时段交互专用蓝（用户参考图蓝框——不动全局 cal-accent 红主题）。 */
+.day-axis-row.slot-sel {
+  background: rgba(59, 130, 246, 0.13);
+  border: 1.5px solid #3B82F6; border-radius: 10px;
+  cursor: pointer;
+}
+.day-axis-row:not(.slot-sel) { cursor: pointer; }
+.slot-plus {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 24px; border-radius: 50%;
+  background: #3B82F6; color: #fff;
+  font-size: 16px; line-height: 1; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2); z-index: 2;
+}
+/* 11-05 08:40 ③: 简要版快建 sheet。 */
+.quick-sheet .sheet-body { padding: 12px 16px 20px; }
+.quick-time-row { display: flex; align-items: center; justify-content: space-between; margin: 12px 2px; }
+.quick-time { font-size: 13px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.quick-more { background: none; border: none; color: #3B82F6; font-size: 13px; font-weight: 600; padding: 4px 2px; }
+.quick-done {
+  display: block; width: 100%; margin-top: 4px;
+  border: 1.5px solid #3B82F6; border-radius: 20px;
+  background: none; color: #3B82F6;
+  font-size: 15px; font-weight: 600; padding: 9px 0;
+}
+.quick-done:not(:disabled):active { background: rgba(59, 130, 246, 0.12); }
+.quick-done:disabled { opacity: 0.4; }
 
 /* --- 5 周视图: 今日列红描边+红周数字 --- */
 /* 11-04 08:51 ②: today outline 废（红字语义接管,见 517 段） */

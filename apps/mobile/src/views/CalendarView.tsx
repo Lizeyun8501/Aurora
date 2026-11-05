@@ -52,6 +52,22 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   }, [mode, selected]);
   /** DK-CALENDAR-02：事件编辑器（null=关;编辑/新建共用 sheet）。 */
   const [eventEditor, setEventEditor] = useState<CalEvent | null>(null);
+  /* 11-05 08:40 ② 点时段→蓝框+加号;③ 加号开简要版快建（更多设置跳完整版）。 */
+  const [slotSel, setSlotSel] = useState<number | null>(null);
+  const [quickNew, setQuickNew] = useState<number | null>(null);
+  const [quickTitle, setQuickTitle] = useState('');
+  const setSlotSlot = (h: number | null) => setSlotSel(h);
+  const dayIso = (h: number) => {
+    const [y2, m2, d2] = selected.split('-').map(Number);
+    const end = new Date(y2, m2 - 1, d2, h + 1);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return {
+      start: `${y2}-${pad(m2)}-${pad(d2)}T${pad(h)}:00:00`,
+      end: `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}T${pad(end.getHours())}:00:00`,
+      mLabel: `${m2}月${d2}日`,
+      endLabel: `${end.getMonth() + 1}月${end.getDate()}日`,
+    };
+  };
   /** 21:40 用户指令②: 年视图滑动切年（上滑=下一年/下滑=过去一年）。 */
   const [yearDelta, setYearDelta] = useState(0);
   const yearTouch = useRef<{ x: number; y: number } | null>(null);
@@ -514,17 +530,22 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               {Array.from({ length: 24 }, (_, i) => i).map((h) => {
               const items = dayAxis.get(h) ?? [];
               return (
-                <div key={h} className="day-axis-row">
+                <div key={h} className={`day-axis-row${slotSel === h ? ' slot-sel' : ''}`}
+                  onClick={() => setSlotSlot(slotSel === h ? null : h)}>
                   <span className="day-axis-time">{String(h).padStart(2, '0')}:00</span>
+                  {slotSel === h && (
+                    <button type="button" className="slot-plus" aria-label={`在 ${String(h).padStart(2, '0')}:00 新建日程`}
+                      onClick={(e) => { e.stopPropagation(); setQuickNew(h); setQuickTitle(''); }}>+</button>
+                  )}
                   <div className="day-axis-items">
                     {items.map((it) => it.kind === 'event' && it.ev ? (
                       <span key={`${it.kind}-${it.id}-${h}`} className="day-axis-item event" role="button" style={{
                         background: `rgba(${parseInt(EV_COLORS[it.ev.color % 6].slice(1, 3), 16)}, ${parseInt(EV_COLORS[it.ev.color % 6].slice(3, 5), 16)}, ${parseInt(EV_COLORS[it.ev.color % 6].slice(5, 7), 16)}, 0.15)`,
                         color: EV_COLORS[it.ev.color % 6],
-                      }} onClick={() => setEventEditor(it.ev!)}>{it.label}</span>
+                      }} onClick={(e) => { e.stopPropagation(); setEventEditor(it.ev!); }}>{it.label}</span>
                     ) : (
                       <span key={`${it.kind}-${it.id}-${h}`} className={`day-axis-item ${it.kind}`} role="button"
-                        onClick={() => onOpenNote(it.id, it.label)}>{it.label}</span>
+                        onClick={(e) => { e.stopPropagation(); onOpenNote(it.id, it.label); }}>{it.label}</span>
                     ))}
                   </div>
                 </div>
@@ -655,6 +676,40 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
           aria-label={`为 ${selected} 添加日程`}
         >{I.plus}</button>
       )}
+
+      {/* 11-05 08:40 ③: 时段加号→简要版快建（更多设置→完整版 prefilled）。 */}
+      {quickNew !== null && !eventEditor && (() => {
+        const q = dayIso(quickNew);
+        return (
+          <>
+            <div className="sheet-mask" onClick={() => setQuickNew(null)} />
+            <div className="sheet quick-sheet" role="dialog" aria-label="快捷新建日程">
+              <div className="sheet-grab" />
+              <div className="sheet-head">
+                <span className="sheet-title">新建日程</span>
+                <button className="icon-btn" onClick={() => setQuickNew(null)} aria-label="关闭">{I.x}</button>
+              </div>
+              <div className="sheet-body">
+                <input className="input" placeholder="准备做什么？" value={quickTitle}
+                  onChange={(e) => setQuickTitle(e.target.value)} aria-label="日程标题" autoFocus />
+                <div className="quick-time-row">
+                  <span className="quick-time">{quickNew === 23 ? `${q.mLabel} 23:00 - 次日 00:00` : `${q.mLabel} ${String(quickNew).padStart(2, '0')}:00 - ${String(quickNew + 1).padStart(2, '0')}:00`}</span>
+                  <button type="button" className="quick-more" onClick={() => {
+                    /* 跳完整版: 关快建→开编辑器（起止 prefilled 本时段）。 */
+                    setQuickNew(null);
+                    setEventEditor({ id: '', title: quickTitle, start: q.start, end: q.end, all_day: false, location: null, note_id: null, color: 0, repeat: null, reminders: null });
+                  }}>更多设置</button>
+                </div>
+                <button type="button" className="quick-done" disabled={!quickTitle.trim()}
+                  onClick={() => {
+                    onUpsertEvent({ id: '', title: quickTitle.trim(), start: q.start, end: q.end, all_day: false, location: null, note_id: null, color: 0, repeat: null, reminders: null });
+                    setQuickNew(null); setSlotSel(null);
+                  }}>完成</button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       {/* DK-CALENDAR-02：事件编辑 sheet（新建/编辑共用——存/删/关联笔记跳转）。 */}
       {eventEditor && (
