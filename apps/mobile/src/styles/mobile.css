@@ -1065,6 +1065,33 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 }
 .slash-label { font-size: 13px; color: var(--text-primary); }
 
+/* ===== E24（TA 22:13）: 容器块三系 ===== */
+.callout-block { border-left: 3px solid var(--brand); background: var(--brand-soft); border-radius: 0 8px 8px 0; padding: 8px 12px; margin: 6px 0; }
+.callout-block[data-callout='tip'] { border-color: #10b981; background: rgba(16, 185, 129, 0.09); }
+.callout-block[data-callout='important'] { border-color: #6366f1; background: rgba(99, 102, 241, 0.09); }
+.callout-block[data-callout='warning'] { border-color: #f59e0b; background: rgba(245, 158, 11, 0.1); }
+.callout-block[data-callout='caution'] { border-color: #ef4444; background: rgba(239, 68, 68, 0.09); }
+.super-block { border: 1px dashed var(--border); border-radius: 10px; padding: 8px; margin: 6px 0; }
+.super-block.super-h { display: flex; flex-direction: row; gap: 8px; overflow-x: auto; }
+.super-block.super-h > * { flex: 0 0 auto; min-width: 160px; }
+.super-block.super-v { display: flex; flex-direction: column; gap: 6px; }
+.tabs-block { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; overflow: hidden; }
+.tabs-block-nav { display: flex; gap: 2px; background: var(--bg-secondary); padding: 4px 6px 0; }
+.tabs-block-tab { border: none; background: transparent; padding: 6px 12px; border-radius: 8px 8px 0 0; font-size: 13px; cursor: pointer; color: var(--text-tertiary); }
+.tabs-block-tab.on { background: var(--bg-primary); color: var(--brand); font-weight: 700; }
+.tabs-block-body { padding: 10px 12px; }
+
+/* ===== E24（TA 22:13）: 附件/媒体/表情 ===== */
+.embed-media { max-width: 100%; border-radius: 8px; display: block; }
+.embed-file-tag { font-size: 18px; margin-right: 6px; }
+.embed-file-name { font-size: 13px; color: var(--brand); text-decoration: underline; }
+.tb-emoji-tabs { display: flex; gap: 6px; margin: 6px 0 8px; }
+.tb-emoji-tab { border: 1px solid var(--border); background: var(--bg-secondary); border-radius: 8px; padding: 4px 10px; font-size: 16px; cursor: pointer; }
+.tb-emoji-tab.on { border-color: var(--brand); background: var(--brand-soft); }
+.tb-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; max-height: 132px; overflow-y: auto; }
+.tb-emoji { border: none; background: transparent; font-size: 20px; padding: 5px 0; cursor: pointer; border-radius: 8px; }
+.tb-emoji:active { background: var(--brand-soft); }
+
 /* E10a 光标避让尾垫: 面板期 PM 底垫 120→300——贴底段拉出滚动余量可滚入面板上方安全带 */
 .ProseMirror.e10-cursor-pad { padding-bottom: 300px; }
 .ProseMirror .task-block-row { display: flex; gap: 8px; align-items: flex-start; }

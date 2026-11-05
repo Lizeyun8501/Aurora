@@ -41,7 +41,7 @@ const BASE = 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
     cells: document.querySelectorAll('.slash-cell').length,
     title: document.querySelector('.slash-menu .tb-sec-title')?.textContent,
   }));
-  record('① / 空行触发菜单（10 项）', menu1.open && menu1.cells === 10, `开=${menu1.open} 项=${menu1.cells}`);
+  record('① / 空行触发菜单（18 项 E24 扩）', menu1.open && menu1.cells === 18, `开=${menu1.open} 项=${menu1.cells}`);
 
   // ② 过滤（输入 标）
   await page.keyboard.type('标', { delay: 30 });
@@ -51,7 +51,7 @@ const BASE = 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
     labels: Array.from(document.querySelectorAll('.slash-label')).map((l) => l.textContent),
     title: document.querySelector('.slash-menu .tb-sec-title')?.textContent,
   }));
-  record('② query 过滤（标→3 标题）', menu2.cells === 3 && menu2.labels.every((l) => l?.includes('标题')), `项=${menu2.cells} ${menu2.labels.join('|')}`);
+  record('② query 过滤（标→6 标题 E24 扩）', menu2.cells === 6 && menu2.labels.every((l) => l?.includes('标题')), `项=${menu2.cells} ${menu2.labels.join('|')}`);
 
   // ③ 点 H1→插入
   await page.evaluate(() => {

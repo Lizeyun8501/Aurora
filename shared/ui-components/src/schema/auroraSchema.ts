@@ -19,6 +19,7 @@
  */
 
 import { Schema, type NodeSpec, type MarkSpec, type Node as ProseNode, type Mark } from 'prosemirror-model';
+import type { DOMOutputSpec } from 'prosemirror-model';
 import OrderedMap from 'orderedmap';
 import { addListNodes } from 'prosemirror-schema-list';
 
@@ -32,8 +33,8 @@ export interface TaskBlockAttrs {
 }
 
 export interface EmbedAttrs {
-  /** 嵌入类型：link | image | file | map | web */
-  embed_type: 'link' | 'image' | 'file' | 'map' | 'web';
+  /** 嵌入类型：link | image | file | map | web | video | audio（E24 扩媒体三系） */
+  embed_type: 'link' | 'image' | 'file' | 'map' | 'web' | 'video' | 'audio';
   /** 嵌入资源 URL */
   url: string;
   /** 显示标题 */
@@ -126,20 +127,23 @@ const baseNodes: Record<string, NodeSpec> = {
   embed: {
     group: 'block',
     attrs: {
-      embed_type: { default: 'link' }, // link | image | file | map | web
+      // E24（TA 22:13）: 扩 video | audio——图/视/音链接媒体三系
+      embed_type: { default: 'link' }, // link | image | file | map | web | video | audio
       url: { default: '' },
       title: { default: '' },
     },
     draggable: true,
-    toDOM: (node: ProseNode) => [
-      'div',
-      {
-        class: 'embed-block',
-        'data-embed-type': node.attrs.embed_type,
-        'data-url': node.attrs.url,
-      },
-      node.attrs.title || node.attrs.url,
-    ],
+    // E24: embed_type 分支真渲染（img/video/audio/file 卡）;contenteditable 假体防光标入
+    toDOM: (node: ProseNode) => {
+      const t = String(node.attrs.embed_type ?? 'link');
+      const url = String(node.attrs.url ?? '');
+      const common = { class: 'embed-block', 'data-embed-type': t, 'data-url': url, contenteditable: 'false' };
+      if (t === 'image' && url) return ['div', common, ['img', { class: 'embed-media', src: url, alt: node.attrs.title || '图片' }]];
+      if (t === 'video' && url) return ['div', common, ['video', { class: 'embed-media', src: url, controls: 'controls', preload: 'metadata' }]];
+      if (t === 'audio' && url) return ['div', common, ['audio', { class: 'embed-media', src: url, controls: 'controls', preload: 'metadata' }]];
+      if (t === 'file') return ['div', common, ['span', { class: 'embed-file-tag' }, '📎'], ['span', { class: 'embed-file-name' }, node.attrs.title || url || '附件']];
+      return ['div', common, node.attrs.title || url];
+    },
     parseDOM: [
       {
         tag: 'div.embed-block',
@@ -157,6 +161,53 @@ const baseNodes: Record<string, NodeSpec> = {
     content: 'block+',
     toDOM: () => ['blockquote', 0],
     parseDOM: [{ tag: 'blockquote' }],
+  },
+
+  // ===== E24（TA 22:13）: 容器块三系——提示块/超级块/页签块 =====
+  /** 提示块（思源 callout 五系+图1 VLM: Note/Tip/Important/Warning/Caution）*/
+  callout: {
+    group: 'block',
+    content: 'block+',
+    attrs: { style: { default: 'note' } }, // note|tip|important|warning|caution
+    toDOM: (node: ProseNode) => ['div', { class: 'callout-block', 'data-callout': node.attrs.style }, 0],
+    parseDOM: [{
+      tag: 'div.callout-block',
+      getAttrs: (dom: HTMLElement) => ({ style: dom.getAttribute('data-callout') || 'note' }),
+    }],
+  },
+  /** 超级块横/纵（VIVO 布局容器——横 flex/纵堆叠） */
+  super_block: {
+    group: 'block',
+    content: 'block+',
+    attrs: { dir: { default: 'v' } }, // v|h
+    toDOM: (node: ProseNode) => ['div', { class: `super-block super-${node.attrs.dir}`, 'data-dir': node.attrs.dir }, 0],
+    parseDOM: [{
+      tag: 'div.super-block',
+      getAttrs: (dom: HTMLElement) => ({ dir: dom.getAttribute('data-dir') === 'h' ? 'h' : 'v' }),
+    }],
+  },
+  /** 页签块（VIVO tabs 容器——单页内容组;tab 切换由 attrs.active） */
+  tabs_block: {
+    group: 'block',
+    content: 'block+',
+    attrs: { labels: { default: '[]' }, active: { default: 0 } }, // labels=JSON 名单
+    toDOM: (node: ProseNode) => {
+      let labels: string[] = [];
+      try { labels = JSON.parse(String(node.attrs.labels)) as string[]; } catch { labels = []; }
+      return ['div', { class: 'tabs-block', 'data-labels': node.attrs.labels, 'data-active': String(node.attrs.active) },
+        ['div', { class: 'tabs-block-nav', contenteditable: 'false' },
+          ...labels.map((l, i) => ['button', { class: `tabs-block-tab ${i === node.attrs.active ? 'on' : ''}`, 'data-tab': String(i) }, l]),
+        ],
+        ['div', { class: 'tabs-block-body' }, 0],
+      ] as unknown as DOMOutputSpec;
+    },
+    parseDOM: [{
+      tag: 'div.tabs-block',
+      getAttrs: (dom: HTMLElement) => ({
+        labels: dom.getAttribute('data-labels') || '[]',
+        active: Number(dom.getAttribute('data-active') || 0),
+      }),
+    }],
   },
 
   // ── 表格节点（共享层增量，DK-05 后续切片接入编辑 UI） ──

@@ -26,7 +26,9 @@ export type BlockKind =
   | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'
   | 'bullet' | 'ordered' | 'task' | 'quote' | 'code'
   | 'table' | 'divider'
-  | 'link' | 'image'; // E7 补齐（思源对标）: 链接/图片
+  | 'link' | 'image'
+  | 'video' | 'audio'
+  | 'callout' | 'super-h' | 'super-v' | 'tabs' | 'mindmap'; // E24（TA 22:13）: 媒体/容器块
 
 /** 光标是否在列表内（bullet_list/ordered_list 祖先）。 */
 function inList(state: EditorView['state']): boolean {
@@ -124,6 +126,38 @@ export function insertBlock(view: EditorView, kind: BlockKind): boolean {
       // E7: 图片 embed——embed_type=image（URL 由 UI 层 prompt/选图注入 attrs）
       const embed = nodes.embed.create({ embed_type: 'image', url: '', title: '' });
       return insertSiblingBlock(view, embed);
+    }
+    // ===== E24（TA 22:13）: 媒体/容器块 =====
+    case 'video': {
+      // E24: 视频/音频链接 embed（URL 由 UI prompt 注入）
+      const embed = nodes.embed.create({ embed_type: 'video', url: '', title: '' });
+      return insertSiblingBlock(view, embed);
+    }
+    case 'audio': {
+      const embed = nodes.embed.create({ embed_type: 'audio', url: '', title: '' });
+      return insertSiblingBlock(view, embed);
+    }
+    case 'callout': {
+      const body = schema.nodes.paragraph.createAndFill();
+      const callout = nodes.callout?.create({ style: 'note' }, body ? [body] : undefined);
+      return callout ? insertSiblingBlock(view, callout) : false;
+    }
+    case 'super-h': case 'super-v': {
+      const body = schema.nodes.paragraph.createAndFill();
+      const sb = nodes.super_block?.create({ dir: kind === 'super-h' ? 'h' : 'v' }, body ? [body] : undefined);
+      return sb ? insertSiblingBlock(view, sb) : false;
+    }
+    case 'tabs': {
+      const body = schema.nodes.paragraph.createAndFill();
+      const tb = nodes.tabs_block?.create({ labels: JSON.stringify(['页签一', '页签二']), active: 0 }, body ? [body] : undefined);
+      return tb ? insertSiblingBlock(view, tb) : false;
+    }
+    case 'mindmap': {
+      // E24: 思维导图块——mermaid mindmap 语序（E22 调研两阶路 P0 复用 mermaid 块渲染管线）
+      const src = ['mindmap', '  root((主题))', '    分支一', '    分支二'].join('\n');
+      const mm = schema.nodes.mermaid?.create({ source: src, lang: 'mermaid' } as never);
+      if (!mm) return false;
+      return insertSiblingBlock(view, mm);
     }
   }
 }

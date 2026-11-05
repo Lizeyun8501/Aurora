@@ -287,6 +287,31 @@ function insertTableCmd(
   return true;
 }
 
+/** E24: 插入块命令工厂（TBCmd 直实现——state+dispatch 手工插容器/媒体块;
+ * 与 insertCommands.insertBlock 同语义但零 view 依赖,面板 BTNS 体系原生兼容）。 */
+function insertBlockCmd(kind: import('./insertCommands').BlockKind): TBCmd {
+  return (state, dispatch) => {
+    const nodes = auroraSchema.nodes;
+    const mkBody = () => nodes.paragraph.createAndFill() ?? nodes.paragraph.create();
+    let node: import('prosemirror-model').Node | null = null;
+    if (kind === 'video' || kind === 'audio') node = nodes.embed.create({ embed_type: kind, url: '', title: '' });
+    else if (kind === 'callout') node = nodes.callout.create({ style: 'note' }, [mkBody()]);
+    else if (kind === 'super-h' || kind === 'super-v') node = nodes.super_block.create({ dir: kind === 'super-h' ? 'h' : 'v' }, [mkBody()]);
+    else if (kind === 'tabs') node = nodes.tabs_block.create({ labels: JSON.stringify(['页签一', '页签二']), active: 0 }, [mkBody()]);
+    else if (kind === 'mindmap') {
+      const src = ['mindmap', '  root((主题))', '    分支一', '    分支二'].join('\n');
+      node = nodes.mermaid.create({ source: src, lang: 'mermaid' } as never);
+    }
+    if (!node) return false;
+    if (dispatch) {
+      const { $from } = state.selection;
+      const blockPos = $from.before(1);
+      dispatch(state.tr.insert(blockPos + state.doc.resolve(blockPos).node().nodeSize, node));
+    }
+    return true;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // DK-2.7 切片三：表格行列手术（零 prosemirror-tables——Transaction 手术四命令）
 // ---------------------------------------------------------------------------
@@ -408,9 +433,19 @@ const BLOCK_BTNS: Array<{ key: string; label: string; title: string; cmd: TBCmd 
   { key: 'heading-1', label: 'H1', title: '标题 1', cmd: blockCmd('heading', { level: 1 }) },
   { key: 'heading-2', label: 'H2', title: '标题 2', cmd: blockCmd('heading', { level: 2 }) },
   { key: 'heading-3', label: 'H3', title: '标题 3', cmd: blockCmd('heading', { level: 3 }) },
+  // E24（TA 22:13）: 六级标题块补齐 H4-H6
+  { key: 'heading-4', label: 'H4', title: '标题 4', cmd: blockCmd('heading', { level: 4 }) },
+  { key: 'heading-5', label: 'H5', title: '标题 5', cmd: blockCmd('heading', { level: 5 }) },
+  { key: 'heading-6', label: 'H6', title: '标题 6', cmd: blockCmd('heading', { level: 6 }) },
   { key: 'code_block', label: '{ }', title: '代码块', cmd: blockCmd('code_block') },
   { key: 'task_block', label: '☑', title: '任务', cmd: blockCmd('task_block') },
   { key: 'table', label: '▦', title: '表格（3×3）', cmd: insertTableCmd },
+  // E24: 容器块三系+思维导图（VIVO/思源对标）
+  { key: 'callout', label: '❝✦', title: '提示块', cmd: insertBlockCmd('callout') },
+  { key: 'super-h', label: '▤', title: '横向超级块', cmd: insertBlockCmd('super-h') },
+  { key: 'super-v', label: '▥', title: '纵向超级块', cmd: insertBlockCmd('super-v') },
+  { key: 'tabs', label: '⧉', title: '页签块', cmd: insertBlockCmd('tabs') },
+  { key: 'mindmap', label: '🌲', title: '思维导图块', cmd: insertBlockCmd('mindmap') },
 ];
 
 const LIST_BTNS: Array<{ key: string; label: string; title: string; cmd: TBCmd }> = [
@@ -560,6 +595,41 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
   }, [view, pop]);
   // E23: 斜杠菜单态（/ 触发——query 过滤;选即插+删语法字符）
   const [slash, setSlash] = useState<{ open: boolean; query: string; pos: number }>({ open: false, query: '', pos: 0 });
+  // E24: 表情符号面（VIVO 对标）——分类 tab+格集;点击行内插入
+  const EMOJI_SETS: { key: string; label: string; list: string[] }[] = [
+    { key: 'face', label: '😊', list: ['😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '😉', '😊', '😇', '🥰', '😍', '🤩', '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🥳', '😏', '😌', '😪', '😴', '🤤', '😷', '🤒', '🤕', '🥶', '🥵', '🥴', '😵'] },
+    { key: 'hand', label: '👍', list: ['👍', '👎', '👌', '🤌', '✌️', '🤞', '🤟', '🤘', '👈', '👉', '👆', '👇', '☝️', '✋', '🤚', '🖖', '👋', '🤙', '💪', '🙏', '👏', '🙌', '👐', '🤲', '🤝', '✍️', '💅', '🤳'] },
+    { key: 'heart', label: '❤️', list: ['❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟', '♥️', '⭐', '🌟', '✨', '⚡', '🔥', '💥', '💫', '🎆', '🌈', '☀️', '🌙', '☁️'] },
+    { key: 'object', label: '🎉', list: ['🎉', '🎊', '🎁', '🎈', '🏆', '🥇', '⚽', '🏀', '🎯', '🎲', '🎵', '🎶', '🎤', '🎧', '📱', '💻', '⌨️', '💡', '📌', '📎', '✂️', '🔒', '🔑', '💰', '📅', '⏰', '✈️', '🚗', '🏠', '☕', '🍜', '🍎'] },
+    { key: 'nature', label: '🌸', list: ['🌸', '🌺', '🌻', '🌹', '🌷', '🍀', '🌿', '🌱', '🍃', '🌳', '🌲', '🌵', '🎋', '🌾', '💐', '🪴', '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🐔'] },
+  ];
+  const [emojiCat, setEmojiCat] = useState('face');
+  const emojiList = EMOJI_SETS.find((x) => x.key === emojiCat)?.list ?? [];
+
+  // E24: 附件/媒体面——hidden file inputs（本选图/拍照/文件）+URL 媒体
+  const pickFile = useRef<HTMLInputElement>(null);
+  const capture = useRef<HTMLInputElement>(null);
+  const pickAttach = useRef<HTMLInputElement>(null);
+  const insertEmbedAt = (embed_type: 'image' | 'file' | 'video' | 'audio', url: string, title: string) => {
+    if (!view || !url) return;
+    const embed = auroraSchema.nodes.embed.create({ embed_type, url, title });
+    // E24 修: doc 尾插（原 before(1)+resolve(pos).node().nodeSize 在容器块/空 doc 下
+    // pos+doc.nodeSize 越界 RangeError——doc.content.size 恒界内）
+    view.dispatch(view.state.tr.insert(view.state.doc.content.size, embed));
+  };
+  const onFilePicked = (e: React.ChangeEvent<HTMLInputElement>, kind: 'image' | 'file') => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    if (f.size > 2 * 1024 * 1024) { window.alert('附件过大（>2MB）——dataURL 内嵌上限'); return; }
+    const r = new FileReader();
+    r.onload = () => insertEmbedAt(kind === 'image' ? 'image' : 'file', String(r.result ?? ''), f.name);
+    r.readAsDataURL(f);
+  };
+  const insertMediaUrl = (t: 'video' | 'audio') => {
+    const url = window.prompt(t === 'video' ? '视频地址' : '音频地址', 'https://');
+    if (url) insertEmbedAt(t, url, '');
+  };
   // E19（TA 20:51 深扫 S10）: Escape 键盘通道关面板——桌面键盘用户预期;粘性面板
   // 的第三关闭路径（点击编辑区/栏钮/Escape）。
   useEffect(() => {
@@ -812,6 +882,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                 </div>
               </div>
             ) : styleTab === 'symbol' ? (
+              <>
               <div className="tb-symbol-grid">
                 {['✓', '✗', '★', '☆', '♥', '♦', '●', '◆', '■', '▸', '▹', '▪', '☑', '☒', '✦', '※'].map((sym) => (
                   <button key={sym} className="tb-symbol" title={`插入 ${sym}`} aria-label={`插入符号 ${sym}`}
@@ -820,10 +891,31 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
                       if (!view) return;
                       const { from, to } = view.state.selection;
                       view.dispatch(view.state.tr.insertText(sym, from, to));
-                     
                     }}>{sym}</button>
                 ))}
               </div>
+              {/* E24: 表情符号——5 分类 tab+40/28 格;点击行内插入 */}
+              <div className="tb-sec-title" style={{ marginTop: 10 }}>表情符号</div>
+              <div className="tb-emoji-tabs" role="tablist">
+                {EMOJI_SETS.map((c) => (
+                  <button key={c.key} className={`tb-emoji-tab ${emojiCat === c.key ? 'on' : ''}`} role="tab"
+                    aria-selected={emojiCat === c.key} title={c.label}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setEmojiCat(c.key)}>{c.label}</button>
+                ))}
+              </div>
+              <div className="tb-emoji-grid">
+                {emojiList.map((em) => (
+                  <button key={em} className="tb-emoji" aria-label={`插入表情 ${em}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      if (!view) return;
+                      const { from, to } = view.state.selection;
+                      view.dispatch(view.state.tr.insertText(em, from, to));
+                    }}>{em}</button>
+                ))}
+              </div>
+              </>
             ) : styleTab === 'template' ? (
               <div className="tb-tmpl-grid">
                 {TEMPLATES.map((t) => (
@@ -877,6 +969,10 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
           </div>
         , document.body)}
       </div>
+      {/* E24: hidden file inputs——本选图/拍照/文件三通道 */}
+      <input ref={pickFile} type="file" accept="image/*" hidden onChange={(e) => onFilePicked(e, 'image')} />
+      <input ref={capture} type="file" accept="image/*" capture="environment" hidden onChange={(e) => onFilePicked(e, 'image')} />
+      <input ref={pickAttach} type="file" hidden onChange={(e) => onFilePicked(e, 'file')} />
       {/* E23: 斜杠菜单（/ 触发——思源 UX;portal body+栏上浮联动同面板体系） */}
       {slash.open && slashFiltered.length > 0 && createPortal(
         <div className="tb-style-pop slash-menu" role="menu" aria-label="斜杠菜单">
@@ -927,6 +1023,22 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
               <button className="tb-style-btn" title="插入表格"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { if (view) insertBlock(view, 'table'); }}>▦</button>
+              {/* E24（TA 22:13）: 附件/媒体/表情四系补齐——本选图/拍照/文件/视频音频链接 */}
+              <button className="tb-style-btn" title="插入图片（本地）"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pickFile.current?.click()}>🖼＋</button>
+              <button className="tb-style-btn" title="拍照并插入"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => capture.current?.click()}>📷</button>
+              <button className="tb-style-btn" title="插入文件"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pickAttach.current?.click()}>📎</button>
+              <button className="tb-style-btn" title="插入视频链接"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => insertMediaUrl('video')}>▶</button>
+              <button className="tb-style-btn" title="插入音频链接"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => insertMediaUrl('audio')}>♪</button>
             </div>
             </div>
           </div>

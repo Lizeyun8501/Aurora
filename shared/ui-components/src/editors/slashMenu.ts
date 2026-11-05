@@ -25,6 +25,15 @@ export function slashItems(): SlashItem[] {
     { id: 'code', label: '代码块', hint: '</> 代码', glyph: '⌨', apply: (v) => insertBlock(v, 'code') },
     { id: 'table', label: '表格', hint: '▦ 表格', glyph: '▦', apply: (v) => insertBlock(v, 'table') },
     { id: 'divider', label: '分割线', hint: '— 分隔', glyph: '—', apply: (v) => insertBlock(v, 'divider') },
+    // E24（TA 22:13）: 容器/媒体块——h4-6/提示/超级/页签/思维导图
+    { id: 'h4', label: '四级标题', hint: 'H4', glyph: 'H₄', apply: (v) => insertBlock(v, 'h4') },
+    { id: 'h5', label: '五级标题', hint: 'H5', glyph: 'H₅', apply: (v) => insertBlock(v, 'h5') },
+    { id: 'h6', label: '六级标题', hint: 'H6', glyph: 'H₆', apply: (v) => insertBlock(v, 'h6') },
+    { id: 'callout', label: '提示块', hint: '❝ 提示', glyph: '❝', apply: (v) => insertBlock(v, 'callout') },
+    { id: 'super-h', label: '横向超级块', hint: '▤ 横排', glyph: '▤', apply: (v) => insertBlock(v, 'super-h') },
+    { id: 'super-v', label: '纵向超级块', hint: '▥ 纵排', glyph: '▥', apply: (v) => insertBlock(v, 'super-v') },
+    { id: 'tabs', label: '页签块', hint: '⧉ 页签', glyph: '⧉', apply: (v) => insertBlock(v, 'tabs') },
+    { id: 'mindmap', label: '思维导图块', hint: '🌲 导图', glyph: '🌲', apply: (v) => insertBlock(v, 'mindmap') },
   ];
 }
 

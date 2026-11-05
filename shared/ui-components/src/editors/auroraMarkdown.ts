@@ -244,6 +244,22 @@ function nodeToMd(node: ProseNode, orderedIdx: { n: number }): string[] {
       const inner = node.content.content.flatMap((c: ProseNode) => nodeToMd(c, orderedIdx));
       return inner.map((l) => `> ${l}`);
     }
+    // E24: 容器块三系——GFM alert 语序（callout）;HTML 容器（super/tabs）
+    case 'callout': {
+      const tag = String(node.attrs.style ?? 'note').toUpperCase();
+      const inner = node.content.content.flatMap((c: ProseNode) => nodeToMd(c, orderedIdx));
+      return [`> [!${tag}]`, ...inner.map((l) => `> ${l}`)];
+    }
+    case 'super_block': {
+      const inner = node.content.content.flatMap((c: ProseNode) => nodeToMd(c, orderedIdx));
+      return [`<div class="super-${node.attrs.dir}">`, ...inner, '</div>'];
+    }
+    case 'tabs_block': {
+      let labels: string[] = [];
+      try { labels = JSON.parse(String(node.attrs.labels)) as string[]; } catch { labels = []; }
+      const inner = node.content.content.flatMap((c: ProseNode) => nodeToMd(c, orderedIdx));
+      return [`<div class="tabs-block" data-labels="${node.attrs.labels}">`, ...inner, '</div>'];
+    }
     case 'task_block': return [`- [${node.attrs.checked ? 'x' : ' '}] ${t}`.trimEnd()];
     case 'bullet_list':
       return node.content.content.flatMap((li: ProseNode) => [`- ${inlineText(li)}`]);
