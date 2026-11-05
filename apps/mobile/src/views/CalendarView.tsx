@@ -544,7 +544,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                       </button>
                     ))}
                     {todayCol === i && (
-                      <span className="week-now" aria-hidden="true" style={{ top: `${(nowH * 48 + 9 + (nowM * 39) / 60).toFixed(1)}px` }} />
+                      <span className="week-now" aria-hidden="true" style={{ top: `${((nowH * 60 + nowM) * 48 / 60).toFixed(1)}px` }} />
                     )}
                   </div>
                 ))}
@@ -582,8 +582,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             <div className="day-axis-hours" ref={axisHoursRef} data-selected={selected}>
               {selected === todayStr && (
                 <span className="day-now-line" aria-hidden="true"
-                  /* 11-05 09:09 ③ 用户令「前上」: 线贴行顶压时间字上方——H×48 定行+9px 字基偏移+39px 分域（48-9）→XX:00 线与字平齐,分针落字下行内。 */
-                  style={{ top: `${(Math.floor(nowMin / 60) * 48 + 9 + ((nowMin % 60) * 39) / 60).toFixed(1)}px` }}>
+                  /* 11-05 23:37 用户令: 0 点对齐首线——线公式回纯 H×48+M×48/60（字心已=行顶,原 +9 字基偏移作废）。 */
+                  style={{ top: `${(nowMin * 48 / 60).toFixed(1)}px` }}>
                   <i className="day-now-time">{String(Math.floor(nowMin / 60)).padStart(2, '0')}:{String(nowMin % 60).padStart(2, '0')}</i>
                 </span>
               )}

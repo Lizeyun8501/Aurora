@@ -421,7 +421,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .day-axis-row.all-day { background: var(--bg-secondary); border-radius: 8px; margin-bottom: 4px; }
 .day-axis-time {
   flex: 0 0 52px; font-size: 11px; color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums; padding-top: 3px;
+  font-variant-numeric: tabular-nums; /* 23:37: padding-top 3 真根——后段不覆同名属性,i 心偏 3.5 */
 }
 .day-axis-items { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
 .day-axis-item {
@@ -517,19 +517,20 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 /* 11-05 18:13 用户令: 时间列无线（线只在日程区）;刻度数值中心对齐右侧对应横线（行底分界）。
    字底贴行底+下移半字（i translateY 6）→中心≈47.5=分界线。 */
+/* 11-05 23:37 用户令: 0 点对齐日程区首线——字心=行顶（h 点=h×48 分界）;padding-top 6 容 i 上移不裁。 */
 .week-times {
   flex: 0 0 46px; display: flex; flex-direction: column;
-  padding-top: 1px; background: transparent;
+  padding-top: 0; background: transparent;
 }
 .week-times span {
   flex: 0 0 48px; height: 48px; box-sizing: border-box; /* shrink 0——限高不压行 */
-  display: flex; align-items: flex-end; justify-content: flex-end;
+  display: flex; align-items: flex-start; justify-content: flex-end;
   padding-right: 6px;
 }
 .week-times span i {
   font-style: normal; font-size: 10px; color: var(--text-tertiary);
   font-variant-numeric: tabular-nums; line-height: 1.3;
-  transform: translateY(6px);
+  transform: translateY(-6px);
 }
 .week-days {
   flex: 1; display: flex; position: relative;
@@ -1631,7 +1632,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 }
 .day-axis-time {
   /* 11-05 09:09 ① 用户修正: 灰框框任务区不框时间——时间回纯文字（参照图1）。 */
-  color: var(--text-tertiary); padding-top: 3px; flex: 0 0 52px;
+  color: var(--text-tertiary); /* 11-05 23:37: padding-top 3 残致字心偏 3.5——新段 flex 布局接管 */
 }
 /* 11-05 08:40 ②: 点时段→蓝框+中央加号（半透明 accent 长条,同参考图）。 */
 .day-axis-row { position: relative; }
@@ -1643,16 +1644,17 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   padding: 0 4px 0 0; gap: 0; border-bottom: none;
 }
 .day-axis-hours .day-axis-row:not(.all-day) .day-axis-time {
-  /* 11-05 19:06 用户令: 仿周页——46 宽右对齐;i translateY(6) 字心=行底分界线（周页同款）。 */
+  /* 11-05 23:37 用户令: 0 点对齐首线——字心=行顶（同周页）;行 padding-top 6 容 i 上移。 */
   flex: 0 0 46px; height: 48px; box-sizing: border-box;
-  display: flex; align-items: flex-end; justify-content: flex-end;
+  display: flex; align-items: flex-start; justify-content: flex-end;
   padding-right: 6px;
 }
 .day-axis-hours .day-axis-row:not(.all-day) .day-axis-time i {
   font-style: normal; font-size: 10px; color: var(--text-tertiary);
   font-variant-numeric: tabular-nums; line-height: 1.3;
-  transform: translateY(6px);
+  transform: translateY(-6px);
 }
+.day-axis-hours .day-axis-row:not(.all-day) { padding-top: 0; }
 .day-axis-hours .day-axis-row:not(.all-day) .day-axis-items {
   /* 11-05 09:33 用户令: 时刻线共享——每整点一条灰线（8~9 结束=9~10 开始）。 */
   flex: 1; background: var(--bg-secondary);
