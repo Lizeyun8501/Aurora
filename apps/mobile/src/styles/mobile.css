@@ -569,10 +569,11 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .week-now::after {
-  content: ''; position: absolute; right: -1px; top: -5px;
+  /* 11-06 13:29 真机令: 三角移线起点（贴刻度列右侧/任务区左缘）;再小一点 7×8→5×6;左竖边与线起点垂直对齐。 */
+  content: ''; position: absolute; left: 0; right: auto; top: -2px;
   width: 0; height: 0;
-  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
-  border-left: 7px solid var(--cal-accent);
+  border-top: 3px solid transparent; border-bottom: 3px solid transparent;
+  border-left: 5px solid var(--cal-accent);
 }
 .week-grid {
   display: grid; grid-template-columns: repeat(7, 1fr);
@@ -1629,16 +1630,16 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .day-now-line::before {
-  /* 11-06 12:19 ③: 左端 7px 圆点→右端小三角（6×8 偏小一点点,同周页::after）。 */
-  content: ''; position: absolute; left: auto; right: -1px; top: -5px;
+  /* 11-06 13:29 真机令: 三角移线起点（left 46=任务区左缘,贴时刻列右侧）;再小 7×8→5×6;左竖边与线起点垂直对齐。 */
+  content: ''; position: absolute; left: 0; right: auto; top: -2px;
   width: 0; height: 0;
-  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
-  border-left: 7px solid var(--cal-accent);
+  border-top: 3px solid transparent; border-bottom: 3px solid transparent;
+  border-left: 5px solid var(--cal-accent);
 }
 /* 11-04 22:14: 红线挂实时时间标签——精确到分（22:13 可读,不靠猜刻度）。 */
 .day-now-time {
   /* 11-05 00:09: top -8→4 下置——首小时内（如 00:07 线 top 5.6px）标签上探成负值浮出容器顶=「00:07 在 00:00 上面」。恒置线下方。 */
-  position: absolute; left: 4px; top: 4px;
+  position: absolute; left: 9px; top: 4px; /* 11-06 13:29: left 4→9 避让起点三角（0~5px） */
   background: var(--cal-accent); color: #fff;
   font-size: 9px; font-weight: 600; line-height: 1;
   padding: 2px 5px; border-radius: 4px;
