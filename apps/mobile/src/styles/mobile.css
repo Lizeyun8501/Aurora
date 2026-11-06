@@ -591,11 +591,11 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .week-now::after {
-  /* 11-06 19:38 ①: 竖向硬算对齐——线 y 0~2（border-top 2px）;三角高 6→4+top -2→-1: 身 y -1~+3 对称包线带,尖点 y=+1=线正中心。
-     原 -2/+6 身 0~+4 质心沉线下=「前下一点点」观感根因。 */
-  content: ''; position: absolute; left: -4px; right: auto; top: -1px;
+  /* 11-06 19:58 真机像素实证（PIL 扫用户截图）: 真机三角竖心比线心低 ~1px（WebView 子像素渲染偏差,web Playwright 无此偏）。
+     修: 回 5×6 好看尺寸+top -3 真机补偿——真机心=线心,web 心=线顶（0）。 */
+  content: ''; position: absolute; left: -4px; right: auto; top: -3px;
   width: 0; height: 0;
-  border-top: 2px solid transparent; border-bottom: 2px solid transparent;
+  border-top: 3px solid transparent; border-bottom: 3px solid transparent;
   border-left: 5px solid var(--cal-accent);
 }
 .week-grid {
@@ -1660,10 +1660,10 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .day-now-line::before {
-  /* 11-06 19:38 ①: 竖向硬算对齐——线 y 0~2;三角高 4+top -1: 身 -1~+3 对称,尖 y=+1=线心（同周页）。 */
-  content: ''; position: absolute; left: -4px; right: auto; top: -1px;
+  /* 11-06 19:58 真机像素实证: 同周页——回 5×6+top -3 真机补偿（真机心=线心）。 */
+  content: ''; position: absolute; left: -4px; right: auto; top: -3px;
   width: 0; height: 0;
-  border-top: 2px solid transparent; border-bottom: 2px solid transparent;
+  border-top: 3px solid transparent; border-bottom: 3px solid transparent;
   border-left: 5px solid var(--cal-accent);
 }
 /* 11-04 22:14: 红线挂实时时间标签——精确到分（22:13 可读,不靠猜刻度）。 */
