@@ -540,7 +540,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               <div className="week-times">
                 <span className="wt-pad" aria-hidden="true" />
                 {Array.from({ length: 24 }, (_, h) => (
-                  <span key={h}><i>{String(h)}</i></span> /* 11-06 18:47 ②: 去 :00 压缩刻度列 */
+                  <span key={h}><i>{String(h)}</i></span>
                 ))}
                 <span className="wt-24"><i>24</i></span>
               </div>
@@ -603,7 +603,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               return (
                 <div key={h} className={`day-axis-row${slotSel === h ? ' slot-sel' : ''}`}
                   onClick={() => setSlotSlot(slotSel === h ? null : h)}>
-                  <span className="day-axis-time"><i>{String(h)}</i> /* 11-06 18:47 ②: 去 :00 */</span>
+                  <span className="day-axis-time"><i>{String(h)}</i></span>
                   {slotSel === h && (
                     <button type="button" className="slot-plus" aria-label={`在 ${String(h).padStart(2, '0')}:00 新建日程`}
                       onClick={(e) => { e.stopPropagation(); setQuickNew(h); setQuickTitle(''); }}>+</button>

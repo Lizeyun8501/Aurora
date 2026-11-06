@@ -591,8 +591,8 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .week-now::after {
-  /* 11-06 17:29 ①: 尖端正指向线——三角左移 -5（竖边贴刻度列右缘）,尖端 x=0=线起点,线自尖射出。 */
-  content: ''; position: absolute; left: -5px; right: auto; top: -2px;
+  /* 11-06 19:10 真机令②: -5→-4——尖嵌线体 1px 重叠,消抗锯齿缝;线自尖射出。 */
+  content: ''; position: absolute; left: -4px; right: auto; top: -2px;
   width: 0; height: 0;
   border-top: 3px solid transparent; border-bottom: 3px solid transparent;
   border-left: 5px solid var(--cal-accent);
@@ -1659,8 +1659,8 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .day-now-line::before {
-  /* 11-06 17:29 ①: 尖端指向线——三角左移 -5（竖边贴时刻列右缘）,尖端 x=0=线起点,线自尖射出。 */
-  content: ''; position: absolute; left: -5px; right: auto; top: -2px;
+  /* 11-06 19:10 真机令②: -5→-4——尖嵌线体 1px 重叠,消抗锯齿缝;线自尖射出。 */
+  content: ''; position: absolute; left: -4px; right: auto; top: -2px;
   width: 0; height: 0;
   border-top: 3px solid transparent; border-bottom: 3px solid transparent;
   border-left: 5px solid var(--cal-accent);
