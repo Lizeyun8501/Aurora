@@ -515,6 +515,26 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   display: flex; overflow: hidden; overflow-y: auto; margin-top: 4px;
   max-height: calc(100vh - 320px);
 }
+/* 11-06 17:29 ③: 周/日铺满整屏抵底导航——view 高=content100%-60（fixed tabbar 56+4 缝）,flex 链伸展。 */
+.view.cal-scroll-mode {
+  display: flex; flex-direction: column;
+  height: calc(100% - 52px); box-sizing: border-box;
+  padding-bottom: 0;
+}
+.view.cal-scroll-mode .card.cal-card {
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
+  margin-bottom: 0; padding-bottom: 0;
+}
+.view.cal-scroll-mode .week-axis { flex: 1; max-height: none; min-height: 0; }
+.view.cal-scroll-mode .day-axis { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.view.cal-scroll-mode .day-axis-hours { flex: 1; max-height: none; min-height: 0; }
+/* 11-06 17:29 ④: 周列头对齐轴首列——头区左让 46（times 列宽）+列间 gap 归零同 days 分隔,周日=第一列。 */
+.view.cal-scroll-mode .week-grid {
+  margin-left: 46px; column-gap: 0;
+}
+.view.cal-scroll-mode .week-grid .week-col:not(:first-child) { border-left: 1px solid var(--border); }
+/* 11-06 17:29 ④b: 头列 min-width 46 撑破 1fr——归 0 让列宽=days 列宽（1:1 对位）。 */
+.view.cal-scroll-mode .week-grid .week-col { min-width: 0; }
 /* 11-05 18:13 用户令: 时间列无线（线只在日程区）;刻度数值中心对齐右侧对应横线（行底分界）。
    字底贴行底+下移半字（i translateY 6）→中心≈47.5=分界线。 */
 /* 11-05 23:37 用户令: 0 点对齐日程区首线——字心=行顶（h 点=h×48 分界）;padding-top 6 容 i 上移不裁。 */
@@ -569,8 +589,8 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .week-now::after {
-  /* 11-06 13:29 真机令: 三角移线起点（贴刻度列右侧/任务区左缘）;再小一点 7×8→5×6;左竖边与线起点垂直对齐。 */
-  content: ''; position: absolute; left: 0; right: auto; top: -2px;
+  /* 11-06 17:29 ①: 尖端正指向线——三角左移 -5（竖边贴刻度列右缘）,尖端 x=0=线起点,线自尖射出。 */
+  content: ''; position: absolute; left: -5px; right: auto; top: -2px;
   width: 0; height: 0;
   border-top: 3px solid transparent; border-bottom: 3px solid transparent;
   border-left: 5px solid var(--cal-accent);
@@ -1630,8 +1650,8 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .day-now-line::before {
-  /* 11-06 13:29 真机令: 三角移线起点（left 46=任务区左缘,贴时刻列右侧）;再小 7×8→5×6;左竖边与线起点垂直对齐。 */
-  content: ''; position: absolute; left: 0; right: auto; top: -2px;
+  /* 11-06 17:29 ①: 尖端指向线——三角左移 -5（竖边贴时刻列右缘）,尖端 x=0=线起点,线自尖射出。 */
+  content: ''; position: absolute; left: -5px; right: auto; top: -2px;
   width: 0; height: 0;
   border-top: 3px solid transparent; border-bottom: 3px solid transparent;
   border-left: 5px solid var(--cal-accent);

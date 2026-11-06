@@ -40,15 +40,22 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   const [selected, setSelected] = useState<string>(initialSelected ?? todayStr);
   /** DK-CALENDAR-01 任务 2 + 04 四态：月/周/日/列表（年视图独立 mode 覆盖月）。 */
   const [mode, setMode] = useState<'month' | 'week' | 'day' | 'list' | 'year'>('month');
-  /* 11-04 19:20 ①: 24h 轴滚动定位——周/日模式+换 selected 时滚到当前时段（今=now-1h,他日=08:00）。 */
+  /* 11-04 19:20 ①: 24h 轴滚动定位——周/日模式+换 selected 时滚到当前时段。
+     11-06 17:29 ②: 红线居屏优先——滚到 now 上下文中心（容不下则 clamp 至少可见）,不再需要滑动找线。 */
   const axisHoursRef = useRef<HTMLDivElement | null>(null);
+  const weekAxisRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    const el = axisHoursRef.current;
-    if (!el || (mode !== 'week' && mode !== 'day')) return;
     const d = new Date(); const liveMin = d.getHours() * 60 + d.getMinutes();
     if (selected === todayStr) setNowMin(liveMin);
-    const anchorHour = selected === todayStr ? Math.max(0, Math.floor(liveMin / 60) - 1) : 8;
-    el.scrollTo({ top: Math.max(0, 48 + (anchorHour - 1) * 48), behavior: 'instant' as ScrollBehavior }); /* 11-06 12:19: 顶空格 +48 */
+    const scrollToCenter = (el: HTMLElement | null, anchorTop: number) => {
+      if (!el) return;
+      const target = anchorTop - el.clientHeight / 2 + 24; /* +24=行半高,线居行 */
+      const max = Math.max(0, el.scrollHeight - el.clientHeight);
+      el.scrollTo({ top: Math.max(0, Math.min(target, max)), behavior: 'instant' as ScrollBehavior });
+    };
+    const nowTop = 48 + (liveMin * 48) / 60; /* 顶空格 +48 基 */
+    if (mode === 'week') scrollToCenter(weekAxisRef.current, nowTop); /* 周页红线恒今——无条件滚红线 */
+    if (mode === 'day') scrollToCenter(axisHoursRef.current, selected === todayStr ? nowTop : 48 + 8 * 48); /* 他日=08:00 惯例 */
   }, [mode, selected]);
   /** DK-CALENDAR-02：事件编辑器（null=关;编辑/新建共用 sheet）。 */
   const [eventEditor, setEventEditor] = useState<CalEvent | null>(null);
@@ -236,7 +243,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   })();
 
   return (
-    <div className={'view cal-fullview' + (mode === 'year' ? ' cal-year-fill' : '')}>
+    <div className={'view cal-fullview' + (mode === 'year' ? ' cal-year-fill' : '') + (mode === 'week' || mode === 'day' ? ' cal-scroll-mode' : '')}>
       <div className="card cal-card">
         <div className="cal-head">
           {/* 11-03 17:05 ④: 左右箭头已删——月/年变换统一上下滑（cal-grid/year-vivo 双通道滑绑）。 */}
@@ -529,7 +536,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
           /* 11-06 12:19 用户三令: ①0 点之上/24 点之下各留一格线,刻度增 24 点——顶空 48+0..23+24 字(心=行顶线);
              ②now 线提层到 week-days 贯整周 7 列(原仅当天列);③右端小三角。事件/线 y 统一 +48 顶空偏移。 */
           return (
-            <div className="week-axis">
+            <div className="week-axis" ref={weekAxisRef}>
               <div className="week-times">
                 <span className="wt-pad" aria-hidden="true" />
                 {Array.from({ length: 24 }, (_, h) => (
