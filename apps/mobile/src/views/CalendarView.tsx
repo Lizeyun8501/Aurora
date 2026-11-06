@@ -48,7 +48,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
     const d = new Date(); const liveMin = d.getHours() * 60 + d.getMinutes();
     if (selected === todayStr) setNowMin(liveMin);
     const anchorHour = selected === todayStr ? Math.max(0, Math.floor(liveMin / 60) - 1) : 8;
-    el.scrollTo({ top: Math.max(0, (anchorHour - 1) * 48), behavior: 'instant' as ScrollBehavior });
+    el.scrollTo({ top: Math.max(0, 48 + (anchorHour - 1) * 48), behavior: 'instant' as ScrollBehavior }); /* 11-06 12:19: 顶空格 +48 */
   }, [mode, selected]);
   /** DK-CALENDAR-02：事件编辑器（null=关;编辑/新建共用 sheet）。 */
   const [eventEditor, setEventEditor] = useState<CalEvent | null>(null);
@@ -526,26 +526,28 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
           }
           const todayCol = days2.findIndex((d) => kOf(d) === todayStr);
           const nowH = now.getHours(), nowM = now.getMinutes();
+          /* 11-06 12:19 用户三令: ①0 点之上/24 点之下各留一格线,刻度增 24 点——顶空 48+0..23+24 字(心=行顶线);
+             ②now 线提层到 week-days 贯整周 7 列(原仅当天列);③右端小三角。事件/线 y 统一 +48 顶空偏移。 */
           return (
             <div className="week-axis">
               <div className="week-times">
+                <span className="wt-pad" aria-hidden="true" />
                 {Array.from({ length: 24 }, (_, h) => (
                   <span key={h}><i>{String(h).padStart(2, '0')}:00</i></span>
                 ))}
+                <span className="wt-24"><i>24:00</i></span>
               </div>
               <div className="week-days">
+                <span className="week-now" aria-hidden="true" style={{ top: `${(48 + ((nowH * 60 + nowM) * 48) / 60).toFixed(1)}px` }} />
                 {days2.map((d, i) => (
                   <div key={kOf(d)} className="week-day-col">
                     {blocks.filter((b) => b.col === i).map((b) => (
-                      <button type="button" key={b.key} className={`week-ev ${b.kind}`} style={{ top: `${(b.topMin * 48) / 60}px`, height: `${(b.hMin * 48) / 60 - 4}px` }}
+                      <button type="button" key={b.key} className={`week-ev ${b.kind}`} style={{ top: `${48 + (b.topMin * 48) / 60}px`, height: `${(b.hMin * 48) / 60 - 4}px` }}
                         aria-label={b.label}
                         onClick={() => { if (b.ev) setEventEditor(b.ev); else if (b.kind === 'task') onNewTask(kOf(d)); }}>
                         {b.label}
                       </button>
                     ))}
-                    {todayCol === i && (
-                      <span className="week-now" aria-hidden="true" style={{ top: `${((nowH * 60 + nowM) * 48 / 60).toFixed(1)}px` }} />
-                    )}
                   </div>
                 ))}
               </div>
@@ -582,11 +584,13 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             <div className="day-axis-hours" ref={axisHoursRef} data-selected={selected}>
               {selected === todayStr && (
                 <span className="day-now-line" aria-hidden="true"
-                  /* 11-05 23:37 用户令: 0 点对齐首线——线公式回纯 H×48+M×48/60（字心已=行顶,原 +9 字基偏移作废）。 */
-                  style={{ top: `${(nowMin * 48 / 60).toFixed(1)}px` }}>
+                  /* 11-06 12:19: 顶空格 +48 后线位（原 23:37 纯公式,现 y 全域平移）。 */
+                  style={{ top: `${(48 + (nowMin * 48) / 60).toFixed(1)}px` }}>
                   <i className="day-now-time">{String(Math.floor(nowMin / 60)).padStart(2, '0')}:{String(nowMin % 60).padStart(2, '0')}</i>
                 </span>
               )}
+              {/* 11-06 12:19 ①: 0 点之上留一格——空 row 占位。 */}
+              <div className="day-axis-row day-pad" aria-hidden="true" />
               {Array.from({ length: 24 }, (_, i) => i).map((h) => {
               const items = dayAxis.get(h) ?? [];
               return (
@@ -611,6 +615,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 </div>
               );
               })}
+              {/* 11-06 12:19 ①: 24 点刻度——心=23 行底线（=h×48 顶线基）;其下留一格线。 */}
+              <div className="day-axis-row day-24"><span className="day-axis-time"><i>24:00</i></span></div>
             </div>
             {/* 轴外兜底区（8 点前/22 点后/无时刻解析失败）——Leo 10-29 合并为单「更早」/单「更晚」行 */}
             {(() => {
