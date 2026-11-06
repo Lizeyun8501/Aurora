@@ -540,9 +540,9 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               <div className="week-times">
                 <span className="wt-pad" aria-hidden="true" />
                 {Array.from({ length: 24 }, (_, h) => (
-                  <span key={h}><i>{String(h).padStart(2, '0')}:00</i></span>
+                  <span key={h}><i>{String(h)}</i></span> /* 11-06 18:47 ②: 去 :00 压缩刻度列 */
                 ))}
-                <span className="wt-24"><i>24:00</i></span>
+                <span className="wt-24"><i>24</i></span>
               </div>
               <div className="week-days">
                 <span className="week-now" aria-hidden="true" style={{ top: `${(48 + ((nowH * 60 + nowM) * 48) / 60).toFixed(1)}px` }} />
@@ -603,7 +603,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               return (
                 <div key={h} className={`day-axis-row${slotSel === h ? ' slot-sel' : ''}`}
                   onClick={() => setSlotSlot(slotSel === h ? null : h)}>
-                  <span className="day-axis-time"><i>{String(h).padStart(2, '0')}:00</i></span>
+                  <span className="day-axis-time"><i>{String(h)}</i> /* 11-06 18:47 ②: 去 :00 */</span>
                   {slotSel === h && (
                     <button type="button" className="slot-plus" aria-label={`在 ${String(h).padStart(2, '0')}:00 新建日程`}
                       onClick={(e) => { e.stopPropagation(); setQuickNew(h); setQuickTitle(''); }}>+</button>
@@ -623,7 +623,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               );
               })}
               {/* 11-06 12:19 ①: 24 点刻度——心=23 行底线（=h×48 顶线基）;其下留一格线。 */}
-              <div className="day-axis-row day-24"><span className="day-axis-time"><i>24:00</i></span></div>
+              <div className="day-axis-row day-24"><span className="day-axis-time"><i>24</i></span></div>
             </div>
             {/* 轴外兜底区（8 点前/22 点后/无时刻解析失败）——Leo 10-29 合并为单「更早」/单「更晚」行 */}
             {(() => {
