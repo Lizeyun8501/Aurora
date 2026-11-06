@@ -112,6 +112,15 @@ interface AndroidBridge {
   queryEvents(fromMs: number, toMs: number): string;
   /** CALENDAR-04: 事件写后提醒重扫（AlarmManager 补注册;mock 无桥=空操作）。 */
   refreshReminders(): boolean;
+  // ===== E25（TA 17:32）: 导出真文件——SAF 目录选取+默认位+写文件 =====
+  /** 当前导出目录显示名（未选=默认 Download/AuroraExports）。 */
+  getExportDirLabel(): string;
+  /** 系统目录选取器（结果经 window.__onExportDirPicked 回推）。 */
+  pickExportDir(): void;
+  /** 清回默认目录。 */
+  resetExportDir(): void;
+  /** 真文件导出（自定义目录直写/默认 Download/兜底系统另存面板;回推 __onExportDone）。 */
+  exportFile(filename: string, mime: string, text: string): void;
 }
 
 /** P2P 同步结果报告。 */

@@ -4,7 +4,12 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.os.Bundle;
 import android.view.View;
+import android.net.Uri;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.os.Environment;
 import android.webkit.JavascriptInterface;
+import android.provider.DocumentsContract;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -35,6 +40,13 @@ public class MainActivity extends Activity {
     private NetworkStateRelay networkRelay;
     /** P2P 同步引擎（懒启动，V19 §31 DEV-005） */
     private SyncEngine syncEngine;
+
+    // ===== E25（TA 17:32）: 导出真文件落盘——SAF 目录选取+CREATE_DOCUMENT 直存 =====
+    private static final int REQ_PICK_EXPORT_DIR = 7301;
+    private static final int REQ_EXPORT_CREATE_DOC = 7302;
+    private String pendingExportName;   // CREATE_DOCUMENT 挂起期文件名
+    private String pendingExportMime;   // 挂起期 mime
+    private String pendingExportText;   // 挂起期内容（JS 线程串来）
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
@@ -557,6 +569,151 @@ public class MainActivity extends Activity {
                 return false;
             }
         }
+
+        // ===== E25（TA 17:32）: 导出真文件——目录选取/默认位/写文件 =====
+
+        /** 当前导出目录显示名（未选=Download/Aurora 默认说明;持久 SharedPreferences）。
+         * 零 androidx: DocumentsContract tree id 尾段当目录名（SAF 惯例足够可读）。 */
+        @JavascriptInterface
+        public String getExportDirLabel() {
+            SharedPreferences sp = getSharedPreferences("aurora", MODE_PRIVATE);
+            String uri = sp.getString("export_dir_uri", "");
+            if (uri == null || uri.isEmpty()) return "默认: Download/AuroraExports";
+            try {
+                String treeId = DocumentsContract.getTreeDocumentId(Uri.parse(uri));
+                String name = treeId != null ? treeId.substring(treeId.lastIndexOf(':') + 1) : null;
+                return name != null && !name.isEmpty() ? ("自定义: " + name) : "自定义目录";
+            } catch (Throwable t) {
+                return "自定义目录";
+            }
+        }
+
+        /** 系统目录选取器（ACTION_OPEN_DOCUMENT_TREE）——结果经 onActivityResult 回推 JS。 */
+        @JavascriptInterface
+        public void pickExportDir() {
+            Intent it = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            it.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(it, REQ_PICK_EXPORT_DIR);
+        }
+
+        /** 清回默认目录。 */
+        @JavascriptInterface
+        public void resetExportDir() {
+            getSharedPreferences("aurora", MODE_PRIVATE).edit().remove("export_dir_uri").apply();
+        }
+
+        /**
+         * 真文件导出：选定自定义目录→DocumentsContract 直写;
+         * 默认（未选）→Download/AuroraExports File API 写（app 免权限公共下载区）;
+         * 兜底→ACTION_CREATE_DOCUMENT 系统另存面板。
+         * 回调: window.__onExportDone(ok, path)。
+         */
+        @JavascriptInterface
+        public void exportFile(final String filename, final String mime, final String text) {
+            final String safe = filename == null ? "note.md" : filename.replaceAll("[\\/:*?\"<>|]", "_");
+            SharedPreferences sp = getSharedPreferences("aurora", MODE_PRIVATE);
+            String uri = sp.getString("export_dir_uri", "");
+            if (uri != null && !uri.isEmpty()) {
+                try {
+                    Uri tree = Uri.parse(uri);
+                    String docId = DocumentsContract.getTreeDocumentId(tree);
+                    // 子目录: 自选树根直接建文件（display name 防重后缀自动（SAF 自动 (1) 处理可省——
+                    // DocumentsContract 同名覆盖新内容,不合意;此处先探名防覆盖省读——直接建即以系统覆写语义为简）
+                    Uri doc = DocumentsContract.createDocument(
+                        getContentResolver(),
+                        DocumentsContract.buildDocumentUriUsingTree(tree, docId),
+                        mime != null ? mime : "text/plain",
+                        safe);
+                    if (doc != null) {
+                        java.io.OutputStream os = getContentResolver().openOutputStream(doc);
+                        if (os != null) {
+                            os.write(text != null ? text.getBytes("UTF-8") : new byte[0]);
+                            os.close();
+                            notifyExportDone(true, safe);
+                            return;
+                        }
+                    }
+                } catch (Throwable t) { /* 降级到默认路径 */ }
+            }
+            // 默认: 公共 Download/AuroraExports（app 外可读——Environment API 免权限路径）
+            try {
+                java.io.File base = new java.io.File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "AuroraExports");
+                if (!base.exists() && !base.mkdirs() && !base.exists()) throw new java.io.IOException("mkdirs fail");
+                java.io.File out = uniqueFile(base, safe);
+                java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
+                fos.write(text != null ? text.getBytes("UTF-8") : new byte[0]);
+                fos.close();
+                notifyExportDone(true, out.getAbsolutePath());
+                return;
+            } catch (Throwable t2) { /* 末路兜底 CREATE_DOCUMENT */ }
+            pendingExportName = safe;
+            pendingExportMime = mime;
+            pendingExportText = text;
+            Intent it = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            it.addCategory(Intent.CATEGORY_OPENABLE);
+            it.setType(mime != null ? mime : "text/plain");
+            it.putExtra(Intent.EXTRA_TITLE, safe);
+            startActivityForResult(it, REQ_EXPORT_CREATE_DOC);
+        }
+    }
+
+    /** E25: SAF 结果回推——目录选取持久化 / CREATE_DOCUMENT 写入。 */
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_PICK_EXPORT_DIR) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                Uri uri = data.getData();
+                getContentResolver().takePersistableUriPermission(uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                getSharedPreferences("aurora", MODE_PRIVATE).edit().putString("export_dir_uri", uri.toString()).apply();
+                notifyExportDirPicked(true);
+            } else {
+                notifyExportDirPicked(false);
+            }
+            return;
+        }
+        if (requestCode == REQ_EXPORT_CREATE_DOC) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                try {
+                    java.io.OutputStream os = getContentResolver().openOutputStream(data.getData());
+                    if (os != null) {
+                        os.write(pendingExportText != null ? pendingExportText.getBytes("UTF-8") : new byte[0]);
+                        os.close();
+                        notifyExportDone(true, pendingExportName != null ? pendingExportName : "note");
+                        return;
+                    }
+                } catch (Throwable t) { /* fallthrough fail */ }
+            }
+            notifyExportDone(false, null);
+        }
+    }
+
+    private void notifyExportDone(final boolean ok, final String path) {
+        final String esc = path == null ? "" : path.replace("\\", "/").replace("\"", "'");
+        webView.post(() -> webView.evaluateJavascript(
+            "window.__onExportDone && window.__onExportDone(" + ok + ", '" + esc + "')", null));
+        runOnUiThread(() -> Toast.makeText(MainActivity.this,
+            ok ? "已导出: " + (path != null ? path : "所选位置") : "导出失败", Toast.LENGTH_LONG).show());
+    }
+
+    private void notifyExportDirPicked(final boolean ok) {
+        webView.post(() -> webView.evaluateJavascript(
+            "window.__onExportDirPicked && window.__onExportDirPicked(" + ok + ")", null));
+    }
+
+    /** 同名自动 (n) 序号防覆盖。 */
+    private static java.io.File uniqueFile(java.io.File dir, String name) {
+        java.io.File f = new java.io.File(dir, name);
+        if (!f.exists()) return f;
+        String base = name, ext = "";
+        int dot = name.lastIndexOf('.');
+        if (dot > 0) { base = name.substring(0, dot); ext = name.substring(dot); }
+        for (int i = 1; i < 1000; i++) {
+            f = new java.io.File(dir, base + "(" + i + ")" + ext);
+            if (!f.exists()) return f;
+        }
+        return new java.io.File(dir, base + "-" + System.currentTimeMillis() + ext);
     }
 
     @Override

@@ -1099,6 +1099,12 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 }
 .slash-label { font-size: 13px; color: var(--text-primary); }
 
+/* ===== E25（TA 17:32）: 导出保存位置 ===== */
+.export-dir-row { display: flex; align-items: center; gap: 8px; padding: 10px 16px; }
+.export-dir-label { flex: 1; font-size: 12px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.export-dir-btn { border: 1px solid var(--border); background: var(--bg-secondary); border-radius: 8px; padding: 4px 10px; font-size: 12px; color: var(--brand); cursor: pointer; }
+.export-dir-btn:active { background: var(--brand-soft); }
+
 /* ===== E24（TA 22:13）: 容器块三系 ===== */
 .callout-block { border-left: 3px solid var(--brand); background: var(--brand-soft); border-radius: 0 8px 8px 0; padding: 8px 12px; margin: 6px 0; }
 .callout-block[data-callout='tip'] { border-color: #10b981; background: rgba(16, 185, 129, 0.09); }

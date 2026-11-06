@@ -1828,6 +1828,39 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
   // （「未见导出文档」根除:内容 App 内可开,不赌系统下载/share 落盘可见性）
   const [exportPreview, setExportPreview] = useState(false);
   const [lastExport, setLastExport] = useState<{ filename: string; content: string; mime: string } | null>(null);
+  // E25: 保存位置——真机桥 label 反映;无桥隐藏行
+  const [exportDirLabel, setExportDirLabel] = useState('');
+  const e25Bridge = (window as unknown as {
+    AndroidBridge?: {
+      getExportDirLabel(): string;
+      pickExportDir(): void;
+      resetExportDir(): void;
+    };
+  }).AndroidBridge;
+  useEffect(() => {
+    if (e25Bridge) setExportDirLabel(e25Bridge.getExportDirLabel());
+  }, [e25Bridge]);
+  // E25: 原生导出结果回推（真文件写完/失败——toast 感知;不依赖 noteExport share 层）
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__onExportDone = (ok: boolean, path: string) => {
+      showToast(ok ? `已保存: ${path || '所选位置'}` : '导出失败');
+    };
+    return () => { delete (window as unknown as Record<string, unknown>).__onExportDone; };
+  }, []);
+  const pickExportDir = () => {
+    if (!e25Bridge) return;
+    e25Bridge.pickExportDir();
+    (window as unknown as Record<string, unknown>).__onExportDirPicked = (ok: boolean) => {
+      setExportDirLabel(ok ? e25Bridge.getExportDirLabel() : exportDirLabel);
+      showToast(ok ? '导出位置已保存' : '已取消');
+    };
+  };
+  const resetExportDir = () => {
+    if (!e25Bridge) return;
+    e25Bridge.resetExportDir();
+    setExportDirLabel(e25Bridge.getExportDirLabel());
+    showToast('已恢复默认位置');
+  };
   const doExport = async (fmt: 'md' | 'word' | 'txt' | 'pdf') => {
     try {
       const m = await import('@aurora/ui-components');
@@ -1835,6 +1868,14 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
       const r = await (fmt === 'pdf' ? m.exportNotePdf(title) : m.exportNote(title, fmt));
       setStatus(r.ok ? 'saved' : null);
       if (r.ok) {
+        // E25（TA 17:32）: 真文件落盘优先——有 AndroidBridge 即调原生 exportFile
+        // （自定义目录 DocumentsContract 直写/默认 Download/AuroraExports/兜底系统另存面板）;
+        // PDF 走 print 链无 content 不走此路。无桥（浏览器/预览）= 原 share/blob 链。
+        const bridge = (window as unknown as { AndroidBridge?: { exportFile(f: string, m: string, t: string): void } }).AndroidBridge;
+        if (bridge && r.content) {
+          bridge.exportFile(r.filename, r.mime ?? 'text/plain', r.content);
+          return; // 原生 toast+__onExportDone 回推接管反馈（noteExport share 不再叠层）
+        }
         if (r.content) { setLastExport({ filename: r.filename, content: r.content, mime: r.mime ?? 'text/plain' }); showToast({ text: `已导出 ${r.filename}`, actionLabel: '查看', onAction: () => setExportPreview(true) }); }
         else showToast(`已导出 ${r.filename}`); // 桌面 print 链无内存产物
       } else showToast(`导出失败：${r.error ?? '未知错误'}`);
@@ -1899,6 +1940,12 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
             </button>
             {/* E6 导入导出（TA 22:33 派单）: Word/PDF/Markdown/TXT 导出 + md/txt 导入 */}
             <div className="menu-group-title">导入导出</div>
+            {/* E25（TA 17:32）: 保存位置——默认 Download/AuroraExports+系统选取（SAF）;真机桥驱动 */}
+            <div className="menu-item export-dir-row" role="group" aria-label="导出保存位置">
+              <span className="export-dir-label">{exportDirLabel}</span>
+              <button className="export-dir-btn" onClick={pickExportDir}>选择位置</button>
+              <button className="export-dir-btn" onClick={resetExportDir}>默认</button>
+            </div>
             <button className="menu-item" onClick={async () => { setMenuOpen(false); await doImport(); }}>
               {I.sync} 导入笔记（md/txt）
             </button>
