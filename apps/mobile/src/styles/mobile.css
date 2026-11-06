@@ -591,10 +591,11 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .week-now::after {
-  /* 11-06 19:10 真机令②: -5→-4——尖嵌线体 1px 重叠,消抗锯齿缝;线自尖射出。 */
-  content: ''; position: absolute; left: -4px; right: auto; top: -2px;
+  /* 11-06 19:38 ①: 竖向硬算对齐——线 y 0~2（border-top 2px）;三角高 6→4+top -2→-1: 身 y -1~+3 对称包线带,尖点 y=+1=线正中心。
+     原 -2/+6 身 0~+4 质心沉线下=「前下一点点」观感根因。 */
+  content: ''; position: absolute; left: -4px; right: auto; top: -1px;
   width: 0; height: 0;
-  border-top: 3px solid transparent; border-bottom: 3px solid transparent;
+  border-top: 2px solid transparent; border-bottom: 2px solid transparent;
   border-left: 5px solid var(--cal-accent);
 }
 .week-grid {
@@ -610,7 +611,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
    ②今日=accent 红字粗（深色 #F08A8A 抬亮,同月历暗节红）
    ③选中=类月历 sel 描框（accent 1px radius8）+底线加粗+中央 V 内凹三角。 */
 /* 11-04 19:51 ①: head min-height 54——原 ~40px 容不下 42×48 框,下边越界被 day-axis 顶部盖住=「下边框没有线」。 */
-.week-col-head { border: none; outline: none; background: transparent; min-height: 60px; /* 11-06 18:47 ③: 54→60 露农历 */ }
+.week-col-head { border: none; outline: none; background: transparent; min-height: 68px; /* 11-06 19:38 ②: 60→68 容 lunar mt10 出框 */ }
 .week-col, .week-col:focus, .week-col-head:focus { outline: none; }
 .week-col.today .week-num { color: var(--cal-accent); font-weight: 700; }
 [data-theme='dark'] .week-col.today .week-num { color: #F08A8A; }
@@ -618,9 +619,9 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
    底线下实心闭环 accent 三角 16×8（原开口 V 填底色看不出三角——实心+加大+闭环）。 */
 .week-col.sel { position: relative; border: none; border-radius: 0; }
 .week-col.sel::before {
-  /* 11-06 18:47 ③: 42×48→44×44 尽量正方+top 2→6 下移——头加高 60 露农历字。 */
-  content: ''; position: absolute; left: 50%; top: 6px; transform: translateX(-50%);
-  width: 44px; height: 44px;
+  /* 11-06 19:38 ②: 44→48 略放大容字（wd+num 两行不压）;top 6→4;头 60 下 54~60 露农历。 */
+  content: ''; position: absolute; left: 50%; top: 4px; transform: translateX(-50%);
+  width: 48px; height: 48px;
   border: 1px solid var(--cal-accent); border-radius: 12px;
   pointer-events: none;
 }
@@ -631,7 +632,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 .week-wd { font-size: 11px; color: var(--text-tertiary); }
 /* 11-04 23:31 ②: 周条农历小字（同月历 cal-lunar 观感）。 */
-.week-lunar { font-size: 8px; color: var(--text-tertiary); letter-spacing: -0.1px; line-height: 1; }
+.week-lunar { font-size: 8px; color: var(--text-tertiary); letter-spacing: -0.1px; line-height: 1; margin-top: 10px; /* 11-06 19:38 ②: 推出 sel 框底（48 框 top4 底52,mt10 起 52=框底）——农历净露 */ }
 .week-lunar.fest { color: var(--cal-accent); }
 [data-theme='dark'] .week-lunar.fest { color: #F08A8A; }
 .week-num { font-size: 15px; font-weight: 600; color: var(--text-primary); }
@@ -1659,10 +1660,10 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 .day-now-line::before {
-  /* 11-06 19:10 真机令②: -5→-4——尖嵌线体 1px 重叠,消抗锯齿缝;线自尖射出。 */
-  content: ''; position: absolute; left: -4px; right: auto; top: -2px;
+  /* 11-06 19:38 ①: 竖向硬算对齐——线 y 0~2;三角高 4+top -1: 身 -1~+3 对称,尖 y=+1=线心（同周页）。 */
+  content: ''; position: absolute; left: -4px; right: auto; top: -1px;
   width: 0; height: 0;
-  border-top: 3px solid transparent; border-bottom: 3px solid transparent;
+  border-top: 2px solid transparent; border-bottom: 2px solid transparent;
   border-left: 5px solid var(--cal-accent);
 }
 /* 11-04 22:14: 红线挂实时时间标签——精确到分（22:13 可读,不靠猜刻度）。 */
