@@ -593,7 +593,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .week-now::after {
   /* 11-06 19:58 真机像素实证（PIL 扫用户截图）: 真机三角竖心比线心低 ~1px（WebView 子像素渲染偏差,web Playwright 无此偏）。
      修: 回 5×6 好看尺寸+top -3 真机补偿——真机心=线心,web 心=线顶（0）。 */
-  content: ''; position: absolute; left: -4px; right: auto; top: -3.5px; /* 11-06 20:22 PIL 二扫: 残偏 +1.5 设备行=0.5 CSS——精补 -0.5 */
+  content: ''; position: absolute; left: -4px; right: auto; top: -4px; /* 11-06 20:44 用户三扫令「上轻微」:-3.5 半 px 3x 量化不稳→整 -4 免量化 */
   width: 0; height: 0;
   border-top: 3px solid transparent; border-bottom: 3px solid transparent;
   border-left: 5px solid var(--cal-accent);
@@ -1661,7 +1661,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 }
 .day-now-line::before {
   /* 11-06 19:58 真机像素实证: 同周页——回 5×6+top -3 真机补偿（真机心=线心）。 */
-  content: ''; position: absolute; left: -4px; right: auto; top: -3.5px; /* 11-06 20:22 PIL 二扫: 残偏 +1.5 设备行=0.5 CSS——精补 -0.5 */
+  content: ''; position: absolute; left: -4px; right: auto; top: -4px; /* 11-06 20:44 用户三扫令「上轻微」:-3.5 半 px 3x 量化不稳→整 -4 免量化 */
   width: 0; height: 0;
   border-top: 3px solid transparent; border-bottom: 3px solid transparent;
   border-left: 5px solid var(--cal-accent);
