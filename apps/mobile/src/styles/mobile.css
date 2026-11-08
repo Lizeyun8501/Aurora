@@ -1136,6 +1136,21 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 }
 .slash-label { font-size: 13px; color: var(--text-primary); }
 
+/* ===== E27 树拖动可视 ===== */
+.nt-row.dragging { opacity: .45; }
+.nt-row.drag-over { background: var(--brand-soft); border-radius: 8px; box-shadow: inset 0 0 0 2px var(--brand); }
+.tree-drag-tip { position: sticky; top: 0; z-index: 5; background: var(--brand); color: #fff; font-size: 12px; padding: 6px 12px; border-radius: 8px; margin-bottom: 6px; }
+
+/* ===== E27（TA 23:16）: 长按上下文菜单/删除确认 sheet ===== */
+.ctx-sheet-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, 0.35); display: flex; align-items: flex-end; animation: fadeIn .12s; }
+.ctx-sheet { width: 100%; background: var(--bg-primary); border-radius: 16px 16px 0 0; padding: 12px 12px calc(12px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 6px; max-height: 60vh; overflow-y: auto; animation: sheetUp .2s cubic-bezier(.2, .9, .3, 1); }
+@keyframes sheetUp { from { transform: translateY(40px); opacity: .4; } to { transform: translateY(0); opacity: 1; } }
+.ctx-sheet-title { font-size: 14px; font-weight: 600; color: var(--text-primary); padding: 4px 8px 8px; }
+.ctx-item { display: flex; align-items: center; gap: 8px; padding: 13px 14px; border: none; background: var(--bg-secondary); border-radius: 12px; font-size: 14px; color: var(--text-primary); cursor: pointer; text-align: left; }
+.ctx-item:active { background: var(--brand-soft); }
+.ctx-item.danger { color: #dc2626; }
+.ctx-cancel { color: var(--text-secondary); }
+
 /* ===== E25（TA 17:32）: 导出保存位置 ===== */
 .export-dir-row { display: flex; align-items: center; gap: 8px; padding: 10px 16px; }
 .export-dir-label { flex: 1; font-size: 12px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

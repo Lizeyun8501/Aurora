@@ -207,6 +207,16 @@ function saveList<T>(k: string, v: T[]) {
 const K_FAVS = 'aurora.favs';
 const K_RECENT = 'aurora.recent';
 const K_TRASH = 'aurora.trash';
+/** E27 目录级别 overlay（TA 23:16）: 0=顶级;>0 大纲层级（缩进显示）——
+ * localStorage 覆盖层（同 icon/title/order 惯例,Rust 元数据表落地后迁移）。 */
+const levelKey = (id: string) => `aurora.level.${id}`;
+function getLevelOverlay(id: string): number {
+  try { return Math.max(0, Math.min(3, Number(localStorage.getItem(levelKey(id)) ?? 0) || 0)); } catch { return 0; }
+}
+function setLevelOverlay(id: string, lv: number) {
+  try { localStorage.setItem(levelKey(id), String(Math.max(0, Math.min(3, lv)))); } catch { /* 防御 */ }
+}
+
 /** 手动排序 overlay（VIVO 原子笔记 v4·长按拖拽排序对标）——
  * core list_notes 返回 updated_at 序（3a8545 冻结面不可动）;
  * localStorage 覆盖层存 id 序列,非命中项按 core 序垫底。
@@ -459,7 +469,11 @@ export default function App() {
     } catch { /* 防御 */ }
     setFavs((prev) => { const n = prev.filter((x) => x !== id); saveList(K_FAVS, n); return n; });
     setRecents((prev) => { const n = prev.filter((r) => r.id !== id); saveList(K_RECENT, n); return n; });
-    platform.deleteNote(id);
+    // E27a: 删除失败可见化——假成功是「无法删除」观感最大嫌疑（E15 share reject 吞病同源）
+    if (!platform.deleteNote(id)) {
+      showToast('删除失败（核心未删）——请重试');
+      return; // 失败=不进假成功链（trash/favs/recents 不动）
+    }
     snippetCache.delete(id);
   };
 
@@ -1140,10 +1154,11 @@ function initialTreePersisted(): TreeNodeMeta[] {
 }
 
 /** 文档树组件 — 展开折叠 + ＋新建子文档 + 孤儿笔记收入 + E21 图标更换。 */
-function NodeTree({ notes, onOpen, showToast }: {
+function NodeTree({ notes, onOpen, showToast, onSoftDelete }: {
   notes: NoteSummary[];
   onOpen: (id: string, title: string) => void;
   showToast: (m: string) => void;
+  onSoftDelete: (id: string, title: string) => void;
 }) {
   // E21: 图标选择器（sheet: 全集 16 格;选中落 overlay 持久,树行即时刷新）
   const [pick, setPick] = useState<{ id: string; kind: 'book' | 'doc' } | null>(null);
@@ -1161,6 +1176,75 @@ function NodeTree({ notes, onOpen, showToast }: {
     return t.length ? t : initialTreePersisted();
   });
   const persist = (t: TreeNodeMeta[]) => { saveTree(t); setTree(t); };
+  // ===== E27（TA 23:16）: 树节点长按——上下文菜单/拖动移父/升降级 =====
+  const [ctxId, setCtxId] = useState<string | null>(null);
+  const [treeDrag, setTreeDrag] = useState<string | null>(null); // 拖动节点 id
+  const [treeDragOver, setTreeDragOver] = useState<string | null>(null); // 落点行 id
+  const press = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ctxNode = tree.find((t) => t.id === ctxId) ?? null;
+
+  const siblings = (pid: string | null) => tree.filter((t) => t.parentId === pid);
+  /** 移节点到 target 行的父下、target 行后一位（拖动=移动+换父——层级变换一次覆盖）。 */
+  const moveNode = (dragId: string, targetId: string) => {
+    const drag = tree.find((t) => t.id === dragId);
+    const target = tree.find((t) => t.id === targetId);
+    if (!drag || !target || dragId === targetId) return;
+    // 祖先环防: target 是 drag 的后代→拒（自吞树）
+    let anc: string | null = target.parentId;
+    while (anc) { if (anc === dragId) { showToast('不能移到自己的子节点下'); return; } anc = tree.find((t) => t.id === anc)?.parentId ?? null; }
+    const newParent = target.kind === 'book' ? target.id : target.parentId;
+    if (drag.parentId === newParent && treeDragOver === dragId) return; // 同位免动
+    const rest = tree.filter((t) => t.id !== dragId);
+    const ti = rest.findIndex((t) => t.id === targetId);
+    const moved = { ...drag, parentId: newParent };
+    rest.splice(ti + 1, 0, moved);
+    persist(rest);
+    showToast('已移动');
+  };
+  /** 升一级: 挂到原父的父下（原父同级后）。顶级/book 无法升。 */
+  const levelUp = (id: string) => {
+    const n = tree.find((t) => t.id === id);
+    if (!n || !n.parentId) { showToast('已是顶级'); return; }
+    const parent = tree.find((t) => t.id === n.parentId);
+    if (!parent) { showToast('已是顶级'); return; }
+    if (parent.kind === 'book' && !parent.parentId) {
+      // 父是顶级笔记本→升为顶级 book? doc 不能成 book——语义边界: 移为顶级孤儿 doc 不合理,拒
+      showToast('已是最上层（父为顶级笔记本）');
+      return;
+    }
+    const rest = tree.filter((t) => t.id !== id);
+    const pi = rest.findIndex((t) => t.id === parent.id);
+    rest.splice(pi + 1, 0, { ...n, parentId: parent.parentId });
+    persist(rest);
+    showToast('已升一级');
+  };
+  /** 降一级: 挂到前一个同级节点下（成其末子）。无前同级→拒。 */
+  const levelDown = (id: string) => {
+    const n = tree.find((t) => t.id === id);
+    if (!n) return;
+    const sibs = siblings(n.parentId).filter((t) => t.id !== id);
+    const idx = tree.findIndex((t) => t.id === id);
+    const prevSame = [...tree.slice(0, idx)].reverse().find((t) => t.parentId === n.parentId && t.id !== id);
+    if (!prevSame) { showToast('前面没有同级节点可挂靠'); return; }
+    if (prevSame.kind !== 'book' && prevSame.id === id) return;
+    const rest = tree.filter((t) => t.id !== id);
+    rest.push({ ...n, parentId: prevSame.id });
+    persist(rest);
+    showToast(`已挂到「${prevSame.kind === 'book' ? prevSame.title : getTitleOverlay(prevSame.id) || prevSame.title}」下`);
+  };
+  /** 删除: doc→软删（回收站）+摘树;book→摘树（子升孤儿）。 */
+  const removeNode = (id: string) => {
+    const n = tree.find((t) => t.id === id);
+    if (!n) return;
+    persist(tree.filter((t) => t.id !== id));
+    if (n.kind === 'doc') {
+      onSoftDelete(n.id, displayTitle(n));
+      showToast('已移入回收站');
+    } else {
+      showToast('笔记本已移除（子笔记转入未入树区）');
+    }
+  };
+
   const [open, setOpen] = useState<Set<string>>(() => new Set(loadTree().filter((x) => x.kind === 'book').map((x) => x.id)));
 
   const toggle = (id: string) =>
@@ -1195,7 +1279,29 @@ function NodeTree({ notes, onOpen, showToast }: {
     const isOpen = open.has(t.id);
     return (
       <React.Fragment key={t.id}>
-        <div className={`nt-row ${t.kind === 'book' ? 'nt-book' : ''}`} style={{ paddingLeft: 8 + depth * 18 }}>
+        <div
+          className={`nt-row ${t.kind === 'book' ? 'nt-book' : ''} ${treeDrag === t.id ? 'dragging' : ''} ${treeDragOver === t.id && treeDrag && treeDrag !== t.id ? 'drag-over' : ''}`}
+          style={{ paddingLeft: 8 + depth * 18 }}
+          data-node-id={t.id}
+          onTouchStart={(e) => {
+            if (treeDrag) return; // 拖动态不加新长按
+            if (press.current) clearTimeout(press.current);
+            press.current = setTimeout(() => { setCtxId(t.id); }, 400);
+          }}
+          onTouchMove={() => {
+            if (press.current) { clearTimeout(press.current); press.current = null; }
+            if (treeDrag && treeDrag !== t.id) setTreeDragOver(t.id);
+          }}
+          onTouchEnd={(e) => {
+            if (press.current) { clearTimeout(press.current); press.current = null; }
+            // E27: 长按刚弹菜单——阻合成 click 穿 backdrop 秒关（touchend preventDefault 阻 click 合成）
+            if (ctxId) { e.preventDefault(); return; }
+            if (treeDrag) {
+              if (treeDragOver && treeDragOver !== treeDrag) moveNode(treeDrag, treeDragOver);
+              setTreeDrag(null); setTreeDragOver(null);
+            }
+          }}
+        >
           {hasKids || t.kind === 'book' ? (
             <button className="nt-arrow" onClick={() => toggle(t.id)} aria-label={isOpen ? '折叠' : '展开'}>{isOpen ? '▾' : '▸'}</button>
           ) : <span className="nt-arrow nt-arrow-ph" />}
@@ -1215,6 +1321,7 @@ function NodeTree({ notes, onOpen, showToast }: {
 
   return (
     <div>
+      {treeDrag && <div className="tree-drag-tip">拖动中——移到目标行松手（落点行即新位置/新层级）</div>}
       {tree.filter((t) => t.kind === 'book').map((b) => row(b, 0))}
       <button className="btn btn-text" style={{ marginTop: 4 }} onClick={() => {
         const id = `b${Date.now()}`;
@@ -1236,6 +1343,23 @@ function NodeTree({ notes, onOpen, showToast }: {
             </div>
           ))}
         </>
+      )}
+
+      {/* E27（TA 23:16）: 树节点长按菜单——删除/换图标/升降级/拖动排序 */}
+      {ctxNode && (
+        <div className="ctx-sheet-backdrop" onClick={() => setCtxId(null)}>
+          <div className="ctx-sheet" role="menu" aria-label="节点操作" onClick={(e) => e.stopPropagation()}>
+            <div className="ctx-sheet-title">
+              {ctxNode.kind === 'book' ? '📁' : '📄'} {displayTitle(ctxNode)}
+            </div>
+            <button className="ctx-item danger" onClick={() => { setCtxId(null); removeNode(ctxNode.id); }}>🗑 删除{ctxNode.kind === 'book' ? '笔记本（子笔记转未入树区）' : '（移入回收站）'}</button>
+            <button className="ctx-item" onClick={() => { setCtxId(null); onPickIcon(ctxNode.id, ctxNode.kind); }}>🎨 更换图标</button>
+            <button className="ctx-item" onClick={() => { setCtxId(null); levelUp(ctxNode.id); }}>↖ 升一级</button>
+            <button className="ctx-item" onClick={() => { setCtxId(null); levelDown(ctxNode.id); }}>↘ 降一级</button>
+            <button className="ctx-item" onClick={() => { setCtxId(null); setTreeDrag(ctxNode.id); showToast('拖到目标行松手（换位置/换层级）'); }}>⇅ 拖动排序</button>
+            <button className="ctx-item ctx-cancel" onClick={() => setCtxId(null)}>取消</button>
+          </div>
+        </div>
       )}
 
       {/* E21 图标选择器 sheet: 16 格全集（book/doc 8+8）;点击即换+toast */}
@@ -1281,6 +1405,10 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
   const [mode, setMode] = useState<'tree' | 'list'>('tree');
   /** v4 长按拖拽排序（VIVO 原子笔记对标）: 拖起 id / 落点索引 / 长按定时器 / 手动序 overlay。 */
   const [dragId, setDragId] = useState<string | null>(null);
+  // E27（TA 23:16）: 长按上下文菜单——删除/换图标/升降级/拖动排序
+  const [ctxId, setCtxId] = useState<string | null>(null);
+  const [ctxIconPick, setCtxIconPick] = useState(false); // 换图标宫格展开态
+  const [uiVer, setUiVer] = useState(0); // overlay（level/icon）变更 bump——重渲染
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [order, setOrder] = useState<string[]>(() => loadOrder());
@@ -1308,7 +1436,7 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
           <span style={{ fontSize: 20, fontWeight: 700 }}>文档</span>
           {modeSeg}
         </div>
-        <NodeTree notes={notes} onOpen={onOpen} showToast={showToast} />
+        <NodeTree notes={notes} onOpen={onOpen} showToast={showToast} onSoftDelete={onSoftDelete} />
       </div>
     );
   }
@@ -1317,6 +1445,8 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
   const shown = query.trim()
     ? notes.filter((n) => n.title.includes(query.trim()))
     : ordered;
+  // E27: ctxNote 在 shown 后求值（声明序）
+  const ctxNote = ctxId ? shown.find((n) => n.id === ctxId) ?? notes.find((n) => n.id === ctxId) : null;
 
   const onMove = (e: React.TouchEvent, id: string) => {
     if (!cardTouch.current) return;
@@ -1329,7 +1459,8 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
   const onCardTouchStart = (e: React.TouchEvent, id: string) => {
     cardTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     if (pressTimer.current) clearTimeout(pressTimer.current);
-    pressTimer.current = setTimeout(() => { setDragId(id); showToast('拖动调整顺序'); }, 350);
+    // E27: 长按=弹上下文菜单（拖动排序经菜单入口——VIVO 惯例;旧「长按直接拖」废止）
+    pressTimer.current = setTimeout(() => { setCtxId(id); setCtxIconPick(false); }, 400);
   };
   const onCardTouchMove = (e: React.TouchEvent, id: string, idx: number) => {
     if (!cardTouch.current) return;
@@ -1346,6 +1477,28 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
     }
     // 拖动态: 记落点
     if (dragId !== id) setDragOverIdx(idx);
+  };
+  /** E27 长按菜单操作。 */
+  const ctxStartDrag = (id: string) => { setCtxId(null); setCtxIconPick(false); setDragId(id); showToast('拖动到目标位置后松手'); };
+  const ctxLevel = (id: string, delta: number) => {
+    const cur = getLevelOverlay(id);
+    const next = Math.max(0, Math.min(3, cur + delta));
+    if (next === cur) { showToast(delta > 0 ? '已是最深层级' : '已是顶级'); return; }
+    setLevelOverlay(id, next);
+    setUiVer((v) => v + 1);
+    showToast(`层级: ${next === 0 ? '顶级' : `L${next}`}`);
+  };
+  const ctxDelete = (id: string, title: string) => {
+    setCtxId(null); setCtxIconPick(false);
+    onSoftDelete(id, title);
+    showToast('已移入回收站');
+  };
+  const ctxSetIcon = (id: string, iconId: string) => {
+    setIconDef(id, iconId);
+    setUiVer((v) => v + 1);
+    setCtxIconPick(false);
+    setCtxId(null);
+    showToast('图标已更换');
   };
   const onCardTouchEnd = () => {
     if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
@@ -1405,8 +1558,10 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
                 onOpen(n.id, n.title);
               }}
             >
-              <div className="note-card-body">
+              <div className="note-card-body" style={{ marginLeft: getLevelOverlay(n.id) * 24 }} data-ui-ver={uiVer}>
                 <div className="note-title">
+                  <VivoIcon def={getIconDef('doc', n.id)} size={20} />
+                  {' '}
                   {n.encryption === 'aes256gcm' && (
                     <span style={{ marginRight: 4 }} aria-label="已加密" title="加密笔记 — 锁定态搜索/导出不可见">🔒</span>
                   )}
@@ -1469,6 +1624,38 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* E27（TA 23:16）: 长按上下文菜单——底部 sheet: 删除/换图标/升降级/拖动排序 */}
+      {ctxNote && (
+        <div className="ctx-sheet-backdrop" onClick={() => { setCtxId(null); setCtxIconPick(false); }}>
+          <div className="ctx-sheet" role="menu" aria-label="笔记操作" onClick={(e) => e.stopPropagation()}>
+            <div className="ctx-sheet-title">{ctxNote.title || '未命名'}</div>
+            {!ctxIconPick ? (
+              <>
+                <button className="ctx-item" onClick={() => ctxDelete(ctxNote.id, ctxNote.title)}>🗑 删除（移入回收站）</button>
+                <button className="ctx-item" onClick={() => setCtxIconPick(true)}>🎨 更换图标</button>
+                <button className="ctx-item" onClick={() => ctxLevel(ctxNote.id, -1)}>↖ 升一级（减少缩进）</button>
+                <button className="ctx-item" onClick={() => ctxLevel(ctxNote.id, 1)}>↘ 降一级（增加缩进）</button>
+                <button className="ctx-item" onClick={() => ctxStartDrag(ctxNote.id)}>⇅ 拖动排序</button>
+                <button className="ctx-item ctx-cancel" onClick={() => { setCtxId(null); setCtxIconPick(false); }}>取消</button>
+              </>
+            ) : (
+              <>
+                <div className="ctx-sheet-title">选择图标</div>
+                <div className="vivo-icon-grid">
+                  {ALL_ICONS.map((ic) => (
+                    <button key={ic.id} className="vivo-icon-cell" title={ic.label} aria-label={ic.label}
+                      onClick={() => ctxSetIcon(ctxNote.id, ic.id)}>
+                      <VivoIcon def={ic} size={26} />
+                    </button>
+                  ))}
+                </div>
+                <button className="ctx-item ctx-cancel" onClick={() => setCtxIconPick(false)}>返回</button>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -1928,6 +2115,21 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
         />
       </div>
 
+      {/* E27a: 删除确认独立 sheet——脱离菜单开态（真机 backdrop 触摸竞态:菜单内嵌确认链断点防御） */}
+      {confirmDel && (
+        <div className="ctx-sheet-backdrop" onClick={() => setConfirmDel(false)}>
+          <div className="ctx-sheet" role="alertdialog" aria-label="删除确认" onClick={(e) => e.stopPropagation()}>
+            <div className="ctx-sheet-title">删除笔记「{docTitle || title || '未命名'}」？</div>
+            <div className="ctx-item" style={{ textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12, cursor: 'default' }}>移入回收站（30 天后自动清除）</div>
+            <button className="ctx-item danger" onClick={() => {
+              snippetCache.delete(noteId);
+              setConfirmDel(false);
+              onDeleted(); // 软删除 — 内容进回收站（失败已在 softDelete 可见化）
+            }}>确认删除</button>
+            <button className="ctx-item ctx-cancel" onClick={() => setConfirmDel(false)}>取消</button>
+          </div>
+        </div>
+      )}
       {menuOpen && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 65 }} onClick={() => setMenuOpen(false)} />
@@ -1973,18 +2175,9 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
             <button className="menu-item" onClick={() => { setSnapOpen(!snapOpen); setMenuOpen(false); }}>
               {I.note} 版本历史（时间机器）
             </button>
-            {confirmDel ? (
-              <button className="menu-item danger" onClick={() => {
-                snippetCache.delete(noteId);
-                onDeleted(); // 软删除 — 内容进回收站
-              }}>
-                {I.trash} 确认删除（移入回收站）
-              </button>
-            ) : (
-              <button className="menu-item danger" onClick={() => setConfirmDel(true)}>
-                {I.trash} 删除笔记
-              </button>
-            )}
+            <button className="menu-item danger" onClick={() => { setMenuOpen(false); setConfirmDel(true); }}>
+              {I.trash} 删除笔记
+            </button>
           </div>
         </>
       )}
