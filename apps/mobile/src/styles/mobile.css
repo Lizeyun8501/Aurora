@@ -606,6 +606,17 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   transform: translateY(-4px);
   pointer-events: none;
 }
+/* 11-08 22:01 ①: 周几条独立行——紧贴年月周日日程页签下,7 列 1fr 与 week-grid 同列。
+   margin-left 20 同步（cal-scroll-mode 下与刻度列/列头对齐——周几字正落每列中央）。 */
+.week-wd-strip {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  margin: 2px 0 0;
+}
+.view.cal-scroll-mode .week-wd-strip { margin-left: 20px; }
+.week-wd-strip span {
+  text-align: center; font-size: 11px; line-height: 1;
+  color: var(--text-tertiary); padding: 4px 0 2px;
+}
 .week-grid {
   display: grid; grid-template-columns: repeat(7, 1fr);
   gap: 4px; margin-top: 8px;
@@ -619,7 +630,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
    ②今日=accent 红字粗（深色 #F08A8A 抬亮,同月历暗节红）
    ③选中=类月历 sel 描框（accent 1px radius8）+底线加粗+中央 V 内凹三角。 */
 /* 11-04 19:51 ①: head min-height 54——原 ~40px 容不下 42×48 框,下边越界被 day-axis 顶部盖住=「下边框没有线」。 */
-.week-col-head { border: none; outline: none; background: transparent; min-height: 68px; /* 11-06 19:38 ②: 60→68 容 lunar mt10 出框 */ }
+.week-col-head { border: none; outline: none; background: transparent; min-height: 52px; /* 11-08 22:01 ②: 68→52——wd 上移后两行(num+lunar) */ }
 .week-col, .week-col:focus, .week-col-head:focus { outline: none; }
 .week-col.today .week-num { color: var(--cal-accent); font-weight: 700; }
 [data-theme='dark'] .week-col.today .week-num { color: #F08A8A; }
@@ -640,7 +651,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 .week-wd { font-size: 11px; color: var(--text-tertiary); }
 /* 11-04 23:31 ②: 周条农历小字（同月历 cal-lunar 观感）。 */
-.week-lunar { font-size: 8px; color: var(--text-tertiary); letter-spacing: -0.1px; line-height: 1; margin-top: 10px; /* 11-06 19:38 ②: 推出 sel 框底（48 框 top4 底52,mt10 起 52=框底）——农历净露 */ }
+.week-lunar { font-size: 8px; color: var(--text-tertiary); letter-spacing: -0.1px; line-height: 1; margin-top: 2px; /* 11-08 22:01 ②: 10→2 撤「推出框底」——农历并入 sel 框（用户令）;框 48: top4+num21+mt2+lunar8=底35<52 富余 */ }
 .week-lunar.fest { color: var(--cal-accent); }
 [data-theme='dark'] .week-lunar.fest { color: #F08A8A; }
 .week-num { font-size: 15px; font-weight: 600; color: var(--text-primary); }

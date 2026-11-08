@@ -80,6 +80,9 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   const yearTouch = useRef<{ x: number; y: number } | null>(null);
   /* 11-03 08:31 报障①: 月页签无滑动翻月（用户滑了无反应→「今」永不出现）——补双通道绑（pointer+touchend 兜底,同年页模式）。 */
   const monthTouch = useRef<{ x: number; y: number } | null>(null);
+  /* 11-08 22:01 ③: 周/日页签左右滑动翻页（用户令）——周±7 天/日±1 天。
+     水平位移>48 且 |dx|>|dy|×1.2（滤上下滚轴手势）;左滑=前进,右滑=回退（同翻页自然语义）。 */
+  const calSwipe = useRef<{ x: number; y: number } | null>(null);
   /** DK-CALENDAR-04 任务 3: 列表页筛选+搜索。 */
   const [listFilter, setListFilter] = useState<'all' | 'linked' | 'birthday'>('all');
   const [listQuery, setListQuery] = useState('');
@@ -247,7 +250,36 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   })();
 
   return (
-    <div className={'view cal-fullview' + (mode === 'year' ? ' cal-year-fill' : '') + (mode === 'week' || mode === 'day' ? ' cal-scroll-mode' : '')}>
+    <div
+      className={'view cal-fullview' + (mode === 'year' ? ' cal-year-fill' : '') + (mode === 'week' || mode === 'day' ? ' cal-scroll-mode' : '')}
+      /* 11-08 22:01 ③: 周/日左右滑翻页——绑 view 容器（覆盖列头+轴全域;竖滚被 |dx|>|dy| 滤波滤除）。 */
+      onPointerDown={(e) => { if (mode === 'week' || mode === 'day') calSwipe.current = { x: e.clientX, y: e.clientY }; }}
+      onPointerUp={(e) => {
+        if (mode !== 'week' && mode !== 'day') return;
+        const t = calSwipe.current; if (!t) return;
+        calSwipe.current = null;
+        const dx = e.clientX - t.x, dy = e.clientY - t.y;
+        if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+          const step = mode === 'week' ? 7 : 1;
+          const d = new Date(`${selected}T00:00:00`); d.setDate(d.getDate() + (dx < 0 ? step : -step));
+          setSelected(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+        }
+      }}
+      onPointerCancel={() => { calSwipe.current = null; }}
+      onTouchEnd={(e) => {
+        /* 双通道兜底: pointer 流个别 ROM 被吞时 touchend 保底（同月页）。 */
+        if (mode !== 'week' && mode !== 'day') return;
+        const t = calSwipe.current; if (!t) return;
+        const tc = e.changedTouches[0]; if (!tc) return;
+        calSwipe.current = null;
+        const dx = tc.clientX - t.x, dy = tc.clientY - t.y;
+        if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+          const step = mode === 'week' ? 7 : 1;
+          const d = new Date(`${selected}T00:00:00`); d.setDate(d.getDate() + (dx < 0 ? step : -step));
+          setSelected(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+        }
+      }}
+    >
       <div className="card cal-card">
         <div className="cal-head">
           {/* 11-03 17:05 ④: 左右箭头已删——月/年变换统一上下滑（cal-grid/year-vivo 双通道滑绑）。 */}
@@ -320,7 +352,9 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
         )}
         {(mode === 'week' || mode === 'day') && (() => {
           /** DK-CALENDAR-04 任务 1: 周视图——7 天并排+当日实例色块列。
-           * 周界=selected 所在周一;列头点入切日视图。 */
+           * 周界=selected 所在周一;列头点入切日视图。
+           * 11-08 22:01 用户令: ①「日一二三四五六」行独立上移紧贴页签（原挤列头首行）;
+           * ②列头=数字+农历,sel 框含农历（原 48 框只罩 wd+num,农历特意推出框外——现并入）。 */
           const wStart = new Date(`${selected}T00:00:00`);
           /* 11-04 19:20 ②: 周日为首（同月历 v27.27 语义统一）。 */
           wStart.setDate(wStart.getDate() - wStart.getDay());
@@ -333,7 +367,12 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
           const pad = (n: number) => String(n).padStart(2, '0');
           const dKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
           return (
-            <div className="week-grid" key={dKey(wStart)}>
+            <>
+              {/* 周几条: 紧贴年月周日日程页签下,7 列与下方 week-grid 同列对齐（margin-left 同步 20）。 */}
+              <div className="week-wd-strip" aria-hidden="true" key={'ws-' + dKey(wStart)}>
+                {days.map((d, i) => <span key={dKey(d)}>{WD[i]}</span>)}
+              </div>
+              <div className="week-grid" key={'wg-' + dKey(wStart)}>
               {days.map((d, i) => {
                 const k = dKey(d);
                 const insts = expandAll(events, new Date(`${k}T00:00:00`), new Date(`${k}T23:59:59`));
@@ -345,15 +384,16 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                     <button className="week-col-head" aria-label={`查看 ${k}`}
                       /* 11-05 12:16 ①: 点日→跳对应日页签。 */
                       onClick={() => { setSelected(k); setMode('day'); }}>
-                      <span className="week-wd">{WD[i]}</span>
                       <span className="week-num">{d.getDate()}</span>
-                      {/* 11-04 23:31 ②: 周条日期带农历（同月历 lunarSub——用 d 实年月防跨月错）。 */}
+                      {/* 11-04 23:31 ②: 周条日期带农历（同月历 lunarSub——用 d 实年月防跨月错）。
+                          11-08 22:01 ②: wd 上移后列头两行,农历入 sel 框（mt 10→2 撤「推出框底」）。 */}
                       <span className={`week-lunar${lunarSub(d.getDate(), d.getFullYear(), d.getMonth()).isStat ? ' fest' : ''}`}>{lunarSub(d.getDate(), d.getFullYear(), d.getMonth()).sub}</span>
                     </button>
                   </div>
                 );
               })}
-            </div>
+              </div>
+            </>
           );
         })()}
         {mode === 'year' && (() => {
@@ -575,7 +615,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
 
         {/* 11-03 19:52 ④: 周页签下方=选中日 24 小时任务轴（同日页——去宜忌聚合）。 */}
         {mode === 'day' && (
-          <div className="day-axis" key={'axis-' + selected}>
+          <div className="day-axis" key={'axis-' + selected} aria-label={`日轴 ${selected}`}>
           {/* 11-04 09:4x 多周 BUG 根修: 原裸 key={selected} 与兄弟 week-grid key={dKey(wStart)} 在 selected=周一时撞串——React 同 key reconcile 错乱致 DOM 错挂+多份 week-grid 残留（真机「多个周显示」）。前缀消撞。 */}
             {/* 全天区：任务（due 无时刻）+ 全天事件 */}
             {(() => {
