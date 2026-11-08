@@ -552,7 +552,7 @@ function FloatingMenu({ view }: { view: EditorView | null }) {
       {btn('I', '斜体', () => runCmd(view, toggleMark(auroraSchema.marks.em)))}
       {btn('H2', '标题', () =>
         runCmd(view, setBlockType(auroraSchema.nodes.heading, { level: 2 })))}
-      {btn('</>', '代码', () =>
+      {btn('</>', '行内代码（把选中文字标成代码样式）', () =>
         runCmd(view, toggleMark(auroraSchema.marks.code)))}
       {/* 原子笔记对标: 选中即高亮（默认黄） */}
       <button
@@ -709,7 +709,10 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
   }, [pop, styleTab]);
   const FONT_COLORS = ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#2563eb', '#7c3aed', '#475569'];
   const HL_COLORS = ['#fef08a', '#bbf7d0', '#bae6fd', '#fbcfe8', '#fed7aa', '#e9d5ff'];
-  const SIZES: Array<[string, string]> = [['14', 'S'], ['17', 'M'], ['20', 'L'], ['24', 'XL']];
+  // E26-③（TA 22:13）: 字号数字级——S/M/L/XL 抽象档改数字直接可读（12-30 七级）
+  const SIZES: Array<[string, string]> = [
+    ['12', '12'], ['14', '14'], ['16', '16'], ['18', '18'], ['20', '20'], ['24', '24'], ['30', '30'],
+  ];
   /**
    * E4 键盘让位（TA 13:53 裁决）: 弹面板→隐藏输入法（面板向下弹获全空间）;
    * 关面板→编辑器曾聚焦则回焦恢复输入法。防重=面板已开不重复 blur。

@@ -913,7 +913,9 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 
 .tb-btn { flex: 0 0 auto; min-width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 14px; cursor: pointer; }
-.tb-btn:active { background: var(--bg-secondary); }
+/* E26-④（TA 22:13）: :active 瞬态背景删——移动 WebView touch 后 :active 常不释放=阴影残留;
+ * 语义态 .active（格式已应用）保留。 */
+.tb-btn:active { background: transparent; }
 .tb-btn.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
 .tb-sep { flex: 0 0 1px; height: 20px; margin: 0 6px; background: var(--border); }
 
@@ -947,7 +949,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   background: var(--bg-secondary); color: var(--text-secondary);
   font-size: 12px; cursor: pointer;
 }
-.tb-size:active { background: var(--brand-soft); color: var(--brand); }
+.tb-size:active { background: transparent; color: inherit; } /* E26-④: 瞬态清 */
 
 /* Aa 面板预设样式块（原子笔记·样式预设渲染态） */
 span.tag-mark::before { content: '‹'; color: var(--text-tertiary); margin-right: 1px; }
@@ -994,7 +996,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   font-size: 11px; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
 }
-.tb-style-btn:active { border-color: var(--brand); color: var(--brand); }
+.tb-style-btn:active { border-color: inherit; color: inherit; } /* E26-④: 瞬态阴影清 */
 .tb-style-btn.blockquote-prev { border-left: 3px solid #dc2626; }
 .tb-style-btn.tag-prev { text-decoration: underline; font-weight: 600; }
 .tb-style-btn.tag-prev::before { content: '‹'; }
@@ -1018,7 +1020,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 }
 /* E9: 钮群等分呼吸（图1 第一行 6 列等宽——fmt 行/插入 grid 统一 flex:1） */
 .tb-fmt-row .tb-btn { min-width: 36px; flex: 1; height: 40px; border-radius: 10px; font-size: 15px; }
-.tb-style-grid-btns { grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.tb-style-grid-btns { grid-template-columns: repeat(4, 1fr); gap: 6px; } /* E26-①(TA 22:13): 14 项 6 列溢出→4 列×4 行全显（禁横滑）;面板 max-height 竖滚已备 */
 .tb-style-grid-btns .tb-style-btn { height: 40px; border-radius: 10px; font-size: 15px; }
 
 /* Aa 面板 v2: tab 头+符号 grid（原子笔记「符号」tab 对标） */
@@ -1530,7 +1532,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   border: none; background: transparent; border-radius: 6px;
   font-size: 14px; color: var(--text-primary); cursor: pointer;
 }
-.floating-menu button:active { background: var(--bg-soft, var(--bg-secondary)); }
+.floating-menu button:active { background: transparent; } /* E26-④: 同病面瞬态清 */
 .floating-menu button.active { color: var(--brand); font-weight: 600; }
 
 /* V26 M2/DK-06: 预计 vs 实际徽标（周回顾） */

@@ -159,7 +159,7 @@ async function ensureAaOpen(page, tab) {
     s.removeAllRanges();
     s.addRange(range);
   });
-  await page.click('.tb-fmt-panel .tb-size >> nth=2'); // L=20（Aa「格式」tab 内字号）
+  await page.click('.tb-fmt-panel .tb-size:has-text("20")'); // E26 数字级: 点「20」档（旧 nth=2=L 语义已废——断言随语义版本化）
   await page.waitForTimeout(300);
   const sizeHtml = await page.evaluate(() => document.querySelector('.ProseMirror p span[style*="font-size"]')?.style.fontSize || 'NONE');
   record('③ 字号档 L', sizeHtml === '20px', `span字号=${sizeHtml}`);
