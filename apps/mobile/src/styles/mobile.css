@@ -585,18 +585,25 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   font-weight: 600;
 }
 .week-ev.task { background: var(--brand-soft); color: var(--cal-accent); }
+/* 11-08 08:41 ①: ::after border 三角退役——DPR3 光栅量化黑洞(0.1px 调整被物理px取整吞掉,
+   -3.5 与 -3.6 真机渲染全同)根除。三角改 SVG 矢量(JSX 内嵌 .now-tri):
+   - 矢量 path AA 栅格化: 顶点亚像素连续,dy 小数→AA 覆盖度渐变,0.1px 级微调真实生效;
+   - 几何链(Playwright 实测标定): svg absolute 包含块=线盒 padding box(线 border-top 2px 下沿),
+     triTop = 线盒顶 + 2 + dy;三角心 = triTop + 3;线心 = 线盒顶 + 1 → **对心 dy = -4**
+     (DPR3 真机 -4×3=-12 物理 px 天然整数,量化零损耗);
+   - 后续微调只改 dy 一个常数(下移 0.4 → -4.4);真机残余系统差(旧 border 实证 +1 物理行):
+     PIL 扫真机截图一次定补偿并入 dy,终身稳定不再试错。 */
 .week-now {
   /* 11-06 12:19 ②③: 挂 week-days 直子——贯整周 7 列（原仅当天列内）;右端小三角（偏小一点点）。 */
   position: absolute; left: 0; right: 0; height: 0;
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
-.week-now::after {
-  /* 11-06 19:58 真机像素实证（PIL 扫用户截图）: 真机三角竖心比线心低 ~1px（WebView 子像素渲染偏差,web Playwright 无此偏）。
-     修: 回 5×6 好看尺寸+top -3 真机补偿——真机心=线心,web 心=线顶（0）。 */
-  content: ''; position: absolute; left: 0; right: auto; top: -3.6px; /* 11-07 21:33 用户令: 月页签红三角下移量 0.5→0.4px（-4 基→-3.6）;left 0 保持 */
-  width: 0; height: 0;
-  border-top: 3px solid transparent; border-bottom: 3px solid transparent;
-  border-left: 5px solid var(--cal-accent);
+.now-tri {
+  /* 11-08 08:41: SVG 三角通用定位——left 0 对齐线左(旧 left 0 语义保持);
+     dy=-4 对心(几何链见上段,Playwright 实测: 心=线心 精确成立);亚像素微调唯一旋钮。 */
+  position: absolute; left: 0; top: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
 }
 .week-grid {
   display: grid; grid-template-columns: repeat(7, 1fr);
@@ -1655,16 +1662,10 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .day-axis-hours { position: relative; max-height: 52vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .day-axis-row { min-height: 48px; }
 /* 11-05 00:09: left 46→56 对齐时刻列（52 列宽+4 行 padding——横线与左侧标注对齐）。 */
+/* 11-08 08:41 ①: ::before border 三角退役（同周页）——SVG .now-tri 接管,--tri-dy DPR 反算。 */
 .day-now-line {
   position: absolute; left: 26px; right: 4px; height: 0; /* 11-06 18:47 ②: time 列 26 同步;11-05 19:06 原 46 */
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
-}
-.day-now-line::before {
-  /* 11-06 19:58 真机像素实证: 同周页——回 5×6+top -3 真机补偿（真机心=线心）。 */
-  content: ''; position: absolute; left: 0; right: auto; top: -3.4px; /* 11-07 21:33 用户令: 日页仍偏下→再上移一点点（-3→-3.4,上移 0.4px）;left 0 保持 */
-  width: 0; height: 0;
-  border-top: 3px solid transparent; border-bottom: 3px solid transparent;
-  border-left: 5px solid var(--cal-accent);
 }
 /* 11-04 22:14: 红线挂实时时间标签——精确到分（22:13 可读,不靠猜刻度）。 */
 .day-now-time {

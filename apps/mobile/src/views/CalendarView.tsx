@@ -94,6 +94,10 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('focus', refresh); };
   }, []);
 
+  /* 11-08 08:41 ①注: now 三角定位无需 JS——dy css 常数直写(.now-tri): DPR3 真机 -2×3=-6 物理px
+     天然整数(量化零损耗);SVG path AA 栅格化亚像素连续,0.1px 级 dy 微调真实生效(旧 border 三角
+     top 小数被 paint 取整吞掉的黑洞根除)。残余系统差(旧 border 实证 +1 物理行): PIL 扫一次补 dy。 */
+
   const view = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   /* 11-02 23:33 用户指令: 五页签滑离当前时段→右下「今」透明圆（加号上方并排）——一点全归位。
      显示条件按模式: 年=yearDelta 残;月=monthOffset 翻走;周/日=selected 非 today（view 由 selected 驱动）;日程=筛选/搜索态。 */
@@ -545,7 +549,14 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 <span className="wt-24"><i>24</i></span>
               </div>
               <div className="week-days">
-                <span className="week-now" aria-hidden="true" style={{ top: `${(48 + ((nowH * 60 + nowM) * 48) / 60).toFixed(1)}px` }} />
+                {/* 11-08 08:41: now 三角 SVG 矢量版——border 三角 DPR3 光栅量化(0.1px 调整失效)根除;
+                    位移走 --tri-dy(CSS 变量,JS 按 devicePixelRatio 反算物理px对齐,全 DPR 渲染一致)。
+                    viewBox 5×6 同旧 border 5×6 视觉;理论初值三角身[-2,+4]心=线心(border-top 2px 心=1)。 */}
+                <span className="week-now" aria-hidden="true" style={{ top: `${(48 + ((nowH * 60 + nowM) * 48) / 60).toFixed(1)}px` }}>
+                  <svg className="now-tri" width="5" height="6" viewBox="0 0 5 6" aria-hidden="true">
+                    <path d="M0 0 L5 3 L0 6 Z" fill="var(--cal-accent)" />
+                  </svg>
+                </span>
                 {days2.map((d, i) => (
                   <div key={kOf(d)} className="week-day-col">
                     {blocks.filter((b) => b.col === i).map((b) => (
@@ -591,8 +602,11 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             <div className="day-axis-hours" ref={axisHoursRef} data-selected={selected}>
               {selected === todayStr && (
                 <span className="day-now-line" aria-hidden="true"
-                  /* 11-06 12:19: 顶空格 +48 后线位（原 23:37 纯公式,现 y 全域平移）。 */
+                  /* 11-06 12:19: 顶空格 +48 后线位（原 23:37 纯公式,现 y 全域平移）;11-08 08:41 三角 SVG 矢量版(同周页,--tri-dy DPR 反算)。 */
                   style={{ top: `${(48 + (nowMin * 48) / 60).toFixed(1)}px` }}>
+                  <svg className="now-tri" width="5" height="6" viewBox="0 0 5 6" aria-hidden="true">
+                    <path d="M0 0 L5 3 L0 6 Z" fill="var(--cal-accent)" />
+                  </svg>
                   <i className="day-now-time">{String(Math.floor(nowMin / 60)).padStart(2, '0')}:{String(nowMin % 60).padStart(2, '0')}</i>
                 </span>
               )}
