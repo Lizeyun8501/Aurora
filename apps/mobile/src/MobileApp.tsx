@@ -364,6 +364,8 @@ export default function App() {
   const [view, setView] = useState<ViewId>('today'); // V19: TodayView 默认启动页
   /** 2026-10-28 周条→日历联动：待跳转选中日期（YYYY-MM-DD），CalendarView 挂载时消费 */
   const [calendarInit, setCalendarInit] = useState<string | null>(null);
+  /** 11-08 23:10 用户令: 待办单击跳转——日历直落 day 页签（挂载时消费）。 */
+  const [calendarModeInit, setCalendarModeInit] = useState<'day' | null>(null);
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureDue, setCaptureDue] = useState<string | undefined>(undefined); // 日历入口预置日期
@@ -528,6 +530,7 @@ export default function App() {
                 onOpenNote={openNote}
                 onNewTask={(due) => { setCaptureDue(due); setCaptureOpen(true); }}
                 initialSelected={calendarInit ?? undefined}
+                initialMode={calendarModeInit ?? undefined}
               />
             )}
             {view === 'agent' && <AgentView theme={theme} />}
@@ -537,7 +540,13 @@ export default function App() {
             {view === 'favorites' && <FavoritesView favs={favs} onOpen={openNote} />}
             {view === 'recent' && <RecentView recents={recents} onOpen={openNote} />}
             {view === 'tasks' && (
-              <TasksView tasks={tasks} onTasks={updateTasks} showToast={showToast} />
+              <TasksView tasks={tasks} onTasks={updateTasks} showToast={showToast}
+                /* 11-08 23:10 用户令: 单击已有待办→跳日历对应日 day 页签（due 缺省=今日）。 */
+                onOpenTask={(t) => {
+                  const n = new Date();
+                  const ds = t.due ?? `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+                  setCalendarInit(ds); setCalendarModeInit('day'); goto('calendar');
+                }} />
             )}
             {view === 'diary' && <DiaryView onOpen={openNote} showToast={showToast} />}
             {view === 'trash' && (
@@ -2246,13 +2255,17 @@ function TrashView({ trash, onTrash, showToast }: {
   );
 }
 
-function TasksView({ tasks, onTasks, showToast }: {
+function TasksView({ tasks, onTasks, showToast, onOpenTask }: {
   tasks: Task[];
   onTasks: (ts: Task[]) => void;
   showToast: (m: string) => void;
+  /** 11-08 23:10 用户令: 单击已有待办→跳转编辑（日历对应日 day 页签）。 */
+  onOpenTask?: (t: Task) => void;
 }) {
   const [filter, setFilter] = useState<'all' | 'open' | 'done'>('all');
   const [prioFilter, setPrioFilter] = useState<'all' | TaskPriority>('all');
+  /* 11-08 23:10 用户令: 长按 550ms 删除——touchmove(滑删手势)即取消;触发后置 fired 抑制松手 click 跳转。 */
+  const lp = useRef<{ timer: ReturnType<typeof setTimeout> | null; fired: boolean }>({ timer: null, fired: false });
   const open = tasks.filter((t) => t.status !== 'done');
   const done = tasks.filter((t) => t.status === 'done');
   const base = filter === 'all' ? tasks : filter === 'open' ? open : done;
@@ -2362,15 +2375,22 @@ function TasksView({ tasks, onTasks, showToast }: {
                   const subs = tasks.filter((st) => st.parentTaskId === t.id);
                   const subDone = subs.filter((st) => st.status === 'done').length;
                   return (
-                    <div key={t.id} className="task-item">
+                    <div key={t.id} className="task-item"
+                      /* 11-08 23:10 用户令: 单击=跳转编辑(日历对应日 day 页签),长按 550ms=删除。
+                         touchmove 立即取消长按(让位滑动/滚动手势);长按触发后 fired 抑制松手 click 双动作。 */
+                      onClick={() => { if (lp.current.fired) { lp.current.fired = false; return; } onOpenTask?.(t); }}
+                      onTouchStart={() => { lp.current.fired = false; lp.current.timer = setTimeout(() => { lp.current.fired = true; lp.current.timer = null; remove(t.id); }, 550); }}
+                      onTouchMove={() => { if (lp.current.timer) { clearTimeout(lp.current.timer); lp.current.timer = null; } }}
+                      onTouchEnd={() => { if (lp.current.timer) { clearTimeout(lp.current.timer); lp.current.timer = null; } }}
+                    >
                       <button
                         className={`task-check ${t.status === 'done' ? 'checked' : ''}`}
-                        onClick={() => toggle(t.id)}
+                        onClick={(e) => { e.stopPropagation(); toggle(t.id); }}
                         aria-label="完成"
                       >{I.check}</button>
                       {/* E17: 优先级色点（点击循环 low→normal→high） */}
                       <button className="task-prio-dot-btn" aria-label="优先级" title="切换优先级"
-                        onClick={() => cyclePrio(t.id)}>
+                        onClick={(e) => { e.stopPropagation(); cyclePrio(t.id); }}>
                         <span className="task-prio-dot" style={{ background: TASK_PRIO.find((p) => p.id === (t.priority ?? 'normal'))?.dot }} />
                       </button>
                       <div className="task-body">
@@ -2382,7 +2402,7 @@ function TasksView({ tasks, onTasks, showToast }: {
                           <span className="task-meta-time">{relativeTime(new Date(t.createdAt).toISOString())}</span>
                         </div>
                       </div>
-                      <button className="icon-btn" onClick={() => remove(t.id)} aria-label="删除任务">{I.x}</button>
+                      <button className="icon-btn" onClick={(e) => { e.stopPropagation(); remove(t.id); }} aria-label="删除任务">{I.x}</button>
                     </div>
                   );
                 })}

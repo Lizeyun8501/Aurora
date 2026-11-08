@@ -18,7 +18,7 @@ import type { CalEvent, ReminderSetting } from '../adapters/androidPlatform';
 import { expandAll, type EvInstance } from './repeatUtil';
 
 
-export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEvent, onOpenNote, onNewTask, initialSelected }: {
+export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEvent, onOpenNote, onNewTask, initialSelected, initialMode }: {
   tasks: Task[];
   /** DK-CALENDAR-02：日程事件（MobileApp 层注入）。 */
   events: CalEvent[];
@@ -28,6 +28,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   onNewTask: (due: string) => void;
   /** 2026-10-28 周条联动预选日期——跨月自动翻页（如 11-01 → 月历翻到 11 月） */
   initialSelected?: string;
+  /** 11-08 23:10 用户令: 待办单击跳转编辑——跳日历对应日 day 页签（仅挂载时消费一次）。 */
+  initialMode?: 'month' | 'week' | 'day' | 'list' | 'year';
 }) {
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -38,8 +40,9 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
     return (yy - now.getFullYear()) * 12 + (mm - 1 - now.getMonth());
   });
   const [selected, setSelected] = useState<string>(initialSelected ?? todayStr);
-  /** DK-CALENDAR-01 任务 2 + 04 四态：月/周/日/列表（年视图独立 mode 覆盖月）。 */
-  const [mode, setMode] = useState<'month' | 'week' | 'day' | 'list' | 'year'>('month');
+  /** DK-CALENDAR-01 任务 2 + 04 四态：月/周/日/列表（年视图独立 mode 覆盖月）。
+   * 11-08 23:10: initialMode——待办跳转直落 day 页签。 */
+  const [mode, setMode] = useState<'month' | 'week' | 'day' | 'list' | 'year'>(initialMode ?? 'month');
   /* 11-04 19:20 ①: 24h 轴滚动定位——周/日模式+换 selected 时滚到当前时段。
      11-06 17:29 ②: 红线居屏优先——滚到 now 上下文中心（容不下则 clamp 至少可见）,不再需要滑动找线。 */
   const axisHoursRef = useRef<HTMLDivElement | null>(null);
@@ -337,13 +340,10 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 >
                   <span className="cal-num">{d}</span>
                   {!isToday && <span className={`cal-lunar ${(ls.isStat || ls.sub.length > 2) && !ls.isWork ? 'fest' : ''}`}>{ls.isWork ? '班' : ls.sub}</span>}
-                  {/* DK-CALENDAR-02 任务 3：事件色点角标（has 点位被任务/笔记占——事件点独立行显色） */}
-                  {dayEventDots(d).length > 0 && (
-                    <span className="cal-ev-dots">
-                      {dayEventDots(d).map((c) => (
-                        <i key={c} className="cal-ev-dot" style={{ background: EV_COLORS[c] }} />
-                      ))}
-                    </span>
+                  {/* 11-08 23:10 用户令: 有日程或待办→仅一种颜色的单点（事件取其色 EV_COLORS[号],纯任务/笔记=accent 红）
+                      ——替换原 cal-ev-dots 多色点列+has::after 红点并列（「红点和另外一个并列显示有点怪」根除）。 */}
+                  {(dayEventDots(d).length > 0 || hasMark(d)) && (
+                    <i className="cal-day-dot" style={{ background: dayEventDots(d).length > 0 ? EV_COLORS[dayEventDots(d)[0]] : 'var(--cal-accent)' }} />
                   )}
                 </button>
               );

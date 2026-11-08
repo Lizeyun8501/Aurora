@@ -198,6 +198,8 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   display: flex; align-items: flex-start; gap: 10px;
   padding: 10px 4px; border-bottom: 1px solid var(--border);
   position: relative; touch-action: pan-y;
+  /* 11-08 23:10: 长按删除手势——禁系统长按文本选择菜单/呼出,防双弹。 */
+  -webkit-touch-callout: none; user-select: none; -webkit-user-select: none;
 }
 .task-item:last-child { border-bottom: none; }
 .task-check {
@@ -647,9 +649,9 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
    底线下实心闭环 accent 三角 16×8（原开口 V 填底色看不出三角——实心+加大+闭环）。 */
 .week-col.sel { position: relative; border: none; border-radius: 0; }
 .week-col.sel::before {
-  /* 11-08 22:19 用户令: 48→42 缩框（wd 上移后两行内容 35px,48 大空）+top 4→6
-     ——框底 6+42=48 < head 高 52: 下边线不再贴底被 week-axis 盖住（「下边线被覆盖不显示」根修）。 */
-  content: ''; position: absolute; left: 50%; top: 6px; transform: translateX(-50%);
+  /* 11-08 23:10 用户令: top 6→2 上移——框 2~44 心=23 ≈内容群(7~38)心 22.5,字居框中;
+     框底 44 < head 52 下边线露 8px。 */
+  content: ''; position: absolute; left: 50%; top: 2px; transform: translateX(-50%);
   width: 42px; height: 42px;
   border: 1px solid var(--cal-accent); border-radius: 10px;
   pointer-events: none;
@@ -1456,13 +1458,14 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   background: var(--brand); color: #fff; font-weight: 600;
   border-radius: 50%; width: 36px; margin: 0 auto;
 }
-.cal-day.has::after {
-  content: ''; position: absolute; bottom: 4px; left: 50%;
-  transform: translateX(-50%);
-  width: 4px; height: 4px; border-radius: 50%;
-  background: var(--brand);
+/* 11-08 23:10 用户令: has::after 红点退役——单点 .cal-day-dot 接管（JSX 内联色: 事件取其色,纯任务/笔记=accent）。
+   位置沿用旧 ::after（bottom 3 居中）;today 白点。 */
+.cal-day.has::after { content: none; }
+.cal-day-dot {
+  position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%);
+  width: 4px; height: 4px; border-radius: 50%; background: var(--cal-accent);
 }
-.cal-day.today.has::after { background: #fff; }
+.cal-day.today .cal-day-dot { background: #fff; }
 
 .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
