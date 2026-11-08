@@ -374,8 +374,8 @@ export default function App() {
   const [view, setView] = useState<ViewId>('today'); // V19: TodayView 默认启动页
   /** 2026-10-28 周条→日历联动：待跳转选中日期（YYYY-MM-DD），CalendarView 挂载时消费 */
   const [calendarInit, setCalendarInit] = useState<string | null>(null);
-  /** 11-08 23:10 用户令: 待办单击跳转——日历直落 day 页签（挂载时消费）。 */
-  const [calendarModeInit, setCalendarModeInit] = useState<'day' | null>(null);
+  /** 11-09 07:31 用户令: 待办单击→编辑弹窗（TaskEditSheet）。 */
+  const [editTask, setEditTask] = useState<Task | null>(null);
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureDue, setCaptureDue] = useState<string | undefined>(undefined); // 日历入口预置日期
@@ -544,7 +544,6 @@ export default function App() {
                 onOpenNote={openNote}
                 onNewTask={(due) => { setCaptureDue(due); setCaptureOpen(true); }}
                 initialSelected={calendarInit ?? undefined}
-                initialMode={calendarModeInit ?? undefined}
               />
             )}
             {view === 'agent' && <AgentView theme={theme} />}
@@ -555,12 +554,8 @@ export default function App() {
             {view === 'recent' && <RecentView recents={recents} onOpen={openNote} />}
             {view === 'tasks' && (
               <TasksView tasks={tasks} onTasks={updateTasks} showToast={showToast}
-                /* 11-08 23:10 用户令: 单击已有待办→跳日历对应日 day 页签（due 缺省=今日）。 */
-                onOpenTask={(t) => {
-                  const n = new Date();
-                  const ds = t.due ?? `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
-                  setCalendarInit(ds); setCalendarModeInit('day'); goto('calendar');
-                }} />
+                /* 11-09 07:31 用户令: 单击已有待办→弹出可编辑待办（非跳日历）。 */
+                onOpenTask={(t) => setEditTask(t)} />
             )}
             {view === 'diary' && <DiaryView onOpen={openNote} showToast={showToast} />}
             {view === 'trash' && (
@@ -602,6 +597,16 @@ export default function App() {
         <ConflictReviewPanel
           onClose={() => setConflictOpen(false)}
           onChanged={() => setSyncChangedAt(Date.now())}
+        />
+      )}
+
+      {/* 11-09 07:31 用户令: 待办单击→编辑弹窗。 */}
+      {editTask && (
+        <TaskEditSheet
+          task={editTask}
+          onClose={() => setEditTask(null)}
+          onSave={(t) => { updateTasks(tasks.map((x) => (x.id === t.id ? t : x))); showToast('待办已更新'); }}
+          onDelete={(id) => { updateTasks(tasks.filter((x) => x.id !== id)); showToast('待办已删除'); }}
         />
       )}
 
@@ -2445,6 +2450,58 @@ function TrashView({ trash, onTrash, showToast }: {
         </>
       )}
     </div>
+  );
+}
+
+/** 11-09 07:31 用户令: 待办单击→可编辑弹窗（非跳日历）——文本/截止日期/优先级/状态+保存/删除。
+    复用 sheet/task-prio-seg 现成样式（同 CaptureSheet 观感体系）。 */
+function TaskEditSheet({ task, onClose, onSave, onDelete }: {
+  task: Task;
+  onClose: () => void;
+  onSave: (t: Task) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [text, setText] = useState(task.text);
+  const [due, setDue] = useState(task.due ?? '');
+  const [prio, setPrio] = useState<TaskPriority>(task.priority ?? 'normal');
+  const [status, setStatus] = useState<TaskStatus>(task.status);
+  return (
+    <>
+      <div className="sheet-mask" onClick={onClose} />
+      <div className="sheet">
+        <div className="sheet-grab" />
+        <div className="sheet-head">
+          <span className="sheet-title">编辑待办</span>
+          <button className="icon-btn" onClick={onClose} aria-label="关闭">{I.x}</button>
+        </div>
+        <div className="sheet-body">
+          <textarea className="input" rows={3} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
+          <div className="task-prio-row" role="radiogroup" aria-label="优先级">
+            {TASK_PRIO.map((p) => (
+              <button key={p.id} className={`task-prio-seg ${prio === p.id ? 'on' : ''}`} role="radio" aria-checked={prio === p.id}
+                onClick={() => setPrio(p.id)}>
+                <span className="task-prio-dot" style={{ background: p.dot }} />{p.label}
+              </button>
+            ))}
+          </div>
+          <div className="task-prio-row" role="radiogroup" aria-label="状态">
+            {TASK_GROUPS.map((g) => (
+              <button key={g.id} className={`task-prio-seg ${status === g.id ? 'on' : ''}`} role="radio" aria-checked={status === g.id}
+                onClick={() => setStatus(g.id)}>{g.label}</button>
+            ))}
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0 4px', fontSize: 13, color: 'var(--text-secondary)' }}>
+            <span>截止日期</span>
+            <input type="date" className="input" style={{ flex: 1 }} value={due} onChange={(e) => setDue(e.target.value)} />
+          </label>
+          <div className="capture-actions">
+            <button className="btn btn-text" onClick={() => { onDelete(task.id); onClose(); }}>删除</button>
+            <button className="btn btn-primary" disabled={!text.trim()} style={{ opacity: text.trim() ? 1 : 0.5 }}
+              onClick={() => { onSave({ ...task, text: text.trim(), due: due || undefined, priority: prio, status }); onClose(); }}>保存</button>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 

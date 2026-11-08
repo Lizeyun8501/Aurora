@@ -18,7 +18,7 @@ import type { CalEvent, ReminderSetting } from '../adapters/androidPlatform';
 import { expandAll, type EvInstance } from './repeatUtil';
 
 
-export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEvent, onOpenNote, onNewTask, initialSelected, initialMode }: {
+export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEvent, onOpenNote, onNewTask, initialSelected }: {
   tasks: Task[];
   /** DK-CALENDAR-02：日程事件（MobileApp 层注入）。 */
   events: CalEvent[];
@@ -28,8 +28,6 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   onNewTask: (due: string) => void;
   /** 2026-10-28 周条联动预选日期——跨月自动翻页（如 11-01 → 月历翻到 11 月） */
   initialSelected?: string;
-  /** 11-08 23:10 用户令: 待办单击跳转编辑——跳日历对应日 day 页签（仅挂载时消费一次）。 */
-  initialMode?: 'month' | 'week' | 'day' | 'list' | 'year';
 }) {
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -40,9 +38,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
     return (yy - now.getFullYear()) * 12 + (mm - 1 - now.getMonth());
   });
   const [selected, setSelected] = useState<string>(initialSelected ?? todayStr);
-  /** DK-CALENDAR-01 任务 2 + 04 四态：月/周/日/列表（年视图独立 mode 覆盖月）。
-   * 11-08 23:10: initialMode——待办跳转直落 day 页签。 */
-  const [mode, setMode] = useState<'month' | 'week' | 'day' | 'list' | 'year'>(initialMode ?? 'month');
+  /** DK-CALENDAR-01 任务 2 + 04 四态：月/周/日/列表（年视图独立 mode 覆盖月）。 */
+  const [mode, setMode] = useState<'month' | 'week' | 'day' | 'list' | 'year'>('month');
   /* 11-04 19:20 ①: 24h 轴滚动定位——周/日模式+换 selected 时滚到当前时段。
      11-06 17:29 ②: 红线居屏优先——滚到 now 上下文中心（容不下则 clamp 至少可见）,不再需要滑动找线。 */
   const axisHoursRef = useRef<HTMLDivElement | null>(null);
@@ -136,11 +133,11 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
     return { dayNotes, dayDiary, dayTasks };
   };
   const hasMark = (d: number) => {
-    const { dayNotes, dayDiary, dayTasks } = dayData(d);
-    if (dayNotes.length > 0 || dayDiary.length > 0 || dayTasks.length > 0) return true;
-    // DK-CALENDAR-03：月历日格事件角标（当月展开实例命中——重复事件已展开）
+    /* 11-09 07:31 用户令: 日下点=仅日程或待办——原 dayNotes/dayDiary 也算,
+       今日无日程待办仅日记/笔记也出红点=误报（「为何今日 9 号下面会有红点」根因）。
+       日程点在月历 JSX dayEventDots 独立管;此处只管待办。 */
     const key = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    return monthInstances.some((i) => eventLocalKey(i.start.toISOString()) === key);
+    return tasks.some((t) => t.due === key);
   };
 
   /** DK-CALENDAR-02 任务 3 / 03 展开面：日格事件色点列表（最多 3 色）。 */
@@ -653,16 +650,16 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
             })()}
             {/* 11-04 19:20 ①: 24h 全时段轴（原 08-22）——容器可滚（css max-height）;nowline 全天窗 /1440。 */}
             <div className="day-axis-hours" ref={axisHoursRef} data-selected={selected}>
-              {selected === todayStr && (
-                <span className="day-now-line" aria-hidden="true"
-                  /* 11-06 12:19: 顶空格 +48 后线位（原 23:37 纯公式,现 y 全域平移）;11-08 08:41 三角 SVG 矢量版(同周页,--tri-dy DPR 反算)。 */
-                  style={{ top: `${(48 + (nowMin * 48) / 60).toFixed(1)}px` }}>
-                  <svg className="now-tri" width="5" height="6" viewBox="0 0 5 6" aria-hidden="true">
-                    <path d="M0 0 L5 3 L0 6 Z" fill="var(--cal-accent)" />
-                  </svg>
-                  <i className="day-now-time">{String(Math.floor(nowMin / 60)).padStart(2, '0')}:{String(nowMin % 60).padStart(2, '0')}</i>
-                </span>
-              )}
+              {/* 11-09 07:31 用户令: 红线常显——原 selected===todayStr 才渲染,跳转/选非今日后线消失。
+                 红线=当前时刻参照（同周页贯 7 列语义）,与 selected 哪天无关。 */}
+              <span className="day-now-line" aria-hidden="true"
+                /* 11-06 12:19: 顶空格 +48 后线位（原 23:37 纯公式,现 y 全域平移）;11-08 08:41 三角 SVG 矢量版(同周页,--tri-dy DPR 反算)。 */
+                style={{ top: `${(48 + (nowMin * 48) / 60).toFixed(1)}px` }}>
+                <svg className="now-tri" width="5" height="6" viewBox="0 0 5 6" aria-hidden="true">
+                  <path d="M0 0 L5 3 L0 6 Z" fill="var(--cal-accent)" />
+                </svg>
+                <i className="day-now-time">{String(Math.floor(nowMin / 60)).padStart(2, '0')}:{String(nowMin % 60).padStart(2, '0')}</i>
+              </span>
               {/* 11-06 12:19 ①: 0 点之上留一格——空 row 占位。 */}
               <div className="day-axis-row day-pad" aria-hidden="true" />
               {Array.from({ length: 24 }, (_, i) => i).map((h) => {
