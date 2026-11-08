@@ -586,6 +586,15 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   font-weight: 600;
 }
 .week-ev.task { background: var(--brand-soft); color: var(--cal-accent); }
+/* 11-08 22:19 用户令: 放不下字的块（<30min 或同列重叠）→色点表示「有几件事」。
+   absolute 居中不受块高 8px/padding 裁剪;色随 kind（event 蓝/task accent,currentColor 继承块字色）。 */
+.week-ev .we-dot {
+  position: absolute; left: 50%; top: 50%;
+  width: 6px; height: 6px; border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: currentColor; opacity: 0.9;
+}
+.week-ev.dot { overflow: visible; }
 /* 11-08 08:41 ①: ::after border 三角退役——DPR3 光栅量化黑洞(0.1px 调整被物理px取整吞掉,
    -3.5 与 -3.6 真机渲染全同)根除。三角改 SVG 矢量(JSX 内嵌 .now-tri):
    - 矢量 path AA 栅格化: 顶点亚像素连续,dy 小数→AA 覆盖度渐变,0.1px 级微调真实生效;
@@ -638,16 +647,17 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
    底线下实心闭环 accent 三角 16×8（原开口 V 填底色看不出三角——实心+加大+闭环）。 */
 .week-col.sel { position: relative; border: none; border-radius: 0; }
 .week-col.sel::before {
-  /* 11-06 19:38 ②: 44→48 略放大容字（wd+num 两行不压）;top 6→4;头 60 下 54~60 露农历。 */
-  content: ''; position: absolute; left: 50%; top: 4px; transform: translateX(-50%);
-  width: 48px; height: 48px;
-  border: 1px solid var(--cal-accent); border-radius: 12px;
+  /* 11-08 22:19 用户令: 48→42 缩框（wd 上移后两行内容 35px,48 大空）+top 4→6
+     ——框底 6+42=48 < head 高 52: 下边线不再贴底被 week-axis 盖住（「下边线被覆盖不显示」根修）。 */
+  content: ''; position: absolute; left: 50%; top: 6px; transform: translateX(-50%);
+  width: 42px; height: 42px;
+  border: 1px solid var(--cal-accent); border-radius: 10px;
   pointer-events: none;
 }
 /* 11-04 21:22 用户令: 周页三角取消（太难看）——sel 只留 42×48 描框（::before）。 */
 .week-col-head {
   display: flex; flex-direction: column; align-items: center;
-  padding: 6px 0 4px; gap: 2px; cursor: pointer; background: transparent;
+  padding: 7px 0 4px; gap: 2px; cursor: pointer; background: transparent; /* 11-08 22:19: 6→7 配 42 框垂直居中(num7~28+lunar30~38 vs 框6~48) */
 }
 .week-wd { font-size: 11px; color: var(--text-tertiary); }
 /* 11-04 23:31 ②: 周条农历小字（同月历 cal-lunar 观感）。 */

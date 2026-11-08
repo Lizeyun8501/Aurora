@@ -577,6 +577,18 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
           }
           const todayCol = days2.findIndex((d) => kOf(d) === todayStr);
           const nowH = now.getHours(), nowM = now.getMinutes();
+          /* 11-08 22:19 用户令: 周中日程块显字——≥30min 块（高≥20px 容 1 行字）且同列无重叠→文字;
+             小块/同列时间重叠互相盖住的→色点（.we-dot,absolute 居中不受块高/padding 裁剪）。 */
+          const overlapped = new Set<string>();
+          for (let c = 0; c < 7; c++) {
+            const arr = blocks.filter((b) => b.col === c).sort((a, b) => a.topMin - b.topMin);
+            for (let i = 0; i < arr.length; i++)
+              for (let j = i + 1; j < arr.length; j++) {
+                if (arr[j].topMin < arr[i].topMin + arr[i].hMin) { overlapped.add(arr[i].key); overlapped.add(arr[j].key); }
+                else break;
+              }
+          }
+          const showText = (b: WBlock) => b.hMin >= 30 && !overlapped.has(b.key);
           /* 11-06 12:19 用户三令: ①0 点之上/24 点之下各留一格线,刻度增 24 点——顶空 48+0..23+24 字(心=行顶线);
              ②now 线提层到 week-days 贯整周 7 列(原仅当天列);③右端小三角。事件/线 y 统一 +48 顶空偏移。 */
           return (
@@ -600,10 +612,11 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 {days2.map((d, i) => (
                   <div key={kOf(d)} className="week-day-col">
                     {blocks.filter((b) => b.col === i).map((b) => (
-                      <button type="button" key={b.key} className={`week-ev ${b.kind}`} style={{ top: `${48 + (b.topMin * 48) / 60}px`, height: `${(b.hMin * 48) / 60 - 4}px` }}
+                      <button type="button" key={b.key} className={`week-ev ${b.kind}${showText(b) ? '' : ' dot'}`} style={{ top: `${48 + (b.topMin * 48) / 60}px`, height: `${(b.hMin * 48) / 60 - 4}px` }}
                         aria-label={b.label}
                         onClick={() => { if (b.ev) setEventEditor(b.ev); else if (b.kind === 'task') onNewTask(kOf(d)); }}>
-                        {b.label}
+                        {/* 11-08 22:19: 块放不下字（<30min 或同列重叠）→色点;正常→标题。 */}
+                        {showText(b) ? b.label : <i className="we-dot" aria-hidden="true" />}
                       </button>
                     ))}
                   </div>
@@ -797,7 +810,10 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
         <button
           className="fab fab-cal"
           onClick={() => setEventEditor({
-            id: '', title: '', start: `${isSelInMonth ? selected : `${y}-${String(m + 1).padStart(2, '0')}-01`}T09:00:00`, end: null,
+            id: '', title: '',
+            /* 11-08 22:19 用户令: 新建默认起止=当前时刻（原固定 09:00/end 空）——日期=selected 日,钟点=当前。 */
+            start: `${isSelInMonth ? selected : `${y}-${String(m + 1).padStart(2, '0')}-01`}T${String(nowMin / 60 | 0).padStart(2, '0')}:${String(nowMin % 60).padStart(2, '0')}:00`,
+            end: `${isSelInMonth ? selected : `${y}-${String(m + 1).padStart(2, '0')}-01`}T${String(nowMin / 60 | 0).padStart(2, '0')}:${String(nowMin % 60).padStart(2, '0')}:00`,
             all_day: false, location: null, note_id: null, color: 1,
           })}
           aria-label={`为 ${selected} 添加日程`}
