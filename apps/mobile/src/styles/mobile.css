@@ -420,7 +420,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 .day-axis-row.all-day { background: var(--bg-secondary); border-radius: 8px; margin-bottom: 4px; }
 /* 11-06 18:47 ②: all-day 行 time 列同 26——「全天」与时段刻度同列右对齐,items 左界一顺。 */
-.day-axis-hours .day-axis-row.all-day .day-axis-time { flex: 0 0 26px; width: 26px; box-sizing: border-box; }
+.day-axis-hours .day-axis-row.all-day .day-axis-time { flex: 0 0 20px; width: 20px; box-sizing: border-box; } /* 11-08 16:59: 同步 26→20 */
 .day-axis-time {
   flex: 0 0 52px; font-size: 11px; color: var(--text-tertiary);
   font-variant-numeric: tabular-nums; /* 23:37: padding-top 3 真根——后段不覆同名属性,i 心偏 3.5 */
@@ -532,7 +532,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .view.cal-scroll-mode .day-axis-hours { flex: 1; max-height: none; min-height: 0; }
 /* 11-06 17:29 ④: 周列头对齐轴首列——头区左让 46（times 列宽）+列间 gap 归零同 days 分隔,周日=第一列。 */
 .view.cal-scroll-mode .week-grid {
-  margin-left: 26px; column-gap: 0; /* 11-06 18:47 ②: 26 同步 */
+  margin-left: 20px; column-gap: 0; /* 11-06 18:47 ②: 26 同步;11-08 16:59: 26→20 */
 }
 .view.cal-scroll-mode .week-grid .week-col { min-width: 0; }
 /* 11-06 18:47 ③: 周日一二三四五六行去所有竖线——不引入框线到本行。 */
@@ -540,8 +540,9 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
    字底贴行底+下移半字（i translateY 6）→中心≈47.5=分界线。 */
 /* 11-05 23:37 用户令: 0 点对齐日程区首线——字心=行顶（h 点=h×48 分界）;padding-top 6 容 i 上移不裁。 */
 .week-times {
-  /* 11-06 18:47 ②: 刻度压缩 46→26（去 :00 后两位数字）——线/三角/任务区整体左移。 */
-  flex: 0 0 26px; display: flex; flex-direction: column;
+  /* 11-06 18:47 ②: 刻度压缩 46→26（去 :00 后两位数字）——线/三角/任务区整体左移。
+     11-08 16:59 用户令: 再次左移 26→20（两位数字 12px+3 距实需 ~15）——日程区再 +6px。 */
+  flex: 0 0 20px; display: flex; flex-direction: column;
   padding-top: 0; background: transparent;
 }
 .week-times span {
@@ -1664,7 +1665,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* 11-05 00:09: left 46→56 对齐时刻列（52 列宽+4 行 padding——横线与左侧标注对齐）。 */
 /* 11-08 08:41 ①: ::before border 三角退役（同周页）——SVG .now-tri 接管,--tri-dy DPR 反算。 */
 .day-now-line {
-  position: absolute; left: 26px; right: 4px; height: 0; /* 11-06 18:47 ②: time 列 26 同步;11-05 19:06 原 46 */
+  position: absolute; left: 20px; right: 4px; height: 0; /* 11-08 16:59: time 列 26→20 同步左移;11-06 18:47 ② 原 46→26 */
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 /* 11-04 22:14: 红线挂实时时间标签——精确到分（22:13 可读,不靠猜刻度）。 */
@@ -1691,8 +1692,9 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 }
 .day-axis-hours .day-axis-row:not(.all-day) .day-axis-time {
   /* 11-05 23:37 用户令: 0 点对齐首线——字心=行顶（同周页）;行 padding-top 6 容 i 上移。
-     11-06 18:47 ②: 压缩 46→26（去 :00）;width 锁 26——flex-basis 单独被 min-width auto 抬 36。 */
-  flex: 0 0 26px; width: 26px; height: 48px; box-sizing: border-box;
+     11-06 18:47 ②: 压缩 46→26（去 :00）;width 锁 26——flex-basis 单独被 min-width auto 抬 36。
+     11-08 16:59 用户令: 再次左移 26→20（同周页,日程区 +6px）。 */
+  flex: 0 0 20px; width: 20px; height: 48px; box-sizing: border-box;
   display: flex; align-items: flex-start; justify-content: flex-end;
   padding-right: 3px;
 }
@@ -1709,7 +1711,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   display: flex; align-items: flex-start;
 }
 .day-axis-hours .day-axis-row.day-24 .day-axis-time {
-  flex: 0 0 26px; width: 26px; height: 48px; box-sizing: border-box; /* 11-06 18:47: 46→26 同步压缩 */
+  flex: 0 0 20px; width: 20px; height: 48px; box-sizing: border-box; /* 11-06 18:47: 46→26;11-08 16:59: 26→20 */
   display: flex; align-items: flex-start; justify-content: flex-end; padding-right: 3px;
 }
 .day-axis-hours .day-axis-row.day-24 .day-axis-time i {
@@ -1736,7 +1738,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 .slot-plus {
   /* 11-05 09:09 ② 用户令: 加号出现在任务区正中央。 */
   position: absolute; /* 11-05 09:15: 50% 相对整行含时间列——移 52 列+10 gap 后取任务区中心。 */
-  left: calc(26px + (100% - 26px) / 2); top: 50%; transform: translate(-50%, -50%); /* 11-06 18:47: 任务区左=26（time 列压缩后）;11-05 19:06 原 46 */
+  left: calc(20px + (100% - 20px) / 2); top: 50%; transform: translate(-50%, -50%); /* 11-08 16:59: 任务区左=20;11-06 18:47: 原 26;11-05 19:06 原 46 */
   width: 24px; height: 24px; border-radius: 50%;
   background: #3B82F6; color: #fff;
   font-size: 16px; line-height: 1; font-weight: 700;
