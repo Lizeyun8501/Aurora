@@ -266,6 +266,21 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
         }
       }}
       onPointerCancel={() => { calSwipe.current = null; }}
+      onTouchMove={(e) => {
+        /* 11-09 15:39 用户令: 真机左右滑无反应根修——touchmove 即时判定(不等 touchend:
+           指针流被滚动手势 cancel/个别 ROM 吞 touchend,move 必达;跟手翻页)。
+           触发即清 calSwipe=消费,touchend 兜底自动 no-op。 */
+        if (mode !== 'week' && mode !== 'day') return;
+        const t = calSwipe.current; if (!t) return;
+        const tc = e.touches[0]; if (!tc) return;
+        const dx = tc.clientX - t.x, dy = tc.clientY - t.y;
+        if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+          calSwipe.current = null;
+          const step = mode === 'week' ? 7 : 1;
+          const d = new Date(`${selected}T00:00:00`); d.setDate(d.getDate() + (dx < 0 ? step : -step));
+          setSelected(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+        }
+      }}
       onTouchEnd={(e) => {
         /* 双通道兜底: pointer 流个别 ROM 被吞时 touchend 保底（同月页）。 */
         if (mode !== 'week' && mode !== 'day') return;
@@ -379,13 +394,21 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                     {/* 11-04 07:39 ①: 列内事件片退役——事件归下方 24h 轴（19:52 语义）,
                         消双重显示+无事件列 180px 灰空框（用户红圈空白）。insts 仅留头部判空。 */}
                     <button className="week-col-head" aria-label={`查看 ${k}`}
-                      /* 11-05 12:16 ①: 点日→跳对应日页签。 */
-                      onClick={() => { setSelected(k); setMode('day'); }}>
+                      /* 11-05 12:16 ①: 点日→跳对应日页签。
+                         11-09 15:39 用户令④: 改周内选列——不跳日页签,选中该列(sel 框移此)
+                         +框内右下加号→点加号快建(日程/待办)该日。 */
+                      onClick={() => { setSelected(k); }}>
                       <span className="week-num">{d.getDate()}</span>
                       {/* 11-04 23:31 ②: 周条日期带农历（同月历 lunarSub——用 d 实年月防跨月错）。
                           11-08 22:01 ②: wd 上移后列头两行,农历入 sel 框（mt 10→2 撤「推出框底」）。 */}
                       <span className={`week-lunar${lunarSub(d.getDate(), d.getFullYear(), d.getMonth()).isStat ? ' fest' : ''}`}>{lunarSub(d.getDate(), d.getFullYear(), d.getMonth()).sub}</span>
                     </button>
+                    {/* 11-09 15:39 ④: 选中列框内右下加号——点加号=快建该日日程/待办(CaptureSheet due 预填)。
+                        挂 week-col 直子(button 不嵌 button)+stopPropagation 不触发选列。 */}
+                    {k === selected && (
+                      <button className="week-head-add" aria-label={`为 ${k} 添加日程或待办`}
+                        onClick={(e) => { e.stopPropagation(); onNewTask(k); }}>{I.plus}</button>
+                    )}
                   </div>
                 );
               })}
@@ -605,6 +628,8 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                   <svg className="now-tri" width="5" height="6" viewBox="0 0 5 6" aria-hidden="true">
                     <path d="M0 0 L5 3 L0 6 Z" fill="var(--cal-accent)" />
                   </svg>
+                  {/* 11-09 15:39 用户令: 周页 now 线也挂时间标签（同日页,左侧刻度列骑线）。 */}
+                  <i className="week-now-time">{String(nowH).padStart(2, '0')}:{String(nowM).padStart(2, '0')}</i>
                 </span>
                 {days2.map((d, i) => (
                   <div key={kOf(d)} className="week-day-col">

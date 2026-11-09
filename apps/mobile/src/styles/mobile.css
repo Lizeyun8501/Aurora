@@ -619,9 +619,15 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 /* 11-08 22:01 ①: 周几条独立行——紧贴年月周日日程页签下,7 列 1fr 与 week-grid 同列。
    margin-left 20 同步（cal-scroll-mode 下与刻度列/列头对齐——周几字正落每列中央）。 */
+.view.cal-scroll-mode {
+  /* 11-09 15:39 用户令: 真机左右滑根修配套——竖滚交给浏览器,横向手势全给 JS
+     (默认 auto 下 week-grid overflow-x 容器会在判定期吞横向 touch 流)。 */
+  touch-action: pan-y;
+}
 .week-wd-strip {
   display: grid; grid-template-columns: repeat(7, 1fr);
   margin: 2px 0 0;
+  touch-action: pan-y; /* 11-09 15:39: 周几条横滑=翻周,禁原生横滚吞手势 */
 }
 .view.cal-scroll-mode .week-wd-strip { margin-left: 20px; }
 .week-wd-strip span {
@@ -632,6 +638,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   display: grid; grid-template-columns: repeat(7, 1fr);
   gap: 4px; margin-top: 8px;
   overflow-x: auto;
+  touch-action: pan-y; /* 11-09 15:39: 真机横滑翻周——列头区禁原生横滚吞 touch 流(overflow-x 留给桌面窄窗滚轮) */
 }
 /* 11-04 07:39 ①②: 列=纯表头（事件片退役归 24h 轴）——灰底+180px 空高同删,今日列灰框根除。 */
 .week-col {
@@ -660,6 +667,17 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .week-col-head {
   display: flex; flex-direction: column; align-items: center;
   padding: 7px 0 4px; gap: 2px; cursor: pointer; background: transparent; /* 11-08 22:19: 6→7 配 42 框垂直居中(num7~28+lunar30~38 vs 框6~48) */
+}
+/* 11-09 15:39 ④: 选中列框内右下加号（快建该日日程/待办）——16px 蓝圆,右下角贴 sel 框内角。 */
+.week-col { position: relative; }
+.week-head-add {
+  position: absolute; right: 2px; top: 26px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #3B82F6; color: #fff;
+  font-size: 11px; line-height: 1; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  z-index: 2;
 }
 .week-wd { font-size: 11px; color: var(--text-tertiary); }
 /* 11-04 23:31 ②: 周条农历小字（同月历 cal-lunar 观感）。 */
@@ -1709,13 +1727,14 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   position: absolute; left: 20px; right: 4px; height: 0; /* 11-08 16:59: time 列 26→20 同步左移;11-06 18:47 ② 原 46→26 */
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
-/* 11-04 22:14: 红线挂实时时间标签——精确到分（22:13 可读,不靠猜刻度）。 */
-.day-now-time {
-  /* 11-05 00:09: top -8→4 下置——首小时内（如 00:07 线 top 5.6px）标签上探成负值浮出容器顶=「00:07 在 00:00 上面」。恒置线下方。 */
-  position: absolute; left: 9px; top: 4px; /* 11-06 13:29: left 4→9 避让起点三角（0~5px） */
+/* 11-04 22:14: 红线挂实时时间标签——精确到分（22:13 可读,不靠猜刻度）。
+   11-09 15:39 用户令: 标签移到左侧时间刻度列（原 left 9 top 4=红线下方右侧）——
+   right:100% 贴线左端向左延伸(刻度列区域),top -6 垂直骑线;margin-right 6 避让起点三角(0~5px)。 */
+.day-now-time, .week-now-time {
+  position: absolute; right: 100%; top: -6px; margin-right: 6px;
   background: var(--cal-accent); color: #fff;
   font-size: 9px; font-weight: 600; line-height: 1;
-  padding: 2px 5px; border-radius: 4px;
+  padding: 2px 4px; border-radius: 4px;
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .day-axis-time {
@@ -1770,10 +1789,16 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 /* 相邻行边折叠: 次行起去 top——9 点处只剩一条线。11-06: :not(.day-pad)——顶空行不入折叠链,0 行保 top 线。 */
 .day-axis-hours .day-axis-row:not(.all-day):not(.day-pad) + .day-axis-row:not(.all-day) .day-axis-items { border-top: none; }
 /* 11-05 08:40: 时段交互专用蓝（用户参考图蓝框——不动全局 cal-accent 红主题）。 */
-.day-axis-row.slot-sel {
-  background: rgba(59, 130, 246, 0.13);
+.day-axis-row.slot-sel { cursor: pointer; background: transparent; border: none; border-radius: 0; }
+/* 11-09 15:39 用户令: 选中框美化——原整行 1.5px 蓝框含时间列(超出灰框)+下边被相邻行盖。
+   改 ::after inset 覆盖层: 只圈 items 区(left 20=灰框左, right 4=行 padding 右),
+   上下 1px 缩进四边全显;不占布局零溢出;z 提升不被相邻行盖。 */
+.day-axis-row.slot-sel::after {
+  content: ''; position: absolute; z-index: 2;
+  inset: 0 4px 1px 20px;
   border: 1.5px solid #3B82F6; border-radius: 10px;
-  cursor: pointer;
+  background: rgba(59, 130, 246, 0.10);
+  pointer-events: none;
 }
 .day-axis-row:not(.slot-sel) { cursor: pointer; }
 .slot-plus {
@@ -1784,7 +1809,7 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   background: #3B82F6; color: #fff;
   font-size: 16px; line-height: 1; font-weight: 700;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.2); z-index: 2;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2); z-index: 3; /* 11-09 15:39: 2→3 压过 slot-sel::after(同层后置渲染) */
 }
 /* 11-05 08:40 ③: 简要版快建 sheet。 */
 .quick-sheet .sheet-body { padding: 12px 16px 20px; }
