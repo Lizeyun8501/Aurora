@@ -1742,10 +1742,11 @@ button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清 *
   border-top: 2px solid var(--cal-accent); z-index: 3; pointer-events: none;
 }
 /* 11-04 22:14: 红线挂实时时间标签——精确到分（22:13 可读,不靠猜刻度）。
-   11-09 15:39 用户令: 标签移到左侧时间刻度列（原 left 9 top 4=红线下方右侧）——
-   right:100% 贴线左端向左延伸(刻度列区域),top -6 垂直骑线;margin-right 6 避让起点三角(0~5px)。 */
+   11-09 19:39 用户令: 15:39 的 right:100% 左伸方案在轴容器 overflow-y auto(x 合成 auto)下
+   被左缘裁断=「红色部分被遮挡」——改线内左端骑线(left 7 避起点三角 0~5px,top -6 半骑线上),
+   容器内零溢出,Google Calendar 经典样式。 */
 .day-now-time, .week-now-time {
-  position: absolute; right: 100%; top: -6px; margin-right: 6px;
+  position: absolute; left: 7px; top: -6px;
   background: var(--cal-accent); color: #fff;
   font-size: 9px; font-weight: 600; line-height: 1;
   padding: 2px 4px; border-radius: 4px;
