@@ -1154,10 +1154,22 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 }
 .slash-label { font-size: 13px; color: var(--text-primary); }
 
+/* ===== E28c（TA 15:44）: 按压反馈统一——pressing 类（JS 代理保证释放） =====
+ * :active 在 preventDefault mousedown 的面板钮上不释放（E26④ 清 transparent）→无反馈
+ * 「混乱」观感;pressing=pointerdown 加/pointerup+cancel 移除——统一瞬态且必释放。
+ * 语义态（.active 格式高亮/.hl-prev 块高亮）不受影响（specificity 同级后置胜出）。 */
+button.pressing { background: var(--brand-soft) !important; }
+button.pressing.ctx-item, button.pressing.ctx-cancel { background: var(--bg-secondary) !important; }
+button.pressing.danger { background: rgba(220, 38, 38, 0.12) !important; }
+button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清 */
+
 /* ===== E27 树拖动可视 ===== */
 .nt-row.dragging { opacity: .45; }
 .nt-row.drag-over { background: var(--brand-soft); border-radius: 8px; box-shadow: inset 0 0 0 2px var(--brand); }
 .tree-drag-tip { position: sticky; top: 0; z-index: 5; background: var(--brand); color: #fff; font-size: 12px; padding: 6px 12px; border-radius: 8px; margin-bottom: 6px; }
+
+/* ===== E28b: 重命名输入 ===== */
+.rename-input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); color: var(--text-primary); font-size: 14px; }
 
 /* ===== E27（TA 23:16）: 长按上下文菜单/删除确认 sheet ===== */
 .ctx-sheet-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, 0.35); display: flex; align-items: flex-end; animation: fadeIn .12s; }

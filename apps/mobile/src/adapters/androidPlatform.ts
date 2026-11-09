@@ -288,7 +288,11 @@ export const platform = {
     const b = bridge();
     if (b) {
       try {
-        return JSON.parse(b.listNotes()) as NoteSummary[];
+        // E28a 修: 桥 JSON 字段=id（Java 侧 o.put("id")）——as 直通致 note_id 缺失
+        // （真机/桥 mock 双环境 NotesView.n.note_id=undefined→僵尸过滤误杀树+孤儿区全列）;
+        // 显式映射 id→note_id（无桥 mock 路径既有惯例对齐）
+        const raw = JSON.parse(b.listNotes()) as Array<{ id: string; title: string; updatedAt: number | string; encryption?: string }>;
+        return raw.map((o) => ({ id: o.id, note_id: o.id, title: o.title, updatedAt: String(o.updatedAt), encryption: o.encryption ?? 'none' }));
       } catch {
         return [];
       }

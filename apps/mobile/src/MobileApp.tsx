@@ -368,6 +368,24 @@ function useKbdViewport(): void {
 }
 
 export default function App() {
+  // E28c（TA 15:44）: 按压反馈统一——:active 残留（E26④ 清后无反馈=「混乱」观感）的
+  // JS 层正解: pointerdown 加 .pressing;pointerup/cancel 全局兜底移除——touch/mouse
+  // 统一+保证释放（不依赖浏览器 :active 生命周期）
+  useEffect(() => {
+    const down = (e: PointerEvent) => {
+      const b = (e.target as HTMLElement | null)?.closest?.('button');
+      if (b) b.classList.add('pressing');
+    };
+    const clearAll = () => document.querySelectorAll('button.pressing').forEach((b) => b.classList.remove('pressing'));
+    document.addEventListener('pointerdown', down);
+    document.addEventListener('pointerup', clearAll);
+    document.addEventListener('pointercancel', clearAll);
+    return () => {
+      document.removeEventListener('pointerdown', down);
+      document.removeEventListener('pointerup', clearAll);
+      document.removeEventListener('pointercancel', clearAll);
+    };
+  }, []);
   useKbdViewport(); // DK-05M：键盘视口感知（--vvh/--kbd-inset）
   const [ready, setReady] = useState(false);
   const [fallback, setFallback] = useState(false);
@@ -474,6 +492,13 @@ export default function App() {
       showToast('删除失败（核心未删）——请重试');
       return; // 失败=不进假成功链（trash/favs/recents 不动）
     }
+    // E28a（TA 15:44 真根因）: ⋮ 删除路径摘树节点——旧链只删 core 笔记+回收站,
+    // aurora.tree 残留节点→树形模式仍渲染该行（「显示删除实际未删除」观感根因）
+    try {
+      const t = JSON.parse(localStorage.getItem('aurora.tree') ?? '[]') as TreeNodeMeta[];
+      const next = t.filter((x) => x.id !== id);
+      if (next.length !== t.length) localStorage.setItem('aurora.tree', JSON.stringify(next));
+    } catch { /* 防御 */ }
     snippetCache.delete(id);
   };
 
@@ -1237,6 +1262,28 @@ function NodeTree({ notes, onOpen, showToast, onSoftDelete }: {
     persist(rest);
     showToast(`已挂到「${prevSame.kind === 'book' ? prevSame.title : getTitleOverlay(prevSame.id) || prevSame.title}」下`);
   };
+  /** E28b（TA 15:44）: 重命名——doc 双写（title overlay+树 meta）;book 树 meta。
+   * overlay 优先显示（displayTitle 惯例）——core rename API 落地前的前端方案（同标题 overlay 注释）。 */
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState('');
+  const startRename = (id: string) => {
+    const n = tree.find((t) => t.id === id);
+    if (!n) return;
+    setCtxId(null);
+    setRenaming(id);
+    setRenameText(displayTitle(n));
+  };
+  const commitRename = () => {
+    if (!renaming) return;
+    const name = renameText.trim();
+    const n = tree.find((t) => t.id === renaming);
+    if (!n || !name) { setRenaming(null); return; }
+    if (n.kind === 'doc') setTitleOverlay(n.id, name);
+    persist(tree.map((t) => (t.id === renaming ? { ...t, title: name } : t)));
+    setRenaming(null);
+    showToast('已重命名');
+  };
+
   /** 删除: doc→软删（回收站）+摘树;book→摘树（子升孤儿）。 */
   const removeNode = (id: string) => {
     const n = tree.find((t) => t.id === id);
@@ -1255,7 +1302,7 @@ function NodeTree({ notes, onOpen, showToast, onSoftDelete }: {
   const toggle = (id: string) =>
     setOpen((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
-  const childrenOf = (pid: string) => tree.filter((t) => t.parentId === pid);
+  const childrenOf = (pid: string | null) => tree.filter((t) => t.parentId === pid && !zombieIds.has(t.id));
   const firstBookId = tree.find((t) => t.kind === 'book')?.id ?? null;
   const displayTitle = (t: TreeNodeMeta) => (t.kind === 'doc' ? getTitleOverlay(t.id) || t.title : t.title);
 
@@ -1275,6 +1322,11 @@ function NodeTree({ notes, onOpen, showToast, onSoftDelete }: {
     showToast(`「${n.title}」已收入笔记本`);
   };
 
+  // E28a: 僵尸 doc 过滤——platform.listNotes() 实查（props notes state 滞后一拍会误杀
+  // createChild 新建节点——dbg 实证;实查 mock=localStorage 真机=桥,幂等且实时）
+  let liveIds: Set<string>;
+  try { liveIds = new Set(platform.listNotes().map((n) => n.note_id)); } catch { liveIds = new Set(); }
+  const zombieIds = new Set(tree.filter((t) => t.kind === 'doc' && !liveIds.has(t.id)).map((t) => t.id));
   const treeDocIds = new Set(tree.filter((t) => t.kind === 'doc').map((t) => t.id));
   const orphans = notes.filter((n) => !treeDocIds.has(n.note_id));
 
@@ -1359,10 +1411,28 @@ function NodeTree({ notes, onOpen, showToast, onSoftDelete }: {
             </div>
             <button className="ctx-item danger" onClick={() => { setCtxId(null); removeNode(ctxNode.id); }}>🗑 删除{ctxNode.kind === 'book' ? '笔记本（子笔记转未入树区）' : '（移入回收站）'}</button>
             <button className="ctx-item" onClick={() => { setCtxId(null); onPickIcon(ctxNode.id, ctxNode.kind); }}>🎨 更换图标</button>
+            <button className="ctx-item" onClick={() => startRename(ctxNode.id)}>✏️ 重命名</button>
             <button className="ctx-item" onClick={() => { setCtxId(null); levelUp(ctxNode.id); }}>↖ 升一级</button>
             <button className="ctx-item" onClick={() => { setCtxId(null); levelDown(ctxNode.id); }}>↘ 降一级</button>
             <button className="ctx-item" onClick={() => { setCtxId(null); setTreeDrag(ctxNode.id); showToast('拖到目标行松手（换位置/换层级）'); }}>⇅ 拖动排序</button>
             <button className="ctx-item ctx-cancel" onClick={() => setCtxId(null)}>取消</button>
+          </div>
+        </div>
+      )}
+
+      {/* E28b: 重命名 sheet——内联输入+确认 */}
+      {renaming && (
+        <div className="ctx-sheet-backdrop" onClick={() => setRenaming(null)}>
+          <div className="ctx-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="ctx-sheet-title">重命名</div>
+            <input
+              className="rename-input" autoFocus value={renameText}
+              onChange={(e) => setRenameText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); }}
+              aria-label="新名称" placeholder="输入新名称"
+            />
+            <button className="ctx-item" onClick={commitRename}>确认</button>
+            <button className="ctx-item ctx-cancel" onClick={() => setRenaming(null)}>取消</button>
           </div>
         </div>
       )}

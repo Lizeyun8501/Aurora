@@ -31,7 +31,7 @@ const BASE = 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
       init: () => 'ok',
       isFallback: () => false,
       listNotes: () => JSON.stringify(list().map((n) => ({ id: n.id, title: n.title, updatedAt: n.updatedAt, encryption: 'none' }))),
-      createNote: (t) => { const n = { id: 'n' + (idSeq++), title: t, updatedAt: Date.now(), content: '' }; const l = list(); l.unshift(n); saveList(l); return JSON.stringify(n); },
+      createNote: (t) => { const n = { id: 'n' + (idSeq++), title: t, updatedAt: Date.now(), content: '' }; const l = list(); l.unshift(n); saveList(l); return n.id; }, // 真机桥返纯 id（Java createNote 返 core String）——E28 僵尸过滤暴露旧 mock 暗错
       getNoteContent: (id) => { const n = list().find((x) => x.id === id); return n ? n.content || '' : ''; },
       saveNoteContent: (id, c) => { const l = list(); const n = l.find((x) => x.id === id); if (n) { n.content = c; n.updatedAt = Date.now(); saveList(l); } return 1; },
       deleteNote: (id) => { saveList(list().filter((x) => x.id !== id)); return 1; },
