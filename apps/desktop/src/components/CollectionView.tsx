@@ -206,6 +206,28 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
     }
   }, [invoke, selected]);
 
+  /** A-01（TA 22:12 工单）: 集合导出 XLSX——列类型映射+公式列批注（公式值=导出时计算值）。 */
+  const exportXlsx = useCallback(async () => {
+    if (!invoke || !selected) return;
+    let destDir: string | null = null;
+    try {
+      destDir = window.prompt('导出目录', '~/Downloads/aurora-export');
+    } catch {
+      destDir = null;
+    }
+    if (!destDir) return;
+    try {
+      const path = (await invoke('cmd_export_collection_xlsx', {
+        collectionId: selected,
+        destDir,
+      })) as string;
+      setErr(null);
+      window.alert(`已导出：${path}`);
+    } catch (e) {
+      setErr(`XLSX 导出失败：${String(e)}`);
+    }
+  }, [invoke, selected]);
+
   /* R5-1：schema 编辑——加列（名称+类型 prompt 两段）+删列（列头 ×）。
      set_schema=全量覆盖语义（对齐 cmd_set_note_tags 惯例）。 */
   const addColumn = useCallback(async () => {
@@ -385,6 +407,24 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
           }}
         >
           ＋ 新建集合
+        </button>
+        <button
+          onClick={() => void exportXlsx()}
+          disabled={!selected}
+          aria-label="导出当前集合为 XLSX 表格"
+          title="导出当前集合为 XLSX（列类型映射;公式列=导出时计算值+批注）"
+          style={{
+            fontSize: 12,
+            padding: '3px 12px',
+            borderRadius: 999,
+            border: '1px solid rgba(88,166,255,0.4)',
+            background: 'rgba(88,166,255,0.12)',
+            color: tokens.color.primaryBright,
+            cursor: selected ? 'pointer' : 'not-allowed',
+            opacity: selected ? 1 : 0.5,
+          }}
+        >
+          ⬇ 导出 XLSX
         </button>
       </h1>
       {cols.length > 0 && (

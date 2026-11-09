@@ -17,6 +17,16 @@ pub struct ImportError {
     pub reason: String,
 }
 
+impl ImportError {
+    /// A-01: 生成器侧构造（无源文件路径场景——导出/转换失败；路径语义留给导入器）。
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            path: PathBuf::new(),
+            reason: reason.into(),
+        }
+    }
+}
+
 impl fmt::Display for ImportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.path.display(), self.reason)

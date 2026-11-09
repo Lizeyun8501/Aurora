@@ -21,6 +21,9 @@ tokio = { version = "1", default-features = false, features = ["sync", "net", "i
 serde_json = "1"
 # 资源（resource data）base64 解码 — 0.22 与依赖树既有节点对齐
 base64 = "0.22"
+# A-01: DOCX/XLSX 容器打包（OOXML 均为 zip 包体——deflate 默认特性即可）
+# A-01: DOCX/XLSX 容器打包（OOXML 均为 zip 包体——default-features=false 只留 deflate：零引 bzip2/zstd 重特性）
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 aurora-sync = { path = "../aurora-sync" }

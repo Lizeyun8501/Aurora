@@ -1516,6 +1516,89 @@ impl UniffiAppCore {
         Ok(doc.body())
     }
 
+    /// A-01（TA 22:12 工单）: 导出笔记为 DOCX（.docx 包体字节——MD→OOXML 纯 Rust）。
+    /// 移动端 JS 拿 bytes 后走 SAF/分享链落盘（APK 二进制通道见 tech-debt 注记）。
+    fn export_note_docx_impl(self: &Arc<Self>, note_id: String) -> Result<Vec<u8>, MobileError> {
+        let md = self.get_note_content_impl(note_id.clone())?;
+        aurora_import::docx_export::markdown_to_docx(&note_id, &md).map_err(|e| {
+            MobileError::OperationFailed {
+                message: format!("docx: {}", e.reason),
+            }
+        })
+    }
+
+    /// A-01: 导出集合为 XLSX（.xlsx 包体字节——rows+prop_defs → 工作表）。
+    fn export_collection_xlsx_impl(
+        self: &Arc<Self>,
+        collection_id: String,
+    ) -> Result<Vec<u8>, MobileError> {
+        let core = self
+            .core
+            .as_ref()
+            .ok_or_else(|| MobileError::OperationFailed {
+                message: "集合导出需 core（fallback 模式无集合域）".into(),
+            })?;
+        self.runtime.block_on(async {
+            let col = core
+                .collections
+                .get(&collection_id)
+                .await
+                .map_err(|e| MobileError::OperationFailed {
+                    message: format!("collection get: {e}"),
+                })?
+                .ok_or_else(|| MobileError::NotFound {
+                    resource: collection_id.clone(),
+                })?;
+            let note_ids = core.collections.rows(&collection_id).await.map_err(|e| {
+                MobileError::OperationFailed {
+                    message: format!("rows: {e}"),
+                }
+            })?;
+            let mut rows: Vec<Vec<Option<serde_json::Value>>> = Vec::with_capacity(note_ids.len());
+            for nid in &note_ids {
+                let set = core.collections.get_props(nid).await.map_err(|e| {
+                    MobileError::OperationFailed {
+                        message: format!("props: {e}"),
+                    }
+                })?;
+                let mut row = Vec::with_capacity(col.prop_defs.len());
+                for def in &col.prop_defs {
+                    let v = set
+                        .values
+                        .get(&def.id)
+                        .map(|pv| pv.value.clone())
+                        .or_else(|| def.default_value.clone());
+                    row.push(v);
+                }
+                rows.push(row);
+            }
+            let columns = col
+                .prop_defs
+                .iter()
+                .map(|d| aurora_import::xlsx_export::XlsxColumn {
+                    name: d.name.clone(),
+                    prop_kind: format!("{:?}", d.prop_type),
+                    formula: match &d.prop_type {
+                        aurora_core::l2_engines::property::PropertyType::Formula { expression } => {
+                            Some(expression.clone())
+                        }
+                        _ => None,
+                    },
+                })
+                .collect();
+            let sheet = aurora_import::xlsx_export::XlsxSheet {
+                sheet_name: col.title.clone(),
+                columns,
+                rows,
+            };
+            aurora_import::xlsx_export::collection_to_xlsx(&sheet).map_err(|e| {
+                MobileError::OperationFailed {
+                    message: format!("xlsx: {}", e.reason),
+                }
+            })
+        })
+    }
+
     /// 导出笔记的完整 Loro 快照（base64）— ProseMirror 编辑器初始化用（DEV-009）。
     ///
     /// 返回 Rust 侧 NoteDoc 当前状态的快照（含 P2P 合并结果）。
@@ -2357,6 +2440,18 @@ impl UniffiAppCore {
 
     pub fn list_notes(self: Arc<Self>) -> Vec<NoteSummary> {
         Self::list_notes_impl(&self)
+    }
+
+    /// A-01: DOCX/XLSX 包体导出（bytes——DoD 允许移动端只暴露导出面）。
+    pub fn export_note_docx(self: Arc<Self>, note_id: String) -> Result<Vec<u8>, MobileError> {
+        Self::export_note_docx_impl(&self, note_id)
+    }
+
+    pub fn export_collection_xlsx(
+        self: Arc<Self>,
+        collection_id: String,
+    ) -> Result<Vec<u8>, MobileError> {
+        Self::export_collection_xlsx_impl(&self, collection_id)
     }
 
     /// V26 M2/DK-06: 今日专注周回顾汇总（JSON 字符串直通 WebView）。

@@ -28,3 +28,8 @@
 1. **T8 与 RV-01 合流**：R03 回执+DK03S3 实证链（41ac132 首跑 20.4s）与 T8 bench 落表同源——统一为一项，挂"待 token"（bench artifact 产出需 token 预算）
 2. **台账纪律**：本档唯一权威；注记中 T 项引用一律指回本档；新债直接入档不另立散页
 3. 6 项消化均**非专卡清债**而是随功能卡顺手消化（错峰策略生效）——T4/T6 保持外部时机驱动，不主动排卡；T9 摘行系 2026-10-19 窗口对账（状态已在但挂错表）
+
+## A-01 勘察登记（2026-11-09 Bravo）
+- [他人既有] shared/ui-components RichEditor.tsx MARK_BTNS / auroraMarkdown.ts labels 两处 TS6133 unused（tsc 全库仅此 2 错;非本卡 diff 面——本卡改动零 tsc 错;归属 Alpha/前端面）
+- [本卡注记] mobile 二进制导出链: FFI export_note_docx/export_collection_xlsx 返 Vec<u8> 已就绪,APK JS 桥 exportFile 现仅 text 通道——真机二进制落盘需 MainActivity 加 base64 通道（APK 重打不在本卡）
+- [本卡注记] DOCX 真机 Word/WPS 开启验证不可行（沙箱无 Office）——OOXML 结构级测试已验（zip 规范+document.xml/styles 骨架+eastAsia 字体）;用户侧真机抽验建议保留

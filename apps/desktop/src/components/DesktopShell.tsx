@@ -2476,11 +2476,12 @@ function BacklinksPanel(props: {
  *   用户侧"另存为 PDF"——路径不可编程指定，平台能力占位例外，诚实注记）；
  * - 结果：成功显示落盘路径 / 失败显示错误（非阻断，不崩编辑视图）。
  */
-type ExportFormat = 'md' | 'html' | 'pdf';
+type ExportFormat = 'md' | 'html' | 'pdf' | 'docx';
 const EXPORT_LABEL: Record<ExportFormat, string> = {
   md: '明文 Markdown（不含附件）',
   html: '明文 HTML（不含附件；MD 有限转换，[[ 透传）',
   pdf: 'PDF（经系统打印对话框——路径由对话框选择）',
+  docx: 'DOCX（OOXML 纯 Rust 转换;标题/列表/任务/表格/代码/引用——链接降级文本）',
 };
 function ExportMarkdownGate(props: {
   invoke: InvokeFn | null;
@@ -2511,6 +2512,9 @@ function ExportMarkdownGate(props: {
       } else if (fmt === 'html') {
         const path = (await invoke('cmd_export_note_html', { noteId: note.note_id, destDir })) as string;
         setResult(`已导出：${path}`);
+      } else if (fmt === 'docx') {
+        const path = (await invoke('cmd_export_note_docx', { noteId: note.note_id, destDir })) as string;
+        setResult(`已导出：${path}`);
       } else {
         const msg = (await invoke('cmd_export_note_pdf')) as string;
         setResult(msg);
@@ -2529,6 +2533,7 @@ function ExportMarkdownGate(props: {
         {([
           ['md', '⤴ 导出 Markdown'],
           ['html', '导出 HTML'],
+          ['docx', '导出 DOCX'],
           ['pdf', '导出 PDF'],
         ] as const).map(([fmt, label]) => (
           <button

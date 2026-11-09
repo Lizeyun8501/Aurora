@@ -30,6 +30,13 @@ interface UniffiAppCore {
 
     sequence<NoteSummary> list_notes();
 
+    // A-01（TA 22:12 工单）: DOCX/XLSX 包体导出（bytes;DoD 允许移动端只暴露导出）
+    [Throws=MobileError]
+    sequence<u8> export_note_docx(string note_id);
+
+    [Throws=MobileError]
+    sequence<u8> export_collection_xlsx(string collection_id);
+
     sequence<SearchResult> search_notes(string query);
 
     [Throws=MobileError]

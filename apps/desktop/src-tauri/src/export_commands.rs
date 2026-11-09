@@ -525,3 +525,145 @@ mod export_html_tests {
         assert!(out.contains("attachment://abc"), "{out}");
     }
 }
+
+// ===== A-01（TA 22:12 工单）: DOCX / XLSX 导出 =====
+
+/// 单篇导出为 DOCX（MD→OOXML 纯 Rust——aurora-import docx_export）。
+/// 重名对账复用 sanitize/dedupe（.docx 后缀变体）;中文 eastAsia 字体（模块内声明）。
+///
+/// # Errors
+/// 应用未初始化 / 笔记不存在 / 目录创建或写盘失败。
+#[tauri::command]
+pub async fn cmd_export_note_docx(note_id: String, dest_dir: String) -> Result<String, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let data = core
+        .kv_store
+        .get(&format!("note:{note_id}"))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("note not found: {note_id}"))?;
+    let json = unwrap_note_bytes(&core, &vault, &data)?;
+    let title = json
+        .get("title")
+        .and_then(|t| t.as_str())
+        .unwrap_or("untitled");
+    let content = json.get("content").and_then(|c| c.as_str()).unwrap_or("");
+
+    tokio::fs::create_dir_all(&dest_dir)
+        .await
+        .map_err(|e| format!("create dir `{dest_dir}`: {e}"))?;
+    let mut existing: HashSet<String> = HashSet::new();
+    let mut rd = tokio::fs::read_dir(&dest_dir)
+        .await
+        .map_err(|e| format!("read dir: {e}"))?;
+    while let Some(e) = rd.next_entry().await.map_err(|e| format!("readdir: {e}"))? {
+        if let Some(name) = e.file_name().to_str() {
+            existing.insert(name.to_string());
+        }
+    }
+    let base = sanitize_filename(title);
+    let existing_docx: Vec<String> = existing
+        .iter()
+        .filter(|n| n.ends_with(".docx"))
+        .map(|n| n.trim_end_matches(".docx").to_string())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let final_name = dedupe_filename(&existing_docx, &base);
+    let path = format!("{}/{}.docx", dest_dir.trim_end_matches('/'), final_name);
+    let bytes = aurora_import::docx_export::markdown_to_docx(title, content)
+        .map_err(|e| format!("docx 生成失败: {}", e.reason))?;
+    tokio::fs::write(&path, &bytes)
+        .await
+        .map_err(|e| format!("write `{path}`: {e}"))?;
+    Ok(path)
+}
+
+/// 集合导出为 XLSX（rows+prop_defs → 工作表;列类型映射+公式批注——xlsx_export）。
+///
+/// # Errors
+/// 应用未初始化 / 集合不存在 / 目录创建或写盘失败。
+#[tauri::command]
+pub async fn cmd_export_collection_xlsx(
+    collection_id: String,
+    dest_dir: String,
+) -> Result<String, String> {
+    let core = get_core()?;
+    let col = core
+        .collections
+        .get(&collection_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("collection not found: {collection_id}"))?;
+    let note_ids = core
+        .collections
+        .rows(&collection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut rows: Vec<Vec<Option<serde_json::Value>>> = Vec::with_capacity(note_ids.len());
+    for nid in &note_ids {
+        let set = core
+            .collections
+            .get_props(nid)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut row: Vec<Option<serde_json::Value>> = Vec::with_capacity(col.prop_defs.len());
+        for def in &col.prop_defs {
+            let v = set
+                .values
+                .get(&def.id)
+                .map(|pv| pv.value.clone())
+                .or_else(|| def.default_value.clone());
+            row.push(v);
+        }
+        rows.push(row);
+    }
+    let sheet = aurora_import::xlsx_export::XlsxSheet {
+        sheet_name: col.title.clone(),
+        columns: col
+            .prop_defs
+            .iter()
+            .map(|d| aurora_import::xlsx_export::XlsxColumn {
+                name: d.name.clone(),
+                prop_kind: format!("{:?}", d.prop_type),
+                formula: match &d.prop_type {
+                    aurora_core::l2_engines::property::PropertyType::Formula { expression } => {
+                        Some(expression.clone())
+                    }
+                    _ => None,
+                },
+            })
+            .collect(),
+        rows,
+    };
+
+    tokio::fs::create_dir_all(&dest_dir)
+        .await
+        .map_err(|e| format!("create dir `{dest_dir}`: {e}"))?;
+    let base = sanitize_filename(&col.title);
+    let mut existing: HashSet<String> = HashSet::new();
+    let mut rd = tokio::fs::read_dir(&dest_dir)
+        .await
+        .map_err(|e| format!("read dir: {e}"))?;
+    while let Some(e) = rd.next_entry().await.map_err(|e| format!("readdir: {e}"))? {
+        if let Some(name) = e.file_name().to_str() {
+            existing.insert(name.to_string());
+        }
+    }
+    let existing_xlsx: Vec<String> = existing
+        .iter()
+        .filter(|n| n.ends_with(".xlsx"))
+        .map(|n| n.trim_end_matches(".xlsx").to_string())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let final_name = dedupe_filename(&existing_xlsx, &base);
+    let path = format!("{}/{}.xlsx", dest_dir.trim_end_matches('/'), final_name);
+    let bytes = aurora_import::xlsx_export::collection_to_xlsx(&sheet)
+        .map_err(|e| format!("xlsx 生成失败: {}", e.reason))?;
+    tokio::fs::write(&path, &bytes)
+        .await
+        .map_err(|e| format!("write `{path}`: {e}"))?;
+    Ok(path)
+}

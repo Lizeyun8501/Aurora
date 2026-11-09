@@ -184,3 +184,136 @@ pub async fn cmd_import_opml(
     let _ = forward.await;
     report
 }
+
+// ===== A-01（TA 22:12 工单）: DOCX / XLSX 导入（尽力解析+跳过报告——禁止静默丢） =====
+
+/// DOCX 导入：word/document.xml → Markdown → write_path 建笔记。
+/// 跳过项（图片/文本框）进报告 warnings——不静默丢内容。
+///
+/// # Errors
+/// 应用未初始化 / 文件读失败 / 空文档（明确错误不产出空笔记）。
+#[tauri::command]
+pub async fn cmd_import_docx(file: String) -> Result<aurora_import::ImportReport, String> {
+    let ctx = import_ctx()?;
+    let bytes = tokio::fs::read(&file)
+        .await
+        .map_err(|e| format!("读取失败 `{file}`: {e}"))?;
+    let result = aurora_import::docx_import::docx_to_markdown(&bytes)
+        .map_err(|e| format!("导入失败: {}", e.reason))?;
+    // 标题: 文件名去后缀（MD 正文无 frontmatter 语义——文件名是最诚实的题名源）
+    let title = std::path::Path::new(&file)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("导入文档");
+    let note_id = aurora_core::write_path::create_note(&ctx, title)
+        .await
+        .map_err(|e| e.to_string())?;
+    aurora_core::write_path::save_note_content(&ctx, &note_id, &result.markdown)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut report = aurora_import::ImportReport::default();
+    report.scanned = 1;
+    report.imported = 1;
+    report.note_ids = vec![note_id.clone()];
+    report.entries = vec![aurora_import::ImportedEntry {
+        note_id,
+        title: title.to_string(),
+        source: file.clone(),
+        tags: Vec::new(),
+        resources: Vec::new(),
+    }];
+    report.warnings = result.skipped;
+    report
+}
+
+/// XLSX 导入：首表 → 新建集合 + 行（每行建笔记挂行值）。
+/// 多表/无缓存公式 → warnings 跳过报告;类型推断建 schema。
+///
+/// # Errors
+/// 应用未初始化 / 文件读失败 / 空表（明确错误）。
+#[tauri::command]
+pub async fn cmd_import_xlsx(file: String) -> Result<aurora_import::ImportReport, String> {
+    let ctx = import_ctx()?;
+    let core = ctx.core.clone();
+    let bytes = tokio::fs::read(&file)
+        .await
+        .map_err(|e| format!("读取失败 `{file}`: {e}"))?;
+    let result = aurora_import::xlsx_import::xlsx_to_collection(&bytes)
+        .map_err(|e| format!("导入失败: {}", e.reason))?;
+    let title = std::path::Path::new(&file)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("导入表格");
+    let col = core
+        .collections
+        .create(title)
+        .await
+        .map_err(|e| e.to_string())?;
+    // schema: 列名+推断类型（Text/Number/Date/Checkbox——Select 无从推断,统一 Text）
+    use aurora_core::l2_engines::property::{PropertyDefinition, PropertyType};
+    let defs: Vec<PropertyDefinition> = result
+        .columns
+        .iter()
+        .map(|(name, kind)| PropertyDefinition {
+            id: format!("c-{}", uuid::Uuid::new_v4()),
+            name: name.clone(),
+            prop_type: match kind.as_str() {
+                "Number" => PropertyType::Number,
+                "Date" => PropertyType::Date,
+                "Checkbox" => PropertyType::Checkbox,
+                _ => PropertyType::Text,
+            },
+            required: false,
+            default_value: None,
+            indexed: false,
+            description: None,
+        })
+        .collect();
+    let def_ids: Vec<String> = defs.iter().map(|d| d.id.clone()).collect();
+    core.collections
+        .set_schema(&col.id, &defs)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut note_ids = Vec::new();
+    for row in &result.rows {
+        // 行笔记: 首列值作题名（无首列则「行 N」）
+        let row_title = row
+            .first()
+            .and_then(|v| v.as_ref())
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("行 {}", note_ids.len() + 1));
+        let nid = aurora_core::write_path::create_note(&ctx, &row_title)
+            .await
+            .map_err(|e| e.to_string())?;
+        core.collections
+            .add_row(&col.id, &nid)
+            .await
+            .map_err(|e| e.to_string())?;
+        for (i, cell) in row.iter().enumerate() {
+            if let (Some(def_id), Some(v)) = (def_ids.get(i), cell) {
+                core.collections
+                    .set_cell(&nid, def_id, v.clone())
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        note_ids.push(nid);
+    }
+    let mut report = aurora_import::ImportReport::default();
+    report.scanned = 1;
+    report.imported = note_ids.len();
+    report.note_ids = note_ids.clone();
+    report.entries = note_ids
+        .iter()
+        .map(|nid| aurora_import::ImportedEntry {
+            note_id: nid.clone(),
+            title: format!("{}/{}", title, nid),
+            source: file.clone(),
+            tags: Vec::new(),
+            resources: Vec::new(),
+        })
+        .collect();
+    report.warnings = result.skipped;
+    report
+}

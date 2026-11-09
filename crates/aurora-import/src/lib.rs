@@ -25,6 +25,8 @@
 pub mod attach;
 /// DK-2.9v2-a: Web Clipper localhost 桥（token 鉴权只写面——批复 2026-10-18）。
 pub mod capture_bridge;
+pub mod docx_export;
+pub mod docx_import;
 pub mod enex;
 pub mod enml;
 pub mod html;
@@ -33,6 +35,8 @@ pub mod notion;
 pub mod opml;
 pub mod report;
 pub mod wizard;
+pub mod xlsx_export;
+pub mod xlsx_import;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

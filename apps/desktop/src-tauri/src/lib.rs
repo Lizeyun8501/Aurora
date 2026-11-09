@@ -272,6 +272,8 @@ pub fn run() {
             plugin_commands::cmd_plugin_hot_update_rollback,
             plugin_commands::cmd_pull_plugin_output,
             export_commands::cmd_export_note_markdown,
+            export_commands::cmd_export_note_docx,
+            export_commands::cmd_export_collection_xlsx,
             export_commands::cmd_export_all_markdown,
             export_commands::cmd_export_note_html,
             export_commands::cmd_export_note_pdf,
@@ -294,6 +296,8 @@ pub fn run() {
             wiki_commands::cmd_wiki_link_titles,
             import_commands::cmd_plan_import,
             import_commands::cmd_import_markdown_dir,
+            import_commands::cmd_import_docx,
+            import_commands::cmd_import_xlsx,
             import_commands::cmd_import_enex,
             import_commands::cmd_import_opml,
         ])
