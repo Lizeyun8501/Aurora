@@ -223,7 +223,7 @@ pub async fn cmd_import_docx(file: String) -> Result<aurora_import::ImportReport
         resources: Vec::new(),
     }];
     report.warnings = result.skipped;
-    report
+    Ok(report)
 }
 
 /// XLSX 导入：首表 → 新建集合 + 行（每行建笔记挂行值）。
@@ -315,5 +315,5 @@ pub async fn cmd_import_xlsx(file: String) -> Result<aurora_import::ImportReport
         })
         .collect();
     report.warnings = result.skipped;
-    report
+    Ok(report)
 }
