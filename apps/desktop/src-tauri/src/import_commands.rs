@@ -271,7 +271,7 @@ pub async fn cmd_import_xlsx(file: String) -> Result<aurora_import::ImportReport
         .collect();
     let def_ids: Vec<String> = defs.iter().map(|d| d.id.clone()).collect();
     core.collections
-        .set_schema(&col.id, &defs)
+        .set_schema(&col.id, defs)
         .await
         .map_err(|e| e.to_string())?;
     let mut note_ids = Vec::new();
