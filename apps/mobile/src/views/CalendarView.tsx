@@ -59,13 +59,18 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   }, [mode, selected]);
   /** DK-CALENDAR-02：事件编辑器（null=关;编辑/新建共用 sheet）。 */
   const [eventEditor, setEventEditor] = useState<CalEvent | null>(null);
-  /* 11-05 08:40 ② 点时段→蓝框+加号;③ 加号开简要版快建（更多设置跳完整版）。 */
+  /* 11-05 08:40 ② 点时段→蓝框+加号;③ 加号开简要版快建（更多设置跳完整版）。
+     11-09 17:46 用户令④(纠偏): 周页 24h 轴时间格(横时间线×纵日期列交织格)点选→格框+加号快建——
+     weekSlot={col,h};quickDay=快建日期(周页=点击列日,日页=selected)。 */
   const [slotSel, setSlotSel] = useState<number | null>(null);
+  const [weekSlot, setWeekSlot] = useState<{ col: number; h: number } | null>(null);
   const [quickNew, setQuickNew] = useState<number | null>(null);
+  const [quickDay, setQuickDay] = useState<string | null>(null);
   const [quickTitle, setQuickTitle] = useState('');
   const setSlotSlot = (h: number | null) => setSlotSel(h);
+  const closeQuick = () => { setQuickNew(null); setQuickDay(null); };
   const dayIso = (h: number) => {
-    const [y2, m2, d2] = selected.split('-').map(Number);
+    const [y2, m2, d2] = (quickDay ?? selected).split('-').map(Number);
     const end = new Date(y2, m2 - 1, d2, h + 1);
     const pad = (n: number) => String(n).padStart(2, '0');
     return {
@@ -395,20 +400,14 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                         消双重显示+无事件列 180px 灰空框（用户红圈空白）。insts 仅留头部判空。 */}
                     <button className="week-col-head" aria-label={`查看 ${k}`}
                       /* 11-05 12:16 ①: 点日→跳对应日页签。
-                         11-09 15:39 用户令④: 改周内选列——不跳日页签,选中该列(sel 框移此)
-                         +框内右下加号→点加号快建(日程/待办)该日。 */
-                      onClick={() => { setSelected(k); }}>
+                         11-09 17:46 用户令(纠偏): 恢复前版(跳日页签)——「点击某个框」指 24h 轴时间格(见 week-days 委托),
+                         列头右下加号方案撤销(被观感否决「大蓝点」)。 */
+                      onClick={() => { setSelected(k); setMode('day'); setWeekSlot(null); }}>
                       <span className="week-num">{d.getDate()}</span>
                       {/* 11-04 23:31 ②: 周条日期带农历（同月历 lunarSub——用 d 实年月防跨月错）。
                           11-08 22:01 ②: wd 上移后列头两行,农历入 sel 框（mt 10→2 撤「推出框底」）。 */}
                       <span className={`week-lunar${lunarSub(d.getDate(), d.getFullYear(), d.getMonth()).isStat ? ' fest' : ''}`}>{lunarSub(d.getDate(), d.getFullYear(), d.getMonth()).sub}</span>
                     </button>
-                    {/* 11-09 15:39 ④: 选中列框内右下加号——点加号=快建该日日程/待办(CaptureSheet due 预填)。
-                        挂 week-col 直子(button 不嵌 button)+stopPropagation 不触发选列。 */}
-                    {k === selected && (
-                      <button className="week-head-add" aria-label={`为 ${k} 添加日程或待办`}
-                        onClick={(e) => { e.stopPropagation(); onNewTask(k); }}>{I.plus}</button>
-                    )}
                   </div>
                 );
               })}
@@ -620,7 +619,19 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 ))}
                 <span className="wt-24"><i>24</i></span>
               </div>
-              <div className="week-days">
+              <div className="week-days"
+                /* 11-09 17:46 用户令④(纠偏): 点灰色日程区时间格(横时间线×纵日期列交织格)→选中该格
+                   (格蓝框+加号,加号→快建该日该时段)。事件委托: 列=closest(.week-day-col).data-col,
+                   行=(clientY-容器顶-48)/48(顶空 48+行高 48);事件块点击 stopPropagation 不选格。 */
+                onClick={(e) => {
+                  const colEl = (e.target as HTMLElement).closest('.week-day-col');
+                  if (!colEl || !colEl.dataset.col) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const h = Math.floor((e.clientY - rect.top - 48) / 48);
+                  if (h < 0 || h > 23) return;
+                  const c = Number(colEl.dataset.col);
+                  setWeekSlot(weekSlot && weekSlot.col === c && weekSlot.h === h ? null : { col: c, h });
+                }}>
                 {/* 11-08 08:41: now 三角 SVG 矢量版——border 三角 DPR3 光栅量化(0.1px 调整失效)根除;
                     位移走 --tri-dy(CSS 变量,JS 按 devicePixelRatio 反算物理px对齐,全 DPR 渲染一致)。
                     viewBox 5×6 同旧 border 5×6 视觉;理论初值三角身[-2,+4]心=线心(border-top 2px 心=1)。 */}
@@ -631,12 +642,20 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                   {/* 11-09 15:39 用户令: 周页 now 线也挂时间标签（同日页,左侧刻度列骑线）。 */}
                   <i className="week-now-time">{String(nowH).padStart(2, '0')}:{String(nowM).padStart(2, '0')}</i>
                 </span>
+                {/* 11-09 17:46 ④: 选中时间格蓝框+加号（同日页 slot-sel 观感体系）;加号→快建(列日+格时段)。 */}
+                {weekSlot && (
+                  <div className="week-slot-sel" aria-hidden="true"
+                    style={{ left: `${(weekSlot.col * 100) / 7}%`, width: `${100 / 7}%`, top: `${48 + weekSlot.h * 48}px`, height: '48px' }}>
+                    <button type="button" className="slot-plus week-slot-plus" aria-label={`在 ${days2[weekSlot.col] ? kOf(days2[weekSlot.col]) : ''} ${String(weekSlot.h).padStart(2, '0')}:00 新建日程`}
+                      onClick={(e) => { e.stopPropagation(); setQuickDay(kOf(days2[weekSlot.col])); setQuickNew(weekSlot.h); setQuickTitle(''); }}>+</button>
+                  </div>
+                )}
                 {days2.map((d, i) => (
-                  <div key={kOf(d)} className="week-day-col">
+                  <div key={kOf(d)} className="week-day-col" data-col={i}>
                     {blocks.filter((b) => b.col === i).map((b) => (
                       <button type="button" key={b.key} className={`week-ev ${b.kind}${showText(b) ? '' : ' dot'}`} style={{ top: `${48 + (b.topMin * 48) / 60}px`, height: `${(b.hMin * 48) / 60 - 4}px` }}
                         aria-label={b.label}
-                        onClick={() => { if (b.ev) setEventEditor(b.ev); else if (b.kind === 'task') onNewTask(kOf(d)); }}>
+                        onClick={(e) => { e.stopPropagation(); if (b.ev) setEventEditor(b.ev); else if (b.kind === 'task') onNewTask(kOf(d)); }}>
                         {/* 11-08 22:19: 块放不下字（<30min 或同列重叠）→色点;正常→标题。 */}
                         {showText(b) ? b.label : <i className="we-dot" aria-hidden="true" />}
                       </button>
@@ -847,12 +866,12 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
         const q = dayIso(quickNew);
         return (
           <>
-            <div className="sheet-mask" onClick={() => setQuickNew(null)} />
+            <div className="sheet-mask" onClick={() => closeQuick()} />
             <div className="sheet quick-sheet" role="dialog" aria-label="快捷新建日程">
               <div className="sheet-grab" />
               <div className="sheet-head">
                 <span className="sheet-title">新建日程</span>
-                <button className="icon-btn" onClick={() => setQuickNew(null)} aria-label="关闭">{I.x}</button>
+                <button className="icon-btn" onClick={() => closeQuick()} aria-label="关闭">{I.x}</button>
               </div>
               <div className="sheet-body">
                 <input className="input" placeholder="准备做什么？" value={quickTitle}
@@ -861,14 +880,14 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                   <span className="quick-time">{quickNew === 23 ? `${q.mLabel} 23:00 - 次日 00:00` : `${q.mLabel} ${String(quickNew).padStart(2, '0')}:00 - ${String(quickNew + 1).padStart(2, '0')}:00`}</span>
                   <button type="button" className="quick-more" onClick={() => {
                     /* 跳完整版: 关快建→开编辑器（起止 prefilled 本时段）。 */
-                    setQuickNew(null);
+                    closeQuick();
                     setEventEditor({ id: '', title: quickTitle, start: q.start, end: q.end, all_day: false, location: null, note_id: null, color: 0, repeat: null, reminders: null });
                   }}>更多设置</button>
                 </div>
                 <button type="button" className="quick-done" disabled={!quickTitle.trim()}
                   onClick={() => {
                     onUpsertEvent({ id: '', title: quickTitle.trim(), start: q.start, end: q.end, all_day: false, location: null, note_id: null, color: 0, repeat: null, reminders: null });
-                    setQuickNew(null); setSlotSel(null);
+                    closeQuick(); setSlotSel(null); setWeekSlot(null);
                   }}>完成</button>
               </div>
             </div>

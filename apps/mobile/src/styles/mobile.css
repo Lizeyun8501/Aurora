@@ -668,16 +668,18 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   display: flex; flex-direction: column; align-items: center;
   padding: 7px 0 4px; gap: 2px; cursor: pointer; background: transparent; /* 11-08 22:19: 6→7 配 42 框垂直居中(num7~28+lunar30~38 vs 框6~48) */
 }
-/* 11-09 15:39 ④: 选中列框内右下加号（快建该日日程/待办）——16px 蓝圆,右下角贴 sel 框内角。 */
-.week-col { position: relative; }
-.week-head-add {
-  position: absolute; right: 2px; top: 26px;
-  width: 16px; height: 16px; border-radius: 50%;
-  background: #3B82F6; color: #fff;
-  font-size: 11px; line-height: 1; font-weight: 700;
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-  z-index: 2;
+/* 11-09 17:46 ④(纠偏): 周页 24h 轴时间格选中框（点灰区交织格）——同日页 slot-sel 观感体系。
+   格框 pointer-events none(不挡事件块/列点击),唯加号可点。列头 week-head-add 方案已撤。 */
+.week-slot-sel {
+  position: absolute; z-index: 1;
+  box-sizing: border-box;
+  border: 1.5px solid #3B82F6; border-radius: 10px;
+  background: rgba(59, 130, 246, 0.10);
+  pointer-events: none;
+}
+.week-slot-sel .slot-plus {
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  pointer-events: auto;
 }
 .week-wd { font-size: 11px; color: var(--text-tertiary); }
 /* 11-04 23:31 ②: 周条农历小字（同月历 cal-lunar 观感）。 */
