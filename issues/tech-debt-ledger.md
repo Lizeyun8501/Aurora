@@ -44,3 +44,4 @@
 - [环境既有] shared/ui-components vitest 环境坏: @testing-library/dom 缺失（Modal/BlockRenderer/Sidebar 既有测试同跑不动——非本卡引入）;AttachmentPreview.test.tsx 行为级断言已写就绪,环境修复即跑
 - [本卡遗留] 移动端附件预览接线: MobileApp 无附件渲染宿主链（attachment:// 渲染/附件列表为移动端独立缺口）;AttachmentPreview 依赖注入设计已保双端可用;待移动端附件链落地即接（与 E25 APK 二进制桥同列）
 - [v2 建议] PDF 内置渲染: pdfjs-dist 动态 chunk lazy-load（打包依赖非 CDN,~900KB gzip 不入主 bundle）——双端 WebView 动态 import 兼容性需先验;v1 按工单降级分支走系统打开
+- [v2 迁移] tauri-plugin-shell open 已 deprecated——A-02 用 allow 保最小 diff,后续迁 tauri-plugin-opener（新依赖+capability 面评估）

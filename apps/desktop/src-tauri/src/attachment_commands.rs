@@ -44,8 +44,8 @@ const MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
 #[tauri::command]
 pub async fn cmd_read_attachment(
     attachment_id: String,
-    /// A-02 范围读取（Option 向后兼容: 旧调用不传=全量）。
-    /// `{start, len}`——明文区间切片;解密/校验恒全量（fail-closed 不旁路）。
+    // A-02 范围读取（Option 向后兼容: 旧调用不传=全量）。
+    // {start, len}——明文区间切片;解密/校验恒全量（fail-closed 不旁路）。
     range: Option<AttachmentRange>,
 ) -> Result<ReadAttachmentDto, String> {
     if !aurora_core::attachment_store::validate_attachment_id(&attachment_id) {
@@ -179,11 +179,15 @@ pub async fn cmd_open_attachment(
     let path_str = path.to_string_lossy().into_owned();
 
     // Rust 侧 shell open（ShellExt——generate_handler 自动注入 AppHandle,
-    // 不经前端 capability 面）。
+    // 不经前端 capability 面）。shell.open 已 deprecated（建议迁
+    // tauri-plugin-opener——v2 登记 ledger;v1 功能面正常,allow 保最小 diff）。
     use tauri_plugin_shell::ShellExt as _;
-    app.shell()
+    #[allow(deprecated)]
+    let opened = app
+        .shell()
         .open(&path_str, None)
         .map_err(|e| format!("shell open: {e}"))?;
+    let _ = opened;
     Ok(path_str)
 }
 
