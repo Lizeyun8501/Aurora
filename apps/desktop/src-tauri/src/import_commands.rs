@@ -215,7 +215,7 @@ pub async fn cmd_import_docx(file: String) -> Result<aurora_import::ImportReport
     report.scanned = 1;
     report.imported = 1;
     report.note_ids = vec![note_id.clone()];
-    report.entries = vec![aurora_import::ImportedEntry {
+    report.entries = vec![aurora_import::report::ImportedEntry {
         note_id,
         title: title.to_string(),
         source: file.clone(),
@@ -306,7 +306,7 @@ pub async fn cmd_import_xlsx(file: String) -> Result<aurora_import::ImportReport
     report.note_ids = note_ids.clone();
     report.entries = note_ids
         .iter()
-        .map(|nid| aurora_import::ImportedEntry {
+        .map(|nid| aurora_import::report::ImportedEntry {
             note_id: nid.clone(),
             title: format!("{}/{}", title, nid),
             source: file.clone(),
