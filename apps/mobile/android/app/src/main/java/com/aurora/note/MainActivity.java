@@ -347,6 +347,37 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** A-08: 任务全量镜像同步（双写面——移动 localStorage 权威,core 镜像供
+         *  桌面日历同源消费;失败返空串,调用方 console.warn 非静默）。 */
+        @JavascriptInterface
+        public String taskSync(String tasksJson) {
+            try {
+                return core != null ? core.taskSync(tasksJson) : "";
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        /** A-08: CalendarVm JSON（events+tasks——移动日历切读入口,下卡切换）。 */
+        @JavascriptInterface
+        public String calendarVm() {
+            try {
+                return core != null ? core.calendarVm() : "";
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        /** A-08: 任务改期（TaskRescheduled 事件——投影/双端同步）。 */
+        @JavascriptInterface
+        public boolean taskReschedule(String taskId, String newDue) {
+            try {
+                return core != null && core.taskReschedule(taskId, newDue);
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
         /** 范围查询 [fromMs, toMs)（交叠命中）。JSON 数组同 listEvents。 */
         @JavascriptInterface
         public String queryEvents(long fromMs, long toMs) {

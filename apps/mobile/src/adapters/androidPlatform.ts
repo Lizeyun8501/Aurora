@@ -67,6 +67,10 @@ export interface ReminderSetting {
 }
 
 interface AndroidBridge {
+  // A-08: task 域 + CalendarVm（Java 壳 MainActivity.taskSync 等——双端对称）
+  taskSync?(tasksJson: string): string;
+  calendarVm?(): string;
+  taskReschedule?(taskId: string, newDue: string): boolean;
   init(dataDir: string): string;
   listNotes(): string;
   createNote(title: string): string;

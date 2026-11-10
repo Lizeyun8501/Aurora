@@ -307,6 +307,22 @@ function loadTasks(): Task[] {
 }
 function saveTasks(ts: Task[]) {
   try { localStorage.setItem('aurora.tasks', JSON.stringify(ts)); } catch { /* 配额满/隐私模式 */ }
+  // A-08 双写（铁律 6 三段式新增段）: 移动 localStorage 权威不动,core 镜像
+  // 供桌面日历同源消费（CalendarVm tasks 面;切读=下卡）。失败 console.warn
+  // 非静默（Java 壳空串约定——F12 可见,真机 chrome inspect 落 logcat）。
+  try {
+    const b = (window as { AndroidBridge?: { taskSync?: (j: string) => string } }).AndroidBridge;
+    if (b?.taskSync) {
+      const payload = JSON.stringify(ts.map((t) => ({
+        id: t.id, text: t.text, status: t.status, due: t.due ?? null,
+        note_id: t.noteId ?? null, created_at: t.createdAt,
+        priority: t.priority ?? null,
+        ext: { estimate_minutes: t.estimateMinutes ?? null, actual_minutes: t.actualMinutes ?? null, parent_task_id: t.parentTaskId ?? null, progress: t.progress ?? null },
+      })));
+      const r = b.taskSync(payload);
+      if (!r) console.warn('[A-08] taskSync core 镜像失败（双写降级——localStorage 权威不受影响）');
+    }
+  } catch (e) { console.warn('[A-08] taskSync 异常', e); }
 }
 
 export interface ToastAction { text: string; actionLabel: string; onAction: () => void }

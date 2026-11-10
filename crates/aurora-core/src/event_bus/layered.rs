@@ -143,6 +143,15 @@ pub enum AppEvent {
         /// 新状态。
         new_status: String,
     },
+    /// 任务改期（A-08: 日历拖拽改期 → 投影/双端日历同步）。due=「YYYY-MM-DD」。
+    TaskRescheduled {
+        /// 任务 ID。
+        task_id: String,
+        /// 原截止日。
+        old_due: Option<String>,
+        /// 新截止日。
+        new_due: Option<String>,
+    },
 
     // ===== 低频后台通道 (Low) =====
     /// 笔记创建（需索引）。
@@ -185,7 +194,8 @@ impl AppEvent {
             | AppEvent::TodayViewRefresh { .. } => EventChannel::High,
             AppEvent::BidiLinkChanged { .. }
             | AppEvent::NoteMetadataChanged { .. }
-            | AppEvent::TaskStatusChanged { .. } => EventChannel::Medium,
+            | AppEvent::TaskStatusChanged { .. }
+            | AppEvent::TaskRescheduled { .. } => EventChannel::Medium,
             AppEvent::NoteCreated { .. }
             | AppEvent::NoteDeleted { .. }
             | AppEvent::SnapshotRequested { .. }
@@ -203,6 +213,7 @@ impl AppEvent {
             AppEvent::BidiLinkChanged { .. } => "BidiLinkChanged",
             AppEvent::NoteMetadataChanged { .. } => "NoteMetadataChanged",
             AppEvent::TaskStatusChanged { .. } => "TaskStatusChanged",
+            AppEvent::TaskRescheduled { .. } => "TaskRescheduled",
             AppEvent::NoteCreated { .. } => "NoteCreated",
             AppEvent::NoteDeleted { .. } => "NoteDeleted",
             AppEvent::SnapshotRequested { .. } => "SnapshotRequested",

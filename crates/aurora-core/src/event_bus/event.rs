@@ -81,6 +81,7 @@ impl CoreEvent {
         ("LinkRemoved", EventChannel::Medium, true),
         ("TaskCreated", EventChannel::Medium, true),
         ("TaskUpdated", EventChannel::Medium, true),
+        ("TaskRescheduled", EventChannel::Medium, true),
         ("TaskCompleted", EventChannel::Medium, true),
         ("TaskDependencyChanged", EventChannel::Medium, true),
         ("TaskDue", EventChannel::Low, true),
@@ -127,6 +128,7 @@ impl CoreEvent {
             CoreEvent::LinkRemoved { .. } => "LinkRemoved",
             CoreEvent::TaskCreated { .. } => "TaskCreated",
             CoreEvent::TaskUpdated { .. } => "TaskUpdated",
+            CoreEvent::TaskRescheduled { .. } => "TaskRescheduled",
             CoreEvent::TaskCompleted { .. } => "TaskCompleted",
             CoreEvent::TaskDependencyChanged { .. } => "TaskDependencyChanged",
             CoreEvent::TaskDue { .. } => "TaskDue",
@@ -220,6 +222,13 @@ pub enum CoreEvent {
         task_id: String,
         status: String,
         changed_fields: Vec<String>,
+    },
+    /// 任务改期（A-08: 日历拖拽/改期 → 投影与双端日历同步）。
+    /// due 形态=「YYYY-MM-DD」（移动端 Task.due 同构;None=清除截止）。
+    TaskRescheduled {
+        task_id: String,
+        old_due: Option<String>,
+        new_due: Option<String>,
     },
     /// 素材添加（BlobStore → 搜索/资产库）。V26: 加 size。
     AssetAdded {

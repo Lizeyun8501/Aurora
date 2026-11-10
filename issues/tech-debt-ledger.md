@@ -33,3 +33,9 @@
 - [他人既有] shared/ui-components RichEditor.tsx MARK_BTNS / auroraMarkdown.ts labels 两处 TS6133 unused（tsc 全库仅此 2 错;非本卡 diff 面——本卡改动零 tsc 错;归属 Alpha/前端面）
 - [本卡注记] mobile 二进制导出链: FFI export_note_docx/export_collection_xlsx 返 Vec<u8> 已就绪,APK JS 桥 exportFile 现仅 text 通道——真机二进制落盘需 MainActivity 加 base64 通道（APK 重打不在本卡）
 - [本卡注记] DOCX 真机 Word/WPS 开启验证不可行（沙箱无 Office）——OOXML 结构级测试已验（zip 规范+document.xml/styles 骨架+eastAsia 字体）;用户侧真机抽验建议保留
+
+## A-08 (2026-11-10) 登记项
+- **桌面周视图为列卡式**（7 列日卡+拖拽改期主通路完整），非移动端 24h 像素轴——24h 轴等价增强待后续卡（估 2 人日）
+- **移动端日历切读 Rust VM**：通道已全通（FFI calendar_vm_json+Java 壳 calendarVm+TS bridge 接口），当前移动 CalendarView 仍读 adapter 旧源（铁律 6 三段式: 双写已落,切读=下卡）
+- **既有 TS6133 ×2**（shared/ui-components RichEditor MARK_BTNS / auroraMarkdown labels,非本卡引入）——desktop typecheck 既有红点,单独小卡清
+- **desktop browser-mock 日历空态**: CalendarPanel invoke=null 显示明示文案（非静默）——tauri 真模式全功能

@@ -79,6 +79,7 @@ export const EVENT_DICT: readonly {
   { type: 'LinkRemoved', channel: 'medium', persistent: true },
   { type: 'TaskCreated', channel: 'medium', persistent: true },
   { type: 'TaskUpdated', channel: 'medium', persistent: true },
+  { type: 'TaskRescheduled', channel: 'medium', persistent: true }, // A-08: 日历改期
   { type: 'TaskCompleted', channel: 'medium', persistent: true },
   { type: 'TaskDependencyChanged', channel: 'medium', persistent: true },
   { type: 'TaskDue', channel: 'low', persistent: true },
@@ -157,6 +158,7 @@ export type CoreEvent =
   | { type: 'BacklinksUpdated'; doc_id: string }
   | { type: 'TaskCreated'; task_id: string; title: string; note_id: string | null; block_id: string | null }
   | { type: 'TaskUpdated'; task_id: string; status: string; changed_fields: string[] }
+  | { type: 'TaskRescheduled'; task_id: string; old_due: string | null; new_due: string | null }
   | { type: 'TaskCompleted'; task_id: string; completed_at: number; actual_minutes: number | null }
   | { type: 'TaskDependencyChanged'; task_id: string; depends_on: string; op: DependencyOp }
   | { type: 'TaskTimerStarted'; task_id: string; started_at: number }

@@ -16,6 +16,7 @@ export const DEFAULT_SHORTCUTS: ShortcutTable = {
   palette: 'Mod+K',
   newNote: 'Mod+N',
   today: 'Mod+J',
+  calendar: 'Mod+Shift+C', // A-08: 快捷跳日历
 };
 
 export const SHORTCUT_ACTIONS = Object.keys(DEFAULT_SHORTCUTS);
@@ -24,6 +25,7 @@ export const SHORTCUT_LABELS: Record<string, string> = {
   palette: '命令面板',
   newNote: '新建笔记',
   today: '今日视图',
+  calendar: '日历视图',
 };
 
 /** 组合串 → 谓词（Mod=metaKey||ctrlKey；Shift=shiftKey；键名不区分大小写）。 */

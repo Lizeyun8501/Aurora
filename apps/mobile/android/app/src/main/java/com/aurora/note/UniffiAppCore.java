@@ -374,6 +374,22 @@ public class UniffiAppCore {
         return nativeDeleteEvent(handle, eventId);
     }
 
+    /** A-08: 任务全量镜像同步（差集删除;成功 "{written}/{deleted}",失败空串）。 */
+    public String taskSync(String tasksJson) {
+        return nativeTaskSync(handle, tasksJson);
+    }
+
+    /** A-08: CalendarVm JSON（events+tasks 全量——双端同一 VM）。失败空串。 */
+    public String calendarVm() {
+        return nativeCalendarVm(handle);
+    }
+
+    /** A-08: 任务改期（TaskRescheduled 事件;newDue 空串=清除截止）。 */
+    public boolean taskReschedule(String taskId, String newDue) {
+        return nativeTaskReschedule(handle, taskId, newDue);
+    }
+
+
     /** 范围查询 [fromMs, toMs)——事件与区间有交叠即命中。错误降级空列表。 */
     public java.util.List<EventItem> queryEvents(long fromMs, long toMs) {
         String json = nativeQueryEvents(handle, fromMs, toMs);
@@ -397,6 +413,10 @@ public class UniffiAppCore {
     private static native String nativeUpsertEvent(long handle, String eventJson);
     private static native boolean nativeDeleteEvent(long handle, String eventId);
     private static native String nativeQueryEvents(long handle, long fromMs, long toMs);
+    // A-08: task 域 + CalendarVm JNI 声明（Rust 侧 Java_com_aurora_note_UniffiAppCore_native*）
+    private static native String nativeTaskSync(long handle, String tasksJson);
+    private static native String nativeCalendarVm(long handle);
+    private static native boolean nativeTaskReschedule(long handle, String taskId, String newDue);
     private static native String nativeCreateNote(long handle, String title);
     private static native int nativeListNotesCount(long handle);
     private static native String[] nativeGetNote(long handle, int index);

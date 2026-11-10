@@ -15,7 +15,7 @@ import {
   type Task, TASK_GROUPS, I, listNotesTitled, NoteCard, EmptyState,
 } from '../MobileApp';
 import type { CalEvent, ReminderSetting } from '../adapters/androidPlatform';
-import { expandAll, type EvInstance } from './repeatUtil';
+import { expandAll, lunarSub, type EvInstance } from './repeatUtil'; // A-08: lunarSub 上移 shared（去内嵌防双份）
 
 
 export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEvent, onOpenNote, onNewTask, initialSelected }: {
@@ -152,21 +152,9 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
     return [...new Set(hits.map((i) => i.ev.color % 6))].slice(0, 3);
   };
 
-  // 农历/节假日 — lunar-typescript（6tail, 含法定节假日+调休数据随库更新）
-  /** 格子副标: 法定假日名 > 农历节日 > 公历节日 > 节气 > 初一显月名 > 农历日。 */
-  const lunarSub = (d: number, yy = y, mm = m): { sub: string; isStat: boolean; isWork: boolean } => {
-    const solar = Solar.fromYmd(yy, mm + 1, d);
-    const lunar = solar.getLunar();
-    const h = HolidayUtil.getHoliday(yy, mm + 1, d);
-    let sub: string;
-    if (h) sub = h.getName();
-    else if (lunar.getFestivals().length) sub = lunar.getFestivals()[0];
-    else if (solar.getFestivals().length) sub = solar.getFestivals()[0];
-    else if (lunar.getJieQi()) sub = lunar.getJieQi();
-    else if (lunar.getDayInChinese() === '初一') sub = `农历${lunar.getMonthInChinese()}月`;
-    else sub = lunar.getDayInChinese();
-    return { sub, isStat: !!h && !h.isWork(), isWork: !!h && h.isWork() };
-  };
+  // 农历/节假日 — lunar-typescript（A-08: lunarSub 上移 shared/calendar.ts——
+  // 本地闭包仅做 y/m 默认参适配（默认参闭包在组件 body,调用点不变）。
+  const lunarSubLocal = (d: number, yy = y, mm = m) => lunarSub(d, yy, mm);
   /** 选中日农历全称（如 二〇二六年正月初一）+ 假日/节气标注。 */
   const selLunarInfo = (() => {
     const [sy, sm, sd] = selected.split('-').map(Number);
@@ -348,7 +336,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
               const key = fmt(d);
               const isToday = key === todayStr;
               const isSel = key === selected;
-              const ls = lunarSub(d);
+              const ls = lunarSubLocal(d);
               return (
                 <button
                   key={d}
@@ -406,7 +394,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                       <span className="week-num">{d.getDate()}</span>
                       {/* 11-04 23:31 ②: 周条日期带农历（同月历 lunarSub——用 d 实年月防跨月错）。
                           11-08 22:01 ②: wd 上移后列头两行,农历入 sel 框（mt 10→2 撤「推出框底」）。 */}
-                      <span className={`week-lunar${lunarSub(d.getDate(), d.getFullYear(), d.getMonth()).isStat ? ' fest' : ''}`}>{lunarSub(d.getDate(), d.getFullYear(), d.getMonth()).sub}</span>
+                      <span className={`week-lunar${lunarSubLocal(d.getDate(), d.getFullYear(), d.getMonth()).isStat ? ' fest' : ''}`}>{lunarSubLocal(d.getDate(), d.getFullYear(), d.getMonth()).sub}</span>
                     </button>
                   </div>
                 );
@@ -624,7 +612,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                    (格蓝框+加号,加号→快建该日该时段)。事件委托: 列=closest(.week-day-col).data-col,
                    行=(clientY-容器顶-48)/48(顶空 48+行高 48);事件块点击 stopPropagation 不选格。 */
                 onClick={(e) => {
-                  const colEl = (e.target as HTMLElement).closest('.week-day-col');
+                  const colEl = (e.target as Element).closest('.week-day-col') as HTMLElement | null;
                   if (!colEl || !colEl.dataset.col) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const h = Math.floor((e.clientY - rect.top - 48) / 48);

@@ -33,6 +33,7 @@ mod ai_commands;
 mod attachment_commands;
 mod backlink_commands;
 mod backup_commands;
+mod calendar_commands; // A-08: 桌面日历命令面（与移动 FFI 同源 core）
 mod capture_server;
 mod collection_commands;
 mod due_preview_commands;
@@ -291,6 +292,12 @@ pub fn run() {
             due_preview_commands::cmd_preview_due,
             todo_commands::cmd_all_tasks,
             todo_commands::cmd_toggle_task,
+            calendar_commands::cmd_calendar_vm,
+            calendar_commands::cmd_list_events,
+            calendar_commands::cmd_upsert_event,
+            calendar_commands::cmd_delete_event,
+            calendar_commands::cmd_reschedule_task,
+            calendar_commands::cmd_sync_tasks,
             template_commands::cmd_list_templates,
             template_commands::cmd_create_from_template,
             wiki_commands::cmd_wiki_link_titles,

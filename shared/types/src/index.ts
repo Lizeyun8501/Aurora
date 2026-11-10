@@ -1,8 +1,9 @@
 /**
  * @aurora/shared-types
  *
- * Pure TypeScript type definitions mirroring the Aurora Note Rust core domain
- * (`crates/aurora-core/`). This package contains no runtime code.
+ * TypeScript definitions mirroring the Aurora Note Rust core domain
+ * (`crates/aurora-core/`). A-08 起含日历运行时纯函数（calendar.ts——
+ * repeatUtil/lunar,双端单份实现,禁止各自复制）。
  */
 
 export * from './blocks';
@@ -17,3 +18,4 @@ export * from './security';
 export * from './plugin';
 export * from './events';
 export * from './adapter';
+export * from './calendar'; // A-08: 日历 shared 面（repeatUtil 上移+lunar+CalendarVm）

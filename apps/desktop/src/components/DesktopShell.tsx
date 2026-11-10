@@ -25,6 +25,7 @@ import TrashView from './TrashView';
 import SmartFolderView from './SmartFolderView';
 import GraphPanel from './GraphPanel';
 import TodoView from './TodoView';
+import CalendarPanel from './CalendarPanel'; // A-08: 桌面日历视图（双端对称）
 import TagView from './TagView';
 import ShortcutSettings from './ShortcutSettings';
 import { DEFAULT_SHORTCUTS, comboMatches, type ShortcutTable } from '../shortcuts';
@@ -175,7 +176,8 @@ export type MainView =
   | 'marketplace'
   | 'plugins'
   | 'collections'
-  | 'tasks';
+  | 'tasks'
+  | 'calendar'; // A-08: 桌面日历视图
 
 /** browser-mock 演示数据 — 形状与内核 NoteSummary/NoteContent 对齐 */
 const MOCK_NOTES: NoteSummary[] = [
@@ -1193,7 +1195,7 @@ function Sidebar(props: {
         ⤴ 导出全部 Markdown
       </button>
       <nav style={{ display: 'flex', gap: tokens.spacing.xs }} aria-label="主导航">
-        {(['notes', 'today', 'tasks', 'tags', 'canvas', 'trash', 'liquify', 'agent', 'marketplace', 'plugins', 'collections'] as const).map((v) => (
+        {(['notes', 'today', 'tasks', 'calendar', 'tags', 'canvas', 'trash', 'liquify', 'agent', 'marketplace', 'plugins', 'collections'] as const).map((v) => (
           <button
             key={v}
             onClick={() => onView(v)}
@@ -1210,7 +1212,7 @@ function Sidebar(props: {
               minHeight: 36,
             }}
           >
-            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : v === 'liquify' ? 'AI 提案' : v === 'agent' ? 'Agent' : v === 'marketplace' ? '市场' : v === 'plugins' ? '插件' : v === 'collections' ? '数据库' : v === 'tasks' ? '待办' : v === 'tags' ? '标签' : '今日视图'}
+            {v === 'notes' ? '全部笔记' : v === 'canvas' ? '画布' : v === 'trash' ? '回收站' : v === 'liquify' ? 'AI 提案' : v === 'agent' ? 'Agent' : v === 'marketplace' ? '市场' : v === 'plugins' ? '插件' : v === 'collections' ? '数据库' : v === 'tasks' ? '待办' : v === 'calendar' ? '日历' : v === 'tags' ? '标签' : '今日视图'}
           </button>
         ))}
       </nav>
@@ -3303,6 +3305,11 @@ export default function DesktopShell() {
         e.preventDefault();
         setView('today');
       }
+      if (comboMatches(shortcuts.calendar ?? 'Mod+Shift+C', e)) {
+        /* A-08: 快捷跳日历（可经 ShortcutSettings 自定义——覆盖表 calendar 键）。 */
+        e.preventDefault();
+        setView('calendar');
+      }
       if (e.key === 'Escape') setPaletteOpen(false);
     };
     window.addEventListener('keydown', onKey);
@@ -3910,6 +3917,12 @@ export default function DesktopShell() {
         title: '待办聚合（全库任务）',
         run: () => setView('tasks'),
       },
+      {
+        kind: 'command',
+        id: 'calendar',
+        title: '日历视图（周/月·A-08 双端对称）',
+        run: () => setView('calendar'),
+      },
       ...templates.map((t) => ({
         kind: 'command' as const,
         id: `tpl-${t.noteId}`,
@@ -4147,6 +4160,16 @@ export default function DesktopShell() {
         ) : view === 'tasks' ? (
           /* DK-2.2 待办聚合 v2（checkbox 回写——cmd_toggle_task 双条件块定位） */
           <TodoView
+            invoke={invoke}
+            onOpenNote={(nid) => {
+              setSelectedId(nid);
+              setView('notes');
+            }}
+          />
+        ) : view === 'calendar' ? (
+          /* A-08: 桌面日历——同一 Rust CalendarVm（cmd_calendar_vm）;repeatUtil=shared 单份;
+             周视图任务拖拽改期→cmd_reschedule_task（TaskRescheduled 事件）。 */
+          <CalendarPanel
             invoke={invoke}
             onOpenNote={(nid) => {
               setSelectedId(nid);

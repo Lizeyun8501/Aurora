@@ -1262,6 +1262,67 @@ impl UniffiAppCore {
             .is_ok()
     }
 
+    // ------------------------------------------------------------------
+    // A-08: task 域方法 + CalendarVm（双端同源——桌面走 Tauri calendar_commands）
+    // ------------------------------------------------------------------
+
+    /// A-08: 任务全量镜像同步（JSON 数组;差集删除）。成功返 "{written}/{deleted}"，
+    /// 失败/无 core 返空串（tracing warn 落日志——fail-closed 惯例同 upsert_event）。
+    pub fn task_sync_json(self: &Arc<Self>, tasks_json: &str) -> String {
+        let Some(core) = &self.core else {
+            return String::new();
+        };
+        let Ok(tasks) =
+            serde_json::from_str::<Vec<aurora_core::task_store::CalendarTask>>(tasks_json)
+        else {
+            tracing::warn!(raw = %tasks_json, "task_sync json parse failed");
+            return String::new();
+        };
+        match self.runtime.block_on(aurora_core::task_store::sync_tasks(
+            core.kv_store.as_ref(),
+            &tasks,
+        )) {
+            Ok((w, d)) => format!("{w}/{d}"),
+            Err(e) => {
+                tracing::warn!(error = %e, "task_sync failed");
+                String::new()
+            }
+        }
+    }
+
+    /// A-08: CalendarVm JSON（events+tasks 全量——移动日历切读入口,双端同一 VM）。
+    pub fn calendar_vm_json(self: &Arc<Self>) -> String {
+        let Some(core) = &self.core else {
+            return String::new();
+        };
+        match self
+            .runtime
+            .block_on(aurora_core::calendar_vm::build_calendar_vm(
+                core.kv_store.as_ref(),
+            )) {
+            Ok(vm) => serde_json::to_string(&vm).unwrap_or_else(|_| String::new()),
+            Err(e) => {
+                tracing::warn!(error = %e, "calendar_vm failed");
+                String::new()
+            }
+        }
+    }
+
+    /// A-08: 任务改期（发 TaskRescheduled——投影/双端同步）。成功 true。
+    pub fn task_reschedule(self: &Arc<Self>, task_id: &str, new_due: Option<String>) -> bool {
+        let Some(core) = &self.core else {
+            return false;
+        };
+        self.runtime
+            .block_on(aurora_core::task_store::reschedule_task(
+                core.kv_store.as_ref(),
+                &core.event_bus,
+                task_id,
+                new_due,
+            ))
+            .is_ok()
+    }
+
     /// 范围查询 JSON [from_ms, to_ms)（事件与 [from,to) 有交叠即命中——
     /// start < to && (end|start) > from;跨月全天事件正确落两侧月视图）。
     pub fn query_events_range_json(self: &Arc<Self>, from_ms: i64, to_ms: i64) -> String {
@@ -1969,6 +2030,51 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeDeleteEvent(
     let core = unsafe { core_from_handle(handle) };
     let id = jstring_to_rust(&mut env, &event_id).unwrap_or_default();
     core.delete_event(&id) as jboolean
+}
+
+// A-08: task 域 + CalendarVm JNI 导出（桌面 calendar_commands 同源——双端对称）
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeTaskSync(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    tasks_json: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let json = jstring_to_rust(&mut env, &tasks_json).unwrap_or_default();
+    let r = core.task_sync_json(&json);
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeCalendarVm(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let json = core.calendar_vm_json();
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(json))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeTaskReschedule(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    task_id: JString,
+    new_due: JString,
+) -> jboolean {
+    let core = unsafe { core_from_handle(handle) };
+    let id = jstring_to_rust(&mut env, &task_id).unwrap_or_default();
+    let due_raw = jstring_to_rust(&mut env, &new_due).unwrap_or_default();
+    // 空串=清除截止（Option::None 语义）
+    let due = if due_raw.is_empty() {
+        None
+    } else {
+        Some(due_raw)
+    };
+    core.task_reschedule(&id, due) as jboolean
 }
 
 #[no_mangle]
