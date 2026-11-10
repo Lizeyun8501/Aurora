@@ -563,12 +563,10 @@ pub async fn cmd_export_note_docx(note_id: String, dest_dir: String) -> Result<S
         }
     }
     let base = sanitize_filename(title);
-    let existing_docx: Vec<String> = existing
+    let existing_docx: HashSet<String> = existing
         .iter()
         .filter(|n| n.ends_with(".docx"))
         .map(|n| n.trim_end_matches(".docx").to_string())
-        .collect::<HashSet<_>>()
-        .into_iter()
         .collect();
     let final_name = dedupe_filename(&existing_docx, &base);
     let path = format!("{}/{}.docx", dest_dir.trim_end_matches('/'), final_name);
@@ -651,12 +649,10 @@ pub async fn cmd_export_collection_xlsx(
             existing.insert(name.to_string());
         }
     }
-    let existing_xlsx: Vec<String> = existing
+    let existing_xlsx: HashSet<String> = existing
         .iter()
         .filter(|n| n.ends_with(".xlsx"))
         .map(|n| n.trim_end_matches(".xlsx").to_string())
-        .collect::<HashSet<_>>()
-        .into_iter()
         .collect();
     let final_name = dedupe_filename(&existing_xlsx, &base);
     let path = format!("{}/{}.xlsx", dest_dir.trim_end_matches('/'), final_name);
