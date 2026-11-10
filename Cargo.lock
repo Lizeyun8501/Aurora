@@ -461,6 +461,7 @@ dependencies = [
  "aurora-ai",
  "aurora-bootstrap",
  "aurora-core",
+ "aurora-entity",
  "aurora-import",
  "aurora-plugin",
  "aurora-security",

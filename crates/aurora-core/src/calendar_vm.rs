@@ -36,7 +36,6 @@ pub async fn build_calendar_vm(kv: &dyn KVStore) -> Result<CalendarVm, Error> {
 mod tests {
     use super::*;
     use crate::l1_infrastructure::storage_engine::MemoryKVStore;
-    use crate::task_store::sync_tasks;
     use chrono::TimeZone;
     use std::sync::Arc;
 
