@@ -54,8 +54,8 @@
 | Rustfmt | ✅ | 8eb2252 check-run success（066e37c 同 diff 面预期同） |
 | Clippy (-D warnings) | ✅ | 8eb2252 success+本机 workspace RC=0 |
 | MSRV (1.91) | ✅ | 8eb2252 success |
-| desktop-check | 8eb2252 红→066e37c 修（set_schema 值传）| 7599fdc/8eb2252 两红均 annotation raw-tail 定谳最小修;066e37c 终态（见下） |
-| Test (stable) | 分离披露 | **25e7cf4 基线本身红**: dk02_s2_trash_flow_roundtrip FAILED（trash 域=Alpha 面，annotation 实证，非本卡 diff）;本机 aurora-import 全量 8 目标 RC=0 |
+| desktop-check | **✅ success（6456195 终态）** | 四红连环均 annotation raw-tail 定谳最小修：①裸 ImportReport 补 Ok()（8eb2252）②set_schema 值传（066e37c）③dedupe_filename &HashSet（62bc031）④ImportedEntry 私有 re-export 改 report:: 全路径（6456195）——本机无 GTK 编不到 desktop 面，CI 四轮定谳全中 |
+| Test (stable) | **唯一 FAILED=dk02_s2_trash_flow_roundtrip**（与 25e7cf4 基线同名同案——trash 域=Alpha 面，annotation 实证分离，非本卡 diff）;本卡 aurora-import 面测试全绿（本机 8 目标 RC=0+CI 全量跑绿） |
 
 **本机验证**: aurora-import test RC=0（a01 六测+dk09 既有全绿）/clippy workspace RC=0/fmt RC=0/mobile-ffi check RC=0/tsc 改动面零错（全库仅 shared 两 TS6133 他人既有债）
 
@@ -72,4 +72,4 @@
 - XLSX 列类型正确 ✓（t="n"/t="b"/s="1" 日期样式断言）
 - 跳过项报告非静默 ✓（warnings 断言）;空表明确报错 ✓
 - 无障碍: 卡片 button 键盘聚焦 ✓/XLSX 钮 aria-label ✓
-- CI: fmt/clippy/MSRV ✅;desktop-check 066e37c 收口待终态确认;Test=基线红分离（dk02_s2 非我面）
+- CI 五门终态（6456195）: Rustfmt ✅ / Clippy ✅ / MSRV ✅ / Wasm×3 ✅ / **desktop-check ✅**;Test (stable) 唯一红=dk02_s2_trash（25e7cf4 基线既有，Alpha 面，同名同案分离成立——本卡 import/docx/xlsx 面测试 CI 全绿）
