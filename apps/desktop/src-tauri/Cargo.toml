@@ -24,6 +24,7 @@ chrono = { workspace = true }
 aurora-core = { path = "../../../crates/aurora-core" }
 aurora-ai = { path = "../../../crates/aurora-ai" }
 aurora-import = { path = "../../../crates/aurora-import" }
+aurora-entity = { path = "../../../crates/entity" }
 aurora-sync = { path = "../../../crates/aurora-sync", features = ["iroh-transport"] } # DK-44: drain 消费面
 aurora-security = { path = "../../../crates/aurora-security" }
 # DK-市场卡：桌面安装面接线（installer 语义层 + WasmRuntime/Marketplace）
