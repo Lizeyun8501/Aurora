@@ -374,6 +374,11 @@ public class UniffiAppCore {
         return nativeDeleteEvent(handle, eventId);
     }
 
+    /** A-09: 高级搜索 JSON（hits+warnings+elapsed;失败空串——fail-closed 惯例）。 */
+    public String advancedSearch(String query) {
+        return nativeAdvancedSearch(handle, query);
+    }
+
     /** A-08: 任务全量镜像同步（差集删除;成功 "{written}/{deleted}",失败空串）。 */
     public String taskSync(String tasksJson) {
         return nativeTaskSync(handle, tasksJson);
@@ -415,6 +420,7 @@ public class UniffiAppCore {
     private static native String nativeQueryEvents(long handle, long fromMs, long toMs);
     // A-08: task 域 + CalendarVm JNI 声明（Rust 侧 Java_com_aurora_note_UniffiAppCore_native*）
     private static native String nativeTaskSync(long handle, String tasksJson);
+    private static native String nativeAdvancedSearch(long handle, String query);
     private static native String nativeCalendarVm(long handle);
     private static native boolean nativeTaskReschedule(long handle, String taskId, String newDue);
     private static native String nativeCreateNote(long handle, String title);

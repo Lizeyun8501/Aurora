@@ -3,6 +3,7 @@
 //! 包含内容编辑、知识网络、GTD效能、AI智能等P0领域服务模块，
 //! 以及导入导出、素材库、系统设置、TodayView、OCR服务等P1领域服务模块。
 
+pub mod advanced_search; // A-09: 高级搜索组装层
 pub mod ai_system;
 pub mod content_editor;
 pub mod fsrs; // V20 Phase 3: FSRS 间隔重复调度（Distill 召回）

@@ -347,6 +347,16 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** A-09: 高级搜索 JSON（5 运算符+徽章面——与桌面 cmd_search_advanced 同源）。 */
+        @JavascriptInterface
+        public String advancedSearch(String query) {
+            try {
+                return core != null ? core.advancedSearch(query) : "";
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
         /** A-08: 任务全量镜像同步（双写面——移动 localStorage 权威,core 镜像供
          *  桌面日历同源消费;失败返空串,调用方 console.warn 非静默）。 */
         @JavascriptInterface

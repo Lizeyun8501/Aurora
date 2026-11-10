@@ -53,9 +53,7 @@ mod tests {
             .unwrap();
         let mut t = crate::task_store::CalendarTask::new("t1", "A-08 任务");
         t.due = Some("2026-11-10".into());
-        crate::task_store::sync_tasks(kv.as_ref(), &[t])
-            .await
-            .unwrap();
+        sync_tasks(kv.as_ref(), &[t]).await.unwrap();
 
         let vm = build_calendar_vm(kv.as_ref()).await.unwrap();
         assert_eq!(vm.events.len(), 1);

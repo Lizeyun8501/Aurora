@@ -3408,43 +3408,68 @@ export default function DesktopShell() {
     return () => window.removeEventListener('keydown', onKey);
   }, [shortcuts, data]);
 
-  /** 原始行形状（CommandPalette 契约: note_id/title/snippet/score + S3 source） */
-  type RawHit = { note_id: string; title: string; snippet: string; score: number; source?: string };
+  /** A-09: advanced 原始行（match_source/rrf_score/semantic_hint 徽章面）。 */
+  type RawHit = {
+    note_id: string;
+    title: string;
+    snippet: string;
+    rrf_score: number;
+    match_source: 'bm25' | 'vector' | 'both';
+    semantic_hint: string | null;
+  };
+  /* A-09: 解析提示（运算符错误/回落——禁静默,palette 透出）。 */
+  const [searchWarnings, setSearchWarnings] = useState<string[]>([]);
   const searchNotes = useCallback(
     async (q: string, mode?: string): Promise<RawHit[]> => {
       if (invoke) {
         try {
-          return (await invoke('cmd_search_notes', { query: q, mode: mode ?? null })) as RawHit[];
+          const r = (await invoke('cmd_search_advanced', {
+            query: q,
+            mode: mode ?? null,
+          })) as { hits: RawHit[]; warnings: string[] };
+          setSearchWarnings(r.warnings ?? []);
+          return r.hits ?? [];
         } catch {
           /* fallthrough to mock */
         }
       }
-      // mock: 本地标题过滤
+      // mock: 本地标题过滤（match_source=bm25——演示数据明示,非伪装语义命中）
+      setSearchWarnings([]);
       return notes
         .filter((n) => n.title.includes(q))
         .map((n, i) => ({
           note_id: n.note_id,
           title: n.title,
           snippet: '（演示数据）',
-          score: 1 - i * 0.1,
+          rrf_score: 1 - i * 0.1,
+          match_source: 'bm25' as const,
+          semantic_hint: null,
         }));
     },
     [invoke, notes],
   );
 
   const runSearch = useCallback(
-    async (q: string) => {
-      const hits = await searchNotes(q);
+    async (q: string, semantic?: boolean) => {
+      const hits = await searchNotes(q, semantic ? 'hybrid' : undefined);
       setResults(
         hits.map((r) => ({
           kind: 'note' as const,
           id: r.note_id,
           title: r.title,
           snippet: r.snippet,
-          source: r.source as 'Bm25' | 'Vector' | 'Both' | undefined,
+          source: r.match_source,
+          semanticHint: r.semantic_hint,
           run: () => openNoteId(r.note_id), // DK-3.2：经 openNoteId 记录最近
         })),
       );
+      /* A-09/C-06: 最近使用置顶数据源（≤8 条去重;失败静默——建议面非关键路径） */
+      try {
+        const key = 'aurora.recentQueries';
+        const prev = JSON.parse(localStorage.getItem(key) ?? '[]') as string[];
+        const next = [q, ...prev.filter((x) => x !== q)].slice(0, 8);
+        localStorage.setItem(key, JSON.stringify(next));
+      } catch { /* 隐私模式/配额满——建议面降级 */ }
     },
     [searchNotes, openNoteId],
   );
@@ -4467,6 +4492,7 @@ export default function DesktopShell() {
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         searchNotes={searchNotes}
+        searchWarnings={searchWarnings}
         onQuery={runSearch}
         openNote={openNoteId}
         items={[...builtins, ...recentItems, ...results]}

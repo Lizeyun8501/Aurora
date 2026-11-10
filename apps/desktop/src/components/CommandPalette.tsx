@@ -19,8 +19,10 @@ export interface PaletteItem {
   id: string;
   title: string;
   snippet?: string;
-  /** DK-03 S3：命中来源（Bm25 不标注=常规全文；Vector=语义召回；Both=混合） */
-  source?: 'Bm25' | 'Vector' | 'Both';
+  /** A-09 归一: bm25/vector/both（旧大写面兼容——渲染统一 lowercase） */
+  source?: 'Bm25' | 'Vector' | 'Both' | 'bm25' | 'vector' | 'both';
+  /** 仅 vector 命中的语义解释（「与『q』相近」——DoD 无来路不明命中） */
+  semanticHint?: string | null;
   /** note → 打开笔记; command → 直接执行 */
   run: () => void;
 }
@@ -28,30 +30,58 @@ export interface PaletteItem {
 interface Props {
   open: boolean;
   onClose: () => void;
-  /** Tauri cmd_search_notes 桥（AppShell 注入；mode=hybrid 走混合检索） */
+  /** Tauri 桥（A-09: Shell 统一走 cmd_search_advanced;组件仅留存兼容签名） */
   searchNotes: (
     query: string,
     mode?: string,
-  ) => Promise<
-    Array<{ note_id: string; title: string; snippet: string; score: number; source?: string }>
-  >;
-  /** 输入变化回调（AppShell 合并内置命令与搜索结果） */
-  onQuery: (query: string) => void;
+  ) => Promise<unknown[]>;
+  /** A-09 解析提示（运算符错误/回落文案——禁静默透出） */
+  searchWarnings?: string[];
+  /** 输入变化回调（A-09: 携语义开关——Shell runSearch 统一执行） */
+  onQuery: (query: string, semantic?: boolean) => void;
   /** AppShell 组装好的条目（内置命令 + 搜索结果） */
   items: PaletteItem[];
   openNote: (noteId: string) => void;
 }
 
-export function CommandPalette({ open, onClose, searchNotes, onQuery, items, openNote }: Props) {
+export function CommandPalette({ open, onClose, searchNotes: _searchNotes, searchWarnings, onQuery, items, openNote }: Props) {
+  // A-09: searchNotes 已收敛到 onQuery 单链（Shell runSearch 统一 cmd_search_advanced）;
+  // prop 留兼容签名——旧注入面零破坏。
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const [semantic, setSemantic] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  /* A-09: 最近使用查询（C-06 置顶——空 query 时建议区;localStorage Shell 写入） */
+  const [recent, setRecent] = useState<string[]>([]);
+  /* A-09: 运算符帮助浮层（palette 内置命令「搜索语法帮助」唤起——DoD 可检索） */
+  const [helpOpen, setHelpOpen] = useState(false);
+  useEffect(() => {
+    if (open) {
+      try {
+        setRecent(JSON.parse(localStorage.getItem('aurora.recentQueries') ?? '[]') as string[]);
+      } catch {
+        setRecent([]);
+      }
+    }
+  }, [open]);
 
   // DK-3.2 切片一：模糊匹配过滤+排序（title 双路——命令与笔记统一打分；
   // 空 query 原样——内置命令全量展示）。语义/全文检索面不经此处
   // （results 由 cmd_search_notes 召回——模糊只作用于标题面，双路互补）。
-  const shown = useMemo(() => fuzzySort(items, query, (i) => i.title), [items, query]);
+  /* A-09: 内置「搜索语法帮助」命令（fuzzy 检索「语法/帮助/搜索」可命中——DoD） */
+  const itemsWithHelp = useMemo(() => {
+    if (items.some((i) => i.id === 'search-syntax-help')) return items;
+    return [
+      ...items,
+      {
+        kind: 'command' as const,
+        id: 'search-syntax-help',
+        title: '搜索语法帮助（path:/tag:/status:/type:/date: 与短语、排除词）',
+        run: () => setHelpOpen((v) => !v),
+      },
+    ];
+  }, [items]);
+  const shown = useMemo(() => fuzzySort(itemsWithHelp, query, (i) => i.title), [itemsWithHelp, query]);
 
   // 唤起时聚焦 + 重置游标
   useEffect(() => {
@@ -61,14 +91,15 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
     }
   }, [open]);
 
-  // 防抖 150ms 搜索（击键 → cmd_search_notes；语义开→mode=hybrid）
+  // 防抖 150ms 搜索（A-09: 单链——onQuery(q, semantic) 由 Shell runSearch 统一
+  // 走 cmd_search_advanced;本组件不再直调 searchNotes（双调收敛,徽章面同源））
   useEffect(() => {
     if (!open || !query.trim()) return;
     const t = setTimeout(() => {
-      void searchNotes(query, semantic ? 'hybrid' : undefined).then(() => onQuery(query));
+      onQuery(query, semantic);
     }, 150);
     return () => clearTimeout(t);
-  }, [query, open, searchNotes, onQuery, semantic]);
+  }, [query, open, onQuery, semantic]);
 
   if (!open) return null;
 
@@ -170,7 +201,9 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
               无匹配 — 支持口语化：「本周未完成的任务」「关于 某主题」
             </div>
           )}
-          {shown.map((r, i) => (
+          {shown.map((r, i) => {
+            const src = r.source?.toLowerCase();
+            return (
             <div
               key={`${r.kind}:${r.id}`}
               onClick={() => run(r)}
@@ -188,9 +221,9 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
               <div style={{ fontWeight: r.kind === 'command' ? 600 : 400, fontSize: tokens.typography.body.size }}>
                 {r.kind === 'command' ? '⌘ ' : '📄 '}
                 {r.title}
-                {r.source === 'Vector' && (
+                {src === 'vector' && (
                   <span
-                    title="语义召回：不含查询关键词，按含义匹配（本地向量）"
+                    title={r.semanticHint ?? '语义召回：不含查询关键词，按含义匹配（本地向量）'}
                     style={{
                       marginLeft: 6,
                       padding: '1px 6px',
@@ -201,12 +234,12 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
                       border: '1px solid rgba(167, 139, 250, 0.45)',
                     }}
                   >
-                    语义
+                    语义相关
                   </span>
                 )}
-                {r.source === 'Both' && (
+                {src === 'both' && (
                   <span
-                    title="混合命中：关键词与语义两路均召回（RRF 融合）"
+                    title="精确 + 语义：关键词与含义两路均命中（RRF 融合）"
                     style={{
                       marginLeft: 6,
                       padding: '1px 6px',
@@ -217,7 +250,7 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
                       border: '1px solid rgba(56, 189, 248, 0.45)',
                     }}
                   >
-                    混合
+                    精确 + 语义
                   </span>
                 )}
               </div>
@@ -233,8 +266,72 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
                 </div>
               )}
             </div>
-          ))}
+          );
+          })}
         </div>
+        {/* A-09: 解析提示条（运算符错误/回落——禁静默;红字短文案） */}
+        {(searchWarnings?.length ?? 0) > 0 && (
+          <div
+            role="status"
+            style={{
+              padding: `${tokens.spacing.xs}px ${tokens.spacing.sm}px`,
+              fontSize: tokens.typography.caption.size,
+              color: '#E8B33D',
+              borderTop: '1px solid rgba(232, 179, 61, 0.3)',
+            }}
+          >
+            {searchWarnings!.slice(0, 2).map((w, i) => (
+              <div key={i}>⚠ {w}</div>
+            ))}
+          </div>
+        )}
+        {/* A-09: 最近使用查询建议（C-06 置顶——空 query 显示;点击回填执行） */}
+        {open && !query.trim() && recent.length > 0 && (
+          <div style={{ padding: tokens.spacing.xs }}>
+            <div style={{ fontSize: 11, color: tokens.color.textSecondary, padding: '2px 6px' }}>最近搜索</div>
+            {recent.slice(0, 5).map((rq) => (
+              <button
+                key={rq}
+                onClick={() => {
+                  setQuery(rq);
+                  onQuery(rq, semantic);
+                }}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left',
+                  padding: '4px 8px', background: 'transparent',
+                  border: 'none', color: tokens.color.textPrimary,
+                  cursor: 'pointer', fontSize: tokens.typography.caption.size + 1,
+                  borderRadius: tokens.radius.sm,
+                }}
+              >
+                ⏱ {rq}
+              </button>
+            ))}
+          </div>
+        )}
+        {/* A-09: 帮助浮层（语法表——palette 命令「搜索语法帮助」唤起） */}
+        {helpOpen && (
+          <div
+            role="dialog"
+            aria-label="搜索语法帮助"
+            style={{
+              padding: tokens.spacing.md,
+              borderTop: '1px solid rgba(55, 220, 242, 0.25)',
+              fontSize: tokens.typography.caption.size + 1,
+              color: tokens.color.textPrimary,
+              lineHeight: 1.8,
+            }}
+          >
+            <strong>高级搜索语法</strong>
+            <div style={{ color: tokens.color.textSecondary, marginTop: 4 }}>
+              path:文件夹 · tag:标签 · status:active|trashed|encrypted · type:note|folder|dailynote · date:2026-11|01..30|&gt;2026-10-01<br />
+              "引号短语" 整词 · -词 排除（作用于标题+摘要） · 未知运算符自动按普通词并提示
+            </div>
+            <button onClick={() => setHelpOpen(false)} style={{ marginTop: 6, background: 'transparent', border: 'none', color: '#37DCF2', cursor: 'pointer' }}>
+              关闭帮助
+            </button>
+          </div>
+        )}
         <div
           style={{
             padding: tokens.spacing.sm,
@@ -243,7 +340,7 @@ export function CommandPalette({ open, onClose, searchNotes, onQuery, items, ope
             borderTop: '1px solid rgba(255,255,255,0.08)',
           }}
         >
-          ↑↓ 选择 · Enter 打开 · Esc 关闭 · 口语化可用（如「未完成的任务」）
+          ↑↓ 选择 · Enter 打开 · Esc 关闭 · 口语化可用（如「未完成的任务」）· 运算符 path:/tag:/status:/type:/date:
         </div>
       </div>
     </div>

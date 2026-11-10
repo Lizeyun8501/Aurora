@@ -195,6 +195,7 @@ pub fn run() {
             cmd_purge_note,
             cmd_purge_expired_trash,
             cmd_search_notes,
+            cmd_search_advanced,
             share_commands::cmd_create_share,
             share_commands::cmd_import_share,
             share_commands::cmd_share_send,
@@ -2060,6 +2061,39 @@ async fn cmd_smartfolder_list_items(folder_id: String) -> Result<Vec<serde_json:
 
 /// 搜索笔记（Tantivy 全文检索；mode=hybrid 走 BM25+KNN→RRF 混合路）。
 #[tauri::command]
+/// A-09: 高级搜索（5 运算符+短语+排除;hybrid 执行→元数据过滤→徽章面）。
+/// 返回 AdvancedSearchResult（snake_case——与 mobile FFI 同一 core 输出,双端同源）。
+#[tauri::command]
+async fn cmd_search_advanced(
+    query: String,
+    mode: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use aurora_core::l3_domain::advanced_search::{
+        run_advanced_search, Bm25Executor, HybridExecutor, SearchExecutor,
+    };
+    use aurora_core::traits::search_backend::SearchOptions;
+    let core = get_core()?;
+    let opts = SearchOptions {
+        limit: 50,
+        ..SearchOptions::default()
+    };
+    // mode=hybrid → BM25+KNN RRF;缺省/其他 → 纯 BM25（语义开关在 UI 侧）
+    let r = if mode.as_deref() == Some("hybrid") {
+        let hybrid = get_hybrid()?;
+        let executor = HybridExecutor {
+            hybrid: hybrid.as_ref(),
+        };
+        run_advanced_search(core.as_ref(), &executor, &query, &opts).await
+    } else {
+        let executor = Bm25Executor {
+            core: core.as_ref(),
+        };
+        run_advanced_search(core.as_ref(), &executor, &query, &opts).await
+    }
+    .map_err(|e| e.to_string())?;
+    serde_json::to_value(&r).map_err(|e| e.to_string())
+}
+
 async fn cmd_search_notes(
     query: String,
     mode: Option<String>,

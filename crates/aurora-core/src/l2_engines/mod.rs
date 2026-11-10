@@ -1,4 +1,5 @@
 pub mod action_extractor; // V20 Phase 3: GTD 行动项提取
+pub mod advanced_query; // A-09: 高级搜索查询解析器（5 运算符+短语+排除;失败回落+提示）
 pub mod bidi_link_projection; // V20 Phase 1: 双链投影
 pub mod capture;
 pub mod collection; // G1-S1: 数据库视图集合域

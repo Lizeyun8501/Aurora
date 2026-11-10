@@ -99,6 +99,21 @@ export default function ShortcutSettings(props: {
         <h2 style={{ margin: `0 0 ${tokens.spacing.sm}px`, fontSize: tokens.typography.heading.size }}>
           快捷键设置
         </h2>
+        {/* A-09: 高级搜索语法帮助（设置页 DoD——与命令面板「搜索语法帮助」同文） */}
+        <section aria-label="高级搜索语法帮助" style={{ margin: `0 0 ${tokens.spacing.md}px`, padding: tokens.spacing.sm, background: 'rgba(55,220,242,0.05)', borderRadius: tokens.radius.md }}>
+          <strong style={{ fontSize: tokens.typography.caption.size + 2 }}>高级搜索语法</strong>
+          <div style={{ fontSize: 12, color: tokens.color.textSecondary, marginTop: 4, lineHeight: 1.8 }}>
+            <div><code>path:文件夹</code> 按所在文件夹过滤（含子夹）</div>
+            <div><code>tag:标签</code> 标签 AND 过滤（可多个）</div>
+            <div><code>status:active|trashed|encrypted</code> 状态过滤</div>
+            <div><code>type:note|folder|smartfolder|dailynote</code> 类型过滤</div>
+            <div><code>date:2026-11</code> / <code>date:2026-11-01..11-30</code> / <code>date:&gt;2026-10-01</code> 按更新时间</div>
+            <div><code>"引号短语"</code> 整词共现 · <code>-词</code> 排除（标题+摘要面）</div>
+            <div style={{ marginTop: 4, color: tokens.color.textDisabled }}>
+              运算符可与关键词组合;未知运算符自动按普通词处理并给出提示（不静默忽略）。
+            </div>
+          </div>
+        </section>
         <p style={{ margin: `0 0 ${tokens.spacing.sm}px`, fontSize: 12, color: tokens.color.textSecondary }}>
           点击「改」后按下新组合键（须含 Mod/Control 或 ⌘；Esc 取消）。同组合后写覆盖先写。
         </p>

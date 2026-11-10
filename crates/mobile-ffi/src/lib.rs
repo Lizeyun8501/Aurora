@@ -1266,6 +1266,33 @@ impl UniffiAppCore {
     // A-08: task 域方法 + CalendarVm（双端同源——桌面走 Tauri calendar_commands）
     // ------------------------------------------------------------------
 
+    /// A-09: 高级搜索 JSON（BM25 执行器——移动无 hybrid 建置,解析+过滤+徽章面
+    /// 与桌面同一 core run_advanced_search;match_source 恒 bm25,语义路=桌面专属）。
+    pub fn advanced_search_json(self: &Arc<Self>, query: &str) -> String {
+        let Some(core) = &self.core else {
+            return String::new();
+        };
+        use aurora_core::l3_domain::advanced_search::{run_advanced_search, Bm25Executor};
+        use aurora_core::traits::search_backend::SearchOptions;
+        let opts = SearchOptions {
+            limit: 50,
+            ..SearchOptions::default()
+        };
+        let executor = Bm25Executor {
+            core: core.as_ref(),
+        };
+        match self
+            .runtime
+            .block_on(run_advanced_search(core.as_ref(), &executor, query, &opts))
+        {
+            Ok(r) => serde_json::to_string(&r).unwrap_or_else(|_| String::new()),
+            Err(e) => {
+                tracing::warn!(error = %e, "advanced_search failed");
+                String::new()
+            }
+        }
+    }
+
     /// A-08: 任务全量镜像同步（JSON 数组;差集删除）。成功返 "{written}/{deleted}"，
     /// 失败/无 core 返空串（tracing warn 落日志——fail-closed 惯例同 upsert_event）。
     pub fn task_sync_json(self: &Arc<Self>, tasks_json: &str) -> String {
@@ -2033,6 +2060,20 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeDeleteEvent(
 }
 
 // A-08: task 域 + CalendarVm JNI 导出（桌面 calendar_commands 同源——双端对称）
+// A-09: 高级搜索 JNI 导出（桌面 cmd_search_advanced 同源——双端对称）
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeAdvancedSearch(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    query: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let q = jstring_to_rust(&mut env, &query).unwrap_or_default();
+    let json = core.advanced_search_json(&q);
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(json))
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeTaskSync(
     mut env: JNIEnv,
