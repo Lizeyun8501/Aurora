@@ -304,6 +304,8 @@ pub fn run() {
             import_commands::cmd_plan_import,
             import_commands::cmd_import_markdown_dir,
             import_commands::cmd_import_docx,
+            attachment_commands::cmd_export_attachment,
+            attachment_commands::cmd_open_attachment,
             import_commands::cmd_import_xlsx,
             import_commands::cmd_import_enex,
             import_commands::cmd_import_opml,

@@ -18,6 +18,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import tokens from '../design/tokens';
 import type { AuroraEditorHandle } from '@aurora/ui-components';
 import { focusTopLevelBlock, getCurrentFocus } from '@aurora/ui-components';
+import { AttachmentPreview } from '@aurora/ui-components';
+import type { PreviewAttachmentDto } from '@aurora/ui-components';
 import CommandPalette, { type PaletteItem } from './CommandPalette';
 import ImportWizard from './ImportWizard';
 import CanvasView from './CanvasView';
@@ -1628,6 +1630,8 @@ function AttachmentItem(props: { invoke: InvokeFn | null; id: string; label: str
   const { invoke, id, label, isImage } = props;
   const [data, setData] = useState<ReadAttachment | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A-02: 内置预览器 overlay 态（图片/文本/PDF/Office 四类分派）
+  const [previewing, setPreviewing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1675,6 +1679,16 @@ function AttachmentItem(props: { invoke: InvokeFn | null; id: string; label: str
     );
   }
   const src = `data:${data.mime};base64,${data.data_base64}`;
+  const previewOverlay = previewing && data ? (
+    <AttachmentPreviewOverlay
+      invoke={invoke}
+      id={id}
+      label={label}
+      mime={data.mime}
+      size={data.size}
+      onClose={() => setPreviewing(false)}
+    />
+  ) : null;
   if (isImage && data.mime.startsWith('image/')) {
     return (
       <figure style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
@@ -1683,30 +1697,108 @@ function AttachmentItem(props: { invoke: InvokeFn | null; id: string; label: str
           alt={label}
           style={{ maxWidth: '100%', borderRadius: tokens.radius?.md ?? 6, border: `1px solid ${tokens.color.bgElevated}` }}
         />
-        <figcaption style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size }}>
+        <figcaption style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size, display: 'flex', gap: tokens.spacing.xs, alignItems: 'center' }}>
           {data.file_name} · {formatBytes(data.size)}
+          <button
+            type="button"
+            onClick={() => setPreviewing(true)}
+            aria-label={`预览附件 ${data.file_name}（缩放/旋转/原图）`}
+            style={{ fontSize: 11, padding: '1px 8px', borderRadius: 999, border: '1px solid rgba(88,166,255,0.4)', background: 'rgba(88,166,255,0.12)', color: tokens.color.primaryBright, cursor: 'pointer' }}
+          >
+            🔍 预览
+          </button>
         </figcaption>
+        {previewOverlay}
       </figure>
     );
   }
   return (
-    <a
-      href={src}
-      download={data.file_name}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: tokens.spacing.xs,
-        padding: `${tokens.spacing.xs}px ${tokens.spacing.sm}px`,
-        borderRadius: tokens.radius?.md ?? 6,
-        border: `1px solid ${tokens.color.bgElevated}`,
-        color: tokens.color.focus ?? tokens.color.textPrimary,
-        textDecoration: 'none',
-        fontSize: tokens.typography.caption.size,
-      }}
-    >
-      📎 {data.file_name} · {formatBytes(data.size)}
-    </a>
+    <span style={{ display: 'inline-flex', gap: tokens.spacing.xs, alignItems: 'center' }}>
+      <a
+        href={src}
+        download={data.file_name}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: tokens.spacing.xs,
+          padding: `${tokens.spacing.xs}px ${tokens.spacing.sm}px`,
+          borderRadius: tokens.radius?.md ?? 6,
+          border: `1px solid ${tokens.color.bgElevated}`,
+          color: tokens.color.focus ?? tokens.color.textPrimary,
+          textDecoration: 'none',
+          fontSize: tokens.typography.caption.size,
+        }}
+      >
+        📎 {data.file_name} · {formatBytes(data.size)}
+      </a>
+      <button
+        type="button"
+        onClick={() => setPreviewing(true)}
+        aria-label={`预览附件 ${data.file_name}`}
+        style={{ fontSize: 11, padding: '1px 8px', borderRadius: 999, border: '1px solid rgba(88,166,255,0.4)', background: 'rgba(88,166,255,0.12)', color: tokens.color.primaryBright, cursor: 'pointer' }}
+      >
+        🔍 预览
+      </button>
+      {previewOverlay}
+    </span>
+  );
+}
+
+/** A-02: 预览器 overlay 桥（tauri invoke → ReadAttachmentFn;Office 导出+系统打开挂真实命令）。 */
+function AttachmentPreviewOverlay(props: {
+  invoke: InvokeFn | null;
+  id: string;
+  label: string;
+  mime: string;
+  size: number;
+  onClose: () => void;
+}) {
+  const { invoke, id, label, mime, size, onClose } = props;
+  const readAttachment = useCallback(
+    async (attachmentId: string, range?: { start: number; len: number }) => {
+      if (!invoke) throw new Error('mock 模式无附件内核');
+      return (await invoke('cmd_read_attachment', {
+        attachmentId,
+        range: range ?? null,
+      })) as PreviewAttachmentDto;
+    },
+    [invoke],
+  );
+  const handleOpenSystem = useCallback(
+    (fileName: string) => {
+      if (!invoke) return;
+      void invoke('cmd_open_attachment', { attachmentId: id })
+        .then(() => undefined)
+        .catch((e: unknown) => {
+          window.alert(`系统打开失败（${fileName}）: ${e instanceof Error ? e.message : String(e)}`);
+        });
+    },
+    [id, invoke],
+  );
+  const handleExportOffice = useCallback(
+    (ext: 'docx' | 'xlsx') => {
+      if (!invoke) return;
+      const dir = window.prompt(`导出目录（${ext.toUpperCase()} 附件原件另存）`, '~/Downloads/aurora-export');
+      if (!dir) return;
+      void invoke('cmd_export_attachment', { attachmentId: id, destDir: dir })
+        .then((p2) => window.alert(`已导出: ${p2}`))
+        .catch((e: unknown) => {
+          window.alert(`导出失败: ${e instanceof Error ? e.message : String(e)}`);
+        });
+    },
+    [id, invoke],
+  );
+  return (
+    <AttachmentPreview
+      attachmentId={id}
+      fileName={label}
+      mime={mime}
+      size={size}
+      readAttachment={readAttachment}
+      onOpenWithSystem={invoke ? handleOpenSystem : undefined}
+      onExportOffice={invoke ? handleExportOffice : undefined}
+      onClose={onClose}
+    />
   );
 }
 

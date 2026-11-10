@@ -4,3 +4,10 @@ export { GraphView } from './GraphView';
 export type { GraphViewProps } from './GraphView';
 export { SettingsView } from './SettingsView';
 export type { SettingsViewProps } from './SettingsView';
+export { AttachmentPreview, classifyPreview, PDF_BUDGET_NOTE } from './AttachmentPreview';
+export type {
+  AttachmentPreviewProps,
+  PreviewAttachmentDto,
+  ReadAttachmentFn,
+  PreviewKind,
+} from './AttachmentPreview';
