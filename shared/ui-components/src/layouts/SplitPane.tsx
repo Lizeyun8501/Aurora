@@ -52,7 +52,7 @@ export function SplitPane({
     }
   }, [size, storageKey]);
 
-  const handleMouseMove = useCallback((event: MouseEvent) => {
+  const handlePointerMove = useCallback((event: React.PointerEvent) => {
     const container = containerRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
@@ -60,31 +60,27 @@ export function SplitPane({
     setSize(clampSize(pct));
   }, []);
 
-  const handleMouseUp = useCallback(() => {
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', handleMouseUp);
-  }, [handleMouseMove]);
-
-  const handleMouseDown = useCallback(
-    (event: React.MouseEvent) => {
-      event.preventDefault();
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
+  const handlePointerUp = useCallback(
+    (event: React.PointerEvent) => {
+      const el = event.currentTarget as HTMLElement | null;
+      el?.releasePointerCapture?.(event.pointerId);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     },
-    [handleMouseMove, handleMouseUp],
+    [],
   );
 
-  // Clean up listeners on unmount.
-  useEffect(() => {
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [handleMouseMove, handleMouseUp]);
+  /* A-10: pointer 事件（触屏/鼠标统一——setPointerCapture 后 move/up 全路由
+     到 divider,平板拖拽与桌面拖拽同语义;mouse 兼容=pointer 泛化子集） */
+  const handlePointerDown = useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault();
+      (event.currentTarget as HTMLElement)?.setPointerCapture?.(event.pointerId);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [],
+  );
 
   return (
     <div ref={containerRef} className={clsx('aurora-split-pane', className)}>
@@ -95,7 +91,9 @@ export function SplitPane({
         className="aurora-split-pane-divider"
         role="separator"
         aria-orientation="vertical"
-        onMouseDown={handleMouseDown}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
       />
       <div className="aurora-split-pane-right" style={{ width: `${100 - size}%` }}>
         {right}

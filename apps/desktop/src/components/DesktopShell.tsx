@@ -1130,8 +1130,10 @@ function Sidebar(props: {
   onExportAll: (count: number) => void;
   /** DK-02 S2：数据门面（树形侧栏四命令）。 */
   bridge: ReturnType<typeof useDataBridge>;
+  /** A-10: 独立笔记窗口入口（行级 ⧉——DesktopShell 层持 invoke）。 */
+  onOpenWindow: (noteId: string, title: string) => void;
 }) {
-  const { notes, selectedId, view, onView, onSelect, onCreate, onImport, onExportAll, bridge } = props;
+  const { notes, selectedId, view, onView, onSelect, onCreate, onImport, onExportAll, bridge, onOpenWindow } = props;
   return (
     <aside
       style={{
@@ -1285,7 +1287,7 @@ function Sidebar(props: {
         </div>
       )}
       {/* DK-02 S2：树形侧栏（folder 折叠 + 原位还原树面，替代平铺列表） */}
-      <TreeSection bridge={bridge} selectedId={selectedId} onSelect={onSelect} />
+      <TreeSection bridge={bridge} selectedId={selectedId} onSelect={onSelect} onOpenWindow={onOpenWindow} />
     </aside>
   );
 }
@@ -1295,8 +1297,10 @@ function TreeSection(props: {
   bridge: ReturnType<typeof useDataBridge>;
   selectedId: string | null;
   onSelect: (id: string, kind: 'Note' | 'Folder' | 'SmartFolder') => void;
+  /** A-10: 独立笔记窗口（行级 ⧉——经 Sidebar 透传 DesktopShell invoke）。 */
+  onOpenWindow: (noteId: string, title: string) => void;
 }) {
-  const { bridge, selectedId, onSelect } = props;
+  const { bridge, selectedId, onSelect, onOpenWindow } = props;
   const [flat, setFlat] = useState<TreeNodeFlat[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [err, setErr] = useState<string | null>(null);
@@ -1471,6 +1475,26 @@ function TreeSection(props: {
               <span aria-hidden>📄</span>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                 {node.title || '未命名'}
+              </span>
+              {/* A-10: 独立窗口打开（stopPropagation 防误触列表选中;title=窗标题面） */}
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label={`在独立窗口打开 ${node.title || '未命名'}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenWindow(node.note_id, node.title || '未命名');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.stopPropagation();
+                    onOpenWindow(node.note_id, node.title || '未命名');
+                  }
+                }}
+                style={{ padding: '0 6px', color: tokens.color.textSecondary, cursor: 'pointer' }}
+                title="在独立窗口打开（A-10）"
+              >
+                ⧉
               </span>
               <select
                 value=""
@@ -2940,6 +2964,7 @@ function EditAuroraEditor(props: {
         onSave: () => {
           // debounce 1s 到期（或 flushSave）——快照主链路 + content 双写
           if (!handle) return;
+          (window as unknown as { __auroraDirty?: boolean }).__auroraDirty = false; /* A-10: persist 完成→dirty 清（快照+md 双写落盘） */
           persistRef.current.saveSnapshot(
             noteId,
             bytesToBase64((handle.doc as any).export({ mode: 'snapshot' }) as Uint8Array),
@@ -2947,6 +2972,7 @@ function EditAuroraEditor(props: {
           persistRef.current.saveContent(noteId, docToMd(handle.view.state.doc));
         },
         onUpdate: () => {
+          (window as unknown as { __auroraDirty?: boolean }).__auroraDirty = true; /* A-10: 编辑未 persist=dirty（onSave 清;关闭确认消费） */
           setTick((t) => t + 1); // 工具条激活态刷新
           // DK-编辑器补全：文档变更后光标窗重扫（[[ 触发/失配即关）
           detectAutocomplete(handle!.view);
@@ -3351,6 +3377,39 @@ export default function DesktopShell() {
     data.listNotes().then(setNotes);
     data.todayStats().then(setStats);
   }, [data]);
+
+  /* A-10: 独立笔记窗口启动路由——#note={id}（cmd_open_note_window 建 URL）。
+     选中后清 hash（防刷新重复置顶列表滚动）。 */
+  useEffect(() => {
+    const m = /^#note=(.+)$/.exec(window.location.hash);
+    if (m) {
+      const id = decodeURIComponent(m[1]);
+      setSelectedId(id);
+      setView('notes');
+      history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
+
+  /* A-10: 未提交编辑关闭确认（禁静默丢弃）——dirty 信号由编辑器 onChange 置/
+     persist 链清（window.__auroraDirty）;onCloseRequested prevent+confirm,
+     确认后放行二次 close（flag 先清防环）。主窗/独立窗统一注册。 */
+  useEffect(() => {
+    if (!invoke) return;
+    import('@tauri-apps/api/window' as string)
+      .then(({ getCurrentWindow }) => getCurrentWindow())
+      .then((win) => {
+        void win.onCloseRequested(async (e: { preventDefault: () => void }) => {
+          const dirty = (window as unknown as { __auroraDirty?: boolean }).__auroraDirty;
+          if (!dirty) return;
+          e.preventDefault();
+          if (window.confirm('有未提交的编辑——关闭将丢弃这些内容。确认关闭?')) {
+            (window as unknown as { __auroraDirty?: boolean }).__auroraDirty = false;
+            await win.close();
+          }
+        });
+      })
+      .catch(() => { /* browser-mock/导入失败——降级无确认（mock 无真实编辑持久化面） */ });
+  }, [invoke]);
 
   /* DK-2.4：模板列表拉取（invoke 就绪后一次；失败静默——palette 缺项不阻断） */
   useEffect(() => {
@@ -4040,6 +4099,19 @@ export default function DesktopShell() {
         title: '日历视图（周/月·A-08 双端对称）',
         run: () => setView('calendar'),
       },
+      {
+        kind: 'command' as const,
+        id: 'open-note-window',
+        title: '在独立窗口打开当前笔记（A-10 多窗口·CRDT 并发合并）',
+        run: () => {
+          const nid = selectedId;
+          if (!nid) return;
+          const t = notes.find((n) => n.note_id === nid)?.title ?? '';
+          invoke?.('cmd_open_note_window', { noteId: nid, title: t }).catch((e) =>
+            window.alert(`独立窗口打开失败：${String(e)}`),
+          );
+        },
+      },
       ...templates.map((t) => ({
         kind: 'command' as const,
         id: `tpl-${t.noteId}`,
@@ -4150,6 +4222,11 @@ export default function DesktopShell() {
           selectedId={selectedId}
           view={view}
           onView={setView}
+          onOpenWindow={(noteId, title) => {
+            invoke?.('cmd_open_note_window', { noteId, title }).catch((err: unknown) =>
+              window.alert(`独立窗口打开失败：${String(err)}`),
+            );
+          }}
           onSelect={(id, kind) => {
             setSelectedId(id);
             setView(kind === 'SmartFolder' ? 'smartfolder' : 'notes');

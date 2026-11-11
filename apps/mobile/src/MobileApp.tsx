@@ -5,6 +5,7 @@ import QueuePanel from './components/QueuePanel';
 import ConflictReviewPanel from './components/ConflictReviewPanel';
 import { Solar, HolidayUtil } from 'lunar-typescript';
 import CalendarView from './views/CalendarView';
+import { SplitPane } from '@aurora/ui-components'; // A-10: 平板双栏（shared 单份——桌面同源比例/拖拽语义）
 import { expandAll } from './views/repeatUtil';
 
 // 编辑器懒加载 — schema/wasm 初始化失败不拖垮整个应用（白屏防御）
@@ -410,7 +411,6 @@ export default function App() {
   const [calendarInit, setCalendarInit] = useState<string | null>(null);
   /** 11-09 07:31 用户令: 待办单击→编辑弹窗（TaskEditSheet）。 */
   const [editTask, setEditTask] = useState<Task | null>(null);
-  const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureDue, setCaptureDue] = useState<string | undefined>(undefined); // 日历入口预置日期
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -465,6 +465,34 @@ export default function App() {
   const updateTasks = (ts: Task[]) => { setTasks(ts); saveTasks(ts); };
 
   /** 打开笔记 — 记录最近浏览。 */
+  /* A-10: 平板双栏——宽 ≥768 启用（iPad 尺寸类;旋转=resize 不卸载组件,
+     editing state 与编辑器光标跨旋转保持——DoD）。 */
+  const [isWide, setIsWide] = useState(() => window.innerWidth >= 768);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const onChange = () => setIsWide(mq.matches);
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+  /* A-10: 分栏状态持久化——选中笔记 id（localStorage;栏宽=SplitPane storageKey
+     自持）。重启/旋转恢复上下文。 */
+  const [editing, setEditing] = useState<{ id: string; title: string } | null>(() => {
+    try {
+      const saved = localStorage.getItem('aurora.tabletSelection');
+      if (saved) {
+        const { id, title } = JSON.parse(saved) as { id: string; title: string };
+        if (id) return { id, title };
+      }
+    } catch { /* 隐私模式降级 */ }
+    return null;
+  });
+  useEffect(() => {
+    try {
+      if (editing) localStorage.setItem('aurora.tabletSelection', JSON.stringify(editing));
+      else localStorage.removeItem('aurora.tabletSelection');
+    } catch { /* 配额满降级 */ }
+  }, [editing]);
+
   const openNote = (id: string, title: string) => {
     setRecents((prev) => {
       const next = [{ id, title, at: Date.now() }, ...prev.filter((r) => r.id !== id)].slice(0, 20);
@@ -520,9 +548,46 @@ export default function App() {
 
   const goto = (v: ViewId) => { setView(v); setDrawerOpen(false); };
 
+  /* A-10: 平板双栏渲染——wide+editing 时主框架保留（TabBar/AppBar 不退场,
+     notes 视图 content 换 SplitPane: 左列表+右编辑器;NoteEditor 组件同 key
+     双栏右格/单栏全屏两形态切换不重挂——光标与组件态跨旋转保持（DoD）。
+     非 notes 视图/无选中走原单栏链（零行为变）。 */
+  const renderEditor = (onClose: () => void) => (
+    <NoteEditor
+      noteId={editing!.id}
+      title={editing!.title}
+      isFav={favs.includes(editing!.id)}
+      onToggleFav={() => toggleFav(editing!.id)}
+      onClose={onClose}
+      onDeleted={() => { softDelete(editing!.id, editing!.title); showToast('已移入回收站'); setEditing(null); }}
+      onOpenQueue={() => setQueueOpen(true)}
+      onOpenConflicts={() => setConflictOpen(true)}
+      showToast={showToast}
+    />
+  );
+  const tabletSplit =
+    isWide && editing && view === 'notes' ? (
+      <SplitPane
+        storageKey="aurora.tabletSplit"
+        initialSize={38}
+        left={
+          <NotesView
+            onOpen={openNote}
+            showToast={showToast}
+            onNewNote={() => setCaptureOpen(true)}
+            onSoftDelete={softDelete}
+            favs={favs}
+            onToggleFav={toggleFav}
+            setNoteEncryption={(id, level) => platform.setNoteEncryption(id, level)}
+          />
+        }
+        right={renderEditor(() => { snippetCache.delete(editing!.id); setEditing(null); })}
+      />
+    ) : null;
+
   return (
     <div className="app-shell">
-      {editing ? (
+      {editing && !tabletSplit ? (
         <NoteEditor
           noteId={editing.id}
           title={editing.title}
@@ -564,7 +629,7 @@ export default function App() {
                 onOpenDate={(ds) => { setCalendarInit(ds); goto('calendar'); }}
               />
             )}
-            {view === 'notes' && (
+            {view === 'notes' && (tabletSplit ?? (
               <NotesView
                 onOpen={openNote}
                 showToast={showToast}
@@ -574,7 +639,7 @@ export default function App() {
                 onToggleFav={toggleFav}
                 setNoteEncryption={(id, level) => platform.setNoteEncryption(id, level)}
               />
-            )}
+            ))}
             {view === 'search' && <SearchView onOpen={openNote} />}
             {view === 'calendar' && (
               <CalendarView

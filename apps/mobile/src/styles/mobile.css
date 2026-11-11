@@ -2007,3 +2007,10 @@ button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清 *
   transform: none; animation: sheetFullIn 0.22s ease both;
 }
 @keyframes sheetFullIn { from { transform: translateY(24px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+
+
+/* A-10: 平板双栏（shared SplitPane 基础样式——双栏列/分隔条;拖拽语义=组件 pointer 面） */
+.aurora-split-pane { display: flex; height: 100%; min-height: 0; overflow: hidden; }
+.aurora-split-pane-left, .aurora-split-pane-right { height: 100%; min-width: 0; overflow-y: auto; }
+.aurora-split-pane-divider { flex: 0 0 6px; cursor: col-resize; background: rgba(255,255,255,0.10); touch-action: none; }
+.aurora-split-pane-divider:active { background: rgba(55,220,242,0.35); }

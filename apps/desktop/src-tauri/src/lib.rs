@@ -196,6 +196,7 @@ pub fn run() {
             cmd_purge_expired_trash,
             cmd_search_notes,
             cmd_search_advanced,
+            cmd_open_note_window,
             share_commands::cmd_create_share,
             share_commands::cmd_import_share,
             share_commands::cmd_share_send,
@@ -2064,6 +2065,54 @@ async fn cmd_smartfolder_list_items(folder_id: String) -> Result<Vec<serde_json:
 /// A-09: 高级搜索（5 运算符+短语+排除;hybrid 执行→元数据过滤→徽章面）。
 /// 返回 AdvancedSearchResult（snake_case——与 mobile FFI 同一 core 输出,双端同源）。
 #[tauri::command]
+/// A-10: 独立笔记窗口（WebviewWindow 同进程——共享 static APP_STATE 同一 core/
+/// WritePath,禁止各自写模型=结构天然满足;编辑快照走 cmd_save_note_snapshot
+/// 的 CRDT apply_update 合并语义,多窗口并发不丢内容）。
+/// 窗口 label=note-{id};重复开=聚焦既有窗口（幂等）。关闭确认在窗口 JS 面
+/// （onCloseRequested+dirty 判定,未提交编辑禁静默丢弃——A-10 DoD）。
+#[tauri::command]
+async fn cmd_open_note_window(
+    app: tauri::AppHandle,
+    note_id: String,
+    title: String,
+) -> Result<(), String> {
+    let label = format!("note-{}", sanitize_window_label(&note_id));
+    // 幂等: 既有窗口聚焦（不重复开——同笔记一窗,CRDT 并发面=跨笔记或同窗重开）
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.set_focus();
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App(format!("index.html#note={}", note_id).into()),
+    )
+    .title(&format!(
+        "{} — Aurora Note",
+        if title.is_empty() { "笔记" } else { &title }
+    ))
+    .inner_size(720.0, 800.0)
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 窗口 label 安全化（label 字符集约束: 字母数字-_;其余折叠 _）。
+fn sanitize_window_label(id: &str) -> String {
+    let mut out = String::with_capacity(id.len());
+    for c in id.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        out.push('n');
+    }
+    out
+}
+
 async fn cmd_search_advanced(
     query: String,
     mode: Option<String>,
