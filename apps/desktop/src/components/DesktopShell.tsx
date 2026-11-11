@@ -19,6 +19,7 @@ import tokens from '../design/tokens';
 import type { AuroraEditorHandle } from '@aurora/ui-components';
 import { focusTopLevelBlock, getCurrentFocus } from '@aurora/ui-components';
 import { AttachmentPreview } from '@aurora/ui-components';
+import { MarkdownSourceEditor, useMarkdownSourceMode } from '@aurora/ui-components';
 import type { PreviewAttachmentDto } from '@aurora/ui-components';
 import CommandPalette, { type PaletteItem } from './CommandPalette';
 import ImportWizard from './ImportWizard';
@@ -2768,6 +2769,22 @@ function EditAuroraEditor(props: {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [focused, setFocused] = useState(false);
   const [view, setView] = useState<import('prosemirror-view').EditorView | null>(null);
+  // A-03: 源码模式——handle ref（flushSave 通道）+ 状态机（apply 经 WritePath）
+  const editorHandleRef = useRef<import('@aurora/ui-components').AuroraEditorHandle | null>(null);
+  const src = useMarkdownSourceMode(view, {
+    onCommit: () => {
+      editorHandleRef.current?.flushSave();
+    },
+  });
+  // A-03: Mod+/ 跨组件通道（源码态=放弃改动;块视图态=进入源码快照）
+  useEffect(() => {
+    const onToggle = (): void => {
+      if (src.sourceMode) src.discard();
+      else src.enter();
+    };
+    window.addEventListener('aurora:toggle-source-mode', onToggle);
+    return () => window.removeEventListener('aurora:toggle-source-mode', onToggle);
+  });
   const [tick, setTick] = useState(0);
   const [Toolbar, setToolbar] = useState<React.ComponentType<{ view: import('prosemirror-view').EditorView | null; tick: number }> | null>(null);
   const persistRef = useRef(persist);
@@ -2992,6 +3009,7 @@ function EditAuroraEditor(props: {
           v.dispatch(v.state.tr.replaceWith(0, v.state.doc.content.size, nodes));
         }
       }
+      editorHandleRef.current = handle;
       if (!cancelled) setView(v);
       // R17：创建完成即派初始大纲（OutlinePanel 未打开时无消费方——零成本）
       window.dispatchEvent(
@@ -3001,6 +3019,7 @@ function EditAuroraEditor(props: {
     return () => {
       cancelled = true;
       setView(null);
+      editorHandleRef.current = null;
       // 退出前 flush：同步序列化落库（切笔记/unmount 语义），再销毁
       try {
         handle?.flushSave();
@@ -3084,7 +3103,38 @@ function EditAuroraEditor(props: {
       `}</style>
       {/* 块操作工具条（共享层实体）：heading 升降级/列表/task/code_block/undo/redo；
           原生 button — Tab 可达 + Enter/Space 激活（R-04 键盘全操作路径） */}
-      {view && Toolbar && <Toolbar view={view} tick={tick} />}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {view && Toolbar && !src.sourceMode && <Toolbar view={view} tick={tick} />}
+        {view && (
+          <button
+            type="button"
+            aria-pressed={src.sourceMode}
+            aria-label="源码模式"
+            title="源码模式（Mod+/）"
+            onClick={() => (src.sourceMode ? src.discard() : src.enter())}
+            style={{
+              fontSize: 11,
+              padding: '2px 10px',
+              borderRadius: 999,
+              border: '1px solid rgba(88,166,255,0.4)',
+              background: src.sourceMode ? 'rgba(88,166,255,0.32)' : 'rgba(88,166,255,0.12)',
+              color: tokens.color.primaryBright,
+              cursor: 'pointer',
+              marginLeft: 'auto',
+            }}
+          >
+            {'</>'} 源码
+          </button>
+        )}
+      </div>
+      {view && src.sourceMode && (
+        <MarkdownSourceEditor
+          initialMd={src.sourceMd}
+          onApply={src.apply}
+          onDiscard={src.discard}
+          error={src.sourceError}
+        />
+      )}
       {/* DK-编辑器补全浮层：相对宿主定位（coordsAtPos 光标锚 v1=容器顶部
           定条——不追光标简化，诚实边界）；键盘 capture 路由见 onAcKeyDown */}
       {ac !== null && (
@@ -3237,6 +3287,7 @@ function EditAuroraEditor(props: {
         aria-multiline="true"
         aria-label="笔记正文"
         tabIndex={0}
+        hidden={src.sourceMode}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         style={{
@@ -3460,6 +3511,13 @@ export default function DesktopShell() {
         /* A-08: 快捷跳日历（可经 ShortcutSettings 自定义——覆盖表 calendar 键）。 */
         e.preventDefault();
         setView('calendar');
+      }
+      /* A-03: 块视图 ⇄ 源码模式（可经 ShortcutSettings 自定义——覆盖表 sourceMode 键）。
+       * 源码态再按=放弃改动回块视图（未应用内容不落库——禁写库纪律）。
+       * 跨组件走 CustomEvent（EditAuroraEditor 内 src 状态机订阅——惯例同 aurora:outline-sync）。 */
+      if (comboMatches(shortcuts.sourceMode ?? 'Mod+/', e)) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('aurora:toggle-source-mode'));
       }
       if (e.key === 'Escape') setPaletteOpen(false);
     };

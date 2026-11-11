@@ -2370,6 +2370,7 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
           noteId={noteId}
           platform={editorPlatform}
           mobileDock
+          sourceModeToggle
           fallbackText={(() => { try { return platform.getNoteContent(noteId); } catch { return ''; } })()}
           onDirty={() => setStatus('dirty')}
           onSaved={() => setStatus('saved')}

@@ -17,6 +17,7 @@ export const DEFAULT_SHORTCUTS: ShortcutTable = {
   newNote: 'Mod+N',
   today: 'Mod+J',
   calendar: 'Mod+Shift+C', // A-08: 快捷跳日历
+  sourceMode: 'Mod+/', // A-03: 块视图 ⇄ Markdown 源码模式
 };
 
 export const SHORTCUT_ACTIONS = Object.keys(DEFAULT_SHORTCUTS);
@@ -26,6 +27,7 @@ export const SHORTCUT_LABELS: Record<string, string> = {
   newNote: '新建笔记',
   today: '今日视图',
   calendar: '日历视图',
+  sourceMode: '源码模式',
 };
 
 /** 组合串 → 谓词（Mod=metaKey||ctrlKey；Shift=shiftKey；键名不区分大小写）。 */

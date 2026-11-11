@@ -109,7 +109,7 @@ export function mdToNodes(schema: AnySchema, text: string): ProseNode[] {
     }
 
     // 标题
-    const heading = /^(#{1,3}) (.*)$/.exec(line);
+    const heading = /^(#{1,6}) (.*)$/.exec(line); // A-03: h4-h6 往返保块型（E24 块面——解析侧跟上）
     if (heading) {
       nodes.push(
         schema.nodes.heading.create(
@@ -148,7 +148,8 @@ export function mdToNodes(schema: AnySchema, text: string): ProseNode[] {
     // 无序列表（相邻行合并）
     if (BULLET_RE.test(line)) {
       const items: ProseNode[] = [];
-      while (i < lines.length && BULLET_RE.test(lines[i])) {
+      // A-03: 任务行（- [x]/- [ ]）语义优先于普通 bullet——列表后跟任务块不丢型
+      while (i < lines.length && BULLET_RE.test(lines[i]) && !TASK_RE.test(lines[i])) {
         items.push(listItem(BULLET_RE.exec(lines[i])![1]));
         i++;
       }
@@ -293,10 +294,17 @@ function nodeToMd(node: ProseNode, orderedIdx: { n: number }): string[] {
 /** ProseMirror doc → markdown-ish 文本（落库序列化） */
 export function docToMd(doc: ProseNode): string {
   const idx = { n: 1 };
-  const lines: string[] = [];
+  // A-03: 顶层块间补空行——相邻同型可合并块（列表/引用/表格/$$）在 md 面
+  // 保块界（无空行则行式解析器天然并块——往返丢块结构）;解析侧跳空行,旧行。
+  const blocks: string[][] = [];
   doc.content.content.forEach((node: ProseNode) => {
     idx.n = 1; // 每个顶层有序列表重新计数
-    lines.push(...nodeToMd(node, idx));
+    blocks.push(nodeToMd(node, idx));
+  });
+  const lines: string[] = [];
+  blocks.forEach((b, bi) => {
+    if (bi > 0) lines.push('');
+    lines.push(...b);
   });
   return lines.join('\n');
 }

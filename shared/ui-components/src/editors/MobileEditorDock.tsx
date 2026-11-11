@@ -76,15 +76,20 @@ interface DockProps {
   view: EditorView | null;
   /** useToolbarState 消费的 tick（RichEditor onUpdate 驱动重渲染） */
   tick: number;
+  /** A-03: 更多菜单挂「源码模式」入口（未传=不渲染 ⋯ 键——宿主可选面）。 */
+  onToggleSourceMode?: () => void;
+  /** 源码模式激活态（更多菜单行 aria-pressed）。 */
+  sourceModeActive?: boolean;
 }
 
 /**
  * 底部常驻工具栏。挂载方：RichEditor（platform=mobile 态）。
  * hooks 声明全前置（React #310 纪律——无 early return）。
  */
-export function MobileEditorDock({ view, tick }: DockProps): React.ReactElement | null {
+export function MobileEditorDock({ view, tick, onToggleSourceMode, sourceModeActive }: DockProps): React.ReactElement | null {
   // React #310：全部 hooks 无条件声明（含 view=null 早期态）
   const [panelOpen, setPanelOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = React.useState(false);
   // 撤销/重做状态感知：复用 RichEditor useToolbarState
   // （PM 命令约定 dispatch=undefined 只探测可执行性）
   const { canUndo, canRedo } = useToolbarState(view, tick);
@@ -137,7 +142,28 @@ export function MobileEditorDock({ view, tick }: DockProps): React.ReactElement 
         {btn('↷', '重做', () => { redo(view.state, view.dispatch); view.focus(); }, !canRedo)}
         {btn('↑', '块上移', () => moveBlock(view, -1), atFirst)}
         {btn('↓', '块下移', () => moveBlock(view, 1), atLast)}
+        {onToggleSourceMode && btn('⋯', '更多', () => setMoreOpen((v) => !v), false, 'm-dock-more')}
       </div>
+      {onToggleSourceMode && (
+        <>
+          <div className={`m-sheet-mask${moreOpen ? ' open' : ''}`} role="presentation"
+            onClick={() => setMoreOpen(false)} aria-hidden="true" />
+          <div className={`m-sheet${moreOpen ? ' open' : ''}`} role="dialog" aria-label="更多">
+            <div className="m-sheet-title">更多</div>
+            <div className="m-grid">
+              <button
+                type="button"
+                aria-pressed={sourceModeActive === true}
+                onClick={() => { onToggleSourceMode(); setMoreOpen(false); }}
+                aria-label="源码模式"
+              >
+                <span className="m-icon">{'</>'}</span>
+                <span className="m-label">源码模式</span>
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }

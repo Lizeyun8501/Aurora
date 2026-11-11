@@ -45,3 +45,8 @@
 - [本卡遗留] 移动端附件预览接线: MobileApp 无附件渲染宿主链（attachment:// 渲染/附件列表为移动端独立缺口）;AttachmentPreview 依赖注入设计已保双端可用;待移动端附件链落地即接（与 E25 APK 二进制桥同列）
 - [v2 建议] PDF 内置渲染: pdfjs-dist 动态 chunk lazy-load（打包依赖非 CDN,~900KB gzip 不入主 bundle）——双端 WebView 动态 import 兼容性需先验;v1 按工单降级分支走系统打开
 - [v2 迁移] tauri-plugin-shell open 已 deprecated——A-02 用 allow 保最小 diff,后续迁 tauri-plugin-opener（新依赖+capability 面评估）
+
+## A-03 勘察登记（2026-11-11 Bravo）
+- [基线既有红] moveBlock.test.ts 两失败（[UL,BQ] swap 多出 PARAGRAPH）——8f1380a clean stash 对照实证;vitest 环境今日修复（root @testing-library/dom 声明未安装——npm install 补齐）后历史不可见债现形;非 A-03 diff 面（moveBlock 纯 PM 事务,无 md 解析）
+- [环境修复] vitest 全库可跑（92/94 绿）——dom 包装版 16.3.2 peer 需 dom@10,今日装齐
+- [v1 边界] 源码态协同编辑不做（停手边界）;CM6 ~350KB gzip 本地打包（codemirror meta+lang-markdown,零 CDN）

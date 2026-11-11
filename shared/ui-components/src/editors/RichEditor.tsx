@@ -35,6 +35,7 @@ import { slashItems, type SlashItem } from './slashMenu'; // E23: 思源 UX—�
 import { insertBlock } from './insertCommands';
 import { auroraSchema } from '../schema/auroraSchema';
 import { MobileEditorDock } from './MobileEditorDock';
+import { MarkdownSourceEditor, useMarkdownSourceMode } from './MarkdownSourceEditor';
 
 export type EditorStatus = 'loading' | 'rich' | 'fallback';
 
@@ -52,6 +53,34 @@ interface RichEditorProps {
   /** R19：移动端底部编辑 Dock（+插入面板/撤销重做/块上下移）。
    *  宿主显式开启（mobile=MobileApp；desktop 不传=默认关）。 */
   mobileDock?: boolean;
+  /** A-03: 源码模式切换面（块视图 ⇄ CM6 源码;Mod-Enter 应用经保存链）。
+   *  mobileDock 态入口在 Dock「更多」菜单;否则右上角切换钮（aria-pressed）。 */
+  sourceModeToggle?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// A-03: 源码模式样式（幂等注入——wrap.source-mode 隐藏 PM host/dock,保挂载态）
+// ---------------------------------------------------------------------------
+let srcModeStyleInjected = false;
+function injectSourceModeStyle(): void {
+  if (srcModeStyleInjected) return;
+  srcModeStyleInjected = true;
+  const el = document.createElement('style');
+  el.id = 'aurora-src-mode-style';
+  el.textContent = `
+.rich-editor-wrap.source-mode .rich-editor-host,
+.rich-editor-wrap.source-mode .aurora-editor-toolbar,
+.rich-editor-wrap.source-mode .m-dock { display: none !important; }
+.rich-editor-wrap.source-mode { position: relative; }
+.aurora-src-toggle {
+  position: absolute; top: -28px; right: 0; z-index: 30;
+  font-size: 11px; padding: 2px 10px; border-radius: 999px;
+  border: 1px solid rgba(88,166,255,0.4); background: rgba(88,166,255,0.12);
+  cursor: pointer;
+}
+.aurora-src-toggle[aria-pressed="true"] { background: rgba(88,166,255,0.32); }
+`;
+  document.head.appendChild(el);
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,7 +1086,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
 // 主组件
 // ---------------------------------------------------------------------------
 
-export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, onStatus, mobileDock }: RichEditorProps) {
+export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, onStatus, mobileDock, sourceModeToggle }: RichEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const handleRef = useRef<AuroraEditorHandle | null>(null);
@@ -1065,6 +1094,15 @@ export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, o
   const [status, setStatus] = useState<EditorStatus>('loading');
   const [tick, setTick] = useState(0);
   const [fallbackContent, setFallbackContent] = useState(fallbackText);
+  // A-03: 源码模式状态机（apply 成功→flushSave 即时落库——WritePath 唯一面）
+  const src = useMarkdownSourceMode(handleRef.current?.view ?? null, {
+    onCommit: () => {
+      dirtyRef.current = true;
+      handleRef.current?.flushSave();
+      dirtyRef.current = false;
+      onSaved?.();
+    },
+  });
 
   const changeStatus = (s: EditorStatus) => {
     setStatus(s);
@@ -1204,14 +1242,43 @@ export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, o
     );
   }
 
+  useEffect(() => { injectSourceModeStyle(); }, []);
+
   return (
-    <div className={`rich-editor-wrap ${status === 'loading' ? 'loading' : ''}`}>
+    <div className={`rich-editor-wrap ${status === 'loading' ? 'loading' : ''}${src.sourceMode ? ' source-mode' : ''}`}>
+      {sourceModeToggle && !mobileDock && status === 'rich' && (
+        <button
+          type="button"
+          className="aurora-src-toggle"
+          aria-pressed={src.sourceMode}
+          aria-label="源码模式"
+          title="源码模式（Mod+/）"
+          onClick={() => (src.sourceMode ? src.discard() : src.enter())}
+        >
+          {'</>'} 源码
+        </button>
+      )}
       <div className="rich-editor-host" ref={hostRef} />
-      {status === 'rich' && (
+      {status === 'rich' && src.sourceMode && (
+        <MarkdownSourceEditor
+          initialMd={src.sourceMd}
+          onApply={src.apply}
+          onDiscard={src.discard}
+          error={src.sourceError}
+        />
+      )}
+      {status === 'rich' && !src.sourceMode && (
         <>
           <FloatingMenu view={handleRef.current?.view ?? null} />
           <EditorToolbar view={handleRef.current?.view ?? null} tick={tick} />
-          {mobileDock && <MobileEditorDock view={handleRef.current?.view ?? null} tick={tick} />}
+          {mobileDock && (
+            <MobileEditorDock
+              view={handleRef.current?.view ?? null}
+              tick={tick}
+              onToggleSourceMode={sourceModeToggle ? (src.sourceMode ? src.discard : src.enter) : undefined}
+              sourceModeActive={src.sourceMode}
+            />
+          )}
         </>
       )}
       {status === 'loading' && (

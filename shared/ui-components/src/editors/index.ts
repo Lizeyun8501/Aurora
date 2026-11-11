@@ -28,6 +28,20 @@ export { MobileEditorDock, BlockInsertPanel, injectMobileDockStyle } from './Mob
 export { insertBlock, moveBlock } from './insertCommands';
 export type { BlockKind } from './insertCommands';
 export { mdToDoc, mdToNodes, docToMd } from './auroraMarkdown';
+
+// A-03: Markdown 源码模式（CM6 本地打包,双端宿主复用）
+export {
+  MarkdownSourceEditor,
+  useMarkdownSourceMode,
+  topLevelIndexAtSelection,
+  focusTopLevelIndex,
+  SOURCE_MODE_ERRORS,
+} from './MarkdownSourceEditor';
+export type {
+  MarkdownSourceEditorProps,
+  SourceModeError,
+  UseMarkdownSourceModeResult,
+} from './MarkdownSourceEditor';
 export { markdownInputRules } from './markdownInputRules';
 export {
   exportNote,

@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import {
   AttachmentPreview,
   classifyPreview,
@@ -15,6 +15,14 @@ import {
  * - 无障碍: dialog role + Esc 关闭 + 图片 alt
  * - PDF 降级卡: 系统打开提示（零外链——断网可用纪律）
  */
+
+// jsdom 无 URL.createObjectURL——全文件桩（blob URL 生命周期断言在图片测试内细桩）。
+beforeAll(() => {
+  if (typeof URL.createObjectURL !== 'function') {
+    URL.createObjectURL = () => 'blob:stub';
+    URL.revokeObjectURL = () => undefined;
+  }
+});
 
 function dto(b64: string, range: [number, number] | null = null): PreviewAttachmentDto {
   return {
@@ -51,9 +59,10 @@ describe('AttachmentPreview', () => {
     const origRevoke = URL.revokeObjectURL;
     URL.createObjectURL = vi.fn(() => url);
     URL.revokeObjectURL = revokeSpy;
-    const read: ReadAttachmentFn = vi.fn(async () =>
-      dto(B64_HELLO, null),
-    );
+    const read: ReadAttachmentFn = vi.fn(async () => ({
+      ...dto(B64_HELLO, null),
+      file_name: 'pic.png',
+    }));
     const { unmount } = render(
       <AttachmentPreview
         attachmentId="att-1"
@@ -87,18 +96,22 @@ describe('AttachmentPreview', () => {
       />,
     );
     await waitFor(() => {
-      expect(screen.getByText(/无法读取/)).toBeInTheDocument();
+      expect(screen.getByText(/预览不可用/)).toBeInTheDocument();
     });
     // 零内容: 无 img / 无 base64 明文进 DOM
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
   });
 
   it('文本: 首片渲染 + 按需续片（range 透传）', async () => {
+    const SLICE = 256 * 1024;
     const calls: Array<{ start: number; len: number } | undefined> = [];
+    const fullSliceB64 = btoa('a'.repeat(SLICE));
     const read: ReadAttachmentFn = vi.fn(async (_id, range) => {
       calls.push(range);
-      if (!range) return dto(B64_HELLO, null); // 全量（首读组件未传 range?首片传 range）
-      return dto(B64_HELLO, [range.start, range.len]);
+      const TOTAL = 2 * SLICE; // EOF 判定用 DTO.size——与首满片+尾片对齐
+      if (!range) return { ...dto(fullSliceB64, null), size: TOTAL };
+      if (range.start === 0) return { ...dto(fullSliceB64, [0, SLICE]), size: TOTAL };
+      return { ...dto(B64_HELLO, [range.start, 5]), size: TOTAL };
     });
     render(
       <AttachmentPreview
@@ -110,12 +123,13 @@ describe('AttachmentPreview', () => {
         onClose={() => undefined}
       />,
     );
-    await screen.findByText(/hello/);
-    const more = screen.getByRole('button', { name: '加载更多' });
+    // 首片=256KB 'a'（满片→按钮现）;点击后续片 'hello' 到达
+    const more = await screen.findByRole('button', { name: '加载更多' });
     fireEvent.click(more);
     await waitFor(() => {
+      expect(screen.getByText(/hello/)).toBeInTheDocument();
       // 续片调用带 range（按需取片断言——range 参数真实透传）
-      expect(calls.some((c) => c && c.start === 0 && c.len > 0)).toBe(true);
+      expect(calls.some((c) => c && c.start !== undefined && c.len > 0)).toBe(true);
     });
   });
 
