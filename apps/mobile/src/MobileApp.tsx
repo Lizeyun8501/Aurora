@@ -465,6 +465,42 @@ export default function App() {
   const updateTasks = (ts: Task[]) => { setTasks(ts); saveTasks(ts); };
 
   /** 打开笔记 — 记录最近浏览。 */
+  /* A-04: favorites→kind=note 书签迁移（幂等标记;**双写一版**——favorites
+     localStorage 原链零动（切读=下卡）,书签域独立读 core——数据零丢失 DoD。 */
+  const [bookmarks, setBookmarks] = useState<Array<{
+    bookmark: { id: string; kind: 'note' | 'folder' | 'search'; target_id: string | null; query_json: string | null; title: string; sort_order: number };
+    stale: boolean;
+  }>>([]);
+  const refreshBookmarks = useCallback(() => {
+    try {
+      const raw = (platform as unknown as { bookmarkList?: () => string }).bookmarkList?.();
+      if (raw) setBookmarks(JSON.parse(raw) as typeof bookmarks);
+    } catch { /* 桥未挂/解析失败——书签区空态（非静默丢: UI 显式空） */ }
+  }, []);
+  useEffect(() => {
+    (async () => {
+      try {
+        const migrated = localStorage.getItem('aurora.bmMigrated');
+        const favs = JSON.parse(localStorage.getItem(K_FAVS) ?? '[]') as string[];
+        if (!migrated && favs.length > 0) {
+          // titles 需查: favs 是 id 列表——标题从 tree/notes 缓存尽力（缺失用 id）
+          for (const id of favs) {
+            const bm = {
+              id: `bm-mig-${id}`, workspace_id: null, kind: 'note',
+              target_id: id, query_json: null,
+              title: id, sort_order: -1, created_at: Date.now(),
+            };
+            (platform as unknown as { bookmarkAdd?: (j: string) => string }).bookmarkAdd?.(JSON.stringify(bm));
+          }
+          localStorage.setItem('aurora.bmMigrated', '1');
+        }
+      } catch { /* 隐私模式/配额——迁移降级（favorites 原数据仍在） */ }
+      refreshBookmarks();
+    })();
+  }, [refreshBookmarks]);
+
+  /* A-04: search 书签跳转串（Drawer2 onSearchJump→SearchView 预填）。 */
+  const [bmSearchJump, setBmSearchJump] = useState<string | undefined>(undefined);
   /* A-10: 平板双栏——宽 ≥768 启用（iPad 尺寸类;旋转=resize 不卸载组件,
      editing state 与编辑器光标跨旋转保持——DoD）。 */
   const [isWide, setIsWide] = useState(() => window.innerWidth >= 768);
@@ -640,7 +676,7 @@ export default function App() {
                 setNoteEncryption={(id, level) => platform.setNoteEncryption(id, level)}
               />
             ))}
-            {view === 'search' && <SearchView onOpen={openNote} />}
+            {view === 'search' && <SearchView onOpen={openNote} initialQuery={bmSearchJump} />}
             {view === 'calendar' && (
               <CalendarView
                 tasks={tasks}
@@ -687,6 +723,20 @@ export default function App() {
               tasks={tasks}
               favs={favs}
               trash={trash}
+              bookmarks={bookmarks}
+              onBookmarkRemove={(id) => {
+                (platform as unknown as { bookmarkRemove?: (i: string) => string }).bookmarkRemove?.(id);
+                refreshBookmarks();
+              }}
+              onSearchJump={(raw) => {
+                setBmSearchJump(raw);
+                goto('search');
+                setDrawerOpen(false);
+              }}
+              onOpenBookmark={(id, title) => {
+                openNote(id, title);
+                setDrawerOpen(false);
+              }}
             />
           )}
         </>
@@ -1822,8 +1872,11 @@ function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, onToggleF
 // 搜索中心 — V19 移动端页面5（自然语言 + 分区结果 + SQL 审计）
 // ===========================================================================
 
-function SearchView({ onOpen }: { onOpen: (id: string, title: string) => void }) {
-  const [query, setQuery] = useState('');
+function SearchView({ onOpen, initialQuery }: { onOpen: (id: string, title: string) => void; initialQuery?: string }) {
+  const [query, setQuery] = useState(initialQuery ?? '');
+  useEffect(() => {
+    if (initialQuery) setQuery(initialQuery);
+  }, [initialQuery]);
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [history, setHistory] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('aurora.searchHistory') ?? '[]'); } catch { return []; }
@@ -2405,14 +2458,17 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
 // Drawer2 — 参考图3 抽屉: 标题+关闭(无logo) · 统计卡 · 分组导航 · 数字角标
 // ===========================================================================
 
-function Drawer2({ current, onNavigate, onClose, tasks, favs, trash }: {
+function Drawer2({ current, onNavigate, onClose, tasks, favs, trash, bookmarks, onBookmarkRemove, onSearchJump, onOpenBookmark }: {
   current: ViewId;
   onNavigate: (v: ViewId) => void;
   onClose: () => void;
   tasks: Task[];
   favs: string[];
   trash: TrashItem[];
-}) {
+  bookmarks: Array<{ bookmark: { id: string; kind: 'note' | 'folder' | 'search'; target_id: string | null; query_json: string | null; title: string; sort_order: number }; stale: boolean }>;
+  onBookmarkRemove: (id: string) => void;
+  onSearchJump?: (raw: string) => void;
+  onOpenBookmark?: (id: string, title: string) => void;}) {
   const notes = listNotesTitled();
   const openTasks = tasks.filter((t) => t.status !== 'done').length;
   const doneTasks = tasks.filter((t) => t.status === 'done').length;
@@ -2464,6 +2520,35 @@ function Drawer2({ current, onNavigate, onClose, tasks, favs, trash }: {
         </div>
 
         <div className="d-scroll">
+          {/* A-04: 书签区（三类+死链显态+移除——移动抽屉面;点击跳笔记/搜索） */}
+          <div className="d-group-title">书签</div>
+          {bookmarks.length === 0 && <div style={{ padding: '4px 16px', fontSize: 12, color: 'var(--muted)' }}>暂无书签</div>}
+          {bookmarks.map((v) => (
+            <div key={v.bookmark.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <button
+                className="d-item"
+                style={{ flex: 1, opacity: v.stale ? 0.55 : 1, cursor: v.stale ? 'not-allowed' : 'pointer' }}
+                onClick={() => {
+                  if (v.stale) return;
+                  if (v.bookmark.kind === 'search') {
+                    try {
+                      const q = JSON.parse(v.bookmark.query_json ?? '{}') as { raw?: string };
+                      if (q.raw) onSearchJump?.(q.raw);
+                    } catch { /* 损坏 query 跳过 */ }
+                  } else if (v.bookmark.target_id) {
+                    onOpenBookmark?.(v.bookmark.target_id, v.bookmark.title);
+                  }
+                }}
+              >
+                <span>{v.bookmark.kind === 'search' ? '🔍' : v.bookmark.kind === 'folder' ? '📚' : '📄'}</span>
+                <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {v.stale ? `${v.bookmark.title}（已失效）` : v.bookmark.title}
+                </span>
+              </button>
+              <button className="icon-btn" onClick={() => onBookmarkRemove(v.bookmark.id)} aria-label={`移除书签 ${v.bookmark.title}`}>{I.x}</button>
+            </div>
+          ))}
+
           <div className="d-group-title">快捷操作</div>
           {item('notes', I.notes, '全部笔记', notes.length)}
           {item('recent', I.clock, '最近浏览')}

@@ -347,6 +347,28 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** A-04: 书签四命令（与桌面同源;list 含死链态——禁静默隐藏）。 */
+        @JavascriptInterface
+        public String bookmarkAdd(String bookmarkJson) {
+            try { return core != null ? core.bookmarkAdd(bookmarkJson) : "core 未初始化"; }
+            catch (Exception e) { return "失败: " + e.getMessage(); }
+        }
+        @JavascriptInterface
+        public String bookmarkList() {
+            try { return core != null ? core.bookmarkList() : "[]"; }
+            catch (Exception e) { return "[]"; }
+        }
+        @JavascriptInterface
+        public String bookmarkRemove(String id) {
+            try { return core != null ? core.bookmarkRemove(id) : "core 未初始化"; }
+            catch (Exception e) { return "失败: " + e.getMessage(); }
+        }
+        @JavascriptInterface
+        public String bookmarkReorder(String idsJson, String titlePatch) {
+            try { return core != null ? core.bookmarkReorder(idsJson, titlePatch) : "core 未初始化"; }
+            catch (Exception e) { return "失败: " + e.getMessage(); }
+        }
+
         /** A-09: 高级搜索 JSON（5 运算符+徽章面——与桌面 cmd_search_advanced 同源）。 */
         @JavascriptInterface
         public String advancedSearch(String query) {

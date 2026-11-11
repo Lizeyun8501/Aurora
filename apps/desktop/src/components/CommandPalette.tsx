@@ -64,6 +64,19 @@ export function CommandPalette({ open, onClose, searchNotes: _searchNotes, searc
       }
     }
   }, [open]);
+  /* A-04: search 书签跳转（Shell onSearchJump → 本事件 → palette 预填 A-09 串
+     ——保存的搜索书签复现原查询条件 DoD）。 */
+  useEffect(() => {
+    const onJump = (e: Event) => {
+      const q = (e as CustomEvent<{ query: string }>).detail?.query ?? '';
+      if (q) {
+        setQuery(q);
+        setTimeout(() => inputRef.current?.focus(), 0);
+      }
+    };
+    window.addEventListener('aurora:search-jump', onJump);
+    return () => window.removeEventListener('aurora:search-jump', onJump);
+  }, []);
 
   // DK-3.2 切片一：模糊匹配过滤+排序（title 双路——命令与笔记统一打分；
   // 空 query 原样——内置命令全量展示）。语义/全文检索面不经此处

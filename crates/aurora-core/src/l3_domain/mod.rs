@@ -5,6 +5,7 @@
 
 pub mod advanced_search; // A-09: 高级搜索组装层
 pub mod ai_system;
+pub mod bookmark_store; // A-04: 书签域（三类导航入口;死链显态不静默） // A-09: 高级搜索组装层
 pub mod content_editor;
 pub mod fsrs; // V20 Phase 3: FSRS 间隔重复调度（Distill 召回）
 pub mod gtd_system;

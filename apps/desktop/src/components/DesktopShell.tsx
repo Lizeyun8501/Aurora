@@ -1133,6 +1133,12 @@ function Sidebar(props: {
   bridge: ReturnType<typeof useDataBridge>;
   /** A-10: 独立笔记窗口入口（行级 ⧉——DesktopShell 层持 invoke）。 */
   onOpenWindow: (noteId: string, title: string) => void;
+  /** A-04: invoke 桥（书签四命令;search 书签跳转经 onSearchJump）。 */
+  invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null;
+  /** A-04: search 书签跳转（带入搜索视图+预填查询——A-09 raw 串复现）。 */
+  onSearchJump: (rawQuery: string) => void;
+  /** A-04: 书签操作轻反馈（行级 ☆ → toast）。 */
+  onBookmarkToast?: (msg: string) => void;
 }) {
   const { notes, selectedId, view, onView, onSelect, onCreate, onImport, onExportAll, bridge, onOpenWindow } = props;
   return (
@@ -1288,10 +1294,165 @@ function Sidebar(props: {
         </div>
       )}
       {/* DK-02 S2：树形侧栏（folder 折叠 + 原位还原树面，替代平铺列表） */}
-      <TreeSection bridge={bridge} selectedId={selectedId} onSelect={onSelect} onOpenWindow={onOpenWindow} />
+      <TreeSection bridge={bridge} selectedId={selectedId} onSelect={onSelect} onOpenWindow={onOpenWindow} onBookmarkAdd={(targetId, title, isFolder) => {
+        props.invoke?.('cmd_bookmark_add', {
+          bookmark: {
+            id: `bm-${targetId}-${Date.now()}`, workspace_id: null,
+            kind: isFolder ? 'folder' : 'note', target_id: targetId, query_json: null,
+            title, sort_order: -1, created_at: Date.now(),
+          },
+        }).then(() => props.onBookmarkToast?.(isFolder ? '已添加笔记本书签' : '已添加笔记书签')).catch(() => {});
+      }} />
+      {/* A-04: 书签区（三类+死链态+拖拽/键盘排序+重命名/移除） */}
+      <BookmarkSection invoke={props.invoke} onOpen={(id, kind) => onSelect(id, kind === 'folder' ? 'Folder' : 'Note')} onSearchJump={props.onSearchJump} />
     </aside>
   );
 }
+
+/** A-04: 书签区（三类导航入口——V24 R2 图 12;死链显态+移除;拖拽排序+
+ * 键盘替代上移/下移——无障碍 DoD;重命名并入 reorder title_patch）。 */
+function BookmarkSection(props: {
+  invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null;
+  onOpen: (id: string, kind: 'note' | 'folder') => void;
+  onSearchJump: (raw: string) => void;
+}) {
+  const { invoke, onOpen, onSearchJump } = props;
+  interface BmView {
+    bookmark: {
+      id: string; kind: 'note' | 'folder' | 'search'; target_id: string | null;
+      query_json: string | null; title: string; sort_order: number;
+    };
+    stale: boolean;
+  }
+  const [list, setList] = useState<BmView[]>([]);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const refresh = useCallback(() => {
+    if (!invoke) return;
+    invoke('cmd_bookmark_list').then((r) => setList((r as BmView[]) ?? [])).catch(() => {});
+  }, [invoke]);
+  useEffect(refresh, [refresh]);
+
+  const reorder = (ids: string[]) => {
+    if (!invoke) return;
+    invoke('cmd_bookmark_reorder', { orderedIds: ids }).then(refresh).catch(() => {});
+  };
+  const move = (id: string, dir: -1 | 1) => {
+    const ids = list.map((v) => v.bookmark.id);
+    const i = ids.indexOf(id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    reorder(ids);
+  };
+  const rename = (id: string) => {
+    const cur = list.find((v) => v.bookmark.id === id)?.bookmark.title ?? '';
+    const t = window.prompt('重命名书签', cur);
+    if (!t || !t.trim() || t === cur) return;
+    const ids = list.map((v) => v.bookmark.id); // 顺序不变+title patch
+    invoke?.('cmd_bookmark_reorder', { orderedIds: ids, titlePatch: t.trim() }).then(refresh).catch(() => {});
+  };
+  const remove = (id: string) => {
+    invoke?.('cmd_bookmark_remove', { id }).then(refresh).catch(() => {});
+  };
+
+  return (
+    <section aria-label="书签" style={{ marginTop: tokens.spacing.sm, paddingTop: tokens.spacing.sm, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+      <div style={{ fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary, padding: `0 ${tokens.spacing.sm}px ${tokens.spacing.xs}px` }}>
+        书签（笔记 / 笔记本 / 搜索）
+      </div>
+      {list.map((v) => {
+        const b = v.bookmark;
+        const icon = b.kind === 'search' ? '🔍' : b.kind === 'folder' ? '📚' : '📄';
+        return (
+          <div
+            key={b.id}
+            draggable
+            onDragStart={(e) => { e.dataTransfer.setData('text/plain', b.id); setDragId(b.id); }}
+            onDragOver={(e) => { if (dragId && dragId !== b.id) e.preventDefault(); }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const src = dragId ?? e.dataTransfer.getData('text/plain');
+              if (!src || src === b.id) return;
+              const ids = list.map((x) => x.bookmark.id);
+              const from = ids.indexOf(src); const to = ids.indexOf(b.id);
+              if (from < 0 || to < 0) return;
+              ids.splice(to, 0, ids.splice(from, 1)[0]);
+              reorder(ids);
+              setDragId(null);
+            }}
+            onDragEnd={() => setDragId(null)}
+            style={{ display: 'flex', alignItems: 'center', gap: 2, opacity: v.stale ? 0.55 : 1 }}
+          >
+            <button
+              onClick={() => {
+                if (b.kind === 'search') {
+                  try {
+                    const q = JSON.parse(b.query_json ?? '{}') as { raw?: string };
+                    if (q.raw) onSearchJump(q.raw);
+                  } catch { /* 损坏 query——跳过（显式日志） */ console.warn('bookmark query_json 损坏', b.id); }
+                } else if (b.target_id) {
+                  onOpen(b.target_id, b.kind);
+                }
+              }}
+              style={{
+                flex: 1, textAlign: 'left', background: 'transparent', border: 'none',
+                color: v.stale ? tokens.color.textDisabled : tokens.color.textPrimary,
+                padding: '4px 8px', cursor: v.stale ? 'not-allowed' : 'pointer',
+                fontSize: tokens.typography.caption.size + 1, borderRadius: tokens.radius.sm,
+                display: 'flex', alignItems: 'center', gap: 4, minWidth: 0,
+              }}
+              title={v.stale ? '目标已删除（失效书签）' : b.kind === 'search' ? '保存的搜索——点击复现查询' : b.title}
+            >
+              <span aria-hidden>{icon}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {v.stale ? `${b.title}（已失效）` : b.title}
+              </span>
+            </button>
+            {/* 无障碍 DoD: 键盘替代（上移/下移）+重命名+移除——Tab 可达 */}
+            <button
+              onClick={() => move(b.id, -1)}
+              aria-label={`上移书签 ${b.title}`}
+              title="上移（键盘排序替代）"
+              style={bmBtn(tokens)}
+            >
+              ↑
+            </button>
+            <button
+              onClick={() => move(b.id, 1)}
+              aria-label={`下移书签 ${b.title}`}
+              title="下移（键盘排序替代）"
+              style={bmBtn(tokens)}
+            >
+              ↓
+            </button>
+            <button onClick={() => rename(b.id)} aria-label={`重命名书签 ${b.title}`} title="重命名" style={bmBtn(tokens)}>
+              ✎
+            </button>
+            <button onClick={() => remove(b.id)} aria-label={`移除书签 ${b.title}`} title={v.stale ? '移除失效书签' : '移除'} style={bmBtn(tokens)}>
+              ✕
+            </button>
+          </div>
+        );
+      })}
+      {list.length === 0 && (
+        <div style={{ fontSize: tokens.typography.caption.size, color: tokens.color.textDisabled, padding: `0 ${tokens.spacing.sm}px` }}>
+          暂无书签——选中笔记 ⋮ 或保存搜索创建
+        </div>
+      )}
+    </section>
+  );
+}
+
+const bmBtn = (tokens: typeof import('../design/tokens').default) => ({
+  background: 'transparent',
+  border: 'none',
+  color: tokens.color.textSecondary,
+  cursor: 'pointer',
+  padding: '0 4px',
+  fontSize: tokens.typography.caption.size,
+  minHeight: 26,
+  minWidth: 22,
+} as const);
 
 /** DK-02 S2 树形侧栏：目录树展示 + 新建文件夹 + 重命名 + 移动（prompt 交互，批量/拖拽后续迭代）。 */
 function TreeSection(props: {
@@ -1300,8 +1461,10 @@ function TreeSection(props: {
   onSelect: (id: string, kind: 'Note' | 'Folder' | 'SmartFolder') => void;
   /** A-10: 独立笔记窗口（行级 ⧉——经 Sidebar 透传 DesktopShell invoke）。 */
   onOpenWindow: (noteId: string, title: string) => void;
+  /** A-04: 行级 ☆ 添加书签（笔记/文件夹——kind 由行 kind 决定）。 */
+  onBookmarkAdd: (targetId: string, title: string, isFolder: boolean) => void;
 }) {
-  const { bridge, selectedId, onSelect, onOpenWindow } = props;
+  const { bridge, selectedId, onSelect, onOpenWindow, onBookmarkAdd } = props;
   const [flat, setFlat] = useState<TreeNodeFlat[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [err, setErr] = useState<string | null>(null);
@@ -1444,6 +1607,18 @@ function TreeSection(props: {
                 </span>
               </button>
               <button
+                onClick={() => onBookmarkAdd(node.note_id, node.title || '未命名文件夹', true)}
+                aria-label={`将文件夹 ${node.title || '未命名文件夹'} 添加为书签`}
+                title="添加为书签（A-04 笔记本类）"
+                style={{
+                  background: 'transparent', border: 'none', color: tokens.color.textSecondary,
+                  cursor: 'pointer', padding: '0 4px', fontSize: tokens.typography.caption.size,
+                  minHeight: tokens.a11y.minTouchTarget,
+                }}
+              >
+                ☆
+              </button>
+              <button
                 onClick={() => {
                   const t = window.prompt('重命名文件夹', node.title);
                   if (t && t.trim()) {
@@ -1496,6 +1671,25 @@ function TreeSection(props: {
                 title="在独立窗口打开（A-10）"
               >
                 ⧉
+              </span>
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label={`将 ${node.title || '未命名'} 添加为书签`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onBookmarkAdd(node.note_id, node.title || '未命名', false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.stopPropagation();
+                    onBookmarkAdd(node.note_id, node.title || '未命名', false);
+                  }
+                }}
+                style={{ padding: '0 6px', color: tokens.color.textSecondary, cursor: 'pointer' }}
+                title="添加为书签（A-04）"
+              >
+                ☆
               </span>
               <select
                 value=""
@@ -3534,6 +3728,15 @@ export default function DesktopShell() {
     match_source: 'bm25' | 'vector' | 'both';
     semantic_hint: string | null;
   };
+  /* A-04: 书签操作轻反馈（toast 态——成功可见,禁静默）。 */
+  const [bookToast, setBookToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!bookToast) return;
+    const t = setTimeout(() => setBookToast(null), 1800);
+    return () => clearTimeout(t);
+  }, [bookToast]);
+  /* A-04: 最近一次搜索串（保存 search 书签数据源——runSearch 记）。 */
+  const [lastQuery, setLastQuery] = useState('');
   /* A-09: 解析提示（运算符错误/回落——禁静默,palette 透出）。 */
   const [searchWarnings, setSearchWarnings] = useState<string[]>([]);
   const searchNotes = useCallback(
@@ -3568,6 +3771,7 @@ export default function DesktopShell() {
 
   const runSearch = useCallback(
     async (q: string, semantic?: boolean) => {
+      setLastQuery(q);
       const hits = await searchNotes(q, semantic ? 'hybrid' : undefined);
       setResults(
         hits.map((r) => ({
@@ -4159,6 +4363,40 @@ export default function DesktopShell() {
       },
       {
         kind: 'command' as const,
+        id: 'bookmark-note',
+        title: '将当前笔记添加为书签（A-04）',
+        run: () => {
+          const nid = selectedId;
+          if (!nid) return;
+          const t = notes.find((n) => n.note_id === nid)?.title ?? '未命名';
+          const id = `bm-${nid}-${Date.now()}`;
+          invoke?.('cmd_bookmark_add', {
+            bookmark: {
+              id, workspace_id: null, kind: 'note', target_id: nid, query_json: null,
+              title: t, sort_order: -1, created_at: Date.now(),
+            },
+          }).then(() => setBookToast('已添加书签')).catch(() => {});
+        },
+      },
+      {
+        kind: 'command' as const,
+        id: 'bookmark-search',
+        title: '保存当前搜索为书签（A-04·含 path:/tag: 等运算符）',
+        run: () => {
+          const q = lastQuery.trim();
+          if (!q) return;
+          invoke?.('cmd_bookmark_add', {
+            bookmark: {
+              id: `bm-search-${Date.now()}`, workspace_id: null, kind: 'search',
+              target_id: null, query_json: JSON.stringify({ raw: q, rule: null }),
+              title: q.length > 24 ? `${q.slice(0, 24)}…` : q,
+              sort_order: -1, created_at: Date.now(),
+            },
+          }).then(() => setBookToast('已保存搜索书签')).catch(() => {});
+        },
+      },
+      {
+        kind: 'command' as const,
         id: 'open-note-window',
         title: '在独立窗口打开当前笔记（A-10 多窗口·CRDT 并发合并）',
         run: () => {
@@ -4275,6 +4513,11 @@ export default function DesktopShell() {
           }}
           aria-hidden={focusMode}
         >
+        {bookToast && (
+          <div role="status" style={{ position: 'fixed', bottom: 60, left: '50%', transform: 'translateX(-50%)', zIndex: 1200, background: tokens.color.bgElevated, color: tokens.color.textPrimary, padding: '8px 16px', borderRadius: tokens.radius.md, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', fontSize: tokens.typography.caption.size + 1 }}>
+            {bookToast}
+          </div>
+        )}
         <Sidebar
           notes={notes}
           selectedId={selectedId}
@@ -4284,6 +4527,13 @@ export default function DesktopShell() {
             invoke?.('cmd_open_note_window', { noteId, title }).catch((err: unknown) =>
               window.alert(`独立窗口打开失败：${String(err)}`),
             );
+          }}
+          invoke={invoke}
+          onBookmarkToast={(msg) => setBookToast(msg)}
+          onSearchJump={(raw) => {
+            /* A-04: search 书签→搜索视图+A-09 串预填（palette 打开态链路） */
+            setPaletteOpen(true);
+            window.dispatchEvent(new CustomEvent('aurora:search-jump', { detail: { query: raw } }));
           }}
           onSelect={(id, kind) => {
             setSelectedId(id);

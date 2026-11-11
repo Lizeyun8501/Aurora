@@ -1266,6 +1266,73 @@ impl UniffiAppCore {
     // A-08: task 域方法 + CalendarVm（双端同源——桌面走 Tauri calendar_commands）
     // ------------------------------------------------------------------
 
+    /// A-04: 书签四命令（JSON 桥——与桌面 cmd_bookmark_* 同一 core 实现,双端同源）。
+    /// add: bookmark JSON;成功返 "ok",失败返错误文案（UI toast 面）。
+    pub fn bookmark_add(self: &Arc<Self>, bookmark_json: &str) -> String {
+        let Some(core) = &self.core else {
+            return "core 未初始化".into();
+        };
+        match serde_json::from_str::<aurora_core::l3_domain::bookmark_store::Bookmark>(
+            bookmark_json,
+        ) {
+            Ok(b) => self
+                .runtime
+                .block_on(aurora_core::l3_domain::bookmark_store::add_bookmark(
+                    core.kv_store.as_ref(),
+                    &b,
+                ))
+                .map(|_| "ok".into())
+                .map_err(|e| e.to_string())
+                .unwrap_or_else(|e| format!("失败: {e}")),
+            Err(e) => format!("书签 JSON 无效: {e}"),
+        }
+    }
+
+    /// list: 含 stale 死链态的 BookmarkView JSON 数组。
+    pub fn bookmark_list(self: &Arc<Self>) -> String {
+        let Some(core) = &self.core else {
+            return "[]".into();
+        };
+        self.runtime
+            .block_on(aurora_core::l3_domain::bookmark_store::list_bookmarks(
+                core.kv_store.as_ref(),
+            ))
+            .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".into()))
+            .unwrap_or_else(|_| "[]".into())
+    }
+
+    /// remove: 幂等;成功 "ok"。
+    pub fn bookmark_remove(self: &Arc<Self>, id: &str) -> String {
+        let Some(core) = &self.core else {
+            return "core 未初始化".into();
+        };
+        self.runtime
+            .block_on(aurora_core::l3_domain::bookmark_store::remove_bookmark(
+                core.kv_store.as_ref(),
+                id,
+            ))
+            .map(|_| "ok".into())
+            .map_err(|e| e.to_string())
+            .unwrap_or_else(|e| format!("失败: {e}"))
+    }
+
+    /// reorder: 顺序 ids+可选 title patch;缺 id 附加尾部不丢。
+    pub fn bookmark_reorder(self: &Arc<Self>, ids_json: &str, title_patch: Option<&str>) -> String {
+        let Some(core) = &self.core else {
+            return "core 未初始化".into();
+        };
+        let ids: Vec<String> = serde_json::from_str(ids_json).unwrap_or_default();
+        self.runtime
+            .block_on(aurora_core::l3_domain::bookmark_store::reorder_bookmarks(
+                core.kv_store.as_ref(),
+                &ids,
+                title_patch,
+            ))
+            .map(|_| "ok".into())
+            .map_err(|e| e.to_string())
+            .unwrap_or_else(|e| format!("失败: {e}"))
+    }
+
     /// A-09: 高级搜索 JSON（BM25 执行器——移动无 hybrid 建置,解析+过滤+徽章面
     /// 与桌面同一 core run_advanced_search;match_source 恒 bm25,语义路=桌面专属）。
     pub fn advanced_search_json(self: &Arc<Self>, query: &str) -> String {
@@ -2060,6 +2127,56 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeDeleteEvent(
 }
 
 // A-08: task 域 + CalendarVm JNI 导出（桌面 calendar_commands 同源——双端对称）
+// A-04: 书签四 JNI 导出（桌面 cmd_bookmark_* 同源——双端对称）
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeBookmarkAdd(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    bookmark: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let b = jstring_to_rust(&mut env, &bookmark).unwrap_or_default();
+    let r = core.bookmark_add(&b);
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
+}
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeBookmarkList(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let r = core.bookmark_list();
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
+}
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeBookmarkRemove(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    id: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let i = jstring_to_rust(&mut env, &id).unwrap_or_default();
+    let r = core.bookmark_remove(&i);
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
+}
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeBookmarkReorder(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    ids: JString,
+    title: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let ids = jstring_to_rust(&mut env, &ids).unwrap_or_default();
+    let title = jstring_to_rust(&mut env, &title);
+    let r = core.bookmark_reorder(&ids, title.as_deref());
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
+}
+
 // A-09: 高级搜索 JNI 导出（桌面 cmd_search_advanced 同源——双端对称）
 #[no_mangle]
 pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeAdvancedSearch(

@@ -374,6 +374,14 @@ public class UniffiAppCore {
         return nativeDeleteEvent(handle, eventId);
     }
 
+    /** A-04: 书签四命令（同桌面 cmd_bookmark_*;list 含死链 stale 态）。 */
+    public String bookmarkAdd(String bookmarkJson) { return nativeBookmarkAdd(handle, bookmarkJson); }
+    public String bookmarkList() { return nativeBookmarkList(handle); }
+    public String bookmarkRemove(String id) { return nativeBookmarkRemove(handle, id); }
+    public String bookmarkReorder(String idsJson, String titlePatch) {
+        return nativeBookmarkReorder(handle, idsJson, titlePatch == null ? "" : titlePatch);
+    }
+
     /** A-09: 高级搜索 JSON（hits+warnings+elapsed;失败空串——fail-closed 惯例）。 */
     public String advancedSearch(String query) {
         return nativeAdvancedSearch(handle, query);
@@ -421,6 +429,10 @@ public class UniffiAppCore {
     // A-08: task 域 + CalendarVm JNI 声明（Rust 侧 Java_com_aurora_note_UniffiAppCore_native*）
     private static native String nativeTaskSync(long handle, String tasksJson);
     private static native String nativeAdvancedSearch(long handle, String query);
+    private static native String nativeBookmarkAdd(long handle, String bookmarkJson);
+    private static native String nativeBookmarkList(long handle);
+    private static native String nativeBookmarkRemove(long handle, String id);
+    private static native String nativeBookmarkReorder(long handle, String idsJson, String titlePatch);
     private static native String nativeCalendarVm(long handle);
     private static native boolean nativeTaskReschedule(long handle, String taskId, String newDue);
     private static native String nativeCreateNote(long handle, String title);

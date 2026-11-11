@@ -71,6 +71,13 @@ interface AndroidBridge {
   taskSync?(tasksJson: string): string;
   calendarVm?(): string;
   taskReschedule?(taskId: string, newDue: string): boolean;
+  // A-09: 高级搜索（5 运算符+徽章面——与桌面 cmd_search_advanced 同源）
+  advancedSearch?(query: string): string;
+  // A-04: 书签四命令（与桌面 cmd_bookmark_* 同源;list 含死链 stale 态）
+  bookmarkAdd?(bookmarkJson: string): string;
+  bookmarkList?(): string;
+  bookmarkRemove?(id: string): string;
+  bookmarkReorder?(idsJson: string, titlePatch: string | null): string;
   init(dataDir: string): string;
   listNotes(): string;
   createNote(title: string): string;

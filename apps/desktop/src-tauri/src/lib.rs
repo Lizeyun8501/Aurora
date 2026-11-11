@@ -196,6 +196,10 @@ pub fn run() {
             cmd_purge_expired_trash,
             cmd_search_notes,
             cmd_search_advanced,
+            cmd_bookmark_add,
+            cmd_bookmark_list,
+            cmd_bookmark_remove,
+            cmd_bookmark_reorder,
             cmd_open_note_window,
             share_commands::cmd_create_share,
             share_commands::cmd_import_share,
@@ -2106,6 +2110,58 @@ fn sanitize_window_label(id: &str) -> String {
         out.push('n');
     }
     out
+}
+
+/// A-04: 书签四命令（add/list/remove/reorder——rename 并入 reorder 的
+/// title_patch 单命令双义;V24 R2 三类: note/folder/search）。
+/// search 类 query_json 由前端组装（{raw:A-09 串, rule:FilterRule 派生}——
+/// raw 单一真相,rule 结构化复用智能文件夹勿另造）。
+#[tauri::command]
+async fn cmd_bookmark_add(bookmark: serde_json::Value) -> Result<String, String> {
+    let core = get_core()?;
+    let b: aurora_core::l3_domain::bookmark_store::Bookmark =
+        serde_json::from_value(bookmark).map_err(|e| e.to_string())?;
+    aurora_core::l3_domain::bookmark_store::add_bookmark(core.kv_store.as_ref(), &b)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(b.id)
+}
+
+/// 列表（含死链 stale 态——UI 显式失效+提供移除,禁静默隐藏）。
+#[tauri::command]
+async fn cmd_bookmark_list() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let views = aurora_core::l3_domain::bookmark_store::list_bookmarks(core.kv_store.as_ref())
+        .await
+        .map_err(|e| e.to_string())?;
+    views
+        .iter()
+        .map(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+        .collect()
+}
+
+#[tauri::command]
+async fn cmd_bookmark_remove(id: String) -> Result<(), String> {
+    let core = get_core()?;
+    aurora_core::l3_domain::bookmark_store::remove_bookmark(core.kv_store.as_ref(), &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 全量重排+可选改名（缺 id 保序附加尾——禁丢项）。
+#[tauri::command]
+async fn cmd_bookmark_reorder(
+    ordered_ids: Vec<String>,
+    title_patch: Option<String>,
+) -> Result<(), String> {
+    let core = get_core()?;
+    aurora_core::l3_domain::bookmark_store::reorder_bookmarks(
+        core.kv_store.as_ref(),
+        &ordered_ids,
+        title_patch.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// A-09: 高级搜索（5 运算符+短语+排除;hybrid 执行→元数据过滤→徽章面）。
