@@ -2060,11 +2060,6 @@ async fn cmd_smartfolder_list_items(folder_id: String) -> Result<Vec<serde_json:
         .collect())
 }
 
-/// 搜索笔记（Tantivy 全文检索；mode=hybrid 走 BM25+KNN→RRF 混合路）。
-#[tauri::command]
-/// A-09: 高级搜索（5 运算符+短语+排除;hybrid 执行→元数据过滤→徽章面）。
-/// 返回 AdvancedSearchResult（snake_case——与 mobile FFI 同一 core 输出,双端同源）。
-#[tauri::command]
 /// A-10: 独立笔记窗口（WebviewWindow 同进程——共享 static APP_STATE 同一 core/
 /// WritePath,禁止各自写模型=结构天然满足;编辑快照走 cmd_save_note_snapshot
 /// 的 CRDT apply_update 合并语义,多窗口并发不丢内容）。
@@ -2113,12 +2108,15 @@ fn sanitize_window_label(id: &str) -> String {
     out
 }
 
+/// A-09: 高级搜索（5 运算符+短语+排除;hybrid 执行→元数据过滤→徽章面）。
+/// 返回 AdvancedSearchResult（snake_case——与 mobile FFI 同一 core 输出,双端同源）。
+#[tauri::command]
 async fn cmd_search_advanced(
     query: String,
     mode: Option<String>,
 ) -> Result<serde_json::Value, String> {
     use aurora_core::l3_domain::advanced_search::{
-        run_advanced_search, Bm25Executor, HybridExecutor, SearchExecutor,
+        run_advanced_search, Bm25Executor, HybridExecutor,
     };
     use aurora_core::traits::search_backend::SearchOptions;
     let core = get_core()?;
@@ -2143,6 +2141,8 @@ async fn cmd_search_advanced(
     serde_json::to_value(&r).map_err(|e| e.to_string())
 }
 
+/// 搜索笔记（Tantivy 全文检索；mode=hybrid 走 BM25+KNN→RRF 混合路）。
+#[tauri::command]
 async fn cmd_search_notes(
     query: String,
     mode: Option<String>,
