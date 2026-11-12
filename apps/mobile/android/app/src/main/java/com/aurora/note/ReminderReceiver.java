@@ -37,6 +37,35 @@ public final class ReminderReceiver extends BroadcastReceiver {
             b = new Notification.Builder(ctx);
             b.setPriority(Notification.PRIORITY_HIGH);
         }
+        // A-06: 任务提醒（taskId 存在）挂双 action——完成走 app 拉起（WritePath 语义）,
+        // 延后走 ReminderActionReceiver 纯闹钟重排（零 DB 写）。
+        String taskId = intent.getStringExtra("taskId");
+        boolean snoozed = intent.getBooleanExtra("snoozed", false);
+        if (taskId != null && !taskId.isEmpty() && !snoozed) {
+            // 完成 → aurora://task-done?taskId=…（拉起 app,JS 经任务更新流回写）
+            android.content.Intent done = new android.content.Intent(
+                android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse("aurora://task-done?taskId=" + android.net.Uri.encode(taskId)));
+            done.setPackage(ctx.getPackageName());
+            done.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            android.app.PendingIntent pDone = android.app.PendingIntent.getActivity(
+                ctx, taskId.hashCode(), done,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+            b.addAction(0, "完成", pDone);
+
+            // 延后 1 小时 → ReminderActionReceiver（纯闹钟重排）
+            android.content.Intent snooze = new android.content.Intent(ctx, ReminderActionReceiver.class);
+            snooze.setAction("aurora.action.SNOOZE_1H");
+            snooze.putExtra("title", title);
+            snooze.putExtra("level", level);
+            if (eventId != null) snooze.putExtra("eventId", eventId);
+            snooze.putExtra("taskId", taskId);
+            android.app.PendingIntent pSnooze = android.app.PendingIntent.getBroadcast(
+                ctx, taskId.hashCode() + 1, snooze,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+            b.addAction(0, "延后 1 小时", pSnooze);
+        }
+
         Notification n = b
                 .setSmallIcon(android.R.drawable.ic_popup_reminder)
                 .setContentTitle(title)

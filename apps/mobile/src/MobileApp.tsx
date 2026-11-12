@@ -304,6 +304,103 @@ function FocusBadge({ tasks }: { tasks: Task[] }) {
   );
 }
 
+/** A-06: 挂起 intent 形态（Java intentJson 对齐——seq/kind/content/mime/subject/at）。 */
+interface SharedIntent {
+  seq: number;
+  kind: 'text' | 'image' | 'action';
+  content: string;
+  mime: string;
+  subject: string;
+  at: number;
+}
+
+/** A-06: 落位目标（浮层可改——默认今日日记,工单「用户可改目标位置」）。 */
+type ShareTarget = 'daily' | 'newNote';
+
+/** A-06: 分享落位（今日日记=追加引用块,缺则建;新建=独立笔记）。 */
+export function landShare(
+  platform: { listNotes(): { id: string; title: string }[]; createNote(t: string): string | null; getNoteContent(id: string): string; saveNoteContent(id: string, c: string): number | boolean },
+  target: ShareTarget,
+  items: SharedIntent[],
+  imageB64: string | null,
+): { ok: boolean; title: string } {
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const frag = items.map((it) => {
+    if (it.kind === 'image') {
+      return `> 🖼️ [系统分享图片] ${time} · 已存本机 ${it.content}`;
+    }
+    return `> 📥 [系统分享] ${time}${it.subject ? ` · ${it.subject}` : ''}\n> ${it.content.replace(/\n/g, '\n> ')}`;
+  }).join('\n\n');
+  let noteId: string | null = '';
+  let title = '';
+  if (target === 'daily') {
+    const exist = platform.listNotes().find((n) => n.title.includes(today) && n.title.startsWith('日记'));
+    if (exist) {
+      noteId = exist.id;
+      title = exist.title;
+    } else {
+      title = `日记 ${today}`;
+      noteId = platform.createNote(title);
+    }
+    if (!noteId) return { ok: false, title };
+    const prev = platform.getNoteContent(noteId) || '';
+    platform.saveNoteContent(noteId, `${prev}${prev.endsWith('\n') || prev === '' ? '' : '\n'}\n${frag}\n`);
+  } else {
+    title = items[0]?.subject || `分享接收 ${today} ${time}`;
+    noteId = platform.createNote(title);
+    if (!noteId) return { ok: false, title };
+    platform.saveNoteContent(noteId, `${frag}\n`);
+  }
+  return { ok: noteId !== '', title };
+}
+
+/** A-06: 分享接收浮层（内容预览+目标切换——text 型 img 预览经 data URL）。 */
+function ShareReceiveSheet(props: {
+  items: SharedIntent[];
+  imageB64: string | null;
+  onClose: () => void;
+  onLand: (target: ShareTarget) => void;
+}) {
+  const { items, imageB64, onClose, onLand } = props;
+  const [target, setTarget] = useState<ShareTarget>('daily');
+  const text = items.filter((i) => i.kind === 'text').map((i) => i.content).join('\n---\n');
+  const img = items.find((i) => i.kind === 'image');
+  return (
+    <>
+      <div className="sheet-mask" onClick={onClose} />
+      <div className="sheet" role="dialog" aria-label="系统分享接收">
+        <div className="sheet-grab" />
+        <div className="sheet-head">
+          <span className="sheet-title">📥 接收到 {items.length} 项分享</span>
+          <button className="icon-btn" onClick={onClose} aria-label="关闭">{I.x}</button>
+        </div>
+        <div className="sheet-body">
+          {text && <pre className="input" style={{ whiteSpace: 'pre-wrap', margin: '0 0 10px', maxHeight: 160, overflow: 'auto', fontSize: 13 }}>{text}</pre>}
+          {img && (
+            <div style={{ marginBottom: 10 }}>
+              {imageB64
+                ? <img src={imageB64} alt="分享图片预览" style={{ maxWidth: '100%', borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)' }} />
+                : <div style={{ fontSize: 12, opacity: 0.7 }}>🖼️ 图片已保存（{img.content}）</div>}
+            </div>
+          )}
+          <div className="capture-modes" role="radiogroup" aria-label="落位目标">
+            <button className={`capture-mode ${target === 'daily' ? 'active' : ''}`} role="radio" aria-checked={target === 'daily'} onClick={() => setTarget('daily')}>
+              📔<span>今日日记（默认）</span>
+            </button>
+            <button className={`capture-mode ${target === 'newNote' ? 'active' : ''}`} role="radio" aria-checked={target === 'newNote'} onClick={() => setTarget('newNote')}>
+              📄<span>新建笔记</span>
+            </button>
+          </div>
+          <button className="btn btn-primary btn-block" onClick={() => onLand(target)}>落位</button>
+          <button className="btn btn-secondary btn-block" style={{ marginTop: 8 }} onClick={onClose}>暂不处理</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function loadTasks(): Task[] {
   try { return JSON.parse(localStorage.getItem('aurora.tasks') ?? '[]'); } catch { return []; }
 }
@@ -414,6 +511,10 @@ export default function App() {
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureDue, setCaptureDue] = useState<string | undefined>(undefined); // 日历入口预置日期
+  // ── A-06: 系统分享接收 + URL Scheme ──────────────────────────────
+  /** 挂起分享队列（text/image 型——浮层确认落位;action 型即时路由）。 */
+  const [shareInbox, setShareInbox] = useState<SharedIntent[]>([]);
+  const [shareImageB64, setShareImageB64] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // DK-50：同步两面板浮层开关（badge 三入口 + menu-pop 两入口共用）
   const [queueOpen, setQueueOpen] = useState(false);
@@ -464,6 +565,65 @@ export default function App() {
   if (!ready) return <SplashScreen />;
 
   const updateTasks = (ts: Task[]) => { setTasks(ts); saveTasks(ts); };
+
+  /* A-06: intent 消费（拉模式——三触发: 挂载/resume(visibilitychange)/Java 推事件）。
+   * action 型即时路由（capture/today/task-done）;text/image 型入 shareInbox 浮层。
+   * task-done 走既有 updateTasks→saveTasks 链（localStorage 权威+taskSync core 镜像
+   * →投影=WritePath 语义——工单禁直改 DB 纪律）。 */
+  const consumeA06Intents = () => {
+    try {
+      const b = (window as unknown as { AndroidBridge?: { consumePendingIntents?(): string } }).AndroidBridge;
+      if (!b?.consumePendingIntents) return;
+      const arr = JSON.parse(b.consumePendingIntents() || '[]') as SharedIntent[];
+      const pending: SharedIntent[] = [];
+      for (const it of arr) {
+        if (it.kind === 'action') {
+          const u = it.content;
+          if (u.startsWith('aurora://capture')) { setCaptureOpen(true); setView('today'); }
+          else if (u.startsWith('aurora://today')) { setView('today'); }
+          else if (u.startsWith('aurora://task-done')) {
+            const m = /taskId=([^&]+)/.exec(u);
+            const tid = m ? decodeURIComponent(m[1]) : null;
+            if (tid) {
+              const t = tasks.find((x) => x.id === tid);
+              if (t && t.status !== 'done') {
+                updateTasks(tasks.map((x) => (x.id === tid ? { ...x, status: 'done' as const } : x)));
+                showToast('通知操作:任务已完成（经保存链回写）');
+              } else {
+                showToast('任务已是完成态（或已不存在）');
+              }
+            }
+            // 双通道刷新小组件（DoD <1s——任务态变更即时推）
+            (window as unknown as { AndroidBridge?: { refreshWidget?(): void } }).AndroidBridge?.refreshWidget?.();
+          }
+        } else {
+          pending.push(it);
+        }
+      }
+      if (pending.length > 0) {
+        setShareInbox(pending);
+        const img = pending.find((x) => x.kind === 'image');
+        if (img) {
+          const bb = (window as unknown as { AndroidBridge?: { readSharedImage?(p: string): string } }).AndroidBridge;
+          setShareImageB64(bb?.readSharedImage ? `data:image/png;base64,${bb.readSharedImage(img.content)}` : null);
+        } else {
+          setShareImageB64(null);
+        }
+      }
+    } catch (e) { console.warn('[A-06] intent 消费异常', e); }
+  };
+  useEffect(() => {
+    consumeA06Intents();
+    const onVis = () => { if (document.visibilityState === 'visible') consumeA06Intents(); };
+    const onEvt = () => consumeA06Intents();
+    window.addEventListener('visibilitychange', onVis);
+    window.addEventListener('aurora:intent-received', onEvt);
+    return () => {
+      window.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('aurora:intent-received', onEvt);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
 
   /** 打开笔记 — 记录最近浏览。 */
   /* A-04: favorites→kind=note 书签迁移（幂等标记;**双写一版**——favorites
@@ -766,6 +926,22 @@ export default function App() {
           onClose={() => setEditTask(null)}
           onSave={(t) => { updateTasks(tasks.map((x) => (x.id === t.id ? t : x))); showToast('待办已更新'); }}
           onDelete={(id) => { updateTasks(tasks.filter((x) => x.id !== id)); showToast('待办已删除'); }}
+        />
+      )}
+
+      {/* A-06: 系统分享接收浮层（目标可改——默认今日日记;确认落位+小组件刷新） */}
+      {shareInbox.length > 0 && (
+        <ShareReceiveSheet
+          items={shareInbox}
+          imageB64={shareImageB64}
+          onClose={() => { setShareInbox([]); setShareImageB64(null); }}
+          onLand={(target) => {
+            const r = landShare(platform, target, shareInbox, shareImageB64);
+            setShareInbox([]);
+            setShareImageB64(null);
+            showToast(r.ok ? `已落位: ${r.title}` : '落位失败（存储不可写）');
+            (window as unknown as { AndroidBridge?: { refreshWidget?(): void } }).AndroidBridge?.refreshWidget?.();
+          }}
         />
       )}
 

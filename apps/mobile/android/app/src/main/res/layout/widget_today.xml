@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A-06: 桌面小组件（今日待办数+快速捕获——RemoteViews 约束:仅系统容器/基础控件） -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="@android:color/white">
+
+    <TextView
+        android:id="@+id/widget_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Aurora · 今日待办"
+        android:textSize="12sp"
+        android:textColor="#666666" />
+
+    <TextView
+        android:id="@+id/widget_count"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="0"
+        android:textSize="34sp"
+        android:textStyle="bold"
+        android:textColor="#1a1a1a" />
+
+    <Button
+        android:id="@+id/widget_capture"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="⚡ 快速捕获"
+        android:textSize="13sp" />
+</LinearLayout>

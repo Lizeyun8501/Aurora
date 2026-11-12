@@ -20,11 +20,30 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
-            android:windowSoftInputMode="adjustResize"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- A-06: 系统分享接收（text/plain + image/*——浏览器/微信等） -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <!-- A-06: 快捷指令 URL Scheme（aurora://capture | today | task-done） -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aurora" />
             </intent-filter>
         </activity>
 
@@ -32,6 +51,23 @@
         <receiver
             android:name=".ReminderReceiver"
             android:exported="false" />
+
+        <!-- A-06: 通知动作接收器（延后1h——纯闹钟重排零 DB 写） -->
+        <receiver
+            android:name=".ReminderActionReceiver"
+            android:exported="false" />
+
+        <!-- A-06: 桌面小组件（今日待办数+快速捕获——RemoteViews 零 WebView） -->
+        <receiver
+            android:name=".AuroraWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_today_info" />
+        </receiver>
     </application>
 
 </manifest>

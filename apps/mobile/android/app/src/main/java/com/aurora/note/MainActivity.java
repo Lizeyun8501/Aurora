@@ -48,10 +48,17 @@ public class MainActivity extends Activity {
     private String pendingExportMime;   // 挂起期 mime
     private String pendingExportText;   // 挂起期内容（JS 线程串来）
 
+    // ── A-06: 系统分享/URL Scheme 接收队列（进程级静态——WebView 生命周期
+    //    独立;JS 消费走 consumePendingIntents() 拉取,推拉解耦防丢） ──
+    private static final java.util.ArrayDeque<String> pendingIntents = new java.util.ArrayDeque<>();
+    private static int intentSeq = 0;
+    private static volatile MainActivity instance;
+
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        instance = this;
 
         // 初始化 Rust 核心（真实 bootstrap: SQLite + Tantivy）
         String dataDir = getFilesDir().getAbsolutePath();
@@ -74,6 +81,16 @@ public class MainActivity extends Activity {
             ReminderScheduler.reschedule(this, core);
         } catch (Throwable t) {
             android.util.Log.w("Aurora", "reminder rescan failed", t);
+        }
+
+        // A-06: 小组件数据通道（只读 core 引用——销毁置 null 降级）
+        AuroraWidgetProvider.AuroraHolder.set(core);
+
+        // A-06: 启动 intent 入队（冷启动分享/scheme——onCreate 只一次）
+        try {
+            enqueueIntent(getIntent());
+        } catch (Throwable t) {
+            android.util.Log.w("Aurora", "A-06 enqueue failed", t);
         }
 
         // WebView 容器
@@ -370,6 +387,45 @@ public class MainActivity extends Activity {
         }
 
         /** A-09: 高级搜索 JSON（5 运算符+徽章面——与桌面 cmd_search_advanced 同源）。 */
+        /** A-06: 消费挂起 intent 队列（拉模式——JSON 数组一次性取走）。 */
+        @JavascriptInterface
+        public String consumePendingIntents() {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            while (!pendingIntents.isEmpty()) {
+                try { arr.put(new org.json.JSONObject(pendingIntents.pollFirst())); }
+                catch (Throwable ignored) {}
+            }
+            return arr.toString();
+        }
+
+        /** A-06: 读分享图片为 base64（WebView file:// 禁用——data URL 预览通道）。 */
+        @JavascriptInterface
+        public String readSharedImage(String path) {
+            try {
+                java.io.File f = new java.io.File(path);
+                if (!f.exists()) return "";
+                byte[] buf = new byte[(int) f.length()];
+                try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+                    int off = 0;
+                    while (off < buf.length) {
+                        int n = in.read(buf, off, buf.length - off);
+                        if (n <= 0) break;
+                        off += n;
+                    }
+                }
+                return android.util.Base64.encodeToString(buf, android.util.Base64.NO_WRAP);
+            } catch (Throwable t) {
+                return "";
+            }
+        }
+
+        /** A-06: 小组件手动刷新（JS 侧任务态变更后即时推——DoD <1s 通道二）。 */
+        @JavascriptInterface
+        public void refreshWidget() {
+            try { AuroraWidgetProvider.pushUpdate(MainActivity.this, core); }
+            catch (Throwable ignored) {}
+        }
+
         /** A-05: 块引用解析 JSON（status 三态;anchor 空串=无锚点）。 */
         @JavascriptInterface
         public String resolveBlockRef(String noteId, String anchor) {
@@ -779,6 +835,72 @@ public class MainActivity extends Activity {
             "window.__onExportDirPicked && window.__onExportDirPicked(" + ok + ")", null));
     }
 
+    /** A-06: intent → JSON 入队（分享文本/图片/scheme 动作三型）。 */
+    private static void enqueueIntent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        if ("android.intent.action.SEND".equals(action)) {
+            String type = intent.getType();
+            String text = intent.getStringExtra(Intent.EXTRA_TEXT);
+            String subject = intent.getStringExtra(Intent.EXTRA_SUBJECT);
+            if (type != null && type.startsWith("image/")) {
+                android.net.Uri uri = null;
+                if (intent.getExtras() != null) {
+                    try {
+                        Object s = intent.getExtras().get(Intent.EXTRA_STREAM);
+                        if (s instanceof android.net.Uri) uri = (android.net.Uri) s;
+                        else if (s instanceof String) { try { uri = android.net.Uri.parse((String) s); } catch (Throwable ignored) {} }
+                    } catch (Throwable ignored) {}
+                }
+                String path = uri != null ? saveSharedImage(uri) : null;
+                if (path != null) {
+                    pendingIntents.add(intentJson("image", path, type, null));
+                } else {
+                    pendingIntents.add(intentJson("text", "（图片接收失败——来源不可读）", type, null));
+                }
+            } else if (text != null && !text.isEmpty()) {
+                pendingIntents.add(intentJson("text", text, type, subject));
+            }
+        } else if ("android.intent.action.VIEW".equals(action) && intent.getData() != null) {
+            pendingIntents.add(intentJson("action", intent.getData().toString(), "x-scheme/aurora", null));
+        }
+    }
+
+    /** A-06: intent JSON 形态（队列元素——JS consumePendingIntents 消费）。 */
+    private static String intentJson(String kind, String content, String mime, String subject) {
+        org.json.JSONObject o = new org.json.JSONObject();
+        try {
+            o.put("seq", ++intentSeq);
+            o.put("kind", kind);
+            o.put("content", content);
+            o.put("mime", mime == null ? "" : mime);
+            o.put("subject", subject == null ? "" : subject);
+            o.put("at", System.currentTimeMillis());
+        } catch (Throwable ignored) {}
+        return o.toString();
+    }
+
+    /** A-06: 分享图片流拷贝到 files/shared/（content URI 读权限只在当刻——立即落盘）。 */
+    private static String saveSharedImage(android.net.Uri uri) {
+        try {
+            java.io.File dir = new java.io.File(instance.getFilesDir(), "shared");
+            if (!dir.exists() && !dir.mkdirs()) return null;
+            String name = "share-" + System.currentTimeMillis() + ".png";
+            java.io.File out = new java.io.File(dir, name);
+            android.content.ContentResolver cr = instance.getContentResolver();
+            try (java.io.InputStream in = cr.openInputStream(uri);
+                 java.io.OutputStream os = new java.io.FileOutputStream(out)) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+            }
+            return out.getAbsolutePath();
+        } catch (Throwable t) {
+            android.util.Log.w("Aurora", "A-06 image save failed", t);
+            return null;
+        }
+    }
+
     /** 同名自动 (n) 序号防覆盖。 */
     private static java.io.File uniqueFile(java.io.File dir, String name) {
         java.io.File f = new java.io.File(dir, name);
@@ -791,6 +913,33 @@ public class MainActivity extends Activity {
             if (!f.exists()) return f;
         }
         return new java.io.File(dir, base + "-" + System.currentTimeMillis() + ext);
+    }
+
+    /** A-06: singleTask 已运行态分享/scheme 入口。 */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        try {
+            enqueueIntent(intent);
+            if (webView != null) {
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('aurora:intent-received'))", null);
+            }
+        } catch (Throwable t) {
+            android.util.Log.w("Aurora", "A-06 onNewIntent failed", t);
+        }
+    }
+
+    /** A-06: 回前台刷新小组件（DoD <1s——onResume 直推 RemoteViews）。 */
+    @Override
+    protected void onResume() {
+        super.onResume();
+        try {
+            AuroraWidgetProvider.pushUpdate(this, core);
+        } catch (Throwable t) {
+            android.util.Log.w("Aurora", "A-06 widget refresh failed", t);
+        }
     }
 
     @Override
@@ -808,6 +957,7 @@ public class MainActivity extends Activity {
             core.destroy();
             core = null;
         }
+        AuroraWidgetProvider.AuroraHolder.set(null);
         if (syncEngine != null) {
             syncEngine.close();
             syncEngine = null;

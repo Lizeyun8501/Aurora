@@ -79,8 +79,65 @@ public final class ReminderScheduler {
                     scheduleOne(ctx, am, id, offsetMin, at, title, level);
                 }
             }
+            scheduleTodayTasks(ctx, am, core, now);
         } catch (Exception e) {
             android.util.Log.w("ReminderScheduler", "reschedule failed", e);
+        }
+    }
+
+    /** A-06: 今日 due 任务提醒注册（calendarVm 只读快照——任务到点通知带
+     *  taskId → ReminderReceiver 挂「完成/延后 1 小时」双 action）。
+     *  窗口语义: 仅未来 24h 内 due 的未完成任务（重扫幂等覆盖）。 */
+    private static void scheduleTodayTasks(Context ctx, AlarmManager am,
+                                           UniffiAppCore core, long now) {
+        try {
+            String vmJson = core.calendarVm();
+            if (vmJson == null || vmJson.isEmpty()) return;
+            JSONObject vm = new JSONObject(vmJson);
+            JSONArray tasks = vm.optJSONArray("tasks");
+            if (tasks == null) return;
+            java.text.SimpleDateFormat df = new java.text.SimpleDateFormat(
+                "yyyy-MM-dd'T'HH:mm", java.util.Locale.US);
+            java.util.TimeZone tz = java.util.TimeZone.getTimeZone("Asia/Shanghai");
+            df.setTimeZone(tz);
+            for (int i = 0; i < tasks.length(); i++) {
+                JSONObject t = tasks.optJSONObject(i);
+                if (t == null) continue;
+                String status = t.optString("status", "");
+                if ("done".equals(status)) continue;
+                String taskId = t.optString("id", "");
+                if (taskId.isEmpty()) continue;
+                String title = t.optString("title", "待办提醒");
+                String due = t.optString("due", "");
+                if (due.length() < 16) continue; // 缺时分的 due（纯日期）不挂到点闹钟
+                long dueMs;
+                try { dueMs = df.parse(due.substring(0, 16)).getTime(); }
+                catch (Exception pe) { continue; }
+                if (dueMs <= now || dueMs > now + 86_400_000L) continue;
+                scheduleOneTask(ctx, am, taskId, dueMs, title);
+            }
+        } catch (Exception e) {
+            android.util.Log.w("ReminderScheduler", "A-06 task schedule failed", e);
+        }
+    }
+
+    /** A-06: 任务提醒单点注册（requestCode=task:{id} 唯一——重扫覆盖）。 */
+    private static void scheduleOneTask(Context ctx, AlarmManager am,
+                                        String taskId, long at, String title) {
+        Intent intent = new Intent(ctx, ReminderReceiver.class)
+                .putExtra("taskId", taskId)
+                .putExtra("title", title)
+                .putExtra("level", 0);
+        int requestCode = ("task:" + taskId).hashCode();
+        PendingIntent pi = PendingIntent.getBroadcast(
+                ctx, requestCode, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        boolean canExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                || am.canScheduleExactAlarms();
+        if (canExact) {
+            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
+        } else {
+            setWindowAndAllowWhileWhileIdleCompat(am, AlarmManager.RTC_WAKEUP, at, 10 * 60_000L, pi);
         }
     }
 

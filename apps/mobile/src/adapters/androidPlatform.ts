@@ -77,6 +77,12 @@ interface AndroidBridge {
   resolveBlockRef?(noteId: string, anchor: string): string;
   // A-05: 面包屑（{id,title}[] JSON——core 单一递归源,双端共用 VM）
   breadcrumb?(noteId: string): string;
+  // A-06: 消费挂起 intent 队列（系统分享/URL scheme——JSON 数组拉取）
+  consumePendingIntents?(): string;
+  // A-06: 分享图片 base64（WebView file:// 禁用——data URL 预览通道）
+  readSharedImage?(path: string): string;
+  // A-06: 小组件手动刷新（任务态变更即时推——DoD <1s 通道二）
+  refreshWidget?(): void;
   // A-04: 书签四命令（与桌面 cmd_bookmark_* 同源;list 含死链 stale 态）
   bookmarkAdd?(bookmarkJson: string): string;
   bookmarkList?(): string;
