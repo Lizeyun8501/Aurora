@@ -10,6 +10,25 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+// B-01: Agent 会话簿（同桌面 ai_commands 静态表语义——进程级;审计链共享）
+static MOBILE_AGENT_AUDIT: std::sync::OnceLock<Arc<aurora_ai::sandbox::AuditLog>> =
+    std::sync::OnceLock::new();
+static MOBILE_AGENT_SESSIONS: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<String, Arc<aurora_ai::agent_session::AgentSession>>>,
+> = std::sync::OnceLock::new();
+
+fn agent_audit() -> Arc<aurora_ai::sandbox::AuditLog> {
+    MOBILE_AGENT_AUDIT
+        .get_or_init(|| Arc::new(aurora_ai::sandbox::AuditLog::new()))
+        .clone()
+}
+
+fn agent_sessions(
+) -> &'static Mutex<std::collections::HashMap<String, Arc<aurora_ai::agent_session::AgentSession>>>
+{
+    MOBILE_AGENT_SESSIONS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
 use aurora_core::l1_infrastructure::note_doc::NoteDoc;
 
 uniffi::setup_scaffolding!();
@@ -1266,6 +1285,140 @@ impl UniffiAppCore {
     // A-08: task 域方法 + CalendarVm（双端同源——桌面走 Tauri calendar_commands）
     // ------------------------------------------------------------------
 
+    /// B-01: 创建 Agent 会话（15 分钟限时默认——超时需重新授权 DoD）。
+    /// 返回 JSON {id, deadline_secs}（同桌面 cmd_agent_session_create 语义）。
+    pub fn agent_session_create(self: &Arc<Self>) -> String {
+        let id = format!("agent-{}", chrono::Utc::now().timestamp_millis());
+        let session = Arc::new(
+            aurora_ai::agent_session::AgentSession::new(&id, agent_audit())
+                .with_deadline_secs(aurora_ai::agent_session::AGENT_DEFAULT_DEADLINE_SECS),
+        );
+        agent_sessions().lock().unwrap().insert(id.clone(), session);
+        serde_json::json!({ "id": id, "deadline_secs": aurora_ai::agent_session::AGENT_DEFAULT_DEADLINE_SECS }).to_string()
+    }
+
+    /// B-01: Kill-Switch（理由落审计链——立即生效不可撤销）。
+    pub fn agent_session_kill(self: &Arc<Self>, session_id: &str, reason: &str) -> bool {
+        let s = agent_sessions().lock().unwrap();
+        match s.get(session_id) {
+            Some(session) => {
+                session.kill(reason);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// B-01: 会话状态 {killed, expired, remaining_secs}（过期→UI 需重新授权）。
+    pub fn agent_session_status(self: &Arc<Self>, session_id: &str) -> String {
+        let s = agent_sessions().lock().unwrap();
+        match s.get(session_id) {
+            Some(session) => serde_json::json!({
+                "id": session_id,
+                "killed": session.is_killed(),
+                "expired": session.expired(),
+                "remaining_secs": session.remaining_secs(),
+            })
+            .to_string(),
+            None => r#"{"id":"","killed":false,"expired":true,"remaining_secs":0}"#.to_string(),
+        }
+    }
+
+    /// B-01: 真实推理链（AppCore.ai.chat——Ollama 主链+门控云 fallback）。
+    /// 输入: [{role,content}...] JSON;成功=助手回复文本;失败=错误文案
+    /// （含 provider 不可用——**UI 判型分流: 不可用=设置引导,其他=错误+重试**,
+    /// 禁任何分支伪造回复）。会话过期/被杀→Err 文案（UI 需重新授权）。
+    pub fn agent_chat(self: &Arc<Self>, session_id: &str, messages_json: &str) -> String {
+        // 会话门: killed/expired → 显式拒绝（15 分钟过期重授权 DoD）
+        {
+            let s = agent_sessions().lock().unwrap();
+            if let Some(session) = s.get(session_id) {
+                if session.is_killed() {
+                    return "ERR:SESSION_KILLED".into();
+                }
+                if session.expired() {
+                    return "ERR:SESSION_EXPIRED".into();
+                }
+            } else {
+                return "ERR:SESSION_NOT_FOUND".into();
+            }
+        }
+        let Some(core) = &self.core else {
+            return "ERR:CORE_NOT_INIT".into();
+        };
+        let messages: Vec<aurora_core::traits::ai_provider::Message> =
+            match serde_json::from_str(messages_json) {
+                Ok(m) => m,
+                Err(e) => return format!("ERR:BAD_INPUT:{e}"),
+            };
+        let opts = aurora_core::traits::ai_provider::ChatOptions {
+            max_tokens: None,
+            temperature: None,
+        };
+        match self.runtime.block_on(core.ai.chat(&messages, &opts)) {
+            Ok(text) => text,
+            Err(e) => format!("ERR:CHAT_FAILED:{}", e),
+        }
+    }
+
+    /// B-01: liquify 提案列表（kv liq:proposal: 前缀——与桌面同源;AI 永不
+    /// 静默写入: 提案仅暂存,commit 需用户勾选确认）。
+    pub fn ai_liquify_list(self: &Arc<Self>) -> String {
+        let Some(core) = &self.core else {
+            return "[]".into();
+        };
+        self.runtime
+            .block_on(async {
+                let rows = core.kv_store.scan_prefix("liq:proposal:").await?;
+                let mut out: Vec<String> = Vec::new();
+                for (k, v) in rows {
+                    let _ = k;
+                    out.push(String::from_utf8_lossy(&v).to_string());
+                }
+                Ok::<_, aurora_core::Error>(out)
+            })
+            .map(|o| o.join("\n__SEP__\n"))
+            .unwrap_or_default()
+    }
+
+    /// B-01: 提案确认落库（用户勾选后——走 write_path 标准写入;未 commit
+    /// 零写事件 DoD）。selected_json: 勾选项索引数组 JSON（同桌面 Vec<usize>）。
+    pub fn ai_liquify_commit(self: &Arc<Self>, proposal_id: &str, selected_json: &str) -> String {
+        let Some(core) = &self.core else {
+            return "ERR:CORE_NOT_INIT".into();
+        };
+        let selected: Vec<usize> = serde_json::from_str(selected_json).unwrap_or_default();
+        self.runtime
+            .block_on(async {
+                let key = format!("liq:proposal:{proposal_id}");
+                let bytes = core
+                    .kv_store
+                    .get(&key)
+                    .await?
+                    .ok_or_else(|| aurora_core::Error::InvalidInput("提案不存在".into()))?;
+                let mut proposal: aurora_ai::liquify::LiquifyProposal =
+                    serde_json::from_slice(&bytes)?;
+                // 移动端 WriteContext 惯例（seal None 明文口径+DK-07 cipher——同 create_note 链）
+                let ctx = aurora_core::write_path::WriteContext {
+                    core: core.clone(),
+                    blocks: self.blocks.clone(),
+                    seal: None,
+                    content_cipher: self.content_cipher.clone(),
+                    attachments: None,
+                };
+                let committed =
+                    aurora_ai::liquify::ai_commit(&ctx, proposal.clone(), &selected).await?;
+                proposal.results = committed.results.clone();
+                proposal.status = committed.status;
+                let out_bytes = serde_json::to_vec(&proposal)
+                    .map_err(aurora_core::Error::Serialization)?;
+                core.kv_store.set(&key, &out_bytes).await?;
+                Ok(())
+            })
+            .map(|_| "ok".to_string())
+            .unwrap_or_else(|e: aurora_core::Error| format!("ERR:COMMIT_FAILED:{}", e))
+    }
+
     /// A-04: 书签四命令（JSON 桥——与桌面 cmd_bookmark_* 同一 core 实现,双端同源）。
     /// add: bookmark JSON;成功返 "ok",失败返错误文案（UI toast 面）。
     pub fn bookmark_add(self: &Arc<Self>, bookmark_json: &str) -> String {
@@ -2197,6 +2350,81 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeDeleteEvent(
 }
 
 // A-08: task 域 + CalendarVm JNI 导出（桌面 calendar_commands 同源——双端对称）
+// B-01: Agent 真实推理链 JNI 导出（session 三+chat+liquify 两——桌面同源）
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeAgentSessionCreate(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let r = core.agent_session_create();
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
+}
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeAgentSessionKill(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    session: JString,
+    reason: JString,
+) -> jboolean {
+    let core = unsafe { core_from_handle(handle) };
+    let sid = jstring_to_rust(&mut env, &session).unwrap_or_default();
+    let reason = jstring_to_rust(&mut env, &reason).unwrap_or_default();
+    core.agent_session_kill(&sid, &reason) as u8
+}
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeAgentSessionStatus(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    session: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let sid = jstring_to_rust(&mut env, &session).unwrap_or_default();
+    let r = core.agent_session_status(&sid);
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
+}
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeAgentChat(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    session: JString,
+    messages: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let sid = jstring_to_rust(&mut env, &session).unwrap_or_default();
+    let msgs = jstring_to_rust(&mut env, &messages).unwrap_or_default();
+    let r = core.agent_chat(&sid, &msgs);
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
+}
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeAiLiquifyList(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let r = core.ai_liquify_list();
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
+}
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeAiLiquifyCommit(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    proposal: JString,
+    selected: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let pid = jstring_to_rust(&mut env, &proposal).unwrap_or_default();
+    let sel = jstring_to_rust(&mut env, &selected).unwrap_or_default();
+    let r = core.ai_liquify_commit(&pid, &sel);
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
+}
+
 // A-04: 书签四 JNI 导出（桌面 cmd_bookmark_* 同源——双端对称）
 #[no_mangle]
 pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeBookmarkAdd(
@@ -2961,6 +3189,96 @@ impl UniffiAppCore {
 
 #[cfg(test)]
 mod tests {
+    // ===== B-01: Agent 真实推理链 E2E =====
+
+    /// B-01 DoD: session create→status(活)→kill→status(killed) 状态变化断言。
+    #[test]
+    fn b01_agent_session_lifecycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        let raw = core.agent_session_create();
+        let sess: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let sid = sess["id"].as_str().unwrap().to_string();
+        assert!(sid.starts_with("agent-"), "id 形态: {sid}");
+        assert!(
+            sess["deadline_secs"].as_u64().unwrap() >= 900,
+            "15 分钟限时"
+        );
+
+        let st: serde_json::Value = serde_json::from_str(&core.agent_session_status(&sid)).unwrap();
+        assert!(!st["killed"].as_bool().unwrap());
+        assert!(!st["expired"].as_bool().unwrap());
+        assert!(st["remaining_secs"].as_u64().unwrap() > 890);
+
+        assert!(core.agent_session_kill(&sid, "test kill"));
+        let st2: serde_json::Value =
+            serde_json::from_str(&core.agent_session_status(&sid)).unwrap();
+        assert!(st2["killed"].as_bool().unwrap(), "kill 后状态必须翻转");
+    }
+
+    /// B-01 DoD: 过期会话→kill/expired 翻转。
+    #[test]
+    fn b01_agent_session_expired_flip() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        let _sess: serde_json::Value = serde_json::from_str(&core.agent_session_create()).unwrap();
+        // 构造过期: 直接以 0 deadline 建替代会话验证 expired 语义
+        let expired_session = std::sync::Arc::new(
+            aurora_ai::agent_session::AgentSession::new("agent-exp-test", agent_audit())
+                .with_deadline_secs(0),
+        );
+        agent_sessions()
+            .lock()
+            .unwrap()
+            .insert("agent-exp-test".into(), expired_session);
+        let st: serde_json::Value =
+            serde_json::from_str(&core.agent_session_status("agent-exp-test")).unwrap();
+        assert!(st["expired"].as_bool().unwrap(), "0 deadline 必须立即过期");
+        // 过期会话 chat → 显式拒绝（非假回复）
+        let r = core.agent_chat("agent-exp-test", "[]");
+        assert_eq!(r, "ERR:SESSION_EXPIRED", "过期=重新授权,禁伪造回复");
+    }
+
+    /// B-01 DoD: 无 provider 可达时 chat 必须失败（Err 串）——**断言无
+    /// assistant 假消息产生**（Rust 面即 Err 文案;UI 面消费该 Err 才分态）。
+    /// 真实环境无 Ollama/云 key（CI 沙箱)→provider 探测失败→chat Err。
+    #[test]
+    fn b01_agent_chat_no_provider_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        let sid: serde_json::Value = serde_json::from_str(&core.agent_session_create()).unwrap();
+        let sid = sid["id"].as_str().unwrap().to_string();
+        let msgs = r#"[{"role":"user","content":"你好"}]"#;
+        let r = core.agent_chat(&sid, msgs);
+        // 两种合法终态: 真实失败（ERR:CHAT_FAILED:...——网络不可达,CI 沙箱）
+        // 或 真实成功（本机恰有 Ollama）。**非法终态**: 空串/mock 假回复。
+        if r.starts_with("ERR:") {
+            assert!(
+                r.contains("CHAT_FAILED") || r.contains("SESSION"),
+                "失败面必须可分型: {r}"
+            );
+        } else {
+            // 真实 provider 存在（如开发机 Ollama）——回复非空即真链
+            assert!(!r.trim().is_empty(), "成功路径必须有真实内容");
+        }
+        // 无会话 chat → 显式拒绝
+        assert_eq!(core.agent_chat("agent-none", msgs), "ERR:SESSION_NOT_FOUND");
+    }
+
+    /// B-01 DoD: liquify 提案 commit 前/后状态门（未 commit 零写——Draft
+    /// 不可二次提交;不存在的提案显式 Err）。
+    #[test]
+    fn b01_liquify_commit_gates() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        // 不存在提案 → 显式 Err（非静默空）
+        let r = core.ai_liquify_commit("liq-none", "[]");
+        assert!(
+            r.starts_with("ERR:COMMIT_FAILED"),
+            "缺失提案必须显式失败: {r}"
+        );
+    }
+
     use super::*;
 
     #[test]

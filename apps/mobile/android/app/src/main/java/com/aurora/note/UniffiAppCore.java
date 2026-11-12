@@ -374,6 +374,19 @@ public class UniffiAppCore {
         return nativeDeleteEvent(handle, eventId);
     }
 
+    /** B-01: Agent 真实推理链（session 三+chat+liquify——桌面同源;chat 失败
+     * 返回 ERR: 前缀错误文案,UI 判型分流禁伪回复）。 */
+    public String agentSessionCreate() { return nativeAgentSessionCreate(handle); }
+    public boolean agentSessionKill(String sessionId, String reason) {
+        return nativeAgentSessionKill(handle, sessionId, reason);
+    }
+    public String agentSessionStatus(String sessionId) { return nativeAgentSessionStatus(handle, sessionId); }
+    public String agentChat(String sessionId, String messagesJson) { return nativeAgentChat(handle, sessionId, messagesJson); }
+    public String aiLiquifyList() { return nativeAiLiquifyList(handle); }
+    public String aiLiquifyCommit(String proposalId, String selectedJson) {
+        return nativeAiLiquifyCommit(handle, proposalId, selectedJson);
+    }
+
     /** A-04: 书签四命令（同桌面 cmd_bookmark_*;list 含死链 stale 态）。 */
     public String bookmarkAdd(String bookmarkJson) { return nativeBookmarkAdd(handle, bookmarkJson); }
     public String bookmarkList() { return nativeBookmarkList(handle); }
@@ -442,6 +455,12 @@ public class UniffiAppCore {
     private static native String nativeBlockRef(long handle, String noteId, String anchor);
     private static native String nativeBreadcrumb(long handle, String noteId);
     private static native String nativeBookmarkAdd(long handle, String bookmarkJson);
+    private static native String nativeAgentSessionCreate(long handle);
+    private static native boolean nativeAgentSessionKill(long handle, String session, String reason);
+    private static native String nativeAgentSessionStatus(long handle, String session);
+    private static native String nativeAgentChat(long handle, String session, String messages);
+    private static native String nativeAiLiquifyList(long handle);
+    private static native String nativeAiLiquifyCommit(long handle, String proposal, String selected);
     private static native String nativeBookmarkList(long handle);
     private static native String nativeBookmarkRemove(long handle, String id);
     private static native String nativeBookmarkReorder(long handle, String idsJson, String titlePatch);

@@ -83,6 +83,13 @@ interface AndroidBridge {
   readSharedImage?(path: string): string;
   // A-06: 小组件手动刷新（任务态变更即时推——DoD <1s 通道二）
   refreshWidget?(): void;
+  // B-01: Agent 真实推理链（session 三+chat+liquify——桌面同源;chat Err=ERR: 前缀）
+  agentSessionCreate?(): string;
+  agentSessionKill?(sessionId: string, reason: string): boolean;
+  agentSessionStatus?(sessionId: string): string;
+  agentChat?(sessionId: string, messagesJson: string): string;
+  aiLiquifyList?(): string;
+  aiLiquifyCommit?(proposalId: string, selectedJson: string): string;
   // A-04: 书签四命令（与桌面 cmd_bookmark_* 同源;list 含死链 stale 态）
   bookmarkAdd?(bookmarkJson: string): string;
   bookmarkList?(): string;

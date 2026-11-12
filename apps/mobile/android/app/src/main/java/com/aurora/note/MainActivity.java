@@ -364,6 +364,34 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** B-01: Agent 真实推理链（chat 失败=ERR: 前缀文案——UI 三态分流）。 */
+        @JavascriptInterface
+        public String agentSessionCreate() {
+            try { return core != null ? core.agentSessionCreate() : ""; } catch (Exception e) { return ""; }
+        }
+        @JavascriptInterface
+        public boolean agentSessionKill(String sessionId, String reason) {
+            try { return core != null && core.agentSessionKill(sessionId, reason); } catch (Exception e) { return false; }
+        }
+        @JavascriptInterface
+        public String agentSessionStatus(String sessionId) {
+            try { return core != null ? core.agentSessionStatus(sessionId) : ""; } catch (Exception e) { return ""; }
+        }
+        @JavascriptInterface
+        public String agentChat(String sessionId, String messagesJson) {
+            try { return core != null ? core.agentChat(sessionId, messagesJson) : "ERR:CORE_NOT_INIT"; }
+            catch (Exception e) { return "ERR:CHAT_FAILED:" + e.getMessage(); }
+        }
+        @JavascriptInterface
+        public String aiLiquifyList() {
+            try { return core != null ? core.aiLiquifyList() : ""; } catch (Exception e) { return ""; }
+        }
+        @JavascriptInterface
+        public String aiLiquifyCommit(String proposalId, String selectedJson) {
+            try { return core != null ? core.aiLiquifyCommit(proposalId, selectedJson) : "ERR:CORE_NOT_INIT"; }
+            catch (Exception e) { return "ERR:COMMIT_FAILED:" + e.getMessage(); }
+        }
+
         /** A-04: 书签四命令（与桌面同源;list 含死链态——禁静默隐藏）。 */
         @JavascriptInterface
         public String bookmarkAdd(String bookmarkJson) {
