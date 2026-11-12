@@ -230,3 +230,59 @@ export function Switch({ checked, onChange }: { checked: boolean; onChange: (v: 
     </button>
   );
 }
+
+
+// B-02 切片三: IconDef/图标表/ToastAction/focusSummary 域随迁（纯搬移）
+export interface IconDef { id: string; label: string; color: string; glyph: string }
+export const BOOK_ICONS: IconDef[] = [
+  { id: 'book-red', label: '红本', color: '#ef4444', glyph: '📖' },
+  { id: 'book-blue', label: '蓝本', color: '#3b82f6', glyph: '📖' },
+  { id: 'book-green', label: '绿本', color: '#10b981', glyph: '📖' },
+  { id: 'book-amber', label: '橙本', color: '#f59e0b', glyph: '📖' },
+  { id: 'book-purple', label: '紫本', color: '#8b5cf6', glyph: '📖' },
+  { id: 'book-slate', label: '灰本', color: '#64748b', glyph: '📁' },
+  { id: 'book-rose', label: '粉本', color: '#f43f5e', glyph: '📚' },
+  { id: 'box-brown', label: '档案盒', color: '#a16207', glyph: '🗂' },
+];
+export const DOC_ICONS: IconDef[] = [
+  { id: 'doc-plain', label: '文档', color: '#94a3b8', glyph: '📄' },
+  { id: 'doc-note', label: '笔记', color: '#0ea5e9', glyph: '📝' },
+  { id: 'doc-star', label: '星标', color: '#f59e0b', glyph: '⭐' },
+  { id: 'doc-idea', label: '灵感', color: '#a855f7', glyph: '💡' },
+  { id: 'doc-task', label: '待办', color: '#10b981', glyph: '☑' },
+  { id: 'doc-diary', label: '日记', color: '#f43f5e', glyph: '📔' },
+  { id: 'doc-code', label: '代码', color: '#334155', glyph: '⌨' },
+  { id: 'doc-chart', label: '图表', color: '#6366f1', glyph: '📊' },
+];
+export const ALL_ICONS = [...BOOK_ICONS, ...DOC_ICONS];
+export function getIconDef(kind: 'book' | 'doc', id: string): IconDef {
+  try {
+    const saved = localStorage.getItem(`aurora.icon.${id}`);
+    if (saved) { const hit = ALL_ICONS.find((x) => x.id === saved); if (hit) return hit; }
+  } catch { /* 防御 */ }
+  return kind === 'book' ? BOOK_ICONS[0] : DOC_ICONS[0];
+}
+export function setIconDef(id: string, iconId: string) {
+  try { localStorage.setItem(`aurora.icon.${id}`, iconId); } catch { /* 防御 */ }
+}
+export interface ToastAction { text: string; actionLabel: string; onAction: () => void }
+
+export function loadOrder(): string[] {
+  try { return JSON.parse(localStorage.getItem(K_ORDER) ?? '[]') as string[]; } catch { return []; }
+}
+
+// B-02 切片三: 排序域随迁（K_ORDER/saveOrder/applyManualOrder——纯搬移）
+export const K_ORDER = 'aurora.noteOrder';
+export function saveOrder(ids: string[]) {
+  try { localStorage.setItem(K_ORDER, JSON.stringify(ids)); } catch { /* 防御 */ }
+}
+export function applyManualOrder<T extends { id: string }>(notes: T[], order: string[]): T[] {
+  if (!order.length) return notes;
+  const pos = new Map(order.map((id, i) => [id, i]));
+  return [...notes].sort((a, b) => {
+    const pa = pos.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+    const pb = pos.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+    if (pa !== pb) return pa - pb;
+    return 0; // 同未命中保 stable sort 原序
+  });
+}
