@@ -73,6 +73,10 @@ interface AndroidBridge {
   taskReschedule?(taskId: string, newDue: string): boolean;
   // A-09: 高级搜索（5 运算符+徽章面——与桌面 cmd_search_advanced 同源）
   advancedSearch?(query: string): string;
+  // A-05: 块引用解析（status 三态 JSON——与桌面 cmd_resolve_block_ref 同源;anchor 空串=无锚点）
+  resolveBlockRef?(noteId: string, anchor: string): string;
+  // A-05: 面包屑（{id,title}[] JSON——core 单一递归源,双端共用 VM）
+  breadcrumb?(noteId: string): string;
   // A-04: 书签四命令（与桌面 cmd_bookmark_* 同源;list 含死链 stale 态）
   bookmarkAdd?(bookmarkJson: string): string;
   bookmarkList?(): string;

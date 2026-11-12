@@ -20,6 +20,7 @@ import { LoroDoc } from 'loro-crdt';
 import { focusBlockPlugin, focusBlockShortcut } from './focusBlock';
 import { mathNodeViews } from './mathNodeView';
 import { mermaidNodeViews } from './mermaidNodeView';
+import { blockRefNodeViews } from './blockRefNodeView';
 import { injectMathStyle } from './mathStyle';
 import { injectMermaidStyle } from './mermaidStyle';
 import { mathInputRules } from './mathInputRules';
@@ -181,6 +182,8 @@ export function createAuroraEditor(
     nodeViews: {
       ...mathNodeViews(),
       ...mermaidNodeViews(),
+      // A-05: 块引用嵌入卡（异步解析三态——resolver 宿主注入）
+      ...blockRefNodeViews(),
     } as EditorProps['nodeViews'],
     dispatchTransaction(tx) {
       view.updateState(view.state.apply(tx));

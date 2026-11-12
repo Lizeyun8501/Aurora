@@ -19,6 +19,8 @@ const TASK_RE = /^- \[( |x)\] (.*)$/;
 const BULLET_RE = /^[-*] (.*)$/;
 /** 有序行（1. / 1)） */
 const ORDERED_RE = /^\d+[.)] (.*)$/;
+/** A-05: 块引用——((noteId)) 或 ((noteId#anchor))（anchor=heading 文本,无 `)`/`#` 穿透） */
+const BLOCK_REF_RE = /^\(\(([\w-]+)(?:#([^)]+))?\)\)$/;
 
 type AnySchema = Schema<string, any>;
 
@@ -90,6 +92,19 @@ export function mdToNodes(schema: AnySchema, text: string): ProseNode[] {
 
     // 空行跳过
     if (!line.trim()) { i++; continue; }
+
+    // A-05: 块引用行——((noteId)) / ((noteId#anchor)) 只读嵌入卡
+    const blockRef = BLOCK_REF_RE.exec(line.trim());
+    if (blockRef) {
+      nodes.push(
+        schema.nodes.block_ref.create({
+          noteId: blockRef[1],
+          anchor: blockRef[2] || null,
+        }),
+      );
+      i++;
+      continue;
+    }
 
     // 代码围栏
     const fence = FENCE_RE.exec(line);
@@ -267,6 +282,11 @@ function nodeToMd(node: ProseNode, orderedIdx: { n: number }): string[] {
     case 'ordered_list':
       return node.content.content.flatMap((li: ProseNode) => [`${orderedIdx.n++}. ${inlineText(li)}`]);
     case 'horizontal_rule': return ['---'];
+    // A-05: 块引用——((noteId#anchor)) 原样回发（原子节点,textContent 无关）
+    case 'block_ref':
+      return [
+        `((${node.attrs.noteId}${node.attrs.anchor ? '#' + node.attrs.anchor : ''}))`,
+      ];
     case 'paragraph': return [t];
     // S2 工具条外类型：占位行保底（内容不丢，往返可再扩）
     case 'embed': return [`[embed:${node.attrs.url || node.attrs.embed_type}]`];

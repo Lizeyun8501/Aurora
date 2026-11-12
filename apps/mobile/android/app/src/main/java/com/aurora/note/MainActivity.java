@@ -370,6 +370,20 @@ public class MainActivity extends Activity {
         }
 
         /** A-09: 高级搜索 JSON（5 运算符+徽章面——与桌面 cmd_search_advanced 同源）。 */
+        /** A-05: 块引用解析 JSON（status 三态;anchor 空串=无锚点）。 */
+        @JavascriptInterface
+        public String resolveBlockRef(String noteId, String anchor) {
+            try { return core != null ? core.blockRef(noteId, anchor) : "{\"status\":\"not_found\"}"; }
+            catch (Exception e) { return "{\"status\":\"not_found\"}"; }
+        }
+
+        /** A-05: 面包屑 JSON（{id,title}[];失败空数组）。 */
+        @JavascriptInterface
+        public String breadcrumb(String noteId) {
+            try { return core != null ? core.breadcrumb(noteId) : "[]"; }
+            catch (Exception e) { return "[]"; }
+        }
+
         @JavascriptInterface
         public String advancedSearch(String query) {
             try {

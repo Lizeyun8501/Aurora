@@ -36,6 +36,7 @@ import { insertBlock } from './insertCommands';
 import { auroraSchema } from '../schema/auroraSchema';
 import { MobileEditorDock } from './MobileEditorDock';
 import { MarkdownSourceEditor, useMarkdownSourceMode } from './MarkdownSourceEditor';
+import { NoteBreadcrumb } from '../views/NoteBreadcrumb';
 
 export type EditorStatus = 'loading' | 'rich' | 'fallback';
 
@@ -56,6 +57,9 @@ interface RichEditorProps {
   /** A-03: 源码模式切换面（块视图 ⇄ CM6 源码;Mod-Enter 应用经保存链）。
    *  mobileDock 态入口在 Dock「更多」菜单;否则右上角切换钮（aria-pressed）。 */
   sourceModeToggle?: boolean;
+  /** A-05: 面包屑数据源（宿主注入——桌面 invoke cmd_breadcrumb / 移动桥;
+   *  未注入=不渲染。VM={id,title}[] 双端共用, Rust 侧单一递归源）。 */
+  fetchBreadcrumb?: (noteId: string) => Promise<{ id: string; title: string }[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1086,7 +1090,7 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
 // 主组件
 // ---------------------------------------------------------------------------
 
-export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, onStatus, mobileDock, sourceModeToggle }: RichEditorProps) {
+export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, onStatus, mobileDock, sourceModeToggle, fetchBreadcrumb }: RichEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const handleRef = useRef<AuroraEditorHandle | null>(null);
@@ -1258,6 +1262,7 @@ export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, o
           {'</>'} 源码
         </button>
       )}
+      {fetchBreadcrumb && status === 'rich' && <EditorBreadcrumb noteId={noteId} fetch={fetchBreadcrumb} />}
       <div className="rich-editor-host" ref={hostRef} />
       {status === 'rich' && src.sourceMode && (
         <MarkdownSourceEditor
@@ -1288,5 +1293,37 @@ export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, o
         </div>
       )}
     </div>
+  );
+}
+
+/** A-05: 面包屑内嵌小组件（fetch 态自持——宿主只注入数据源）。 */
+function EditorBreadcrumb(props: {
+  noteId: string;
+  fetch: (noteId: string) => Promise<{ id: string; title: string }[]>;
+}): React.ReactElement | null {
+  const { noteId, fetch } = props;
+  const [crumbs, setCrumbs] = useState<{ id: string; title: string }[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setCrumbs(null);
+    fetch(noteId)
+      .then((c) => {
+        if (!cancelled) setCrumbs(c);
+      })
+      .catch(() => {
+        if (!cancelled) setCrumbs(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [noteId, fetch]);
+  if (!crumbs || crumbs.length === 0) return null;
+  return (
+    <NoteBreadcrumb
+      crumbs={crumbs}
+      onSelect={() => {
+        /* v1: 双端跳转走宿主路由——面包屑级点击事件由宿主经 onSelect 接管面后续卡 */
+      }}
+    />
   );
 }

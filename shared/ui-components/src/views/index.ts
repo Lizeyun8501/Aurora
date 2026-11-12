@@ -11,3 +11,5 @@ export type {
   ReadAttachmentFn,
   PreviewKind,
 } from './AttachmentPreview';
+export { NoteBreadcrumb } from './NoteBreadcrumb';
+export type { BreadcrumbCrumb, NoteBreadcrumbProps } from './NoteBreadcrumb';

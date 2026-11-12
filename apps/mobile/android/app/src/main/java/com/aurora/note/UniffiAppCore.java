@@ -387,6 +387,16 @@ public class UniffiAppCore {
         return nativeAdvancedSearch(handle, query);
     }
 
+    /** A-05: 块引用解析 JSON（status 三态 ok/not_found/locked;桌面同源）。 */
+    public String blockRef(String noteId, String anchor) {
+        return nativeBlockRef(handle, noteId, anchor);
+    }
+
+    /** A-05: 面包屑 JSON（{id,title}[] 双端共用 VM;失败空串）。 */
+    public String breadcrumb(String noteId) {
+        return nativeBreadcrumb(handle, noteId);
+    }
+
     /** A-08: 任务全量镜像同步（差集删除;成功 "{written}/{deleted}",失败空串）。 */
     public String taskSync(String tasksJson) {
         return nativeTaskSync(handle, tasksJson);
@@ -429,6 +439,8 @@ public class UniffiAppCore {
     // A-08: task 域 + CalendarVm JNI 声明（Rust 侧 Java_com_aurora_note_UniffiAppCore_native*）
     private static native String nativeTaskSync(long handle, String tasksJson);
     private static native String nativeAdvancedSearch(long handle, String query);
+    private static native String nativeBlockRef(long handle, String noteId, String anchor);
+    private static native String nativeBreadcrumb(long handle, String noteId);
     private static native String nativeBookmarkAdd(long handle, String bookmarkJson);
     private static native String nativeBookmarkList(long handle);
     private static native String nativeBookmarkRemove(long handle, String id);

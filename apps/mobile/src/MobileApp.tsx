@@ -6,6 +6,7 @@ import ConflictReviewPanel from './components/ConflictReviewPanel';
 import { Solar, HolidayUtil } from 'lunar-typescript';
 import CalendarView from './views/CalendarView';
 import { SplitPane } from '@aurora/ui-components'; // A-10: 平板双栏（shared 单份——桌面同源比例/拖拽语义）
+import { setBlockRefResolver, BLOCK_REF_OPEN_EVENT } from '@aurora/ui-components'; // A-05: 块引用桥
 import { expandAll } from './views/repeatUtil';
 
 // 编辑器懒加载 — schema/wasm 初始化失败不拖垮整个应用（白屏防御）
@@ -599,6 +600,7 @@ export default function App() {
       onOpenQueue={() => setQueueOpen(true)}
       onOpenConflicts={() => setConflictOpen(true)}
       showToast={showToast}
+      onOpenNote={(id, t) => { snippetCache.delete(editing!.id); setEditing({ id, title: t }); }}
     />
   );
   const tabletSplit =
@@ -637,6 +639,7 @@ export default function App() {
           onOpenQueue={() => setQueueOpen(true)}
           onOpenConflicts={() => setConflictOpen(true)}
           showToast={showToast}
+          onOpenNote={(id, t) => { snippetCache.delete(editing!.id); setEditing({ id, title: t }); }}
         />
       ) : (
         <>
@@ -2204,13 +2207,50 @@ function SyncPanel({ noteId }: { noteId: string }) {
 // 编辑页 — V19 移动端页面4（全屏沉浸 · 顶部返回+标题+工具菜单 · 专注模式）
 // ===========================================================================
 
-function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onOpenQueue, onOpenConflicts, showToast }: {
+/** A-05: 块引用/面包屑移动桥面（真机 AndroidBridge JSON 通道;无桥降级——
+ * 嵌入卡显式提示态、面包屑不渲染,与桌面 mock 模式语义对齐）。 */
+const a05FetchBreadcrumb = async (noteId: string): Promise<{ id: string; title: string }[]> => {
+  try {
+    const b = (window as unknown as { AndroidBridge?: { breadcrumb?(id: string): string } }).AndroidBridge;
+    if (!b?.breadcrumb) return [];
+    return JSON.parse(b.breadcrumb(noteId)) as { id: string; title: string }[];
+  } catch {
+    return [];
+  }
+};
+
+/** A-05: resolver 注入+跳转监听（挂载期一次性——真机通道缺失时保持提示态）。 */
+function A05BridgeEffect(props: { noteId: string; onOpenNote: (noteId: string, title: string) => void }): null {
+  const { onOpenNote } = props;
+  useEffect(() => {
+    setBlockRefResolver(async (nid, anchor) => {
+      try {
+        const b = (window as unknown as { AndroidBridge?: { resolveBlockRef?(id: string, a: string): string } }).AndroidBridge;
+        if (!b?.resolveBlockRef) return { status: 'not_found' } as const;
+        return JSON.parse(b.resolveBlockRef(nid, anchor ?? '')) as import('@aurora/ui-components').BlockRefData;
+      } catch {
+        return { status: 'not_found' } as const;
+      }
+    });
+    const onOpen = (e: Event): void => {
+      const d = (e as CustomEvent<{ noteId: string; anchor?: string | null }>).detail;
+      if (d?.noteId) onOpenNote(d.noteId, d.noteId);
+    };
+    window.addEventListener(BLOCK_REF_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(BLOCK_REF_OPEN_EVENT, onOpen);
+  }, [onOpenNote]);
+  return null;
+}
+
+function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onOpenQueue, onOpenConflicts, showToast, onOpenNote }: {
   noteId: string;
   title: string;
   isFav: boolean;
   onToggleFav: () => void;
   onClose: () => void;
   onDeleted: () => void;
+  /** A-05: 块引用卡「跳转源块」→ 父级编辑态切笔记。 */
+  onOpenNote: (noteId: string, title: string) => void;
   /** DK-50：编辑态菜单的同步两入口（App 层面板 state 下传） */
   onOpenQueue: () => void;
   onOpenConflicts: () => void;
@@ -2418,12 +2458,16 @@ function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onO
         </div>
       )}
 
+      {/* A-05: 块引用 resolver 注入 + 跳转桥（真机 AndroidBridge;无桥=提示态不空白） */}
+      {/* eslint-disable-next-line react-hooks/rules-of-hooks -- 模块级注入非 hook 消费 */}
+      <A05BridgeEffect noteId={noteId} onOpenNote={onOpenNote} />
       <React.Suspense fallback={<div className="editor-loading-tip"><span className="spinner" />编辑器加载中…</div>}>
         <RichEditor
           noteId={noteId}
           platform={editorPlatform}
           mobileDock
           sourceModeToggle
+          fetchBreadcrumb={a05FetchBreadcrumb}
           fallbackText={(() => { try { return platform.getNoteContent(noteId); } catch { return ''; } })()}
           onDirty={() => setStatus('dirty')}
           onSaved={() => setStatus('saved')}

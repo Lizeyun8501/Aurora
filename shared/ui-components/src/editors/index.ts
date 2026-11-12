@@ -37,6 +37,13 @@ export {
   focusTopLevelIndex,
   SOURCE_MODE_ERRORS,
 } from './MarkdownSourceEditor';
+export {
+  setBlockRefResolver,
+  BLOCK_REF_OPEN_EVENT,
+  BLOCK_REF_REFRESH_EVENT,
+  blockRefNodeViews,
+} from './blockRefNodeView';
+export type { BlockRefData, BlockRefResolver } from './blockRefNodeView';
 export type {
   MarkdownSourceEditorProps,
   SourceModeError,

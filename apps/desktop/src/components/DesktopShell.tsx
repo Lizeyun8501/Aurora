@@ -20,6 +20,7 @@ import type { AuroraEditorHandle } from '@aurora/ui-components';
 import { focusTopLevelBlock, getCurrentFocus } from '@aurora/ui-components';
 import { AttachmentPreview } from '@aurora/ui-components';
 import { MarkdownSourceEditor, useMarkdownSourceMode } from '@aurora/ui-components';
+import { NoteBreadcrumb, setBlockRefResolver, BLOCK_REF_OPEN_EVENT } from '@aurora/ui-components';
 import type { PreviewAttachmentDto } from '@aurora/ui-components';
 import CommandPalette, { type PaletteItem } from './CommandPalette';
 import ImportWizard from './ImportWizard';
@@ -2274,6 +2275,8 @@ function EditorPane(props: {
         content={note.content}
         persist={persist}
         wikiTitles={wikiTitles}
+        invoke={invoke}
+        onOpenNote={(id) => _onSelect?.(id)}
       />
       {/* DK-09 渲染接线：attachment:// 引用解析（图片内联 / 文件卡） */}
       <AttachmentStrip invoke={invoke} content={note.content} />
@@ -2958,8 +2961,12 @@ function EditAuroraEditor(props: {
   };
   /** DK-编辑器补全：全库标题候选（cmd_wiki_link_titles 聚合，EditorPane 供给） */
   wikiTitles?: string[];
+  /** A-05: invoke 通道（块引用解析/面包屑——mock 模式 null=组件自降级） */
+  invoke: InvokeFn | null;
+  /** A-05: 跳转源笔记（块引用卡「跳转源块」+ 面包屑级跳转——宿主路由）。 */
+  onOpenNote: (noteId: string) => void;
 }) {
-  const { noteId, content, persist, wikiTitles } = props;
+  const { noteId, content, persist, wikiTitles, invoke, onOpenNote } = props;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [focused, setFocused] = useState(false);
   const [view, setView] = useState<import('prosemirror-view').EditorView | null>(null);
@@ -2983,6 +2990,68 @@ function EditAuroraEditor(props: {
   const [Toolbar, setToolbar] = useState<React.ComponentType<{ view: import('prosemirror-view').EditorView | null; tick: number }> | null>(null);
   const persistRef = useRef(persist);
   persistRef.current = persist;
+  /* ── A-05: 块引用+面包屑 ──────────────────────────────
+   * resolver 模块级单次注入（mock=null 未注入态:嵌入卡显式提示,不空白）;
+   * doc-refresh 桥: Tauri 'aurora:doc-updated'（保存路径广播——多窗口
+   * A-10 场景引用卡 1s 内增量刷新）→ DOM CustomEvent;
+   * open-note 桥: 嵌入卡「跳转源块」→ 宿主路由 onOpenNote。 */
+  useEffect(() => {
+    if (!invoke) return;
+    setBlockRefResolver(async (nid, anchor) => {
+      try {
+        const r = (await invoke('cmd_resolve_block_ref', {
+          noteId: nid,
+          anchor: anchor ?? null,
+        })) as { status: 'ok' | 'not_found' | 'locked'; title?: string; section_md?: string };
+        return r;
+      } catch {
+        return { status: 'not_found' } as const;
+      }
+    });
+  }, [invoke]);
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const tauri = await import('@tauri-apps/api/event');
+        if (cancelled) return;
+        unlisten = await tauri.listen<string>('aurora:doc-updated', (e) => {
+          window.dispatchEvent(
+            new CustomEvent('aurora:doc-refresh', { detail: { noteId: e.payload } }),
+          );
+        });
+      } catch {
+        /* mock 模式无 Tauri 宿主——桥不建（组件态自持） */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+  useEffect(() => {
+    const onOpen = (e: Event): void => {
+      const d = (e as CustomEvent<{ noteId: string; anchor?: string | null }>).detail;
+      if (d?.noteId) onOpenNote(d.noteId);
+    };
+    window.addEventListener(BLOCK_REF_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(BLOCK_REF_OPEN_EVENT, onOpen);
+  }, [onOpenNote]);
+  const [crumbs, setCrumbs] = useState<{ id: string; title: string }[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setCrumbs(null);
+    if (!invoke) return () => { cancelled = true; };
+    void invoke('cmd_breadcrumb', { noteId })
+      .then((c) => {
+        if (!cancelled) setCrumbs(c as { id: string; title: string }[]);
+      })
+      .catch(() => {
+        if (!cancelled) setCrumbs(null);
+      });
+    return () => { cancelled = true; };
+  }, [invoke, noteId]);
   /* ── R10：块操作工具条（block handle menu）──────────────────────
    * hover 顶层块左侧显把手「⠿」，点开菜单：转 H2/H3/正文、删除块、聚焦块。
    * 纯 tr 手写（setNodeMarkup/delete），零新依赖。idx=host 直接子元素序
@@ -3297,6 +3366,9 @@ function EditAuroraEditor(props: {
       `}</style>
       {/* 块操作工具条（共享层实体）：heading 升降级/列表/task/code_block/undo/redo；
           原生 button — Tab 可达 + Enter/Space 激活（R-04 键盘全操作路径） */}
+      {crumbs && crumbs.length > 0 && (
+        <NoteBreadcrumb crumbs={crumbs} onSelect={(id) => onOpenNote(id)} />
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {view && Toolbar && !src.sourceMode && <Toolbar view={view} tick={tick} />}
         {view && (

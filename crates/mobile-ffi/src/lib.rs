@@ -1360,6 +1360,76 @@ impl UniffiAppCore {
         }
     }
 
+    /// A-05: 块引用解析 JSON（桌面 cmd_resolve_block_ref 同源——双端对称;
+    /// status 三态 ok/not_found/locked;锚点未命中=ok+提示文案,与桌面一致）。
+    pub fn block_ref_json(self: &Arc<Self>, note_id: &str, anchor: Option<&str>) -> String {
+        let Some(core) = &self.core else {
+            return r#"{"status":"not_found"}"#.into();
+        };
+        // 存在性（元数据 note:{id}——与 get_note_content 同源语义）
+        let exists = self
+            .runtime
+            .block_on(async {
+                core.kv_store
+                    .get(&format!("note:{note_id}"))
+                    .await
+                    .map(|v| v.is_some())
+            })
+            .unwrap_or(false);
+        if !exists {
+            return r#"{"status":"not_found"}"#.into();
+        }
+        // 正文经五容器 md 通道（存储/加密语义由既有 impl 承接）
+        let md = match self.get_note_content_impl(note_id.to_string()) {
+            Ok(m) => m,
+            Err(_) => return r#"{"status":"locked"}"#.into(),
+        };
+        let meta_title = self
+            .list_notes_impl()
+            .iter()
+            .find(|n| n.id == note_id)
+            .map(|n| n.title.clone())
+            .unwrap_or_default();
+        match aurora_core::l3_domain::block_ref::resolve_section(&md, anchor) {
+            aurora_core::l3_domain::block_ref::SectionResolve::Ok { title, section_md } => {
+                let payload = serde_json::json!({
+                    "status": "ok",
+                    "title": if meta_title.is_empty() { title } else { meta_title },
+                    "section_md": section_md,
+                });
+                serde_json::to_string(&payload).unwrap_or_else(|_| r#"{"status":"locked"}"#.into())
+            }
+            aurora_core::l3_domain::block_ref::SectionResolve::AnchorNotFound { .. } => {
+                serde_json::json!({
+                    "status": "ok",
+                    "title": meta_title,
+                    "section_md": "（引用锚点未命中——源笔记存在,标题锚点已变更）",
+                })
+                .to_string()
+            }
+        }
+    }
+
+    /// A-05: 面包屑 JSON（core block_ref::breadcrumb_of 单一递归源——双端共用
+    /// VM 字段 {id,title}[];无 core/失败返空数组,fail-closed 惯例）。
+    pub fn breadcrumb_json(self: &Arc<Self>, note_id: &str) -> String {
+        let Some(core) = &self.core else {
+            return "[]".into();
+        };
+        match self
+            .runtime
+            .block_on(aurora_core::l3_domain::block_ref::breadcrumb_of(
+                core.kv_store.as_ref(),
+                note_id,
+            )) {
+            Ok(chain) => serde_json::to_string(&chain).unwrap_or_else(|_| "[]".into()),
+            Err(e) => {
+                tracing::warn!(error = %e, "breadcrumb failed");
+                "[]".into()
+            }
+        }
+    }
+
     /// A-08: 任务全量镜像同步（JSON 数组;差集删除）。成功返 "{written}/{deleted}"，
     /// 失败/无 core 返空串（tracing warn 落日志——fail-closed 惯例同 upsert_event）。
     pub fn task_sync_json(self: &Arc<Self>, tasks_json: &str) -> String {
@@ -2213,6 +2283,36 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeCalendarVm(
     let core = unsafe { core_from_handle(handle) };
     let json = core.calendar_vm_json();
     dk49_json_to_jstring(&mut env, &serde_json::Value::String(json))
+}
+
+// A-05: 块引用解析 JNI 导出（桌面 cmd_resolve_block_ref 同源——双端对称）
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeBlockRef(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    note_id: JString,
+    anchor: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let nid = jstring_to_rust(&mut env, &note_id).unwrap_or_default();
+    let anc = jstring_to_rust(&mut env, &anchor).filter(|a| !a.is_empty());
+    let json = core.block_ref_json(&nid, anc.as_deref());
+    rust_str_to_jstring(&mut env, &json)
+}
+
+// A-05: 面包屑 JNI 导出（core 单一递归源——双端共用 VM）
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeBreadcrumb(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    note_id: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let nid = jstring_to_rust(&mut env, &note_id).unwrap_or_default();
+    let json = core.breadcrumb_json(&nid);
+    rust_str_to_jstring(&mut env, &json)
 }
 
 #[no_mangle]

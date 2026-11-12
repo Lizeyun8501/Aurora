@@ -33,6 +33,7 @@ mod ai_commands;
 mod attachment_commands;
 mod backlink_commands;
 mod backup_commands;
+mod block_ref_commands; // A-05: 块引用解析+面包屑命令面
 mod calendar_commands; // A-08: 桌面日历命令面（与移动 FFI 同源 core）
 mod capture_server;
 mod collection_commands;
@@ -311,6 +312,8 @@ pub fn run() {
             import_commands::cmd_import_markdown_dir,
             import_commands::cmd_import_docx,
             attachment_commands::cmd_export_attachment,
+            block_ref_commands::cmd_resolve_block_ref,
+            block_ref_commands::cmd_breadcrumb,
             attachment_commands::cmd_open_attachment,
             import_commands::cmd_import_xlsx,
             import_commands::cmd_import_enex,
@@ -602,7 +605,11 @@ async fn cmd_get_note_snapshot(note_id: String) -> Result<Option<String>, String
 /// 同款）—— apply_update import 合并非替换，内核容器与编辑器容器共存不互覆，
 /// P2P 对端修改不丢。空快照视为无操作。
 #[tauri::command]
-async fn cmd_save_note_snapshot(note_id: String, snapshot_b64: String) -> Result<(), String> {
+async fn cmd_save_note_snapshot(
+    app: tauri::AppHandle,
+    note_id: String,
+    snapshot_b64: String,
+) -> Result<(), String> {
     use base64::Engine;
     let core = get_core()?;
     let bytes = base64::engine::general_purpose::STANDARD
@@ -626,18 +633,27 @@ async fn cmd_save_note_snapshot(note_id: String, snapshot_b64: String) -> Result
         }
         _ => bytes,
     };
-    core.kv_store
+    let r = core
+        .kv_store
         .set(
             &aurora_core::app_core::notesnap_key(&core.user_id, &note_id),
             &merged,
         )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    // A-05: 保存路径广播——多窗口（A-10）下块引用卡 1s 内增量刷新
+    //（EventBus Medium 为唯一消费者投影环路（契约冻结）,v1 走 Tauri 事件
+    // 桥,偏差披露于 A-05 交付报告）
+    if r.is_ok() {
+        let _ = tauri::Emitter::emit(&app, "aurora:doc-updated", &note_id);
+    }
+    r
 }
 
 /// 更新笔记（解密 → 修改 → 重新加密落库 + 更新索引）。
 #[tauri::command]
 async fn cmd_update_note(
+    app: tauri::AppHandle,
     note_id: String,
     title: Option<String>,
     content: Option<String>,
@@ -739,6 +755,8 @@ async fn cmd_update_note(
         .await
         .map_err(|e| e.to_string())?;
     info!(note_id = %note_id, "note updated via desktop WritePath");
+    // A-05: 保存路径广播（多窗口块引用卡刷新——同 cmd_save_note_snapshot）
+    let _ = tauri::Emitter::emit(&app, "aurora:doc-updated", &note_id);
     Ok(())
 }
 

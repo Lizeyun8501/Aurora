@@ -257,6 +257,36 @@ const baseNodes: Record<string, NodeSpec> = {
     parseDOM: [{ tag: 'hr' }],
   },
 
+  // A-05: 块引用（transclusion）——((noteId)) / ((noteId#anchor)) 只读嵌入卡
+  //（渲染面走 BlockRefNodeView——异步解析+失效/锁定三态;anchor=heading 文本）
+  block_ref: {
+    group: 'block',
+    atom: true,
+    attrs: {
+      noteId: { default: '' },
+      anchor: { default: null as string | null },
+    },
+    toDOM: (node: ProseNode) => [
+      'div',
+      {
+        class: 'aurora-block-ref',
+        'data-note-id': node.attrs.noteId,
+        'data-anchor': node.attrs.anchor ?? '',
+        role: 'blockquote',
+      },
+      `((${node.attrs.noteId}${node.attrs.anchor ? '#' + node.attrs.anchor : ''}))`,
+    ],
+    parseDOM: [
+      {
+        tag: 'div.aurora-block-ref',
+        getAttrs: (dom: HTMLElement) => ({
+          noteId: dom.getAttribute('data-note-id') || '',
+          anchor: dom.getAttribute('data-anchor') || null,
+        }),
+      },
+    ],
+  },
+
   // AI 建议块（共享层增量 — DK-10 AI 网关钩子）
   ai_suggestion: {
     group: 'block',
