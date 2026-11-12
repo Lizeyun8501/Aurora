@@ -14,7 +14,7 @@
  * 样式全部引用 design/tokens（单一事实源 — 禁止硬编码色值）。
  * 无障碍: 焦点环 2px focus 色 / 触控目标 ≥44px / 对比度 ≥4.5:1（tokens.a11y）。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import tokens from '../design/tokens';
 import type { AuroraEditorHandle } from '@aurora/ui-components';
 import { focusTopLevelBlock, getCurrentFocus } from '@aurora/ui-components';
@@ -24,30 +24,32 @@ import { NoteBreadcrumb, setBlockRefResolver, BLOCK_REF_OPEN_EVENT } from '@auro
 import type { PreviewAttachmentDto } from '@aurora/ui-components';
 import CommandPalette, { type PaletteItem } from './CommandPalette';
 import ImportWizard from './ImportWizard';
-import CanvasView from './CanvasView';
-import TrashView from './TrashView';
-import SmartFolderView from './SmartFolderView';
-import GraphPanel from './GraphPanel';
-import TodoView from './TodoView';
-import CalendarPanel from './CalendarPanel'; // A-08: 桌面日历视图（双端对称）
-import TagView from './TagView';
+// B-02 切片四: 重视图 React.lazy（首屏 bundle 只载 Shell+notes/today——
+// 按需 chunk;Suspense 兜底占位零闪烁——纯加载策略,零行为变化）
+const CanvasView = React.lazy(() => import('./CanvasView'));
+const TrashView = React.lazy(() => import('./TrashView'));
+const SmartFolderView = React.lazy(() => import('./SmartFolderView'));
+const GraphPanel = React.lazy(() => import('./GraphPanel'));
+const TodoView = React.lazy(() => import('./TodoView'));
+const CalendarPanel = React.lazy(() => import('./CalendarPanel')); // A-08: 桌面日历视图（双端对称）
+const TagView = React.lazy(() => import('./TagView'));
 import ShortcutSettings from './ShortcutSettings';
 import { DEFAULT_SHORTCUTS, comboMatches, type ShortcutTable } from '../shortcuts';
 import VersionHistoryPanel from './VersionHistoryPanel';
 import TodayDailyNote from './TodayDailyNote';
-import LiquifyReview from './LiquifyReview';
+const LiquifyReview = React.lazy(() => import('./LiquifyReview'));
 import PairDialog from './PairDialog';
 import QuickCapture, { useQuickCaptureEvent } from './QuickCapture';
 import ReviewPanel from './ReviewPanel';
 import ReviewStatsPanel from './ReviewStatsPanel'; // R17：FSRS 统计面板（Bravo T4 交付，Alpha 挂载）
 import CoverHeader from './CoverHeader';
-import CollectionView from './CollectionView';
+const CollectionView = React.lazy(() => import('./CollectionView'));
 // DK-48 同步体验三组件（badge 常驻 + 两面板浮层；数据面只读消费）
 import SyncStatusBadge from './SyncStatusBadge';
 import QueuePanel from './QueuePanel';
 import ConflictReviewPanel from './ConflictReviewPanel';
-import MarketplaceView from './MarketplaceView';
-import PluginsView from './PluginsView';
+const MarketplaceView = React.lazy(() => import('./MarketplaceView'));
+const PluginsView = React.lazy(() => import('./PluginsView'));
 
 export interface InvokeFn {
   (cmd: string, args?: Record<string, unknown>): Promise<unknown>;
@@ -2680,9 +2682,9 @@ function InfoPanelTabs(props: {
       {tab === 'backlinks' ? (
         <BacklinksPanel noteId={noteId} invoke={invoke} onSelect={onSelect} />
       ) : tab === 'graph' ? (
-        <GraphPanel invoke={invoke} onSelect={onSelect} />
+        <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><GraphPanel invoke={invoke} onSelect={onSelect} /></Suspense>
       ) : tab === 'todos' ? (
-        <TodoView invoke={invoke} onOpenNote={onSelect} compact />
+        <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><TodoView invoke={invoke} onOpenNote={onSelect} compact /></Suspense>
       ) : tab === 'outline' ? (
         <OutlinePanel />
       ) : tab === 'stats' ? (
@@ -4722,7 +4724,7 @@ export default function DesktopShell() {
           <CanvasView />
         ) : view === 'smartfolder' && selectedId ? (
           /* DK-02 S3 UI 面：智能文件夹求值展示 + 规则编辑（拉模式，打开即求值） */
-          <SmartFolderView
+          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><SmartFolderView
             invoke={invoke ?? mockSmartFolderInvoke}
             folderId={selectedId}
             folderTitle={notes.find((n) => n.note_id === selectedId)?.title || '智能文件夹'}
@@ -4730,7 +4732,7 @@ export default function DesktopShell() {
               setSelectedId(nid);
               setView('notes');
             }}
-          />
+          /></Suspense>
         ) : view === 'tasks' ? (
           /* DK-2.2 待办聚合 v2（checkbox 回写——cmd_toggle_task 双条件块定位） */
           <TodoView
@@ -4743,37 +4745,37 @@ export default function DesktopShell() {
         ) : view === 'calendar' ? (
           /* A-08: 桌面日历——同一 Rust CalendarVm（cmd_calendar_vm）;repeatUtil=shared 单份;
              周视图任务拖拽改期→cmd_reschedule_task（TaskRescheduled 事件）。 */
-          <CalendarPanel
+          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><CalendarPanel
             invoke={invoke}
             onOpenNote={(nid) => {
               setSelectedId(nid);
               setView('notes');
             }}
-          />
+          /></Suspense>
         ) : view === 'tags' ? (
           /* DK-2.5 标签面板 v1（聚合+AND/NOT 组合过滤——写通路复用 set_note_tags） */
-          <TagView
+          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><TagView
             invoke={invoke}
             onOpenNote={(nid) => {
               setSelectedId(nid);
               setView('notes');
             }}
-          />
+          /></Suspense>
         ) : view === 'trash' ? (
           /* DK-02 S1 回收站视图（Alpha UI 切片；core 面 Bravo f175692） */
-          <TrashView invoke={invoke} />
+          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><TrashView invoke={invoke} /></Suspense>
         ) : view === 'liquify' ? (
           /* DK-10 两段式提交审查视图（铁律：AI 不得静默写入——用户逐 op 勾选） */
-          <LiquifyReview invoke={invoke} />
+          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><LiquifyReview invoke={invoke} /></Suspense>
         ) : view === 'marketplace' ? (
           /* DK-15c：marketplace 徽章面（详情能力展示——列表页/权限切换另卡） */
-          <MarketplaceView pluginName="demo-plugin" granted={[]} />
+          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><MarketplaceView pluginName="demo-plugin" granted={[]} /></Suspense>
         ) : view === 'plugins' ? (
           /* DK-市场卡：已安装插件管理（列表/卸载/invoke 冒烟——安装表单随市场下载器卡） */
-          <PluginsView invoke={invoke} />
+          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><PluginsView invoke={invoke} /></Suspense>
         ) : view === 'collections' ? (
           /* G1-S3：数据库视图（表格 v1——集合 CRUD+行绑定+单元格编辑） */
-          <CollectionView invoke={invoke} onOpenNote={(id) => { setSelectedId(id); setView('notes'); }} />
+          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><CollectionView invoke={invoke} onOpenNote={(id) => { setSelectedId(id); setView('notes'); }} /></Suspense>
         ) : view === 'agent' ? (
           /* DK-10 Agent 会话面板（15min 限时 + Kill-Switch + 审计链查看） */
           <AgentPanel invoke={invoke} />
