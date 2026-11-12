@@ -65,6 +65,29 @@ pub async fn cmd_collection_set_schema(
         .map_err(|e| e.to_string())
 }
 
+/// A-07: 视图配置读取（dbview:{id} KV——形态/筛选/排序持久化）。
+/// 未存过=Ok(None)（前端落 DEFAULT_VIEW_CONFIG）。
+#[tauri::command]
+pub async fn cmd_collection_view_get(id: String) -> Result<Option<serde_json::Value>, String> {
+    let core = get_core()?;
+    core.kv_store
+        .get(&format!("dbview:{id}"))
+        .await
+        .map_err(|e| e.to_string())
+        .map(|v| v.map(|b| serde_json::from_slice(&b).unwrap_or(serde_json::Value::Null)))
+}
+
+/// A-07: 视图配置写入（全量覆盖——对齐 schema 编辑惯例）。
+#[tauri::command]
+pub async fn cmd_collection_view_set(id: String, config: serde_json::Value) -> Result<(), String> {
+    let core = get_core()?;
+    let bytes = serde_json::to_vec(&config).map_err(|e| e.to_string())?;
+    core.kv_store
+        .set(&format!("dbview:{id}"), &bytes)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// 绑行（笔记进集合——v1 行=笔记）。
 #[tauri::command]
 pub async fn cmd_collection_add_row(id: String, note_id: String) -> Result<(), String> {

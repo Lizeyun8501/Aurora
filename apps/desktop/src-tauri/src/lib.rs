@@ -296,6 +296,8 @@ pub fn run() {
             collection_commands::cmd_collection_remove_row,
             collection_commands::cmd_collection_set_cell,
             collection_commands::cmd_collection_rows,
+            collection_commands::cmd_collection_view_get,
+            collection_commands::cmd_collection_view_set,
             due_preview_commands::cmd_preview_due,
             todo_commands::cmd_all_tasks,
             todo_commands::cmd_toggle_task,

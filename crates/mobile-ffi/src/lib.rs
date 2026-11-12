@@ -1410,8 +1410,8 @@ impl UniffiAppCore {
                     aurora_ai::liquify::ai_commit(&ctx, proposal.clone(), &selected).await?;
                 proposal.results = committed.results.clone();
                 proposal.status = committed.status;
-                let out_bytes = serde_json::to_vec(&proposal)
-                    .map_err(aurora_core::Error::Serialization)?;
+                let out_bytes =
+                    serde_json::to_vec(&proposal).map_err(aurora_core::Error::Serialization)?;
                 core.kv_store.set(&key, &out_bytes).await?;
                 Ok(())
             })
