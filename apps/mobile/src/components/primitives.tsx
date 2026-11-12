@@ -197,3 +197,36 @@ export function EmptyState({ text }: { text: string }) {
     </div>
   );
 }
+
+
+// B-02: 本地域类型/常量（原 MobileApp 侧——视图拆出后随迁;零逻辑改动）
+export interface TrashItem { id: string; title: string; text: string; deletedAt: number; }
+export interface RecentItem { id: string; title: string; at: number; }
+
+export function loadList<T>(k: string): T[] {
+  try { return JSON.parse(localStorage.getItem(k) ?? '[]'); } catch { return []; }
+}
+export function saveList<T>(k: string, v: T[]) {
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 配额满/隐私模式 */ }
+}
+export const K_FAVS = 'aurora.favs';
+export const K_RECENT = 'aurora.recent';
+export const K_TRASH = 'aurora.trash';
+/** E27 目录级别 overlay（TA 23:16）: 0=顶级;>0 大纲层级（缩进显示）——
+ * localStorage 覆盖层（同 icon/title/order 惯例,Rust 元数据表落地后迁移）。 */
+const levelKey = (id: string) => `aurora.level.${id}`;
+export function getLevelOverlay(id: string): number {
+  try { return Math.max(0, Math.min(3, Number(localStorage.getItem(levelKey(id)) ?? 0) || 0)); } catch { return 0; }
+}
+export function setLevelOverlay(id: string, lv: number) {
+  try { localStorage.setItem(levelKey(id), String(Math.max(0, Math.min(3, lv)))); } catch { /* 防御 */ }
+}
+
+
+export function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button className={`switch ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}>
+      <span className="switch-knob" />
+    </button>
+  );
+}
