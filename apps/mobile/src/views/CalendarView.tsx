@@ -4,16 +4,15 @@
  * DK-CALENDAR-01 任务 4：从 MobileApp.tsx 拆出（2000+ 行瘦身）。
  * 纯搬移零逻辑改动（独立 commit）。
  *
- * 依赖说明：NoteCard/EmptyState/I/Task/TASK_GROUPS/listNotesTitled 仍在
- * MobileApp.tsx——本模块从其 import。ESM 函数级引用（组件体内使用，
- * 无模块顶层执行依赖）——环安全（MobileApp ↔ views 双向 import 的
- * React 组件环是既有生态常见形态）。
+ * B-02 断环: 依赖已抽 components/primitives.tsx（单向 import——
+ * rg 反向引用零命中,组件环解除）。
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Solar, HolidayUtil, Lunar } from 'lunar-typescript';
+// B-02 断环: 原语单向 import（../components/primitives——不再反向依赖 MobileApp）
 import {
   type Task, TASK_GROUPS, I, listNotesTitled, NoteCard, EmptyState,
-} from '../MobileApp';
+} from '../components/primitives';
 import type { CalEvent, ReminderSetting } from '../adapters/androidPlatform';
 import { expandAll, lunarSub, type EvInstance } from './repeatUtil'; // A-08: lunarSub 上移 shared（去内嵌防双份）
 
