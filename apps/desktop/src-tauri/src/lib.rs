@@ -202,6 +202,8 @@ pub fn run() {
             cmd_bookmark_remove,
             cmd_bookmark_reorder,
             cmd_open_note_window,
+            cmd_theme_get,
+            cmd_theme_set,
             share_commands::cmd_create_share,
             share_commands::cmd_import_share,
             share_commands::cmd_share_send,
@@ -2089,6 +2091,29 @@ async fn cmd_smartfolder_list_items(folder_id: String) -> Result<Vec<serde_json:
 /// 的 CRDT apply_update 合并语义,多窗口并发不丢内容）。
 /// 窗口 label=note-{id};重复开=聚焦既有窗口（幂等）。关闭确认在窗口 JS 面
 /// （onCloseRequested+dirty 判定,未提交编辑禁静默丢弃——A-10 DoD）。
+#[tauri::command]
+/// A-11: 用户自定义主题读取（settings KV——theme:user;None=默认）。
+async fn cmd_theme_get() -> Result<Option<serde_json::Value>, String> {
+    let core = crate::get_core()?;
+    core.kv_store
+        .get("theme:user")
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
+        .transpose()
+}
+
+#[tauri::command]
+/// A-11: 主题写入（白名单校验在前端 VM——KV 只存已验 JSON;全量覆盖）。
+async fn cmd_theme_set(theme: serde_json::Value) -> Result<(), String> {
+    let core = crate::get_core()?;
+    let bytes = serde_json::to_vec(&theme).map_err(|e| e.to_string())?;
+    core.kv_store
+        .set("theme:user", &bytes)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn cmd_open_note_window(
     app: tauri::AppHandle,

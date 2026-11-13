@@ -2,6 +2,13 @@ import { Component, StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import MobileApp from './MobileApp';
 import './styles/mobile.css';
+/* A-11: 启动应用持久化主题（白名单覆盖——存储态直应用;校验过的数据
+ * 重入校验防篡改,失败静默清——恢复默认不阻断启动）。 */
+import { applyTheme, validateTheme, type ThemeOverrides } from '@aurora/ui-components';
+try {
+  const ov = JSON.parse(localStorage.getItem('aurora.theme.custom') ?? '{}') as ThemeOverrides;
+  if (Object.keys(ov).length > 0 && validateTheme(ov).ok) applyTheme(ov);
+} catch { /* 损坏/隐私模式——默认主题 */ }
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

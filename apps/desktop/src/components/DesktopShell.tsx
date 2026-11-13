@@ -16,6 +16,11 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import tokens from '../design/tokens';
+import {
+  THEME_WHITELIST, THEME_DEFAULTS, THEME_PRESETS,
+  validateTheme, applyTheme, clearTheme, exportThemeJSON, importThemeJSON,
+  type ThemeTokenKey,
+} from '@aurora/ui-components'; // A-11: 主题 VM（白名单+对比度——双端同源）
 import type { AuroraEditorHandle } from '@aurora/ui-components';
 import { focusTopLevelBlock, getCurrentFocus } from '@aurora/ui-components';
 import { AttachmentPreview } from '@aurora/ui-components';
@@ -3754,6 +3759,30 @@ export default function DesktopShell() {
       .catch(() => { /* browser-mock/导入失败——降级无确认（mock 无真实编辑持久化面） */ });
   }, [invoke]);
 
+  /* ── A-11: 用户自定义主题（白名单覆盖——shared themeVm 双端同源）──── */
+  const [themePanelOpen, setThemePanelOpen] = useState(false);
+  const [customTheme, setCustomTheme] = useState<Record<string, string>>({});
+  const [themeErrs, setThemeErrs] = useState<string[]>([]);
+  /* 启动加载+应用（KV theme:user——校验重入,失败静默清回默认）。 */
+  useEffect(() => {
+    if (!invoke) return;
+    invoke('cmd_theme_get')
+      .then((r) => {
+        const ov = (r as Record<string, string> | null) ?? {};
+        setCustomTheme(ov);
+        if (Object.keys(ov).length > 0 && validateTheme(ov).ok) applyTheme(ov as Partial<Record<ThemeTokenKey, string>>);
+      })
+      .catch(() => { /* KV 读失败——默认主题 */ });
+  }, [invoke]);
+  const tryApplyTheme = (ov: Record<string, string>): boolean => {
+    const v = validateTheme(ov as Partial<Record<ThemeTokenKey, string>>);
+    setThemeErrs(v.errors);
+    if (!v.ok) return false;
+    applyTheme(ov as Partial<Record<ThemeTokenKey, string>>);
+    invoke?.('cmd_theme_set', { theme: ov }).catch(() => { /* 持久化失败——应用已生效（会话级） */ });
+    return true;
+  };
+
   /* DK-2.4：模板列表拉取（invoke 就绪后一次；失败静默——palette 缺项不阻断） */
   useEffect(() => {
     if (!invoke) return;
@@ -4126,6 +4155,12 @@ export default function DesktopShell() {
         id: 'new-note',
         title: '新建笔记',
         run: () => data.createNote('未命名'),
+      },
+      {
+        kind: 'command' as const,
+        id: 'theme-settings',
+        title: '主题设置（A-11 白名单定制）',
+        run: () => setThemePanelOpen(true),
       },
       {
         kind: 'command' as const,
@@ -4980,6 +5015,123 @@ export default function DesktopShell() {
         openNote={openNoteId}
         items={[...builtins, ...recentItems, ...results]}
       />
+      {/* A-11: 主题设置面板（白名单 12 项+预设+对比度硬约束+导入导出） */}
+      {themePanelOpen && (
+        <div
+          role="dialog"
+          aria-label="主题设置"
+          style={{
+            position: 'fixed', inset: 0, zIndex: 300,
+            background: 'rgba(0,0,0,0.55)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setThemePanelOpen(false); }}
+        >
+          <div
+            style={{
+              width: 'min(680px, 92vw)', maxHeight: '84vh', overflowY: 'auto',
+              background: tokens.color.bgElevated, borderRadius: tokens.radius.lg,
+              padding: tokens.spacing.xl, display: 'flex', flexDirection: 'column', gap: tokens.spacing.md,
+              border: '1px solid rgba(255,255,255,0.1)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h2 style={{ margin: 0, fontSize: tokens.typography.heading.size }}>🎨 主题设置（白名单 {THEME_WHITELIST.length} 项）</h2>
+              <button onClick={() => setThemePanelOpen(false)} aria-label="关闭" style={{ background: 'transparent', border: 'none', color: tokens.color.textSecondary, cursor: 'pointer', fontSize: 18 }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {THEME_PRESETS.map((p) => (
+                <button
+                  key={p.name}
+                  onClick={() => { if (tryApplyTheme(p.overrides as Record<string, string>)) { setCustomTheme(p.overrides as Record<string, string>); } }}
+                  aria-label={`应用预设 ${p.name}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+                    fontSize: 12, padding: '4px 12px', borderRadius: 999,
+                    border: '1px solid rgba(255,255,255,0.14)', background: 'transparent', color: tokens.color.textPrimary,
+                  }}
+                >
+                  <span style={{
+                    width: 14, height: 14, borderRadius: 4, display: 'inline-block',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    background: `linear-gradient(135deg, ${(p.overrides.bgBase ?? THEME_DEFAULTS.bgBase)} 50%, ${(p.overrides.primary ?? THEME_DEFAULTS.primary)} 50%)`,
+                  }} />
+                  {p.name}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 6 }}>
+              {THEME_WHITELIST.map((k: ThemeTokenKey) => (
+                <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: tokens.color.textPrimary }}>
+                  <input
+                    type="color"
+                    aria-label={`自定义 ${k}`}
+                    value={(customTheme[k] ?? THEME_DEFAULTS[k]) as string}
+                    onChange={(e) => setCustomTheme((t) => ({ ...t, [k]: e.target.value }))}
+                  />
+                  <span style={{ opacity: 0.85 }}>{k}</span>
+                </label>
+              ))}
+            </div>
+            {themeErrs.length > 0 && (
+              <div role="alert" style={{ color: tokens.color.danger, fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                {themeErrs.join('\n')}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => { if (tryApplyTheme(customTheme)) { /* 应用成功 */ } }}
+                style={{ fontSize: 12, padding: '6px 16px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(88,166,255,0.4)', background: 'rgba(88,166,255,0.12)', color: tokens.color.primaryBright }}
+              >
+                应用（对比度校验）
+              </button>
+              <button
+                onClick={() => {
+                  clearTheme();
+                  setCustomTheme({});
+                  setThemeErrs([]);
+                  void invoke?.('cmd_theme_set', { theme: {} }).catch(() => undefined);
+                }}
+                style={{ fontSize: 12, padding: '6px 16px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.14)', background: 'transparent', color: tokens.color.textSecondary }}
+              >
+                恢复默认
+              </button>
+              <button
+                onClick={() => {
+                  const json = exportThemeJSON(customTheme as Partial<Record<ThemeTokenKey, string>>);
+                  void navigator.clipboard?.writeText(json).then(
+                    () => window.alert === undefined ? undefined : undefined,
+                  ).catch(() => undefined);
+                  window.prompt?.('主题 JSON（已尝试复制到剪贴板）:', json);
+                }}
+                style={{ fontSize: 12, padding: '6px 16px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.14)', background: 'transparent', color: tokens.color.textSecondary }}
+              >
+                导出 JSON
+              </button>
+              <button
+                onClick={() => {
+                  const raw = window.prompt?.('粘贴主题 JSON:');
+                  if (!raw) return;
+                  const r = importThemeJSON(raw);
+                  if (r.overrides) {
+                    if (tryApplyTheme(r.overrides as Record<string, string>)) {
+                      setCustomTheme(r.overrides as Record<string, string>);
+                    }
+                  } else {
+                    setThemeErrs(r.errors);
+                  }
+                }}
+                style={{ fontSize: 12, padding: '6px 16px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.14)', background: 'transparent', color: tokens.color.textSecondary }}
+              >
+                导入 JSON
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: tokens.color.textDisabled }}>
+              安全纪律: 仅白名单 {THEME_WHITELIST.length} 项令牌可覆盖（其余锁定）;对比度 ≥4.5:1 硬约束;零 CSS 字符串注入。
+            </div>
+          </div>
+        </div>
+      )}
       {/* DK-48：同步两面板（独立浮层组件；onChanged 联动 badge 刷新） */}
       {queuePanelOpen && invoke && (
         <QueuePanel
