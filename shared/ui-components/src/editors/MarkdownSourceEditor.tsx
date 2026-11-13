@@ -169,6 +169,9 @@ export interface MarkdownSourceEditorProps {
   onDiscard: () => void;
   /** 宿主回传的解析错误（apply 失败产物——横幅展示,留在源码态）。 */
   error?: SourceModeError | null;
+  /** A-10 补:源码态脏信号（docChanged 一次置真;apply/discard 由宿主清）——
+   *  关窗确认消费（未提交源码态编辑禁静默丢弃——工单原文）。 */
+  onDirty?: () => void;
   className?: string;
 }
 
@@ -192,11 +195,14 @@ function injectSourceStyle(): void {
 }
 
 export function MarkdownSourceEditor(props: MarkdownSourceEditorProps): ReactElement {
-  const { initialMd, onApply, onDiscard, error, className } = props;
+  const { initialMd, onApply, onDiscard, error, onDirty, className } = props;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<CMEditorView | null>(null);
   const applyRef = useRef(onApply);
   applyRef.current = onApply;
+  const onDirtyRef = useRef(onDirty);
+  onDirtyRef.current = onDirty;
+  const sourceDirtyRef = useRef(false);
 
   useEffect(() => {
     injectSourceStyle();
@@ -207,6 +213,13 @@ export function MarkdownSourceEditor(props: MarkdownSourceEditorProps): ReactEle
       extensions: [
         basicSetup,
         markdown(),
+        // A-10 补:源码态脏信号（首变更一次上报——关窗确认消费）
+        CMEditorView.updateListener.of((vu) => {
+          if (vu.docChanged && !sourceDirtyRef.current) {
+            sourceDirtyRef.current = true;
+            onDirtyRef.current?.();
+          }
+        }),
         cmKeymap.of([
           {
             key: 'Mod-Enter',

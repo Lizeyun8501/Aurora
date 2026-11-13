@@ -1135,6 +1135,7 @@ export function RichEditor({ noteId, platform, fallbackText, onDirty, onSaved, o
 
       const handle = createAuroraEditor(hostRef.current, {
         loroDoc: doc,
+        noteId, /* A-10: 跨重挂载 selection 恢复（旋转边界） */
         onSave: (snapshotBytes) => {
           // Uint8Array → base64 → JNI（CRDT 合并到 Rust 侧 NoteDoc）
           const b64 = bytesToBase64(snapshotBytes);

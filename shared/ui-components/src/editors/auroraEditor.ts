@@ -9,7 +9,7 @@
 // 通过快照单向（JS→Rust）合并；P2P 同步在 Rust 侧进行，下次打开笔记时
 // 经 getNoteSnapshot 快照恢复（拉取 Rust 侧合并结果）。
 
-import { EditorState } from 'prosemirror-state';
+import { EditorState, Selection } from 'prosemirror-state';
 import { EditorView, type EditorProps } from 'prosemirror-view';
 import { Plugin, PluginKey } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
@@ -68,6 +68,8 @@ export interface CreateAuroraEditorOptions {
   exportSnapshot?: (doc: LoroDoc) => Uint8Array;
   /** 每次事务后回调（工具栏刷新激活态用）。 */
   onUpdate?: () => void;
+  /** A-10: 笔记 id（跨重挂载 selection 保持——旋转边界场景;缺省不缓存）。 */
+  noteId?: string;
 }
 
 /**
@@ -118,11 +120,23 @@ function buildHighlightDeco(doc: import('prosemirror-model').Node): DecorationSe
   return DecorationSet.create(doc, decos);
 }
 
+/** A-10: 跨重挂载 selection 缓存（平板旋转跨 ≥768 边界——tabletSplit↔单栏
+ * 切换重建编辑器 DOM;noteId 键存 selection JSON,重挂载恢复——DoD「旋转后
+ * 选中笔记与光标位置保持」）。上限 16 条 LRU（防长会话膨胀）。 */
+const selectionCache = new Map<string, unknown>();
+function cacheSelection(id: string, sel: unknown): void {
+  if (selectionCache.size >= 16 && !selectionCache.has(id)) {
+    const first = selectionCache.keys().next().value;
+    if (first != null) selectionCache.delete(first);
+  }
+  selectionCache.set(id, sel);
+}
+
 export function createAuroraEditor(
   dom: HTMLElement,
   options: CreateAuroraEditorOptions,
 ): AuroraEditorHandle {
-  const { loroDoc, onSave, exportSnapshot, onUpdate } = options;
+  const { loroDoc, onSave, exportSnapshot, onUpdate, noteId } = options;
 
   injectHighlightStyle(); // DK-2.7：token 着色样式幂等注入
   injectMathStyle(); // DK-2.7 切片五：公式渲染/编辑样式幂等注入
@@ -156,6 +170,21 @@ export function createAuroraEditor(
     ],
   });
 
+  // A-10: 恢复上次 selection（同 noteId 重挂载——旋转边界场景;loro 首帧
+  // 同步 setTimeout 0 后再 set——文 DEFAULT 空文档→内容就绪序）。
+  if (noteId) {
+    const savedSel = selectionCache.get(noteId);
+    if (savedSel) {
+      setTimeout(() => {
+        try {
+          const sel = Selection.fromJSON(view.state.doc, savedSel as Parameters<typeof Selection.fromJSON>[1]);
+          const tr = view.state.tr.setSelection(sel);
+          (view as unknown as { dispatch: (t: unknown) => void }).dispatch(tr);
+          view.focus();
+        } catch { /* 文档已变——selection 失配静默放弃（诚实降级） */ }
+      }, 8);
+    }
+  }
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   const doExport = () =>
@@ -236,6 +265,12 @@ export function createAuroraEditor(
         unsubscribe();
       } catch {
         /* noop */
+      }
+      // A-10: 卸载存 selection（同 noteId 重挂载恢复）
+      if (noteId) {
+        try {
+          cacheSelection(noteId, view.state.selection.toJSON());
+        } catch { /* noop */ }
       }
       view.destroy();
       // 释放 WASM 侧 LoroDoc — 每次打开笔记 new LoroDoc，不 free 会累积泄漏

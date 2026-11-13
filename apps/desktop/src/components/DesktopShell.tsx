@@ -3243,6 +3243,7 @@ function EditAuroraEditor(props: {
       }
       handle = createAuroraEditor(host, {
         loroDoc,
+        noteId, /* A-10: 跨重挂载 selection 恢复（窗口重开/旋转边界） */
         onSave: () => {
           // debounce 1s 到期（或 flushSave）——快照主链路 + content 双写
           if (!handle) return;
@@ -3398,8 +3399,22 @@ function EditAuroraEditor(props: {
       {view && src.sourceMode && (
         <MarkdownSourceEditor
           initialMd={src.sourceMd}
-          onApply={src.apply}
-          onDiscard={src.discard}
+          onApply={(md) => {
+            const ok = src.apply(md);
+            if (ok !== false) {
+              /* A-10 补:应用成功→源码脏清（dirty 链由 persist onSave 再兜底） */
+              (window as unknown as { __auroraSrcDirty?: boolean }).__auroraSrcDirty = false;
+            }
+            return ok;
+          }}
+          onDiscard={() => {
+            src.discard();
+            (window as unknown as { __auroraSrcDirty?: boolean }).__auroraSrcDirty = false;
+          }}
+          onDirty={() => {
+            /* A-10 补:未提交源码态编辑=脏（关窗确认消费——禁静默丢弃,工单原文） */
+            (window as unknown as { __auroraSrcDirty?: boolean }).__auroraSrcDirty = true;
+          }}
           error={src.sourceError}
         />
       )}
@@ -3718,11 +3733,13 @@ export default function DesktopShell() {
       .then(({ getCurrentWindow }) => getCurrentWindow())
       .then((win) => {
         void win.onCloseRequested(async (e: { preventDefault: () => void }) => {
-          const dirty = (window as unknown as { __auroraDirty?: boolean }).__auroraDirty;
+          const w = window as unknown as { __auroraDirty?: boolean; __auroraSrcDirty?: boolean };
+          const dirty = w.__auroraDirty || w.__auroraSrcDirty;
           if (!dirty) return;
           e.preventDefault();
-          if (window.confirm('有未提交的编辑——关闭将丢弃这些内容。确认关闭?')) {
-            (window as unknown as { __auroraDirty?: boolean }).__auroraDirty = false;
+          if (window.confirm('有未提交的编辑（可能含源码模式改动）——关闭将丢弃这些内容。确认关闭?')) {
+            w.__auroraDirty = false;
+            w.__auroraSrcDirty = false;
             await win.close();
           }
         });
