@@ -346,3 +346,74 @@ async fn dk07_s3_desktop_encrypted_note_roundtrip() {
     };
     assert!(aurora_core::write_path::open_note_content(&locked_ctx, &id, &rec).is_err());
 }
+
+/// B-04 DoD 4: 「保存 → 事件 → 投影」全链一致性守门（后续所有双端改动
+/// 的回归基线）。断言三面:
+/// 1) 桌面/移动两封装走**同一** write_path::save_note_content（同函数
+///    实体——seal 差异仅密文层;oplog/事件/投影面同源）;
+/// 2) 保存后事件序号单调推进（NoteContentChanged/NoteMetadataChanged
+///    已入 Medium 总线——last_seq 前后对照）;
+/// 3) catch_up_projections 后搜索投影可读回内容（投影消费链通——
+///    **旁路写入检测锚**: 未经 write_path 的直写 KV 不发事件→
+///    last_seq 不动→投影水位不进——本测试以此差分面为基线）。
+#[tokio::test]
+async fn b04_write_to_projection_full_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let booted = bootstrap(
+        dir.path(),
+        std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+    )
+    .expect("bootstrap");
+    let db = dir.path().join("aurora.db");
+    let ctx = ctx_for(Endpoint::Mobile, &booted, &db);
+
+    let seq_before = booted.core.event_bus.last_seq();
+    let id = write_path::create_note(&ctx, "B04 全链守门").await.unwrap();
+    write_path::save_note_content(&ctx, &id, "# 全链\n\n正文内容 B04")
+        .await
+        .unwrap();
+    let seq_after = booted.core.event_bus.last_seq();
+
+    // 1) 事件链: create+save 至少推 3 条事件（Created+ContentChanged+MetadataChanged）
+    assert!(
+        seq_after > seq_before + 2,
+        "事件序号必须推进（旁路写入=不推进——差分锚）: before={seq_before} after={seq_after}"
+    );
+
+    // 2) 投影消费: catch_up 后搜索投影能读回内容（core.search=SearchIndexProjection
+    //    消费链的查询面——SearchHit.note_id 比对）
+    booted.core.catch_up_projections().await.unwrap();
+    let out = booted
+        .core
+        .search
+        .search("全链", &Default::default())
+        .await
+        .expect("投影查询");
+    assert!(
+        out.hits.iter().any(|h| h.note_id == id),
+        "投影必须消费到保存内容（保存→事件→投影全链通）: hits={:?}",
+        out.hits
+            .iter()
+            .map(|h| h.note_id.clone())
+            .collect::<Vec<_>>()
+    );
+
+    // 3) 旁路差分锚: 直写 KV（不经 write_path）——事件序号不动
+    booted
+        .core
+        .kv_store
+        .set("note:bypass-probe", b"{}")
+        .await
+        .unwrap();
+    let seq_bypass = booted.core.event_bus.last_seq();
+    assert_eq!(
+        seq_bypass, seq_after,
+        "旁路写入不推事件——序号不动即基线成立（绕过 write_path 的写入投影不可见）"
+    );
+    booted
+        .core
+        .kv_store
+        .delete("note:bypass-probe")
+        .await
+        .unwrap();
+}

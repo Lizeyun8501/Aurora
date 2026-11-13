@@ -4,6 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# B-04: 默认仅 metrics+tracing（observability.rs）;四大面板按需开
+default = []
+monitoring = []
+testing = []
+release = []
+diagnostics = []
+full = ["monitoring", "testing", "release", "diagnostics"]
+
 [dependencies]
 # Serialization
 serde = { workspace = true }

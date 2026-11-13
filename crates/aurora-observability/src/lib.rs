@@ -5,10 +5,16 @@
 //! pillar (logs / metrics / traces / crashes), the monitoring & alerting system,
 //! the canary release & rollback machinery, and the log diagnostics toolkit.
 
+pub mod observability; // metrics+tracing 两面（B-04 裁剪后默认面）
+
+// B-04: 企业级面板转 feature-gate（默认关——个人应用减面;`full` 开全部）
+#[cfg(feature = "diagnostics")]
 pub mod diagnostics;
+#[cfg(feature = "monitoring")]
 pub mod monitoring;
-pub mod observability;
+#[cfg(feature = "release")]
 pub mod release;
+#[cfg(feature = "testing")]
 pub mod testing;
 
 use thiserror::Error;
