@@ -1223,6 +1223,113 @@ mod tests {
     }
 
     #[test]
+    /// B-03/ADR-006: 字段集合比对——tokens.ts（真源）color 键集合与本 ADR
+    /// 映射表 Rust 侧常量一致;漂移即红（进 CI DoD 3）。
+    #[test]
+    fn b03_token_mapping_consistency() {
+        // ADR-006 §3.1 锁定的 tokens.ts color 键集合（真源快照）
+        const TS_COLOR_KEYS: [&str; 12] = [
+            "bgBase",
+            "bgSurface",
+            "bgElevated",
+            "primary",
+            "primaryBright",
+            "textPrimary",
+            "textSecondary",
+            "textDisabled",
+            "success",
+            "warning",
+            "danger",
+            "focus",
+        ];
+        // 解析 tokens.ts（include_str 相对 crate 根——paths 由 env 锚）
+        let ts = include_str!("../../../../apps/desktop/src/design/tokens.ts");
+        let color_block = ts
+            .split("color: {")
+            .nth(1)
+            .and_then(|r| r.split("},").next())
+            .expect("tokens.ts color 块缺失（真源文件漂移——ADR-006 红线）");
+        let mut parsed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for line in color_block.lines() {
+            let l = line.trim();
+            // "bgBase: "#10151C"," 形态键抽取
+            if let Some(k) = l.split(':').next() {
+                let k = k.trim();
+                if !k.is_empty()
+                    && k.chars()
+                        .next()
+                        .map(|c| c.is_ascii_lowercase())
+                        .unwrap_or(false)
+                    && !k.starts_with('/')
+                {
+                    parsed.insert(k.to_string());
+                }
+            }
+        }
+        let expected: std::collections::BTreeSet<&str> = TS_COLOR_KEYS.iter().copied().collect();
+        assert_eq!(
+            parsed,
+            expected
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<std::collections::BTreeSet<_>>(),
+            "tokens.ts color 键集合与 ADR-006 映射表漂移——两方须同步修订（ADR/代码同改）"
+        );
+        // Rust 投影字段（ADR §3.2）——结构字段名编译期存在性由下断言锁
+        let d = DesignTokens::dark();
+        let _ = (
+            d.bg_primary.as_str(),
+            d.bg_secondary.as_str(),
+            d.text_primary.as_str(),
+        );
+    }
+
+    /// B-03/ADR-006: 对比度守卫——暗/亮两套正文对比度 ≥4.5:1（WCAG;
+    /// DoD 4 自动化校验）。相对亮度按 WCAG 公式。
+    fn b03_rel_lum(hex: &str) -> f64 {
+        let h = hex.trim_start_matches('#');
+        let r = u8::from_str_radix(&h[0..2], 16).unwrap() as f64 / 255.0;
+        let g = u8::from_str_radix(&h[2..4], 16).unwrap() as f64 / 255.0;
+        let b = u8::from_str_radix(&h[4..6], 16).unwrap() as f64 / 255.0;
+        let f = |c: f64| {
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+    }
+    fn b03_contrast(fg: &str, bg: &str) -> f64 {
+        let (l1, l2) = (b03_rel_lum(fg), b03_rel_lum(bg));
+        let (hi, lo) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    #[test]
+    fn b03_contrast_guard() {
+        // ADR-006 §4.2: 两套基线正文对比度双验（tokens.ts 真源色值快照）
+        // 暗色: textPrimary #E8EDF2 / bgBase #10151C; textSecondary #9AA7B4 / bgBase
+        assert!(
+            b03_contrast("#E8EDF2", "#10151C") >= 4.5,
+            "暗色正文 textPrimary 对比度不足"
+        );
+        assert!(
+            b03_contrast("#9AA7B4", "#10151C") >= 4.5,
+            "暗色次文 textSecondary 对比度不足"
+        );
+        // 亮色: Rust 投影 light()（#1a1a1a / #ffffff;#666666 / #ffffff）
+        let light = DesignTokens::light();
+        assert!(
+            b03_contrast(&light.text_primary, &light.bg_primary) >= 4.5,
+            "亮色正文不足"
+        );
+        assert!(
+            b03_contrast(&light.text_secondary, &light.bg_primary) >= 4.5,
+            "亮色次文不足"
+        );
+    }
+
     fn test_css_variables_output() {
         let tokens = DesignTokens::dark();
         let css = tokens.to_css_variables();

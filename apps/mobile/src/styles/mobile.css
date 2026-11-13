@@ -1,3 +1,21 @@
+/* ADR-006（B-03）: 令牌变量基线——tokens.ts 真源投影（暗色默认+青主色）。
+   禁新增裸 hex（ADR §5 纪律）;语义专属色（日历/黄历/语义域）走扩展变量。 */
+:root {
+  /* tokens.ts color 12 键投影（ADR §3.1） */
+  --bg-base: #10151C; --bg-surface: #162235; --bg-elevated: #1D2633;
+  --primary: #1B6B7A; --primary-bright: #37DCF2;
+  --text-primary: #E8EDF2; --text-secondary: #9AA7B4; --text-disabled: #5A6672;
+  --success: #3DDB8E; --warning: #E8B33D; --danger: #E85D5D; --focus: #37DCF2;
+  /* 语义域扩展（ADR-006 扩展面——日历/黄历/accent 兼容） */
+  --cal-yi: #059669; --cal-ji: #dc2626; --cal-fest-dark: #F08A8A;
+  --cal-workday-dark: #EAC36A; --cal-note-dark: #34D399; --cal-diary-dark: #FBBF24;
+  --cal-note: #059669; --cal-diary: #B45309;
+  --accent: #2563eb; --link-blue: #3B82F6;
+  /* 编辑器/标注语义（ADR-006 扩展——callout/prev 预览语义色） */
+  --hl-bg: #fef08a; --red-text: #dc2626; --tip-border: #10b981;
+  --important-border: #6366f1; --toast-ink: #111827;
+}
+
 /* ============================================================
    Aurora Mobile v13 — V19 官方界面设计落地
    原则: 极简克制 · 层级清晰 · 低视觉疲劳 · 功能不隐藏
@@ -404,8 +422,8 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 600; color: #fff;
 }
-.almanac-tag.yi { background: #059669; }
-.almanac-tag.ji { background: #dc2626; }
+.almanac-tag.yi { background: var(--cal-yi); }
+.almanac-tag.ji { background: var(--cal-ji); }
 .almanac-item { font-size: 12px; color: var(--text-secondary); }
 .almanac-item::after { content: ' '; }
 
@@ -436,18 +454,18 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 .day-axis-item:active { transform: scale(0.96); }
 .day-axis-item.task { background: rgba(59, 130, 246, 0.12); color: var(--brand); }
-.day-axis-item.note { background: rgba(5, 150, 105, 0.10); color: #059669; }
-.day-axis-item.diary { background: rgba(217, 119, 6, 0.10); color: #B45309; }
+.day-axis-item.note { background: rgba(5, 150, 105, 0.10); color: var(--cal-note); }
+.day-axis-item.diary { background: rgba(217, 119, 6, 0.10); color: var(--cal-diary); }
 @keyframes calAxisIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 /* 任务 3：月历按压+翻月动效（无 FLIP——key 重挂触发） */
 .cal-day-btn { transition: transform 0.18s ease; }
 .cal-day-btn:active { transform: scale(0.96); }
 .cal-grid { animation: calAxisIn 0.2s ease both; grid-auto-rows: 52px; grid-template-rows: 22px; }
 /* 任务 3：节假日红/调休金暗色模式可读性（亮度抬升） */
-[data-theme='dark'] .cal-lunar.fest { color: #F08A8A; }
-[data-theme='dark'] .cal-day.workday .cal-lunar { color: #EAC36A; border-color: #EAC36A; }
-[data-theme='dark'] .day-axis-item.note { background: rgba(16, 185, 129, 0.15); color: #34D399; }
-[data-theme='dark'] .day-axis-item.diary { background: rgba(245, 158, 11, 0.15); color: #FBBF24; }
+[data-theme='dark'] .cal-lunar.fest { color: var(--cal-fest-dark); }
+[data-theme='dark'] .cal-day.workday .cal-lunar { color: var(--cal-workday-dark); border-color: var(--cal-workday-dark); }
+[data-theme='dark'] .day-axis-item.note { background: rgba(16, 185, 129, 0.15); color: var(--cal-note-dark); }
+[data-theme='dark'] .day-axis-item.diary { background: rgba(245, 158, 11, 0.15); color: var(--cal-diary-dark); }
 
 /* ============================================================
    DK-CALENDAR-02 — 事件角标 + 编辑 sheet 字段
@@ -488,7 +506,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 }
 .ev-freq.sel {
   background: var(--accent-soft, rgba(59, 130, 246, 0.15));
-  color: var(--accent, #2563eb); border-color: var(--accent, #2563eb);
+  color: var(--accent); border-color: var(--accent);
 }
 .ev-interval input {
   width: 52px; padding: 4px 6px; border-radius: 6px;
@@ -502,7 +520,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   border: 1px solid var(--border); cursor: pointer;
 }
 .ev-wd.sel {
-  background: var(--accent, #2563eb); color: #fff; border-color: var(--accent, #2563eb);
+  background: var(--accent); color: #fff; border-color: var(--accent);
 }
 .ev-lunar-hint {
   margin-top: 8px; font-size: 12px; color: var(--text-tertiary);
@@ -584,7 +602,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   white-space: nowrap; text-overflow: ellipsis;
 }
 .week-ev.event {
-  background: rgba(59, 130, 246, 0.13); color: #3B82F6;
+  background: rgba(59, 130, 246, 0.13); color: var(--link-blue);
   font-weight: 600;
 }
 .week-ev.task { background: var(--brand-soft); color: var(--cal-accent); }
@@ -651,7 +669,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .week-col-head { border: none; outline: none; background: transparent; min-height: 52px; /* 11-08 22:01 ②: 68→52——wd 上移后两行(num+lunar) */ }
 .week-col, .week-col:focus, .week-col-head:focus { outline: none; }
 .week-col.today .week-num { color: var(--cal-accent); font-weight: 700; }
-[data-theme='dark'] .week-col.today .week-num { color: #F08A8A; }
+[data-theme='dark'] .week-col.today .week-num { color: var(--cal-fest-dark); }
 /* 11-04 19:20 ③④: sel=月页同款 42×48 定尺寸描框（::before,与 cal-day-btn.sel 完全一致）;
    底线下实心闭环 accent 三角 16×8（原开口 V 填底色看不出三角——实心+加大+闭环）。 */
 .week-col.sel { position: relative; border: none; border-radius: 0; }
@@ -673,7 +691,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .week-slot-sel {
   position: absolute; z-index: 1;
   box-sizing: border-box;
-  border: 1.5px solid #3B82F6; border-radius: 10px;
+  border: 1.5px solid var(--link-blue); border-radius: 10px;
   background: rgba(59, 130, 246, 0.10);
   pointer-events: none;
 }
@@ -685,9 +703,9 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 /* 11-04 23:31 ②: 周条农历小字（同月历 cal-lunar 观感）。 */
 .week-lunar { font-size: 8px; color: var(--text-tertiary); letter-spacing: -0.1px; line-height: 1; margin-top: 2px; /* 11-08 22:01 ②: 10→2 撤「推出框底」——农历并入 sel 框（用户令）;框 48: top4+num21+mt2+lunar8=底35<52 富余 */ }
 .week-lunar.fest { color: var(--cal-accent); }
-[data-theme='dark'] .week-lunar.fest { color: #F08A8A; }
+[data-theme='dark'] .week-lunar.fest { color: var(--cal-fest-dark); }
 .week-num { font-size: 15px; font-weight: 600; color: var(--text-primary); }
-.week-col.today .week-num { color: var(--accent, #2563eb); }
+.week-col.today .week-num { color: var(--accent); }
 .week-col-items {
   flex: 1; display: flex; flex-direction: column; gap: 3px; padding: 4px 3px;
   overflow-y: auto;
@@ -713,7 +731,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .year-month:active { transform: scale(0.96); }
 .ym-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
 .ym-dots { display: flex; gap: 3px; min-height: 6px; }
-.ym-dot { display: block; width: 5px; height: 5px; border-radius: 50%; background: var(--accent, #2563eb); }
+.ym-dot { display: block; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 .ev-list { margin-top: 8px; }
 .ev-list-filters { display: flex; gap: 6px; margin-top: 8px; }
 .ev-list-group { margin-top: 10px; }
@@ -731,8 +749,8 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
 .ev-list-time { flex: 0 0 38px; font-size: 12px; color: var(--text-tertiary); }
 .ev-list-title { flex: 1; font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ev-list-badge {
-  flex: 0 0 auto; font-size: 10px; color: var(--accent, #2563eb);
-  border: 1px solid var(--accent, #2563eb); border-radius: 4px; padding: 1px 4px;
+  flex: 0 0 auto; font-size: 10px; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 4px; padding: 1px 4px;
 }
 .ev-reminders { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
 .ev-rem { display: inline-flex; align-items: center; gap: 2px; }
@@ -742,7 +760,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   border: 1px solid var(--border); cursor: pointer;
 }
 .ev-rem.sel .ev-rem-btn {
-  background: var(--accent, #2563eb); color: #fff; border-color: var(--accent, #2563eb);
+  background: var(--accent); color: #fff; border-color: var(--accent);
 }
 .ev-rem-alarm {
   width: 22px; height: 22px; border-radius: 50%; font-size: 11px;
@@ -750,7 +768,7 @@ textarea.input { padding: 10px 12px; min-height: 88px; resize: none; line-height
   border: 1px solid var(--border); cursor: pointer;
 }
 .ev-rem-alarm.on {
-  background: #d97706; color: #fff; border-color: #d97706;
+  background: var(--cal-diary); color: #fff; border-color: var(--cal-diary);
 }
 
 .result-section-title {
@@ -1029,15 +1047,15 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
   display: flex; align-items: center; justify-content: center;
 }
 .tb-style-btn:active { border-color: inherit; color: inherit; } /* E26-④: 瞬态阴影清 */
-.tb-style-btn.blockquote-prev { border-left: 3px solid #dc2626; }
+.tb-style-btn.blockquote-prev { border-left: 3px solid var(--cal-ji); }
 .tb-style-btn.tag-prev { text-decoration: underline; font-weight: 600; }
 .tb-style-btn.tag-prev::before { content: '‹'; }
 .tb-style-btn.tag-prev::after { content: '›'; }
-.tb-style-btn.quote-prev { color: #2563eb; font-style: italic; }
+.tb-style-btn.quote-prev { color: var(--accent); font-style: italic; }
 .tb-style-btn.quote-prev::before { content: '“'; }
 .tb-style-btn.quote-prev::after { content: '”'; }
-.tb-style-btn.hl-prev { background: #fef08a; color: var(--text-primary); border: none; }
-.tb-style-btn.red-prev { color: #dc2626; font-weight: 800; }
+.tb-style-btn.hl-prev { background: var(--hl-bg); color: var(--text-primary); border: none; }
+.tb-style-btn.red-prev { color: var(--red-text); font-weight: 800; }
 
 /* E9（TA 13:03 图1 对标）: 分区卡——独立圆角块+左上小标题（sheet 内三段分区化观感） */
 .tb-sec {
@@ -1180,7 +1198,7 @@ button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清 *
 .ctx-sheet-title { font-size: 14px; font-weight: 600; color: var(--text-primary); padding: 4px 8px 8px; }
 .ctx-item { display: flex; align-items: center; gap: 8px; padding: 13px 14px; border: none; background: var(--bg-secondary); border-radius: 12px; font-size: 14px; color: var(--text-primary); cursor: pointer; text-align: left; }
 .ctx-item:active { background: var(--brand-soft); }
-.ctx-item.danger { color: #dc2626; }
+.ctx-item.danger { color: var(--red-text); }
 .ctx-cancel { color: var(--text-secondary); }
 
 /* ===== E25（TA 17:32）: 导出保存位置 ===== */
@@ -1191,10 +1209,10 @@ button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清 *
 
 /* ===== E24（TA 22:13）: 容器块三系 ===== */
 .callout-block { border-left: 3px solid var(--brand); background: var(--brand-soft); border-radius: 0 8px 8px 0; padding: 8px 12px; margin: 6px 0; }
-.callout-block[data-callout='tip'] { border-color: #10b981; background: rgba(16, 185, 129, 0.09); }
-.callout-block[data-callout='important'] { border-color: #6366f1; background: rgba(99, 102, 241, 0.09); }
-.callout-block[data-callout='warning'] { border-color: #f59e0b; background: rgba(245, 158, 11, 0.1); }
-.callout-block[data-callout='caution'] { border-color: #ef4444; background: rgba(239, 68, 68, 0.09); }
+.callout-block[data-callout='tip'] { border-color: var(--tip-border); background: rgba(16, 185, 129, 0.09); }
+.callout-block[data-callout='important'] { border-color: var(--important-border); background: rgba(99, 102, 241, 0.09); }
+.callout-block[data-callout='warning'] { border-color: var(--warning); background: rgba(245, 158, 11, 0.1); }
+.callout-block[data-callout='caution'] { border-color: var(--danger); background: rgba(239, 68, 68, 0.09); }
 .super-block { border: 1px dashed var(--border); border-radius: 10px; padding: 8px; margin: 6px 0; }
 .super-block.super-h { display: flex; flex-direction: row; gap: 8px; overflow-x: auto; }
 .super-block.super-h > * { flex: 0 0 auto; min-width: 160px; }
@@ -1267,7 +1285,7 @@ button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清 *
 .export-preview-body { flex: 1; min-height: 40vh; overflow-y: auto; background: var(--bg-secondary); border-radius: 8px; padding: 12px; }
 
 /* E18 toast flex 版接管尾段（11-04 07:39 Leo: E18 遗留孤立闭括修——CSS 大括号配平铁律） */
-[data-theme='dark'] .toast { background: rgba(229, 231, 235, 0.95); color: #111827; }
+[data-theme='dark'] .toast { background: rgba(229, 231, 235, 0.95); color: var(--toast-ink); }
 
 /* 骨架屏 — V19 §1.4 加载优先骨架 */
 .skeleton {
@@ -1458,10 +1476,10 @@ button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清 *
   color: var(--text-tertiary); max-width: 100%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.cal-lunar.fest { color: #E85D5D; }
+.cal-lunar.fest { color: var(--danger); }
 .cal-day.workday .cal-lunar {
-  color: #E8B33D; font-weight: 600;
-  border: 1px solid #E8B33D; border-radius: 4px;
+  color: var(--warning); font-weight: 600;
+  border: 1px solid var(--warning); border-radius: 4px;
   padding: 0 2px; line-height: 1.2;
 }
 /* 笔记本文档树 — V23-I5（思源式无限级目录） */
@@ -1811,7 +1829,7 @@ button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清 *
 .day-axis-row.slot-sel::after {
   content: ''; position: absolute; z-index: 2;
   inset: 0 4px 1px 20px;
-  border: 1.5px solid #3B82F6; border-radius: 10px;
+  border: 1.5px solid var(--link-blue); border-radius: 10px;
   background: rgba(59, 130, 246, 0.10);
   pointer-events: none;
 }
@@ -1821,7 +1839,7 @@ button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清 *
   position: absolute; /* 11-05 09:15: 50% 相对整行含时间列——移 52 列+10 gap 后取任务区中心。 */
   left: calc(20px + (100% - 20px) / 2); top: 50%; transform: translate(-50%, -50%); /* 11-08 16:59: 任务区左=20;11-06 18:47: 原 26;11-05 19:06 原 46 */
   width: 24px; height: 24px; border-radius: 50%;
-  background: #3B82F6; color: #fff;
+  background: var(--link-blue); color: #fff;
   font-size: 16px; line-height: 1; font-weight: 700;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 1px 4px rgba(0,0,0,0.2); z-index: 3; /* 11-09 15:39: 2→3 压过 slot-sel::after(同层后置渲染) */
@@ -1830,11 +1848,11 @@ button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清 *
 .quick-sheet .sheet-body { padding: 12px 16px 20px; }
 .quick-time-row { display: flex; align-items: center; justify-content: space-between; margin: 12px 2px; }
 .quick-time { font-size: 13px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.quick-more { background: none; border: none; color: #3B82F6; font-size: 13px; font-weight: 600; padding: 4px 2px; }
+.quick-more { background: none; border: none; color: var(--link-blue); font-size: 13px; font-weight: 600; padding: 4px 2px; }
 .quick-done {
   display: block; width: 100%; margin-top: 4px;
-  border: 1.5px solid #3B82F6; border-radius: 20px;
-  background: none; color: #3B82F6;
+  border: 1.5px solid var(--link-blue); border-radius: 20px;
+  background: none; color: var(--link-blue);
   font-size: 15px; font-weight: 600; padding: 9px 0;
 }
 .quick-done:not(:disabled):active { background: rgba(59, 130, 246, 0.12); }

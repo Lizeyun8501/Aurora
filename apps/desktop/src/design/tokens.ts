@@ -1,8 +1,11 @@
 /**
  * Aurora Design Tokens 基线 — V23-I1（双端共享）
  *
- * 单一事实源：桌面（Tauri/React）与移动（Capacitor/React）引用同一份
- * tokens；Rust 侧主题结构体（aurora-core theme）与本文件字段一一对应。
+ * **单一事实源（ADR-006 裁决）**：桌面/移动 UI 走本文件;V25/V26 界面规范
+ * 以本文件为准修订（docs/adr/ADR-006-design-token-baseline.md——暗色默认
+ * +青色主色,规范侧 #4F46E5/固定 #111827 侧栏条目已废止）;Rust
+ * DesignTokens=插件 iframe 投影（字段名映射锁定/值域独立,见 ADR §3.2）。
+ * 硬编码 hex 禁令与 CSS 变量名集合见 ADR §3.1/§5。
  *
  * 设计原则（V22.1 §7 承继 + V23-P1 补全）：
  * - 暗色为默认主题：低亮度深空底（非纯黑，降 OLED 频闪疲劳）

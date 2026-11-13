@@ -170,6 +170,13 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// ADR-006（B-03）: 令牌纪律——专属扩展色常量化（非 tokens 12 键的语义域;
+// 禁新增裸 hex——ADR §5）
+const HOTKEY_VIOLET = '#c9a9ff';
+const FALLBACK_GRAY = '#8A97A0';
+const ON_PRIMARY_INK = '#FFFFFF';
+const HOTKEY_INK = '#1a1625';
+
 export type MainView =
   | 'notes'
   | 'today'
@@ -805,7 +812,7 @@ function ReviewEntryCard({
         gap: tokens.spacing.md,
       }}
     >
-      <div style={{ fontSize: 28, fontWeight: 700, color: hot ? '#c9a9ff' : tokens.color.textSecondary }}>
+      <div style={{ fontSize: 28, fontWeight: 700, color: hot ? HOTKEY_VIOLET : tokens.color.textSecondary }}>
         {due ?? '…'}
       </div>
       <div style={{ flex: 1 }}>
@@ -817,9 +824,9 @@ function ReviewEntryCard({
       <button
         onClick={onOpen}
         style={{
-          background: hot ? '#c9a9ff' : 'transparent',
-          border: `1px solid ${hot ? '#c9a9ff' : 'rgba(255,255,255,0.18)'}`,
-          color: hot ? '#1a1625' : tokens.color.textSecondary,
+          background: hot ? HOTKEY_VIOLET : 'transparent',
+          border: `1px solid ${hot ? HOTKEY_VIOLET : 'rgba(255,255,255,0.18)'}`,
+          color: hot ? HOTKEY_INK : tokens.color.textSecondary,
           borderRadius: tokens.radius.sm,
           padding: '6px 14px',
           cursor: 'pointer',
@@ -1162,7 +1169,7 @@ function Sidebar(props: {
         onClick={onCreate}
         style={{
           background: tokens.color.primary,
-          color: '#FFFFFF',
+          color: ON_PRIMARY_INK,
           border: 'none',
           borderRadius: tokens.radius.md,
           padding: `${tokens.spacing.sm + 2}px ${tokens.spacing.md}px`,
@@ -2347,7 +2354,7 @@ function FlashcardRow({ note, invoke }: { note: NoteContent; invoke: InvokeFn | 
           background: 'rgba(163,113,247,0.16)',
           border: '1px solid rgba(163,113,247,0.4)',
           borderRadius: tokens.radius.sm,
-          color: '#c9a9ff',
+          color: HOTKEY_VIOLET,
           padding: '4px 12px',
           cursor: busy ? 'wait' : 'pointer',
           fontSize: 13,
@@ -2363,7 +2370,7 @@ function FlashcardRow({ note, invoke }: { note: NoteContent; invoke: InvokeFn | 
           background: 'rgba(163,113,247,0.10)',
           border: '1px solid rgba(163,113,247,0.3)',
           borderRadius: tokens.radius.sm,
-          color: '#c9a9ff',
+          color: HOTKEY_VIOLET,
           padding: '4px 12px',
           cursor: busy ? 'wait' : 'pointer',
           fontSize: 13,
@@ -2372,7 +2379,7 @@ function FlashcardRow({ note, invoke }: { note: NoteContent; invoke: InvokeFn | 
       >
         {busy ? '…' : '🧩 按块建卡'}
       </button>
-      {msg && <span style={{ color: '#c9a9ff', fontSize: 12 }}>{msg}</span>}
+      {msg && <span style={{ color: HOTKEY_VIOLET, fontSize: 12 }}>{msg}</span>}
     </div>
   );
 }
@@ -2682,9 +2689,9 @@ function InfoPanelTabs(props: {
       {tab === 'backlinks' ? (
         <BacklinksPanel noteId={noteId} invoke={invoke} onSelect={onSelect} />
       ) : tab === 'graph' ? (
-        <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><GraphPanel invoke={invoke} onSelect={onSelect} /></Suspense>
+        <Suspense fallback={<div style={{ padding: 24, color: FALLBACK_GRAY }}>视图加载中…</div>}><GraphPanel invoke={invoke} onSelect={onSelect} /></Suspense>
       ) : tab === 'todos' ? (
-        <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><TodoView invoke={invoke} onOpenNote={onSelect} compact /></Suspense>
+        <Suspense fallback={<div style={{ padding: 24, color: FALLBACK_GRAY }}>视图加载中…</div>}><TodoView invoke={invoke} onOpenNote={onSelect} compact /></Suspense>
       ) : tab === 'outline' ? (
         <OutlinePanel />
       ) : tab === 'stats' ? (
@@ -2907,7 +2914,7 @@ function ExportMarkdownGate(props: {
               disabled={busy}
               style={{
                 background: tokens.color.primary,
-                color: '#FFFFFF',
+                color: ON_PRIMARY_INK,
                 border: 'none',
                 borderRadius: tokens.radius.md,
                 padding: `${tokens.spacing.xs}px ${tokens.spacing.md}px`,
@@ -4701,7 +4708,7 @@ export default function DesktopShell() {
                   }}
                   style={{
                     background: tokens.color.primary,
-                    color: '#FFFFFF',
+                    color: ON_PRIMARY_INK,
                     border: 'none',
                     borderRadius: tokens.radius.md,
                     padding: `${tokens.spacing.xs}px ${tokens.spacing.md}px`,
@@ -4741,7 +4748,7 @@ export default function DesktopShell() {
           <CanvasView />
         ) : view === 'smartfolder' && selectedId ? (
           /* DK-02 S3 UI 面：智能文件夹求值展示 + 规则编辑（拉模式，打开即求值） */
-          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><SmartFolderView
+          <Suspense fallback={<div style={{ padding: 24, color: FALLBACK_GRAY }}>视图加载中…</div>}><SmartFolderView
             invoke={invoke ?? mockSmartFolderInvoke}
             folderId={selectedId}
             folderTitle={notes.find((n) => n.note_id === selectedId)?.title || '智能文件夹'}
@@ -4762,7 +4769,7 @@ export default function DesktopShell() {
         ) : view === 'calendar' ? (
           /* A-08: 桌面日历——同一 Rust CalendarVm（cmd_calendar_vm）;repeatUtil=shared 单份;
              周视图任务拖拽改期→cmd_reschedule_task（TaskRescheduled 事件）。 */
-          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><CalendarPanel
+          <Suspense fallback={<div style={{ padding: 24, color: FALLBACK_GRAY }}>视图加载中…</div>}><CalendarPanel
             invoke={invoke}
             onOpenNote={(nid) => {
               setSelectedId(nid);
@@ -4771,7 +4778,7 @@ export default function DesktopShell() {
           /></Suspense>
         ) : view === 'tags' ? (
           /* DK-2.5 标签面板 v1（聚合+AND/NOT 组合过滤——写通路复用 set_note_tags） */
-          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><TagView
+          <Suspense fallback={<div style={{ padding: 24, color: FALLBACK_GRAY }}>视图加载中…</div>}><TagView
             invoke={invoke}
             onOpenNote={(nid) => {
               setSelectedId(nid);
@@ -4780,19 +4787,19 @@ export default function DesktopShell() {
           /></Suspense>
         ) : view === 'trash' ? (
           /* DK-02 S1 回收站视图（Alpha UI 切片；core 面 Bravo f175692） */
-          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><TrashView invoke={invoke} /></Suspense>
+          <Suspense fallback={<div style={{ padding: 24, color: FALLBACK_GRAY }}>视图加载中…</div>}><TrashView invoke={invoke} /></Suspense>
         ) : view === 'liquify' ? (
           /* DK-10 两段式提交审查视图（铁律：AI 不得静默写入——用户逐 op 勾选） */
-          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><LiquifyReview invoke={invoke} /></Suspense>
+          <Suspense fallback={<div style={{ padding: 24, color: FALLBACK_GRAY }}>视图加载中…</div>}><LiquifyReview invoke={invoke} /></Suspense>
         ) : view === 'marketplace' ? (
           /* DK-15c：marketplace 徽章面（详情能力展示——列表页/权限切换另卡） */
-          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><MarketplaceView pluginName="demo-plugin" granted={[]} /></Suspense>
+          <Suspense fallback={<div style={{ padding: 24, color: FALLBACK_GRAY }}>视图加载中…</div>}><MarketplaceView pluginName="demo-plugin" granted={[]} /></Suspense>
         ) : view === 'plugins' ? (
           /* DK-市场卡：已安装插件管理（列表/卸载/invoke 冒烟——安装表单随市场下载器卡） */
-          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><PluginsView invoke={invoke} /></Suspense>
+          <Suspense fallback={<div style={{ padding: 24, color: FALLBACK_GRAY }}>视图加载中…</div>}><PluginsView invoke={invoke} /></Suspense>
         ) : view === 'collections' ? (
           /* G1-S3：数据库视图（表格 v1——集合 CRUD+行绑定+单元格编辑） */
-          <Suspense fallback={<div style={{ padding: 24, color: "#8A97A0" }}>视图加载中…</div>}><CollectionView invoke={invoke} onOpenNote={(id) => { setSelectedId(id); setView('notes'); }} /></Suspense>
+          <Suspense fallback={<div style={{ padding: 24, color: FALLBACK_GRAY }}>视图加载中…</div>}><CollectionView invoke={invoke} onOpenNote={(id) => { setSelectedId(id); setView('notes'); }} /></Suspense>
         ) : view === 'agent' ? (
           /* DK-10 Agent 会话面板（15min 限时 + Kill-Switch + 审计链查看） */
           <AgentPanel invoke={invoke} />
