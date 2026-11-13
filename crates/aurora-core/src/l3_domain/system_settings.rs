@@ -1222,7 +1222,6 @@ mod tests {
         assert_eq!(merged.bg_primary, base.bg_primary);
     }
 
-    #[test]
     /// B-03/ADR-006: 字段集合比对——tokens.ts（真源）color 键集合与本 ADR
     /// 映射表 Rust 侧常量一致;漂移即红（进 CI DoD 3）。
     #[test]
@@ -1330,6 +1329,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn test_css_variables_output() {
         let tokens = DesignTokens::dark();
         let css = tokens.to_css_variables();
