@@ -1,266 +1,2471 @@
-/**
- * SyncStatusBadge — DK-48 组件 1：常驻同步指示（顶栏缝隙挂载）
- *
- * 数据源：cmd_sync_status 轮询（15s + 挂载即刷；不做事件订阅——
- * EventBus 桥接超范围，见工单 §4 停手边界）。
- *
- * 展示（DoD1 三信息主界面直读）：
- * - gate 三态图标 + 文字（颜色不作唯一载体 — tokens 设计原则）
- * - queue_len 徽标（>0 显示）
- * - 冲突红点（pending_artifacts + pending_semantic > 0）
- *
- * 点击浮层：状态明细 + 三快捷入口（队列面板 / 冲突面板 / 仅 Wi-Fi 开关）。
- * 浮层交互跟随壳内既有浮层惯例（fixed 遮罩 + Esc/点外关闭）。
- */
-import { useCallback, useEffect, useRef, useState } from 'react';
-import tokens from '../design/tokens';
+//! Aurora Desktop — Tauri v2 Platform Adapter
+//!
+//! 对应 V19 §30 平台适配要求，提供：
+//! - Tauri command 薄层（将前端调用路由到 aurora-core）
+//! - DesktopPlatform Trait 实现（菜单、托盘、快捷键、剪贴板）
+//! - 启动时 AppCore 初始化与恢复（V19 §36.1）
+//!
+//! # 启动流程（V19 §36.1 + ARCH-003，装配复用 [`aurora_bootstrap`]）
+//! 1. 确定 data_dir（用户库目录）
+//! 2. `aurora_bootstrap::bootstrap()`：迁移 + DEK 保险库 + AppCore DI 注入 + startup
+//! 3. 存入全局状态供 command handler 使用，并注册 Tauri 平台能力
+//!
+//! # E2EE 说明
+//! 笔记 JSON 经 [`LocalDekVault`]（32 字节随机 DEK + AES-256-GCM）加密后写入
+//! KVStore，满足 V19 §10「明文 → DEK 加密 → 存储密文」；本地全文检索索引
+//! （Tantivy）按 V19 设计保留明文，仅存在于本机。
+//! 过渡方案说明：DEK 当前以本地文件保管（Unix 0600），生产应迁移至
+//! `KeyHierarchy` 口令解锁 + OS 安全存储（DPAPI / Keychain）。
 
-/** 与 sync_commands.rs SyncStatusDto 对齐（serde 默认 snake_case 透传）。 */
-interface SyncStatusDto {
-  gate: string;
-  wifi_only: boolean;
-  queue_len: number;
-  pending_artifacts: number;
-  pending_semantic: number;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use tauri::Manager;
+
+use aurora_core::app_core::AppCore;
+use aurora_core::l2_engines::hybrid_search::HybridSearcher;
+use aurora_core::l2_engines::vector_search::{EmbedProvider, VectorIndex};
+use aurora_security::LocalDekVault;
+use tracing::{info, warn};
+
+// ── 启动期常量与全局状态 ─────────────────────────────
+
+mod ai_commands;
+mod attachment_commands;
+mod backlink_commands;
+mod backup_commands;
+mod block_ref_commands; // A-05: 块引用解析+面包屑命令面
+mod calendar_commands; // A-08: 桌面日历命令面（与移动 FFI 同源 core）
+mod capture_server;
+mod collection_commands;
+mod due_preview_commands;
+mod export_commands;
+mod history_commands;
+mod import_commands;
+mod plugin_commands;
+mod share_commands;
+mod shortcut_commands;
+mod sync_commands;
+mod tag_commands;
+mod template_commands;
+mod todo_commands;
+mod wiki_commands;
+
+/// 桌面端默认数据目录名。
+const AURORA_DIR_NAME: &str = "aurora";
+/// 默认工作区 ID（单工作区模式；多工作区接入后改为按用户选择注入）。
+const DEFAULT_WORKSPACE_ID: &str = "default";
+
+/// 桌面端应用核心（全局单例）。
+static APP_STATE: Mutex<Option<Arc<AppCore>>> = Mutex::new(None);
+/// 本地 DEK 保险库（全局单例）。
+static VAULT_STATE: Mutex<Option<Arc<LocalDekVault>>> = Mutex::new(None);
+/// 附件存储（DK-09 — bootstrap 装配，setup 注入）。
+static ATTACH_STATE: Mutex<Option<Arc<dyn aurora_core::attachment_store::AttachmentStore>>> =
+    Mutex::new(None);
+/// 同步门（DK-08 §7.3 — bootstrap 装配，setup 注入；wifi_only 运行时切换）。
+/// 注：读取侧暂无调用方（wifi_only 读写经 BootedApp 同源语义），访问器随需再补。
+static SYNC_GATE_STATE: Mutex<Option<Arc<aurora_sync::sync_gate::SyncGate>>> = Mutex::new(None);
+/// 向量索引（DK-03 S3b — 混合检索向量路 + 索引管线写入共用）。
+static VEC_STATE: Mutex<Option<Arc<VectorIndex>>> = Mutex::new(None);
+/// 嵌入供给方（S3b — 索引管线与回填共用，从 HybridSearcher 不可逆取故独立存）。
+static EMBED_STATE: Mutex<Option<Arc<dyn EmbedProvider>>> = Mutex::new(None);
+/// 混合检索器（S3b — BM25+KNN→RRF，cmd_search_notes hybrid 模式走此路）。
+static HYBRID_STATE: Mutex<Option<Arc<HybridSearcher>>> = Mutex::new(None);
+
+/// 获取向量索引引用（S3b）。
+fn get_vectors() -> Result<Arc<VectorIndex>, String> {
+    VEC_STATE
+        .lock()
+        .map_err(|e| format!("mutex poisoned: {}", e))?
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "vector index not initialized".into())
 }
 
-type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-
-interface Props {
-  invoke: InvokeFn;
-  /** 壳内 wifi_only 状态（null = 未加载/不可用 — 浮层内开关置灰） */
-  wifiOnly: boolean | null;
-  onToggleWifiOnly: () => void;
-  onOpenQueue: () => void;
-  onOpenConflicts: () => void;
+/// 获取嵌入供给方引用（S3b）。
+fn get_embed() -> Result<Arc<dyn EmbedProvider>, String> {
+    EMBED_STATE
+        .lock()
+        .map_err(|e| format!("mutex poisoned: {}", e))?
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "embed provider not initialized".into())
 }
 
-const POLL_MS = 15_000;
-
-/** gate 值 → 图标/文案/语义色（三态，DeferUntilUnmetered=仅 Wi-Fi 计量网拦截）。 */
-function gateView(gate: string): { icon: string; label: string; color: string } {
-  switch (gate) {
-    case 'Allow':
-      return { icon: '✓', label: '同步畅通', color: tokens.color.success };
-    case 'DeferUntilUnmetered':
-      return { icon: '⏸', label: '门控推迟（仅 Wi-Fi）', color: tokens.color.warning };
-    default:
-      return { icon: '⏸', label: '离线（已推迟）', color: tokens.color.textSecondary };
-  }
+/// 获取混合检索器引用（S3b）。
+fn get_hybrid() -> Result<Arc<HybridSearcher>, String> {
+    HYBRID_STATE
+        .lock()
+        .map_err(|e| format!("mutex poisoned: {}", e))?
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "hybrid searcher not initialized".into())
 }
 
-export default function SyncStatusBadge({
-  invoke,
-  wifiOnly,
-  onToggleWifiOnly,
-  onOpenQueue,
-  onOpenConflicts,
-}: Props) {
-  const [status, setStatus] = useState<SyncStatusDto | null>(null);
-  const [popupOpen, setPopupOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+/// 获取用户数据目录路径。
+///
+/// 平台约定：
+/// - Linux: `~/.local/share/aurora/`
+/// - macOS: `~/Library/Application Support/aurora/`
+/// - Windows: `%APPDATA%\aurora\`
+fn get_data_dir() -> PathBuf {
+    if let Some(dir) = dirs_next::data_dir() {
+        dir.join(AURORA_DIR_NAME)
+    } else {
+        std::env::temp_dir().join(AURORA_DIR_NAME)
+    }
+}
 
-  const refresh = useCallback(() => {
-    invoke('cmd_sync_status')
-      .then((r) => setStatus(r as SyncStatusDto))
-      .catch(() => setStatus(null));
-  }, [invoke]);
+/// 获取 AppCore 实例的 Arc 引用（不持有锁，可安全跨 .await）。
+fn get_core() -> Result<Arc<AppCore>, String> {
+    let guard = APP_STATE
+        .lock()
+        .map_err(|e| format!("mutex poisoned: {}", e))?;
+    guard
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "AppCore not initialized".into())
+}
 
-  // 挂载即刷 + 15s 轮询（工单：不做事件订阅）
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, POLL_MS);
-    return () => clearInterval(t);
-  }, [refresh]);
+/// DK-20：笔记内容加密对（NoteContentCipher HKDF 每笔记密钥——复用 DK-07 S2
+/// aurora-security 实现，装配进 WriteContext.content_cipher）。桌面端 TODO(DK-07) 关闭。
+fn content_cipher_pair(
+) -> Result<std::sync::Arc<aurora_core::write_path::ContentCipherPair>, String> {
+    let vault = get_vault()?;
+    let dek =
+        aurora_security::key_hierarchy::WorkspaceDek::from_bytes("vault-master", *vault.dek());
+    let enc = aurora_security::note_cipher::NoteContentCipher::new(dek.clone());
+    let dec = aurora_security::note_cipher::NoteContentCipher::new(dek);
+    Ok(std::sync::Arc::new(
+        aurora_core::write_path::ContentCipherPair {
+            encrypt: Box::new(move |note_id: &str, plain: &str| enc.encrypt(note_id, plain)),
+            decrypt: Box::new(move |note_id: &str, sealed: &str| dec.decrypt(note_id, sealed)),
+        },
+    ))
+}
 
-  // 浮层打开时点外/Esc 关闭（壳内浮层惯例）
-  useEffect(() => {
-    if (!popupOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setPopupOpen(false);
+/// 获取本地 DEK 保险库引用。
+fn get_vault() -> Result<Arc<LocalDekVault>, String> {
+    let guard = VAULT_STATE
+        .lock()
+        .map_err(|e| format!("mutex poisoned: {}", e))?;
+    guard
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "vault not initialized".into())
+}
+
+fn box_err(e: impl std::fmt::Display) -> Box<dyn std::error::Error> {
+    Box::<dyn std::error::Error>::from(e.to_string())
+}
+
+/// 初始化桌面应用并启动 Tauri 事件循环（V19 §36.1 真实启动入口）。
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        // DK-3.3：全局快捷键插件（register_shortcut 真实现底座——
+        // Rust 侧注册+emit 事件，前端权限面不经）
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![
+            cmd_create_note,
+            cmd_get_note_snapshot,
+            cmd_save_note_snapshot,
+            cmd_get_note,
+            cmd_update_note,
+            cmd_delete_note,
+            cmd_list_trashed,
+            cmd_create_folder,
+            cmd_move_note,
+            cmd_rename_folder,
+            cmd_list_tree,
+            cmd_smartfolder_create,
+            cmd_daily_note_open,
+            cmd_daily_note_set_mode,
+            cmd_daily_note_get_mode,
+            cmd_daily_note_set_template,
+            cmd_daily_note_get_template,
+            cmd_smartfolder_set_rule,
+            cmd_smartfolder_get_rule,
+            cmd_set_note_tags,
+            history_commands::cmd_list_note_histories,
+            history_commands::cmd_get_note_history,
+            tag_commands::cmd_list_tags,
+            tag_commands::cmd_notes_by_tags,
+            cmd_smartfolder_list_items,
+            cmd_restore_note,
+            cmd_purge_note,
+            cmd_purge_expired_trash,
+            cmd_search_notes,
+            cmd_search_advanced,
+            cmd_bookmark_add,
+            cmd_bookmark_list,
+            cmd_bookmark_remove,
+            cmd_bookmark_reorder,
+            cmd_open_note_window,
+            cmd_theme_get,
+            cmd_theme_set,
+            share_commands::cmd_create_share,
+            share_commands::cmd_import_share,
+            share_commands::cmd_share_send,
+            share_commands::cmd_inbox_list,
+            share_commands::cmd_inbox_import,
+            capture_server::cmd_capture_bridge_start,
+            capture_server::cmd_capture_bridge_stop,
+            capture_server::cmd_capture_bridge_status,
+            shortcut_commands::cmd_get_shortcuts,
+            shortcut_commands::cmd_set_shortcuts,
+            cmd_app_status,
+            cmd_today_view_stats,
+            cmd_set_task_dependency,
+            cmd_remove_task_dependency,
+            cmd_blocked_task_ids,
+            cmd_today_task_rows,
+            cmd_upcoming_tasks,
+            cmd_get_task_dependencies,
+            cmd_pomodoro_state,
+            cmd_pomodoro_start,
+            cmd_pomodoro_pause,
+            cmd_pomodoro_reset,
+            cmd_pomodoro_config,
+            cmd_pomodoro_sync,
+            cmd_weekly_review,
+            cmd_get_backlinks,
+            cmd_add_review_card,
+            cmd_board_tasks,
+            cmd_set_task_status,
+            cmd_due_review_cards,
+            cmd_review_due_count,
+            cmd_review_stats,
+            cmd_review_daily_series,
+            cmd_review_card,
+            cmd_add_review_cards_from_blocks,
+            attachment_commands::cmd_read_attachment,
+            ai_commands::cmd_get_ai_cloud_policy,
+            backup_commands::cmd_backup_now,
+            backup_commands::cmd_backup_status,
+            ai_commands::cmd_set_ai_cloud_policy,
+            ai_commands::cmd_ai_liquify_proposal,
+            ai_commands::cmd_ai_list_liquify_proposals,
+            ai_commands::cmd_ai_commit_liquify,
+            ai_commands::cmd_ai_reject_liquify_proposal,
+            ai_commands::cmd_agent_session_create,
+            ai_commands::cmd_agent_session_kill,
+            ai_commands::cmd_agent_session_status,
+            ai_commands::cmd_agent_audit_recent,
+            ai_commands::cmd_agent_audit_note,
+            sync_commands::cmd_get_wifi_only,
+            sync_commands::cmd_set_wifi_only,
+            sync_commands::cmd_sync_status,
+            sync_commands::cmd_queue_list,
+            sync_commands::cmd_queue_drain,
+            sync_commands::cmd_queue_retry,
+            sync_commands::cmd_pair_status,
+            sync_commands::cmd_pair_enable,
+            sync_commands::cmd_pair_import,
+            sync_commands::cmd_pair_unpair,
+            sync_commands::cmd_conflict_list,
+            sync_commands::cmd_conflict_resolve,
+            sync_commands::cmd_conflict_resolve_semantic,
+            plugin_commands::cmd_list_plugin_policies,
+            plugin_commands::cmd_set_plugin_policy,
+            plugin_commands::cmd_apply_plugin_policy,
+            plugin_commands::cmd_plugin_install,
+            plugin_commands::cmd_plugin_list,
+            plugin_commands::cmd_market_list,
+            plugin_commands::cmd_market_install,
+            plugin_commands::cmd_plugin_uninstall,
+            plugin_commands::cmd_plugin_invoke,
+            plugin_commands::cmd_plugin_audit_logs,
+            plugin_commands::cmd_plugin_hot_update_start,
+            plugin_commands::cmd_plugin_hot_update_status,
+            plugin_commands::cmd_plugin_hot_update_confirm,
+            plugin_commands::cmd_plugin_hot_update_rollback,
+            plugin_commands::cmd_pull_plugin_output,
+            export_commands::cmd_export_note_markdown,
+            export_commands::cmd_export_note_docx,
+            export_commands::cmd_export_collection_xlsx,
+            export_commands::cmd_export_all_markdown,
+            export_commands::cmd_export_note_html,
+            export_commands::cmd_export_note_pdf,
+            backlink_commands::cmd_backlinks_of,
+            backlink_commands::cmd_links_graph,
+            collection_commands::cmd_collection_create,
+            collection_commands::cmd_collection_list,
+            collection_commands::cmd_collection_get,
+            collection_commands::cmd_collection_delete,
+            collection_commands::cmd_collection_set_schema,
+            collection_commands::cmd_collection_add_row,
+            collection_commands::cmd_collection_remove_row,
+            collection_commands::cmd_collection_set_cell,
+            collection_commands::cmd_collection_rows,
+            collection_commands::cmd_collection_view_get,
+            collection_commands::cmd_collection_view_set,
+            due_preview_commands::cmd_preview_due,
+            todo_commands::cmd_all_tasks,
+            todo_commands::cmd_toggle_task,
+            calendar_commands::cmd_calendar_vm,
+            calendar_commands::cmd_list_events,
+            calendar_commands::cmd_upsert_event,
+            calendar_commands::cmd_delete_event,
+            calendar_commands::cmd_reschedule_task,
+            calendar_commands::cmd_sync_tasks,
+            template_commands::cmd_list_templates,
+            template_commands::cmd_create_from_template,
+            wiki_commands::cmd_wiki_link_titles,
+            import_commands::cmd_plan_import,
+            import_commands::cmd_import_markdown_dir,
+            import_commands::cmd_import_docx,
+            attachment_commands::cmd_export_attachment,
+            block_ref_commands::cmd_resolve_block_ref,
+            block_ref_commands::cmd_breadcrumb,
+            attachment_commands::cmd_open_attachment,
+            import_commands::cmd_import_xlsx,
+            import_commands::cmd_import_enex,
+            import_commands::cmd_import_opml,
+        ])
+        .setup(|app| {
+            tracing_subscriber::fmt::init();
+            info!("Aurora Desktop starting");
+
+            let data_dir = get_data_dir();
+            info!(data_dir = ?data_dir, "data directory ready");
+
+            // 共享装配：迁移 + DEK 保险库 + AppCore DI 注入 + startup（V19 §36.1）
+            let booted = aurora_bootstrap::bootstrap(
+                &data_dir,
+                std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
+            )
+            .map_err(box_err)?;
+            // B-06/T6: 同步状态桥——EventBus Low 发布监听→Tauri 事件
+            // （徽标 3s 内增量刷新;15s 轮询兜底不替换——防事件丢失僵死）。
+            {
+                let app_handle = app.handle().clone();
+                booted
+                    .core
+                    .event_bus
+                    .set_low_publish_listener(Some(Box::new(move |event| {
+                        if let aurora_core::event_bus::layered::AppEvent::SyncStateChanged {
+                            gate,
+                            queue_len,
+                            reason,
+                        } = event
+                        {
+                            let _ = tauri::Emitter::emit(
+                                &app_handle,
+                                "aurora:sync-state-changed",
+                                serde_json::json!({
+                                    "gate": gate,
+                                    "queue_len": queue_len,
+                                    "reason": reason,
+                                }),
+                            );
+                        }
+                    })));
+            }
+            *VAULT_STATE.lock().expect("VAULT_STATE mutex poisoned") = Some(booted.vault.clone());
+            *SYNC_GATE_STATE
+                .lock()
+                .expect("SYNC_GATE_STATE mutex poisoned") = Some(booted.sync_gate.clone());
+            *APP_STATE.lock().expect("APP_STATE mutex poisoned") = Some(booted.core.clone());
+            *ATTACH_STATE.lock().expect("ATTACH_STATE mutex poisoned") =
+                Some(booted.attachments.clone());
+            // R13（切片三-2）：复习队列恢复——重启清偿（内存读模型 → KVStore）。
+            // 坏快照/缺 key 静默=空队列起步（诚实边界：恢复失败不阻断启动）。
+            // desktop-check 存量债修复（2026-10-26）：setup 闭包非 async——
+            // block_on 桥接（E0728 链头，连带 E0277 假错）；log crate 未链接，
+            // 恢复计数走 eprintln（setup 期 tracing 尚未 init）。
+            let restored = tauri::async_runtime::block_on(async {
+                match booted.core.kv_store.get(FSRS_QUEUE_KEY).await {
+                    Ok(Some(raw)) => match serde_json::from_slice::<serde_json::Value>(&raw) {
+                        Ok(snap) => booted.core.review_queue.restore_json(&snap),
+                        Err(_) => 0,
+                    },
+                    _ => 0,
+                }
+            });
+            if restored > 0 {
+                eprintln!("fsrs queue restored: {} cards", restored);
+            }
+            // BOOTED_STATE 的 move 必须最后——booted 的其余字段先 clone 完
+            // （E0382 borrow-after-move，49ae86c 引入 · 2026-09-25 修）。
+            let booted_arc = std::sync::Arc::new(booted);
+            *sync_commands::BOOTED_STATE
+                .lock()
+                .expect("BOOTED_STATE mutex poisoned") = Some(booted_arc.clone());
+            // DK-2.8v2: 分享收件循环接线（transport 就绪即 spawn；未配对
+            // 则 info 跳过——配对面落地后重启生效，零改动）
+            share_commands::setup_share_accept(booted_arc.clone());
+            // DK-2.9v2-a: Web Clipper localhost 桥（token 鉴权只写面）——自动启动
+            capture_server::setup_capture_bridge();
+            info!("AppCore startup complete");
+
+            // DK-03 S3b：混合检索装配（向量路 768 = nomic-embed-text 本地口径）。
+            // 诚实标注：维度按配置口径冻结，AIProvider 实际模型维度不符时
+            // index_note 维度守卫报错 → 索引管线 log warn 静默失效，BM25 兜底——
+            // 不做 probe 惰性组装（模型/维度配置化留待配置卡）。
+            {
+                // DK-1.3 setup 下沉：装配逻辑已迁 bootstrap（Alpha 批复
+                // 2026-10-18 跨 crate 签名预批）——desktop 侧只留 static 挂载+回填。
+                let core = booted_arc.core.clone();
+                let (vec_idx, embed, hybrid) = aurora_bootstrap::build_hybrid_searcher(
+                    &core,
+                    "nomic-embed-text",
+                    768,
+                );
+                *VEC_STATE.lock().expect("VEC_STATE mutex poisoned") = Some(vec_idx);
+                *EMBED_STATE.lock().expect("EMBED_STATE mutex poisoned") = Some(embed.clone());
+                *HYBRID_STATE.lock().expect("HYBRID_STATE mutex poisoned") = Some(hybrid);
+
+                // boot 后向量回填（限速 250ms/篇防本地推理过载；content_of 为同步
+                // 闭包——预载解密内容表是唯一路径，个人库量级可控）。
+                let core_for_backfill = core.clone();
+                tauri::async_runtime::spawn(async move {
+                    let Ok(vault) = get_vault() else { return };
+                    let Ok(pairs) = core_for_backfill.kv_store.scan_prefix("note:").await else {
+                        warn!("vector backfill: note scan failed");
+                        return;
+                    };
+                    let mut contents: std::collections::HashMap<String, String> =
+                        std::collections::HashMap::new();
+                    for (k, v) in pairs {
+                        let Some(id) = k.strip_prefix("note:").map(String::from) else {
+                            continue;
+                        };
+                        match unwrap_note_bytes(&core_for_backfill, &vault, &v) {
+                            Ok(json) => {
+                                if let Some(c) = json.get("content").and_then(|x| x.as_str()) {
+                                    contents.insert(id, c.to_string());
+                                }
+                            }
+                            Err(e) => warn!(note_id = %id, error = %e, "backfill: note decrypt failed"),
+                        }
+                    }
+                    let Ok(vecs) = get_vectors() else { return };
+                    let Ok(embed_ref) = get_embed() else { return };
+                    let content_of = |id: &str| contents.get(id).cloned();
+                    match vecs
+                        .backfill_missing(&content_of, embed_ref.as_ref(), 50, std::time::Duration::from_millis(250))
+                        .await
+                    {
+                        Ok(n) if n > 0 => info!(backfilled = n, "vector backfill done"),
+                        Ok(_) => info!("vector backfill: nothing to do"),
+                        Err(e) => warn!(error = %e, "vector backfill failed (embedding unavailable? BM25 fallback active)"),
+                    }
+                });
+            }
+
+            // DK-市场卡：插件运行时状态（WasmRuntime + Marketplace）挂载
+            // + 已安装件启动恢复（restore 损坏不阻断启动——installer 语义）
+            let plugin_state = plugin_commands::PluginState::new();
+            // DK-1.3 setup 下沉：恢复组合面已迁 bootstrap（desktop 侧
+            // block_on+日志留壳——tauri 依赖面归壳语义）
+            let (restored, audit_restored) = tauri::async_runtime::block_on(
+                aurora_bootstrap::restore_plugin_runtime(
+                    &plugin_state.runtime,
+                    &booted_arc.core.kv_store,
+                ),
+            );
+            info!(restored, "plugin runtime restored installed plugins");
+            if audit_restored > 0 {
+                info!(n = audit_restored, "audit chain restored from snapshot");
+            }
+            app.manage(plugin_state.clone());
+
+            // DK-17 S2：运行时定时器（S1 挂起项收敛）——DK-1.3 setup 下沉：
+            // tick 全逻辑已迁 bootstrap（tokio::spawn 等价 tauri::async_runtime::
+            // spawn——批复确认；desktop 侧只留调用点）。
+            aurora_bootstrap::spawn_hourly_ticker(
+                booted_arc.clone(),
+                plugin_state.runtime.clone(),
+            );
+
+            // 注册平台能力（托盘/快捷键/剪贴板/通知），供后续 command 使用
+            app.manage(TauriDesktopPlatform::new(app.handle().clone()));
+
+            // DK-3.3：全局快速捕获默认键（Alt+Shift+N）——触发即 emit
+            // `quick-capture` 事件，前端浮层接手（v1 固定键；键位自定义=
+            // 快捷键表 v2 扩展——系统级键与应用内表域不同，v1 不打通）。
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                let ok = app
+                    .global_shortcut()
+                    .on_shortcut("Alt+Shift+N", |app, _shortcut, event| {
+                        if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                            let _ = tauri::Emitter::emit(app, "quick-capture", ());
+                        }
+                    })
+                    .is_ok();
+                if ok {
+                    info!("global quick-capture shortcut registered (Alt+Shift+N)");
+                } else {
+                    // 注册失败不阻断启动（无桌面环境/键被占——前端 palette
+                    // 内快速捕获仍可用）
+                    info!("global quick-capture shortcut register failed (degrade)");
+                }
+            }
+
+            info!("Aurora Desktop initialized and ready");
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+
+// ── 笔记编解码辅助（E2EE + 搜索索引同步） ──────────────
+
+/// 解密笔记字节：优先按密文（bincode(Ciphertext)）解密；解密失败时兼容
+/// 升级前的明文 JSON（旧版本无加密落库），保证存量数据不丢失。
+pub(crate) fn unwrap_note_bytes(
+    core: &AppCore,
+    vault: &LocalDekVault,
+    data: &[u8],
+) -> Result<serde_json::Value, String> {
+    match vault.decrypt(core.crypto.as_ref(), data) {
+        Ok(plaintext) => serde_json::from_slice(&plaintext).map_err(|e| e.to_string()),
+        Err(e) => match serde_json::from_slice::<serde_json::Value>(data) {
+            Ok(v) => {
+                warn!("note stored in legacy plaintext format; consider re-saving",);
+                Ok(v)
+            }
+            Err(_) => Err(format!("note decrypt failed: {}", e)),
+        },
+    }
+}
+
+// ── V26 I2/DK-01W: WritePath 唯一写入入口 ─────────────────────
+
+/// blocks 双轨存储（进程级单例；复用 migration 建的 aurora.db；打开失败 = 内存降级）。
+fn blocks_store() -> Option<std::sync::Arc<aurora_core::blocks::BlockStore>> {
+    static BLOCKS: std::sync::OnceLock<Option<std::sync::Arc<aurora_core::blocks::BlockStore>>> =
+        std::sync::OnceLock::new();
+    BLOCKS
+        .get_or_init(|| {
+            let dir = dirs_next::data_dir()
+                .map(|d| d.join("aurora-note"))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            aurora_core::blocks::BlockStore::open(&dir.join("aurora.db")).map(std::sync::Arc::new)
+        })
+        .clone()
+}
+
+// ── Tauri Commands（§30 平台适配） ─────────────────────
+
+/// 创建新笔记（加密存储 + 建立搜索索引）。
+#[tauri::command]
+async fn cmd_create_note(title: String) -> Result<String, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    // V26 I2/DK-01W: 唯一写入入口（闭包与 ctx 同栈，借用链一致）
+    // V26 DK-01W: owned ctx（'static boxed 闭包，避免 async 自借用）
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPopupOpen(false);
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
     };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: Some(content_cipher_pair()?),
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(), // DK-09
     };
-  }, [popupOpen]);
-
-  if (!status) return null; // 状态未就绪（mock 模式/查询失败）不占位
-
-  const gv = gateView(status.gate);
-  const conflictPending = status.pending_artifacts + status.pending_semantic;
-
-  return (
-    <div ref={rootRef} style={{ position: 'relative' }}>
-      <button
-        type="button"
-        onClick={() => setPopupOpen((v) => !v)}
-        aria-label={`同步状态：${gv.label}，队列 ${status.queue_len} 条，冲突 ${conflictPending} 条`}
-        title={gv.label}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: tokens.spacing.sm,
-          background: tokens.color.bgElevated,
-          border: '1px solid rgba(255,255,255,0.10)',
-          borderRadius: tokens.radius.md,
-          padding: `${tokens.spacing.xs + 2}px ${tokens.spacing.sm + 2}px`,
-          cursor: 'pointer',
-          color: tokens.color.textPrimary,
-          fontSize: tokens.typography.caption.size,
-          minHeight: tokens.a11y.minTouchTarget - 12,
-        }}
-      >
-        <span style={{ color: gv.color, fontWeight: 700 }} aria-hidden="true">
-          {gv.icon}
-        </span>
-        <span
-          style={{
-            color: tokens.color.textSecondary,
-            maxWidth: 132,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {gv.label}
-        </span>
-        {status.queue_len > 0 && (
-          <span
-            title={`离线队列积压 ${status.queue_len} 条`}
-            style={{
-              background: tokens.color.primary,
-              color: '#FFFFFF',
-              borderRadius: 999,
-              padding: '0 7px',
-              fontSize: 11,
-              fontWeight: 600,
-              lineHeight: '18px',
-            }}
-          >
-            {status.queue_len}
-          </span>
-        )}
-        {conflictPending > 0 && (
-          <span
-            title={`待处理冲突 ${conflictPending} 条`}
-            aria-label={`待处理冲突 ${conflictPending} 条`}
-            style={{
-              width: 9,
-              height: 9,
-              borderRadius: 999,
-              background: tokens.color.danger,
-              display: 'inline-block',
-            }}
-          />
-        )}
-      </button>
-      {popupOpen && (
-        <div
-          role="dialog"
-          aria-label="同步状态详情"
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 8px)',
-            right: 0,
-            width: 320,
-            background: tokens.color.bgSurface,
-            border: '1px solid rgba(55, 220, 242, 0.25)',
-            borderRadius: tokens.radius.lg,
-            boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
-            padding: tokens.spacing.md,
-            zIndex: 900,
-          }}
-        >
-          <div
-            style={{
-              fontSize: tokens.typography.heading.size,
-              fontWeight: 600,
-              marginBottom: tokens.spacing.sm,
-            }}
-          >
-            同步状态
-          </div>
-          {[
-            ['门控', `${gv.icon} ${gv.label}`],
-            ['仅 Wi-Fi', status.wifi_only ? '开' : '关'],
-            ['离线队列积压', `${status.queue_len} 条`],
-            ['待处理冲突', `副本 ${status.pending_artifacts} · 语义 ${status.pending_semantic}`],
-          ].map(([k, v]) => (
-            <div
-              key={k}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                gap: tokens.spacing.sm,
-                padding: `${tokens.spacing.xs}px 0`,
-                fontSize: tokens.typography.body.size,
-              }}
-            >
-              <span style={{ color: tokens.color.textSecondary }}>{k}</span>
-              <span>{v}</span>
-            </div>
-          ))}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: tokens.spacing.sm,
-              marginTop: tokens.spacing.md,
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setPopupOpen(false);
-                onOpenQueue();
-              }}
-              style={entryBtnStyle}
-            >
-              打开离线队列面板
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPopupOpen(false);
-                onOpenConflicts();
-              }}
-              style={entryBtnStyle}
-            >
-              打开冲突处理面板
-            </button>
-            <button
-              type="button"
-              onClick={onToggleWifiOnly}
-              disabled={wifiOnly === null}
-              title={wifiOnly === null ? '开关状态不可用' : undefined}
-              style={{
-                ...entryBtnStyle,
-                opacity: wifiOnly === null ? 0.5 : 1,
-                cursor: wifiOnly === null ? 'not-allowed' : 'pointer',
-              }}
-            >
-              仅 Wi-Fi 同步：{wifiOnly === null ? '—' : wifiOnly ? '开（点击关闭）' : '关（点击开启）'}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+    let id = aurora_core::write_path::create_note(&ctx, &title)
+        .await
+        .map_err(|e| e.to_string())?;
+    // 投影事件驱动（搜索/双链/任务 — TodayView 桌面端从此有数据）
+    core.catch_up_projections()
+        .await
+        .map_err(|e| e.to_string())?;
+    info!(note_id = %id, "note created via desktop WritePath");
+    Ok(id)
 }
 
-const entryBtnStyle: React.CSSProperties = {
-  textAlign: 'left',
-  background: tokens.color.bgElevated,
-  border: '1px solid rgba(255,255,255,0.10)',
-  borderRadius: tokens.radius.md,
-  padding: `${tokens.spacing.sm + 2}px ${tokens.spacing.md}px`,
-  color: tokens.color.textPrimary,
-  fontSize: tokens.typography.body.size,
-  cursor: 'pointer',
-};
+/// 获取笔记内容（解密后返回）。
+#[tauri::command]
+async fn cmd_get_note(note_id: String) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let key = format!("note:{}", note_id);
+    let data = core
+        .kv_store
+        .get(&key)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("note not found: {}", note_id))?;
+    unwrap_note_bytes(&core, &vault, &data)
+}
+
+/// 编辑器快照读取（DK-05 S3）：kv `notesnap:{user_id}:{id}` 全量快照（含前端
+/// loro-prosemirror "doc" 容器 + 内核容器）。无快照返回 null（前端降级 md 灌入）。
+/// DK-47：走惰性迁移 helper——legacy 无段 key 命中即搬迁至 per-user 段。
+#[tauri::command]
+async fn cmd_get_note_snapshot(note_id: String) -> Result<Option<String>, String> {
+    use base64::Engine;
+    let core = get_core()?;
+    let bytes = aurora_core::app_core::get_notesnap_with_migration(
+        core.kv_store.as_ref(),
+        &core.user_id,
+        &note_id,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(bytes
+        .filter(|b| !b.is_empty())
+        .map(|b| base64::engine::general_purpose::STANDARD.encode(b)))
+}
+
+/// 编辑器快照写入（DK-05 S3）：CRDT 合并语义（mobile save_note_snapshot_impl
+/// 同款）—— apply_update import 合并非替换，内核容器与编辑器容器共存不互覆，
+/// P2P 对端修改不丢。空快照视为无操作。
+#[tauri::command]
+async fn cmd_save_note_snapshot(
+    app: tauri::AppHandle,
+    note_id: String,
+    snapshot_b64: String,
+) -> Result<(), String> {
+    use base64::Engine;
+    let core = get_core()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&snapshot_b64)
+        .map_err(|e| e.to_string())?;
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let merged = match aurora_core::app_core::get_notesnap_with_migration(
+        core.kv_store.as_ref(),
+        &core.user_id,
+        &note_id,
+    )
+    .await
+    {
+        Ok(Some(existing)) if !existing.is_empty() => {
+            let doc = aurora_core::l1_infrastructure::note_doc::NoteDoc::from_snapshot(&existing)
+                .map_err(|e| e.to_string())?;
+            doc.apply_update(&bytes).map_err(|e| e.to_string())?;
+            doc.export_snapshot().map_err(|e| e.to_string())?
+        }
+        _ => bytes,
+    };
+    let r = core
+        .kv_store
+        .set(
+            &aurora_core::app_core::notesnap_key(&core.user_id, &note_id),
+            &merged,
+        )
+        .await
+        .map_err(|e| e.to_string());
+    // A-05: 保存路径广播——多窗口（A-10）下块引用卡 1s 内增量刷新
+    //（EventBus Medium 为唯一消费者投影环路（契约冻结）,v1 走 Tauri 事件
+    // 桥,偏差披露于 A-05 交付报告）
+    if r.is_ok() {
+        let _ = tauri::Emitter::emit(&app, "aurora:doc-updated", &note_id);
+    }
+    r
+}
+
+/// 更新笔记（解密 → 修改 → 重新加密落库 + 更新索引）。
+#[tauri::command]
+async fn cmd_update_note(
+    app: tauri::AppHandle,
+    note_id: String,
+    title: Option<String>,
+    content: Option<String>,
+) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    // V26 I2/DK-01W: 走 WritePath（含 Loro 快照 + blocks 派生 + 事件）
+    // V26 DK-01W: owned ctx（'static boxed 闭包，避免 async 自借用）
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: Some(content_cipher_pair()?),
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(), // DK-09
+    };
+    if let Some(t) = title.as_deref() {
+        if title.is_some() {
+            aurora_core::write_path::rename_note(&ctx, &note_id, t)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    if let Some(c) = content.as_deref() {
+        aurora_core::write_path::save_note_content(&ctx, &note_id, c)
+            .await
+            .map_err(|e| e.to_string())?;
+        // DK-2.6 v1：内容历史链追加（fire-and-forget——非关键路径，
+        // 同内容去抖+20 版上限；失败 warn 不阻断保存主链）
+        {
+            let core2 = core.clone();
+            let vault2 = vault.clone();
+            let nid = note_id.clone();
+            let content2 = c.to_string();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) =
+                    history_commands::push_note_history(&core2, &vault2, &nid, &content2).await
+                {
+                    warn!(note_id = %nid, error = %e, "note history push failed");
+                }
+            });
+        }
+        // DK-3.4：任务投影播种（fire-and-forget——对齐 mobile-ffi 1291 模式：
+        // 正文任务行/AI 行动项 → TaskProjection inbox 行，due_date_of v2
+        // 解析「明天 9 点」等 NL 日期；task_id 稳定派生幂等——重复保存重播种
+        // 覆盖同 id 行）。失败静默（投影为派生面非权威——notes/blocks 兜底）。
+        {
+            let core2 = core.clone();
+            let nid = note_id.clone();
+            let content2 = c.to_string();
+            tauri::async_runtime::spawn(async move {
+                if let Some(tp) = core2.projections().iter().find_map(|p| {
+                    p.as_any().and_then(|a| {
+                        a.downcast_ref::<aurora_core::l2_engines::task_projection::TaskProjection>()
+                    })
+                }) {
+                    let _ = aurora_core::l2_engines::action_extractor::ActionItemExtractor::apply_to_projection(&nid, &content2, tp).await;
+                }
+            });
+        }
+        // DK-03 S3b：向量索引管线（fire-and-forget——Ollama 缺席时静默失效，
+        // BM25 兜底；hash 去重由 index_note 内建，重复保存不重嵌）。
+        if !c.is_empty() {
+            if let (Ok(vecs), Ok(embed)) = (get_vectors(), get_embed()) {
+                let note_id2 = note_id.clone();
+                let content2 = c.to_string();
+                tauri::async_runtime::spawn(async move {
+                    match vecs.index_note(&note_id2, &content2, embed.as_ref()).await {
+                        Ok(outcome) => {
+                            info!(note_id = %note_id2, outcome = ?outcome, "vector indexed")
+                        }
+                        Err(e) => warn!(note_id = %note_id2, error = %e, "vector index failed"),
+                    }
+                });
+            }
+        }
+    }
+    core.catch_up_projections()
+        .await
+        .map_err(|e| e.to_string())?;
+    info!(note_id = %note_id, "note updated via desktop WritePath");
+    // A-05: 保存路径广播（多窗口块引用卡刷新——同 cmd_save_note_snapshot）
+    let _ = tauri::Emitter::emit(&app, "aurora:doc-updated", &note_id);
+    Ok(())
+}
+
+// ── V23-I1: 双端能力对齐（今日视图/反链/FSRS 复习） ──────────
+
+/// 今日视图统计（移动端 today_view_stats 同源 — AppCore 任务投影聚合）。
+#[tauri::command]
+async fn cmd_today_view_stats() -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let (active, done) = core.task_projection_stats();
+    let due_today = core.task_projection_due_today();
+    Ok(serde_json::json!({
+        "active": active,
+        "done": done,
+        "due_today": due_today,
+    }))
+}
+
+// === DK-21 S2：任务依赖命令面（blocked 徽章数据源）===
+
+type ProjRef<'a> = &'a aurora_core::l2_engines::task_projection::TaskProjection;
+
+/// 从 AppCore 投影注册表取任务投影（借用绑定 core 局部 Arc，跨 await 安全）。
+fn task_proj<'a>(core: &'a std::sync::Arc<AppCore>) -> Result<ProjRef<'a>, String> {
+    core.projections()
+        .iter()
+        .find_map(|p| {
+            p.as_any().and_then(|a| {
+                a.downcast_ref::<aurora_core::l2_engines::task_projection::TaskProjection>()
+            })
+        })
+        .ok_or_else(|| "task projection not registered".into())
+}
+
+/// 设置依赖边（成环/自依赖拒绝——环路径可读返回 Err）。
+#[tauri::command]
+async fn cmd_set_task_dependency(task_id: String, depends_on: String) -> Result<(), String> {
+    let core = get_core()?;
+    task_proj(&core)?
+        .set_dependency(&task_id, &depends_on)
+        .await
+}
+
+/// 移除依赖边。
+#[tauri::command]
+async fn cmd_remove_task_dependency(task_id: String, depends_on: String) -> Result<(), String> {
+    let core = get_core()?;
+    task_proj(&core)?
+        .remove_dependency(&task_id, &depends_on)
+        .await
+}
+
+/// blocked 任务 id 列表（派生态实时计算——前置非终态即阻塞）。
+#[tauri::command]
+async fn cmd_blocked_task_ids() -> Result<Vec<String>, String> {
+    let core = get_core()?;
+    let mut ids = task_proj(&core)?
+        .blocked_ids()
+        .await
+        .into_iter()
+        .collect::<Vec<_>>();
+    ids.sort();
+    Ok(ids)
+}
+
+/// 读取任务依赖边（前置列表）。
+#[tauri::command]
+async fn cmd_get_task_dependencies(task_id: String) -> Result<Vec<String>, String> {
+    let core = get_core()?;
+    Ok(task_proj(&core)?.get_dependencies(&task_id).await)
+}
+
+/// 今日任务行 + blocked 标记（TodayView 列表渲染数据面）。
+#[tauri::command]
+async fn cmd_today_task_rows() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let proj = task_proj(&core)?;
+    // R3-2：窗口=今日全天（23:59:59.999）——今天晚些时刻截止的任务
+    // 今天就该出现在视图里（v1 只取「此刻前」漏掉当日未来截止项）；
+    // 逾期项（due<今日 0 点）天然含在集内——前端按今日 0 点分界分区。
+    let today_end = {
+        // desktop-check 存量债：with_ymd_and_hms 属 TimeZone trait（缺 use 编译债）
+        use chrono::{Datelike, TimeZone};
+        let t = chrono::Local::now();
+        chrono::Local
+            .with_ymd_and_hms(t.year(), t.month(), t.day(), 23, 59, 59)
+            .single()
+            .unwrap_or_else(chrono::Local::now)
+            .timestamp_millis()
+            + 999
+    };
+    let blocked = proj.blocked_ids().await;
+    let mut rows = proj
+        .today(today_end)
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "task_id": r.task_id,
+                "title": r.title,
+                "status": r.status,
+                "priority": r.priority,
+                "due_date": r.due_date,
+                "blocked": blocked.contains(&r.task_id),
+            })
+        })
+        .collect::<Vec<_>>();
+    // blocked 优先展示（阻塞任务前置——用户先处理依赖）
+    rows.sort_by(|a, b| {
+        let ba = a["blocked"].as_bool().unwrap_or(false);
+        let bb = b["blocked"].as_bool().unwrap_or(false);
+        bb.cmp(&ba)
+            .then(b["task_id"].as_str().cmp(&a["task_id"].as_str()))
+    });
+    Ok(rows)
+}
+
+/// R3-2：后续任务行——due ∈ (今日末, 今日末+N 天] 的非终态行
+/// （TodayView 三分区之「后续」，默认 7 天窗口）。
+#[tauri::command]
+async fn cmd_upcoming_tasks(days: Option<i64>) -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let proj = task_proj(&core)?;
+    // desktop-check 存量债：with_ymd_and_hms 属 TimeZone trait（缺 use 编译债）
+    use chrono::{Datelike, TimeZone};
+    let t = chrono::Local::now();
+    let today_end = chrono::Local
+        .with_ymd_and_hms(t.year(), t.month(), t.day(), 23, 59, 59)
+        .single()
+        .unwrap_or_else(chrono::Local::now)
+        .timestamp_millis()
+        + 999;
+    let window = days.unwrap_or(7).clamp(1, 90);
+    let rows = proj
+        .due_between(today_end, today_end + window * 86_400_000)
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "task_id": r.task_id,
+                "title": r.title,
+                "status": r.status,
+                "priority": r.priority,
+                "due_date": r.due_date,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(rows)
+}
+
+// === DK-22 S2：番茄钟 / 周回顾命令面 ===
+
+/// 全局番茄钟实例（desktop 层持有 — core `PomodoroTimer` 线程安全，
+/// 无持久化需求：计时态生命周期 = 应用会话）。
+static POMODORO: std::sync::OnceLock<aurora_core::l3_domain::today_view::PomodoroTimer> =
+    std::sync::OnceLock::new();
+
+fn pomodoro() -> &'static aurora_core::l3_domain::today_view::PomodoroTimer {
+    POMODORO.get_or_init(aurora_core::l3_domain::today_view::PomodoroTimer::default)
+}
+
+fn pomo_state_json() -> serde_json::Value {
+    let s = pomodoro().state();
+    serde_json::json!({
+        "phase": s.phase,
+        "remaining_seconds": s.remaining_seconds,
+        "completed_work_cycles": s.completed_work_cycles,
+        "running": s.running,
+    })
+}
+
+/// 番茄钟当前状态（前端 1s 轮询渲染）。
+#[tauri::command]
+async fn cmd_pomodoro_state() -> Result<serde_json::Value, String> {
+    Ok(pomo_state_json())
+}
+
+/// 启动 / 暂停后恢复（重锚挂钟）。
+#[tauri::command]
+async fn cmd_pomodoro_start() -> Result<serde_json::Value, String> {
+    pomodoro().start();
+    Ok(pomo_state_json())
+}
+
+/// 暂停（计时冻结）。
+#[tauri::command]
+async fn cmd_pomodoro_pause() -> Result<serde_json::Value, String> {
+    pomodoro().pause();
+    Ok(pomo_state_json())
+}
+
+/// 重置回工作相位满格。
+#[tauri::command]
+async fn cmd_pomodoro_reset() -> Result<serde_json::Value, String> {
+    pomodoro().reset();
+    Ok(pomo_state_json())
+}
+
+/// 配置工作/休息时长（分钟）。会重置当前计时（配置变更语义）。
+#[tauri::command]
+async fn cmd_pomodoro_config(
+    work_minutes: u32,
+    break_minutes: u32,
+) -> Result<serde_json::Value, String> {
+    if work_minutes == 0 || break_minutes == 0 || work_minutes > 180 || break_minutes > 120 {
+        return Err("时长需在 1-180 / 1-120 分钟内".into());
+    }
+    let _ = POMODORO.set(aurora_core::l3_domain::today_view::PomodoroTimer::new(
+        work_minutes,
+        break_minutes,
+    ));
+    Ok(pomo_state_json())
+}
+
+/// DK-22 DoD：WebView 后台化回归补偿——按挂钟锚差值一次性补秒。
+#[tauri::command]
+async fn cmd_pomodoro_sync() -> Result<serde_json::Value, String> {
+    pomodoro().sync_wall_clock();
+    Ok(pomo_state_json())
+}
+
+/// DK-25 周回顾：全周口径——`week_start`（YYYY-MM-DD，须为周一；缺省=本周一）
+/// 起算 [周一 00:00, 下周一 00:00) 闭区间内完成任务集，聚合预计 vs 实际偏差率。
+#[tauri::command]
+async fn cmd_weekly_review(week_start: Option<String>) -> Result<serde_json::Value, String> {
+    use chrono::{Datelike, Duration, NaiveDate};
+    let core = get_core()?;
+    let proj = task_proj(&core)?;
+
+    // 解析周一锚点（缺省 = 本周周一；非周一输入回退到所在周的周一）
+    let (monday, label) = match week_start.as_deref() {
+        Some(s) => {
+            let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map_err(|e| format!("week_start 需为 YYYY-MM-DD: {e}"))?;
+            let back = d.weekday().num_days_from_monday() as i64;
+            (d - Duration::days(back), s.to_string())
+        }
+        None => {
+            let today = chrono::Utc::now().date_naive();
+            let back = today.weekday().num_days_from_monday() as i64;
+            (today - Duration::days(back), String::new())
+        }
+    };
+    let from_ms = monday
+        .and_hms_opt(0, 0, 0)
+        .ok_or("monday time")?
+        .and_utc()
+        .timestamp_millis();
+    let to_ms = (monday + Duration::days(7))
+        .and_hms_opt(0, 0, 0)
+        .ok_or("next monday time")?
+        .and_utc()
+        .timestamp_millis()
+        - 1; // 周日 23:59:59.999 含（闭区间）
+    let next_monday = (monday + Duration::days(7)).format("%Y-%m-%d").to_string();
+    let range_label = if label.is_empty() {
+        format!("{} ~ {}", monday, next_monday)
+    } else {
+        format!("{label} ~ {next_monday}")
+    };
+
+    let ids = proj.completed_task_ids_between(from_ms, to_ms);
+    let s = proj.weekly_summary(&ids);
+    Ok(serde_json::json!({
+        "range_label": range_label,
+        "completed_count": ids.len(),
+        "total_estimate_minutes": s.total_estimate_minutes,
+        "total_actual_minutes": s.total_actual_minutes,
+        "deviation_rate": s.deviation_rate,
+        "per_task": s.per_task,
+    }))
+}
+
+/// 反向链接（移动端 get_backlinks 同源 — 双链投影 incoming + 标题解析）。
+#[tauri::command]
+async fn cmd_get_backlinks(note_id: String) -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let kv = core.kv_store.clone();
+    let sources = core.bidi_link_incoming(&note_id);
+    let mut out = Vec::with_capacity(sources.len());
+    for src in sources {
+        // 标题解析: 与移动端同语义 — 读不到正文时回退显示 ID
+        let title = kv
+            .get(&format!("note:{}", src))
+            .await
+            .ok()
+            .flatten()
+            .and_then(|bytes| {
+                serde_json::from_slice::<serde_json::Value>(&bytes)
+                    .ok()
+                    .and_then(|v| v.get("title").and_then(|t| t.as_str().map(String::from)))
+            })
+            .unwrap_or_else(|| src.clone());
+        out.push(serde_json::json!({
+            "source_note_id": src,
+            "source_title": title,
+        }));
+    }
+    Ok(out)
+}
+
+/// FSRS 到期复习卡（移动端 due_review_cards 同源 — 复习队列 due/R 阈值）。
+#[tauri::command]
+async fn cmd_due_review_cards() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let now = chrono::Utc::now();
+    let items = core.review_queue.due_items(now);
+    let scheduler = aurora_core::l3_domain::fsrs::FsrsScheduler::new();
+    let vault = get_vault()?;
+    let mut out = Vec::with_capacity(items.len());
+    for it in items {
+        let r = scheduler.retrievability(&it.state, now);
+        // G3：卡面字段（title 恒明文+首行摘要）——到期队列小（几~几十）逐条读可接受
+        // R11/R12/R14：生成卡（:b/:l）卡面重拼——id 反查提取集；
+        // 内容已改删时降级笔记级卡面 + 失效注记（诚实边界）。
+        let is_generated = aurora_core::l3_domain::fsrs::is_generated_card_id(&it.card_id);
+        let (title, summary) = match core.kv_store.get(&format!("note:{}", it.note_id)).await {
+            Ok(Some(bytes)) => match unwrap_note_bytes(&core, &vault, &bytes) {
+                Ok(json) => {
+                    let note_title = json
+                        .get("title")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("未命名")
+                        .to_string();
+                    let content = json.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                    if is_generated {
+                        // R11/R12/R14：块卡(:b)/列表卡(:l) 卡面重拼——id 反查
+                        // 当前笔记提取集；heading/术语已改删时降级 + 失效注记。
+                        let cards = extract_distill_cards(&it.note_id, content);
+                        match cards.iter().find(|(cid, _, _)| cid == &it.card_id) {
+                            Some((_, q, a)) => (format!("{} · {}", note_title, q), a.clone()),
+                            None => (
+                                format!("{} · （卡已失效——内容已改）", note_title),
+                                String::new(),
+                            ),
+                        }
+                    } else {
+                        (
+                            note_title,
+                            content
+                                .lines()
+                                .find(|l| !l.trim().is_empty())
+                                .unwrap_or("")
+                                .chars()
+                                .take(80)
+                                .collect::<String>(),
+                        )
+                    }
+                }
+                Err(_) => ("未命名".to_string(), String::new()),
+            },
+            _ => ("未命名".to_string(), String::new()),
+        };
+        out.push(serde_json::json!({
+            "card_id": it.card_id,
+            "note_id": it.note_id,
+            "due_at": it.due.to_rfc3339(),
+            "retrievability": r,
+            "reps": it.state.reps,
+            "lapses": it.state.lapses,
+            "title": title,
+            "summary": summary,
+        }));
+    }
+    Ok(out)
+}
+
+/// FSRS 评分复习（移动端 review_card 同源 — 1 Again / 2 Hard / 3 Good / 4 Easy）。
+#[tauri::command]
+async fn cmd_review_card(card_id: String, rating: i64) -> Result<String, String> {
+    let core = get_core()?;
+    let rating = match rating {
+        1 => aurora_core::l3_domain::fsrs::Rating::Again,
+        2 => aurora_core::l3_domain::fsrs::Rating::Hard,
+        3 => aurora_core::l3_domain::fsrs::Rating::Good,
+        4 => aurora_core::l3_domain::fsrs::Rating::Easy,
+        _ => return Err("rating must be 1-4".into()),
+    };
+    let out = core
+        .review_queue
+        .review_card(&card_id, rating)
+        .ok_or_else(|| format!("card not found: {}", card_id))?;
+    persist_queue(&core).await; // R13：评分即落盘
+    Ok(out.due.to_rfc3339())
+}
+
+/// R15：到期卡轻量计数（Today 视图复习分区入口徽标——不做卡面重拼，
+/// O(1) 读模型长度；全量重拼走 cmd_due_review_cards）。
+#[tauri::command]
+async fn cmd_review_due_count() -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    // R17-α3：包 {count} 对象——前端 ReviewEntryCard 按 {count} 解构，
+    // 裸 usize 序列化致 undefined→徽标永不 hot（R-β2 挂账清偿）
+    Ok(serde_json::json!({ "count": core.review_queue.due_items(chrono::Utc::now()).len() }))
+}
+
+/// R17：FSRS 统计面聚合（ReviewStatsPanel 数据源——today/again_rate/due_7d
+/// 全量口径；轻计数仍走 cmd_review_due_count。core ReviewStats 零 serde
+/// 侵入——手写 Value 映射对齐 cmd_due_review_cards 惯例）。
+#[tauri::command]
+async fn cmd_review_stats() -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let s = core.review_queue.review_stats(chrono::Utc::now());
+    Ok(serde_json::json!({
+        "total_cards": s.total_cards,
+        "due_now": s.due_now,
+        "today_reviews": s.today_reviews,
+        "today_again_rate": s.today_again_rate,
+        "due_7d": s.due_7d,
+    }))
+}
+
+/// R18：留存率曲线（ReviewStatsPanel 曲线段数据源）——最近 days 天按日
+/// 评分量+Again 率。days 由前端传参，clamp 1..=30 防滥用（core 信任内部
+/// 调用方；跨边界入参收紧——R-β2 DTO 教训同源）。
+#[tauri::command]
+async fn cmd_review_daily_series(days: Option<usize>) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let days = days.unwrap_or(7).clamp(1, 30);
+    let series = core
+        .review_queue
+        .review_daily_series(chrono::Utc::now(), days);
+    Ok(serde_json::json!(series
+        .into_iter()
+        .map(|d| serde_json::json!({
+            "date": d.date,
+            "reviews": d.reviews,
+            "again_rate": d.again_rate,
+        }))
+        .collect::<Vec<_>>()))
+}
+
+/// G4：看板数据源——投影全量行（status 分列用）。
+#[tauri::command]
+async fn cmd_board_tasks() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    Ok(task_proj(&core)?
+        .rows()
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "task_id": r.task_id,
+                "note_id": r.note_id,
+                "title": r.title,
+                "status": r.status,
+                "priority": r.priority,
+                "due_date": r.due_date,
+                "blocked": false,
+            })
+        })
+        .collect())
+}
+
+/// G4：看板换列（投影行 status 直改——core set_row_status 统一 stamp
+/// 语义；v1 边界：不回写笔记文本——R2-Bug1 title 映射保投影态自洽，
+/// 文本回写 v2）。
+#[tauri::command]
+async fn cmd_set_task_status(task_id: String, status: String) -> Result<(), String> {
+    let core = get_core()?;
+    task_proj(&core)?
+        .set_row_status(&task_id, &status)
+        .map_err(|e| e.to_string())
+}
+
+/// G3：笔记级建卡（笔记 Distill 的 v1 形态——整笔记一张卡）。
+/// card_id=`card:note:{id}` 幂等（重注册=覆盖重排——ReviewQueue 语义）；
+/// 卡面=笔记 title（恒明文通路）+正文首行摘要（≤80 char）。
+#[tauri::command]
+async fn cmd_add_review_card(note_id: String) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let key = format!("note:{}", note_id);
+    let data = core
+        .kv_store
+        .get(&key)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("note not found: {}", note_id))?;
+    let json = unwrap_note_bytes(&core, &vault, &data)?;
+    let title = json
+        .get("title")
+        .and_then(|t| t.as_str())
+        .unwrap_or("未命名")
+        .to_string();
+    let summary: String = json
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .chars()
+        .take(80)
+        .collect();
+    let scheduled = core.review_queue.add_card(
+        &format!("card:note:{}", note_id),
+        &note_id,
+        aurora_core::l3_domain::fsrs::Rating::Good,
+    );
+    persist_queue(&core).await; // R13（切片三-2）：队列变更即落盘
+    Ok(serde_json::json!({
+        "card_id": format!("card:note:{}", note_id),
+        "note_id": note_id,
+        "title": title,
+        "summary": summary,
+        "due_at": scheduled.due.to_rfc3339(),
+    }))
+}
+
+/// R13（切片三-2）：复习队列快照落盘（内存读模型 → KVStore 持久化）。
+/// 失败静默（持久化故障不阻断复习主链——下次变更重试覆盖）。
+const FSRS_QUEUE_KEY: &str = "fsrs:queue:v1";
+async fn persist_queue(core: &AppCore) {
+    let snap = core.review_queue.snapshot_json().to_string();
+    let _ = core.kv_store.set(FSRS_QUEUE_KEY, snap.as_bytes()).await;
+}
+
+/// R14（Distill v2 列表项卡化）：markdown → 生成卡提取器（纯函数）。
+/// 两路语义：
+/// 1. 块卡（:b）——1-3 级 heading 为卡提示（Q），其下首个非空段为卡底（A ≤80 字）；
+/// 2. 列表卡（:l）——「- **术语**：定义」形态（粗体术语+冒号——结构特征防线
+///    挡噪音：无粗体前缀/无定义的列表项不卡化），Q=术语、A=定义 ≤80 字。
+///
+/// 返回 (card_id, q, a)——card_id 构造进提取器（建卡与 due 重拼单一事实源）。
+fn extract_distill_cards(note_id: &str, md: &str) -> Vec<(String, String, String)> {
+    let mut cards: Vec<(String, String, String)> = Vec::new();
+    let mut cur: Option<(String, String)> = None; // (heading_q, a)
+    for line in md.lines() {
+        let trimmed = line.trim();
+        let hashes = trimmed.len() - trimmed.trim_start_matches('#').len();
+        if hashes >= 1 {
+            let after = &trimmed[hashes..]; // '#' 为单字节，切片边界安全
+            let heading_text = after
+                .strip_prefix([' ', '\t'])
+                .map(str::trim)
+                .filter(|t| !t.is_empty());
+            if hashes <= 3 {
+                if let Some(text) = heading_text {
+                    // 1-3 级 heading：落袋前卡，开新卡
+                    if let Some((q, a)) = cur.take() {
+                        cards.push((
+                            block_card_id(note_id, &q),
+                            q,
+                            if a.is_empty() {
+                                "(无正文 — 概念卡)".to_string()
+                            } else {
+                                a
+                            },
+                        ));
+                    }
+                    cur = Some((text.to_string(), String::new()));
+                }
+                // 1-3 级但无空格/空文本（#tag、裸#）：非 heading 非正文，跳过
+            } else {
+                // H4+ 子树不卡化；当前卡就此落袋（卡底未收=概念卡）
+                if let Some((q, a)) = cur.take() {
+                    cards.push((
+                        block_card_id(note_id, &q),
+                        q,
+                        if a.is_empty() {
+                            "(无正文 — 概念卡)".to_string()
+                        } else {
+                            a
+                        },
+                    ));
+                }
+            }
+            continue;
+        }
+        // 列表卡扫描（R14 v2）：- **术语**：定义
+        if let Some((term, def)) = parse_list_card(trimmed) {
+            cards.push((list_card_id(note_id, &term), term, def));
+        }
+        // heading 下首个非空段 = 卡底
+        if let Some((_, a)) = cur.as_mut() {
+            if a.is_empty() && !trimmed.is_empty() {
+                *a = trimmed.chars().take(80).collect();
+            }
+        }
+    }
+    if let Some((q, a)) = cur.take() {
+        cards.push((
+            block_card_id(note_id, &q),
+            q,
+            if a.is_empty() {
+                "(无正文 — 概念卡)".to_string()
+            } else {
+                a
+            },
+        ));
+    }
+    cards
+}
+
+/// R14：列表卡解析——「- **术语**：定义」/「* **术语**: 定义」形态
+///（中英冒号都收；无粗体术语/无定义不卡化——噪音防线）。
+fn parse_list_card(line: &str) -> Option<(String, String)> {
+    let body = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))?
+        .trim();
+    if !body.starts_with("**") {
+        return None;
+    }
+    let close = body[2..].find("**")? + 2;
+    let term = body[2..close].trim();
+    if term.is_empty() {
+        return None;
+    }
+    let rest = body[close + 2..].trim_start();
+    let def = rest
+        .strip_prefix('：')
+        .or_else(|| rest.strip_prefix(':'))?
+        .trim();
+    if def.is_empty() {
+        return None;
+    }
+    Some((term.to_string(), def.chars().take(80).collect()))
+}
+
+/// R14：列表卡 card_id（:l 尾——FNV-1a hash8 幂等锚定与块卡同族）。
+fn list_card_id(note_id: &str, term: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in term.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("card:note:{}:l{:08x}", note_id, h as u32)
+}
+
+/// R11：块卡 card_id 构造（FNV-1a hash8 幂等锚定，非安全哈希）——
+/// 建卡与 due 队列重拼共用（单一事实源）。
+fn block_card_id(note_id: &str, heading: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in heading.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("card:note:{}:b{:08x}", note_id, h as u32)
+}
+
+/// R10/R12（块级卡 Distill）：按块生成复习卡——同步语义（core sync_block_cards）：
+/// 当前 1-3 级 heading 集为准——缺失注册（首评 Good）、失效块卡（heading 改/删）
+/// 清队；已存在卡 FSRS 进度保留。笔记级卡不受影响。
+#[tauri::command]
+async fn cmd_add_review_cards_from_blocks(note_id: String) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let key = format!("note:{}", note_id);
+    let data = core
+        .kv_store
+        .get(&key)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("note not found: {}", note_id))?;
+    let json = unwrap_note_bytes(&core, &vault, &data)?;
+    let title = json
+        .get("title")
+        .and_then(|t| t.as_str())
+        .unwrap_or("未命名")
+        .to_string();
+    let content = json.get("content").and_then(|c| c.as_str()).unwrap_or("");
+    let cards = extract_distill_cards(&note_id, content);
+    let keep: Vec<String> = cards.iter().map(|(cid, _, _)| cid.clone()).collect();
+    let (added, removed) = core.review_queue.sync_block_cards(&note_id, &keep);
+    persist_queue(&core).await; // R13：同步即落盘
+    let mut out = Vec::with_capacity(cards.len());
+    for (cid, q, a) in cards.iter() {
+        out.push(serde_json::json!({
+            "card_id": cid,
+            "note_id": note_id,
+            "title": format!("{} · {}", title, q),
+            "summary": a.clone(),
+        }));
+    }
+    Ok(
+        serde_json::json!({ "created": out.len(), "added": added, "removed": removed, "cards": out }),
+    )
+}
+
+/// 删除笔记（含搜索索引）。
+#[tauri::command]
+async fn cmd_delete_note(note_id: String) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    // V26 I2/DK-01W: 走 WritePath（元数据+快照同删 + NoteDeleted 事件）
+    // V26 DK-01W: owned ctx（'static boxed 闭包，避免 async 自借用）
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: Some(content_cipher_pair()?),
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(), // DK-09
+    };
+    aurora_core::write_path::delete_note(&ctx, &note_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    core.catch_up_projections()
+        .await
+        .map_err(|e| e.to_string())?;
+    info!(note_id = %note_id, "note deleted via desktop WritePath");
+    Ok(())
+}
+
+/// 列出回收站（DK-02 S1）。
+#[tauri::command]
+async fn cmd_list_trashed() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let items = aurora_core::write_path::list_trashed(&core)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(items
+        .into_iter()
+        .map(|t| {
+            serde_json::json!({
+                "note_id": t.note_id,
+                "deleted_at_ms": t.deleted_at_ms,
+                "title": t.title,
+            })
+        })
+        .collect())
+}
+
+/// 创建文件夹（DK-02 S2）。
+#[tauri::command]
+async fn cmd_create_folder(
+    parent_id: Option<String>,
+    title: String,
+) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: Some(content_cipher_pair()?),
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    let rc = aurora_core::write_path::create_folder(&ctx, parent_id.as_deref(), &title)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "note_id": rc.aggregate_id,
+        "seq": rc.seq,
+    }))
+}
+
+/// 移动节点（DK-02 S2——环检测 fail-closed）。
+#[tauri::command]
+async fn cmd_move_note(
+    note_id: String,
+    new_parent_id: Option<String>,
+    sort_order: i64,
+) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    aurora_core::write_path::move_node(&ctx, &note_id, new_parent_id.as_deref(), sort_order)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 重命名文件夹（DK-02 S2）。
+#[tauri::command]
+async fn cmd_rename_folder(folder_id: String, new_title: String) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    aurora_core::write_path::rename_folder(&ctx, &folder_id, &new_title)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 目录树扁平列表（DK-02 S2——UI 端组装嵌套）。
+#[tauri::command]
+async fn cmd_list_tree() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let crypto = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let seal_pair = aurora_core::write_path::SealPair {
+        seal: Box::new(|b: &[u8]| Ok(b.to_vec())),
+        unseal: Box::new(unseal),
+    };
+    let nodes = aurora_core::write_path::list_tree(&core, Some(&seal_pair))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(nodes
+        .into_iter()
+        .map(|n| {
+            serde_json::json!({
+                "note_id": n.note_id,
+                "kind": format!("{:?}", n.kind),
+                "title": n.title,
+                "parent_id": n.parent_id,
+                "sort_order": n.sort_order,
+            })
+        })
+        .collect())
+}
+
+/// 从回收站恢复笔记（DK-02 S1 — NoteCreated 重放驱动投影/索引重建）。
+#[tauri::command]
+async fn cmd_restore_note(note_id: String) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None, // 与 cmd_delete_note 同口径（TODO(DK-07)）
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    aurora_core::write_path::restore_note(&ctx, &note_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    core.catch_up_projections()
+        .await
+        .map_err(|e| e.to_string())?;
+    info!(note_id = %note_id, "note restored via desktop command");
+    Ok(())
+}
+
+/// 彻底删除回收站笔记（DK-02 S1 — 物理删 + 附件级联）。
+#[tauri::command]
+async fn cmd_purge_note(note_id: String) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    aurora_core::write_path::purge_note(&ctx, &note_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    // DK-03 S3b：purge 联动——向量记录物理清（残留会命中已删笔记）
+    if let Ok(vecs) = get_vectors() {
+        if let Err(e) = vecs.remove_note(&note_id).await {
+            warn!(note_id = %note_id, error = %e, "vector remove_note failed (purge)");
+        }
+    }
+    core.catch_up_projections()
+        .await
+        .map_err(|e| e.to_string())?;
+    info!(note_id = %note_id, "note purged via desktop command");
+    Ok(())
+}
+
+/// DK-17 遗留补全：清理超期回收站（days 天前的标记全 purge——TrashView「清理过期」按钮）。
+#[tauri::command]
+async fn cmd_purge_expired_trash(days: i64) -> Result<Vec<String>, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    let purged = aurora_core::write_path::purge_expired(&ctx, days)
+        .await
+        .map_err(|e| e.to_string())?;
+    // DK-03 S3b：purge 联动——向量记录物理清（trash 面过滤随物理删失效，须清）
+    if let Ok(vecs) = get_vectors() {
+        for id in &purged {
+            if let Err(e) = vecs.remove_note(id).await {
+                warn!(note_id = %id, error = %e, "vector remove_note failed (purge)");
+            }
+        }
+    }
+    core.catch_up_projections()
+        .await
+        .map_err(|e| e.to_string())?;
+    info!(
+        days,
+        count = purged.len(),
+        "trash purge_expired via desktop command"
+    );
+    Ok(purged)
+}
+
+/// 打开当日每日笔记（DK-19——启动/访问当日视图调用；Auto 自动创建，Manual 仅定位）。
+#[tauri::command]
+async fn cmd_daily_note_open(date: String) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    match aurora_core::write_path::ensure_daily_note(&ctx, &date).await {
+        Ok(Some(r)) => Ok(serde_json::json!({ "note_id": r.note_id, "created": r.created })),
+        Ok(None) => Ok(serde_json::json!({ "note_id": serde_json::Value::Null, "created": false })),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// 设置每日笔记模式（DK-19：auto/manual/off）。
+#[tauri::command]
+async fn cmd_daily_note_set_mode(mode: String) -> Result<(), String> {
+    let core = get_core()?;
+    let m = match mode.as_str() {
+        "auto" => aurora_core::write_path::DailyNoteMode::Auto,
+        "manual" => aurora_core::write_path::DailyNoteMode::Manual,
+        "off" => aurora_core::write_path::DailyNoteMode::Off,
+        _ => return Err(format!("非法模式: '{mode}'（需 auto/manual/off）")),
+    };
+    aurora_core::write_path::set_daily_mode(&core, m)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 读取每日笔记模式（DK-19）。
+#[tauri::command]
+async fn cmd_daily_note_get_mode() -> Result<String, String> {
+    let core = get_core()?;
+    let m = aurora_core::write_path::get_daily_mode(&core)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(match m {
+        aurora_core::write_path::DailyNoteMode::Auto => "auto",
+        aurora_core::write_path::DailyNoteMode::Manual => "manual",
+        aurora_core::write_path::DailyNoteMode::Off => "off",
+    }
+    .to_string())
+}
+
+/// 设置每日笔记模板（DK-19，占位符 {{date}}/{{weekday}}）。
+#[tauri::command]
+async fn cmd_daily_note_set_template(template: String) -> Result<(), String> {
+    let core = get_core()?;
+    aurora_core::write_path::set_daily_template(&core, &template)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 读取每日笔记模板（DK-19，未设置返回默认模板）。
+#[tauri::command]
+async fn cmd_daily_note_get_template() -> Result<String, String> {
+    let core = get_core()?;
+    aurora_core::write_path::get_daily_template(&core)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 创建智能文件夹（DK-02 S3）。
+#[tauri::command]
+async fn cmd_smartfolder_create(
+    parent_id: Option<String>,
+    title: String,
+    title_contains: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    let rc = aurora_core::write_path::create_smartfolder(
+        &ctx,
+        parent_id.as_deref(),
+        &title,
+        aurora_core::write_path::FilterRule {
+            title_contains,
+            tags_include: Vec::new(),
+            tags_exclude: Vec::new(),
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "note_id": rc.aggregate_id, "seq": rc.seq }))
+}
+
+/// 更新智能文件夹规则（DK-02 S3）。
+#[tauri::command]
+async fn cmd_smartfolder_set_rule(
+    folder_id: String,
+    title_contains: Option<String>,
+    tags_include: Option<Vec<String>>,
+    tags_exclude: Option<Vec<String>>,
+) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let blocks = blocks_store();
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let ctx = aurora_core::write_path::WriteContext {
+        core: core.clone(),
+        blocks,
+        seal: Some(aurora_core::write_path::SealPair {
+            seal: Box::new(seal),
+            unseal: Box::new(unseal),
+        }),
+        content_cipher: None,
+        attachments: ATTACH_STATE
+            .lock()
+            .expect("ATTACH_STATE mutex poisoned")
+            .clone(),
+    };
+    aurora_core::write_path::update_rule(
+        &ctx,
+        &folder_id,
+        aurora_core::write_path::FilterRule {
+            title_contains,
+            tags_include: tags_include.unwrap_or_default(),
+            tags_exclude: tags_exclude.unwrap_or_default(),
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// DK-27: 设置笔记标签集（全量覆盖——轻量读取源 + NoteMetadataChanged 联动）。
+#[tauri::command]
+async fn cmd_set_note_tags(note_id: String, tags: Vec<String>) -> Result<(), String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let crypto = core.crypto.clone();
+    let vault_seal = vault.clone();
+    let seal = move |b: &[u8]| {
+        vault_seal
+            .encrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let crypto2 = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto2.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let seal_pair = aurora_core::write_path::SealPair {
+        seal: Box::new(seal),
+        unseal: Box::new(unseal),
+    };
+    aurora_core::write_path::set_note_tags(&core, &note_id, tags, Some(&seal_pair))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 读取智能文件夹规则（DK-02 S3 UI 面——Alpha 跨领地补丁：仅 tauri 读端薄层，
+/// 复用 unwrap_note_bytes 既有解密模式，write_path/core 零触碰——领地声明见回执）。
+#[tauri::command]
+async fn cmd_smartfolder_get_rule(folder_id: String) -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let data = core
+        .kv_store
+        .get(&format!("note:{folder_id}"))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("smartfolder not found: {folder_id}"))?;
+    let json = unwrap_note_bytes(&core, &vault, &data)?;
+    let rule = json
+        .get("rule")
+        .cloned()
+        .unwrap_or(serde_json::json!({ "title_contains": null }));
+    Ok(serde_json::json!({
+        "title_contains": rule.get("title_contains").and_then(|v| v.as_str()),
+        "tags_include": rule.get("tags_include").cloned().unwrap_or(serde_json::json!([])),
+        "tags_exclude": rule.get("tags_exclude").cloned().unwrap_or(serde_json::json!([])),
+    }))
+}
+
+/// 求值智能文件夹（DK-02 S3——动态视图实时列表）。
+#[tauri::command]
+async fn cmd_smartfolder_list_items(folder_id: String) -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let vault = get_vault()?;
+    let crypto = core.crypto.clone();
+    let vault_unseal = vault.clone();
+    let unseal = move |b: &[u8]| {
+        vault_unseal
+            .decrypt(crypto.as_ref(), b)
+            .map_err(|e| aurora_core::Error::Internal(e.to_string()))
+    };
+    let seal_pair = aurora_core::write_path::SealPair {
+        seal: Box::new(|b: &[u8]| Ok(b.to_vec())),
+        unseal: Box::new(unseal),
+    };
+    let items =
+        aurora_core::write_path::evaluate_smart_folder_for(&core, Some(&seal_pair), &folder_id)
+            .await
+            .map_err(|e| e.to_string())?;
+    Ok(items
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "note_id": r.id,
+                "title": r.title,
+                "updated_at": r.updated_at,
+            })
+        })
+        .collect())
+}
+
+/// A-10: 独立笔记窗口（WebviewWindow 同进程——共享 static APP_STATE 同一 core/
+/// WritePath,禁止各自写模型=结构天然满足;编辑快照走 cmd_save_note_snapshot
+/// 的 CRDT apply_update 合并语义,多窗口并发不丢内容）。
+/// 窗口 label=note-{id};重复开=聚焦既有窗口（幂等）。关闭确认在窗口 JS 面
+/// （onCloseRequested+dirty 判定,未提交编辑禁静默丢弃——A-10 DoD）。
+#[tauri::command]
+/// A-11: 用户自定义主题读取（settings KV——theme:user;None=默认）。
+async fn cmd_theme_get() -> Result<Option<serde_json::Value>, String> {
+    let core = crate::get_core()?;
+    core.kv_store
+        .get("theme:user")
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
+        .transpose()
+}
+
+#[tauri::command]
+/// A-11: 主题写入（白名单校验在前端 VM——KV 只存已验 JSON;全量覆盖）。
+async fn cmd_theme_set(theme: serde_json::Value) -> Result<(), String> {
+    let core = crate::get_core()?;
+    let bytes = serde_json::to_vec(&theme).map_err(|e| e.to_string())?;
+    core.kv_store
+        .set("theme:user", &bytes)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cmd_open_note_window(
+    app: tauri::AppHandle,
+    note_id: String,
+    title: String,
+) -> Result<(), String> {
+    let label = format!("note-{}", sanitize_window_label(&note_id));
+    // 幂等: 既有窗口聚焦（不重复开——同笔记一窗,CRDT 并发面=跨笔记或同窗重开）
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.set_focus();
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App(format!("index.html#note={}", note_id).into()),
+    )
+    .title(&format!(
+        "{} — Aurora Note",
+        if title.is_empty() { "笔记" } else { &title }
+    ))
+    .inner_size(720.0, 800.0)
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 窗口 label 安全化（label 字符集约束: 字母数字-_;其余折叠 _）。
+fn sanitize_window_label(id: &str) -> String {
+    let mut out = String::with_capacity(id.len());
+    for c in id.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        out.push('n');
+    }
+    out
+}
+
+/// A-04: 书签四命令（add/list/remove/reorder——rename 并入 reorder 的
+/// title_patch 单命令双义;V24 R2 三类: note/folder/search）。
+/// search 类 query_json 由前端组装（{raw:A-09 串, rule:FilterRule 派生}——
+/// raw 单一真相,rule 结构化复用智能文件夹勿另造）。
+#[tauri::command]
+async fn cmd_bookmark_add(bookmark: serde_json::Value) -> Result<String, String> {
+    let core = get_core()?;
+    let b: aurora_core::l3_domain::bookmark_store::Bookmark =
+        serde_json::from_value(bookmark).map_err(|e| e.to_string())?;
+    aurora_core::l3_domain::bookmark_store::add_bookmark(core.kv_store.as_ref(), &b)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(b.id)
+}
+
+/// 列表（含死链 stale 态——UI 显式失效+提供移除,禁静默隐藏）。
+#[tauri::command]
+async fn cmd_bookmark_list() -> Result<Vec<serde_json::Value>, String> {
+    let core = get_core()?;
+    let views = aurora_core::l3_domain::bookmark_store::list_bookmarks(core.kv_store.as_ref())
+        .await
+        .map_err(|e| e.to_string())?;
+    views
+        .iter()
+        .map(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+        .collect()
+}
+
+#[tauri::command]
+async fn cmd_bookmark_remove(id: String) -> Result<(), String> {
+    let core = get_core()?;
+    aurora_core::l3_domain::bookmark_store::remove_bookmark(core.kv_store.as_ref(), &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 全量重排+可选改名（缺 id 保序附加尾——禁丢项）。
+#[tauri::command]
+async fn cmd_bookmark_reorder(
+    ordered_ids: Vec<String>,
+    title_patch: Option<String>,
+) -> Result<(), String> {
+    let core = get_core()?;
+    aurora_core::l3_domain::bookmark_store::reorder_bookmarks(
+        core.kv_store.as_ref(),
+        &ordered_ids,
+        title_patch.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// A-09: 高级搜索（5 运算符+短语+排除;hybrid 执行→元数据过滤→徽章面）。
+/// 返回 AdvancedSearchResult（snake_case——与 mobile FFI 同一 core 输出,双端同源）。
+#[tauri::command]
+async fn cmd_search_advanced(
+    query: String,
+    mode: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use aurora_core::l3_domain::advanced_search::{
+        run_advanced_search, Bm25Executor, HybridExecutor,
+    };
+    use aurora_core::traits::search_backend::SearchOptions;
+    let core = get_core()?;
+    let opts = SearchOptions {
+        limit: 50,
+        ..SearchOptions::default()
+    };
+    // mode=hybrid → BM25+KNN RRF;缺省/其他 → 纯 BM25（语义开关在 UI 侧）
+    let r = if mode.as_deref() == Some("hybrid") {
+        let hybrid = get_hybrid()?;
+        let executor = HybridExecutor {
+            hybrid: hybrid.as_ref(),
+        };
+        run_advanced_search(core.as_ref(), &executor, &query, &opts).await
+    } else {
+        let executor = Bm25Executor {
+            core: core.as_ref(),
+        };
+        run_advanced_search(core.as_ref(), &executor, &query, &opts).await
+    }
+    .map_err(|e| e.to_string())?;
+    serde_json::to_value(&r).map_err(|e| e.to_string())
+}
+
+/// 搜索笔记（Tantivy 全文检索；mode=hybrid 走 BM25+KNN→RRF 混合路）。
+#[tauri::command]
+async fn cmd_search_notes(
+    query: String,
+    mode: Option<String>,
+) -> Result<Vec<serde_json::Value>, String> {
+    use aurora_core::traits::search_backend::SearchOptions;
+    let core = get_core()?;
+    info!(
+        query,
+        mode = mode.as_deref().unwrap_or("bm25"),
+        "search notes via desktop command"
+    );
+    let opts = SearchOptions {
+        limit: 20,
+        ..SearchOptions::default()
+    };
+    let (hits, total) = if mode.as_deref() == Some("hybrid") {
+        let hybrid = get_hybrid()?;
+        let r = hybrid
+            .search_hybrid(&query, &opts)
+            .await
+            .map_err(|e| e.to_string())?;
+        let n = r.hits.len();
+        (r.hits, n)
+    } else {
+        let r = core
+            .search
+            .search(&query, &opts)
+            .await
+            .map_err(|e| e.to_string())?;
+        (r.hits, r.total)
+    };
+    let vault = get_vault()?;
+    let mut results = Vec::with_capacity(hits.len());
+    for hit in hits {
+        // title 实时回填：BM25 命中自带；纯向量命中 title 留空——此处解密读
+        // note 元数据补全（改标题不触发重嵌，title 不入向量记录——见 S3a 注释）。
+        let title = if hit.title.is_empty() {
+            core.kv_store
+                .get(&format!("note:{}", hit.note_id))
+                .await
+                .ok()
+                .flatten()
+                .and_then(|bytes| unwrap_note_bytes(&core, &vault, &bytes).ok())
+                .and_then(|v| v.get("title").and_then(|t| t.as_str().map(String::from)))
+                .unwrap_or_default()
+        } else {
+            hit.title.clone()
+        };
+        results.push(serde_json::json!({
+            "note_id": hit.note_id,
+            "doc_id": hit.note_id, // 前端 CommandPalette 契约为 note_id——doc_id 为历史键，双写兼容
+            "title": title,
+            "score": hit.score,
+            "snippet": hit.snippet,
+            "source": format!("{:?}", hit.source), // Bm25 / Vector / Both（徽章数据面）
+        }));
+    }
+    let _ = total; // RRF 截断后 total 无分页语义（hybrid）；BM25 分页留后续卡
+
+    // ── DK-3.3 拼音首字母召回：query 为纯 ASCII 字母（≥2）时，按标题折叠
+    //    首字母串子序列比对补召回（Tantivy/jieba 不懂数拼音——索引期拼音化
+    //    为 v2 单列；此处运行时折叠，万级标题亚毫秒级）。
+    let q_trim = query.trim();
+    let is_pinyin_q =
+        !q_trim.is_empty() && q_trim.len() >= 2 && q_trim.chars().all(|c| c.is_ascii_alphabetic());
+    if is_pinyin_q {
+        let ql = q_trim.to_ascii_lowercase();
+        if let Ok(pairs) = core.kv_store.scan_prefix("note:").await {
+            for (k, bytes) in pairs {
+                let Some(id) = k.strip_prefix("note:").map(String::from) else {
+                    continue;
+                };
+                if results
+                    .iter()
+                    .any(|r| r.get("note_id").and_then(|v| v.as_str()) == Some(id.as_str()))
+                {
+                    continue; // 已被 BM25/向量召回——去重
+                }
+                let title = unwrap_note_bytes(&core, &vault, &bytes)
+                    .ok()
+                    .and_then(|v| v.get("title").and_then(|t| t.as_str().map(String::from)))
+                    .unwrap_or_default();
+                if title.is_empty() {
+                    continue;
+                }
+                let folded = aurora_core::pinyin::pinyin_initials(&title);
+                if is_subsequence(&ql, &folded) {
+                    results.push(serde_json::json!({
+                        "note_id": id.clone(),
+                        "doc_id": id, // 契约同上：note_id 主、doc_id 兼容
+                        "title": title,
+                        "score": 1.0,
+                        "snippet": String::new(),
+                        "source": "Pinyin",
+                    }));
+                }
+            }
+        }
+    }
+    Ok(results)
+}
+
+/// DK-3.3：ASCII 子序列判定（与前端 fuzzyMatch 的子序列语义一致）。
+fn is_subsequence(pattern: &str, target: &str) -> bool {
+    let mut it = target.chars();
+    pattern.chars().all(|pc| it.any(|tc| tc == pc))
+}
+
+/// 获取应用状态摘要（健康检查）。
+#[tauri::command]
+fn cmd_app_status() -> Result<serde_json::Value, String> {
+    let core = get_core()?;
+    let crypto_version = core.crypto.algorithm_version();
+    Ok(serde_json::json!({
+        "status": "healthy",
+        "platform": "desktop",
+        "crypto_version": crypto_version,
+        "workspace_id": DEFAULT_WORKSPACE_ID,
+    }))
+}
+
+// ── DesktopPlatform Trait（§30） ───────────────────────
+
+/// 桌面端平台能力 Trait。
+/// 由 Tauri 初始化时注入应用状态，提供原生桌面功能（菜单、托盘、剪贴板、快捷键）。
+pub trait DesktopPlatform: Send + Sync {
+    /// 设置应用托盘图标与菜单。
+    fn set_tray(&self, icon_path: &str, menu_items: Vec<TrayMenuItem>);
+    /// 注册全局快捷键。
+    fn register_shortcut(&self, accelerator: &str, callback: Box<dyn Fn() + Send>);
+    /// 设置应用菜单。
+    fn set_menu(&self, menu_spec: &str);
+    /// 读取剪贴板内容。
+    fn clipboard_read(&self) -> Result<String, String>;
+    /// 写入剪贴板内容。
+    fn clipboard_write(&self, text: &str) -> Result<(), String>;
+    /// 触发原生通知。
+    fn notify(&self, title: &str, body: &str);
+}
+
+/// 托盘菜单项。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TrayMenuItem {
+    pub id: String,
+    pub label: String,
+    pub accelerator: Option<String>,
+}
+
+/// Tauri v2 DesktopPlatform 实现（持有 AppHandle，接入应用生命周期）。
+pub struct TauriDesktopPlatform {
+    // 保留 AppHandle 供托盘/快捷键/通知等原生能力接入；
+    // 当前实现为接口就绪 + 日志占位（见各方法 TODO）。
+    #[allow(dead_code)]
+    app: tauri::AppHandle,
+}
+
+impl TauriDesktopPlatform {
+    pub fn new(app: tauri::AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl DesktopPlatform for TauriDesktopPlatform {
+    fn set_tray(&self, icon_path: &str, menu_items: Vec<TrayMenuItem>) {
+        // TODO: 接入 tauri::tray::TrayIconBuilder（需 bundle icon 资源就绪后启用）
+        info!(icon_path, ?menu_items, "set_tray requested");
+    }
+
+    fn register_shortcut(&self, accelerator: &str, _callback: Box<dyn Fn() + Send>) {
+        // TODO: 接入 tauri-plugin-global-shortcut
+        info!(accelerator, "register_shortcut requested");
+    }
+
+    fn set_menu(&self, menu_spec: &str) {
+        // TODO: 接入 tauri::menu::Menu
+        info!(menu_spec, "set_menu requested");
+    }
+
+    fn clipboard_read(&self) -> Result<String, String> {
+        // TODO: 接入 tauri-plugin-clipboard-manager
+        Ok(String::new())
+    }
+
+    fn clipboard_write(&self, text: &str) -> Result<(), String> {
+        // TODO: 接入 tauri-plugin-clipboard-manager
+        info!(len = text.len(), "clipboard_write requested");
+        Ok(())
+    }
+
+    fn notify(&self, title: &str, body: &str) {
+        // TODO: 接入 tauri-plugin-notification
+        info!(title, body, "notify requested");
+    }
+}
+
+// ── R10/Alpha 块级卡提取器单测 ──────────────────────────────────
+// （2026-10-26 desktop-check 存量债清偿：R14 已将 extract_block_cards 收敛进
+// extract_distill_cards 单一事实源——本 mod 引用已删函数成孤儿，heading/首段
+// 语义由 R14 测试面与 core sync_block_cards 测试覆盖，整段退役。）

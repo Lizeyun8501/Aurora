@@ -336,6 +336,32 @@ pub fn run() {
                 std::sync::Arc::new(aurora_sync::sync_gate::AlwaysUnmetered),
             )
             .map_err(box_err)?;
+            // B-06/T6: 同步状态桥——EventBus Low 发布监听→Tauri 事件
+            // （徽标 3s 内增量刷新;15s 轮询兜底不替换——防事件丢失僵死）。
+            {
+                let app_handle = app.handle().clone();
+                booted
+                    .core
+                    .event_bus
+                    .set_low_publish_listener(Some(Box::new(move |event| {
+                        if let aurora_core::event_bus::layered::AppEvent::SyncStateChanged {
+                            gate,
+                            queue_len,
+                            reason,
+                        } = event
+                        {
+                            let _ = tauri::Emitter::emit(
+                                &app_handle,
+                                "aurora:sync-state-changed",
+                                serde_json::json!({
+                                    "gate": gate,
+                                    "queue_len": queue_len,
+                                    "reason": reason,
+                                }),
+                            );
+                        }
+                    })));
+            }
             *VAULT_STATE.lock().expect("VAULT_STATE mutex poisoned") = Some(booted.vault.clone());
             *SYNC_GATE_STATE
                 .lock()

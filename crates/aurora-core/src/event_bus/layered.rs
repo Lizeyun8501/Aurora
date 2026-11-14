@@ -182,6 +182,16 @@ pub enum AppEvent {
         /// 同步笔记数。
         note_count: usize,
     },
+    /// B-06/T6: 同步状态变化（Low 通道——徽标增量刷新;轮询 15s 兜底不替换,
+    /// 防事件丢失致状态僵死）。发布点: drain/retry 完成/门禁切换。
+    SyncStateChanged {
+        /// 门禁决策（Allow/DeferUntilUnmetered——badge 三态同源）。
+        gate: String,
+        /// 变化后队列长度（增量刷新读数）。
+        queue_len: u32,
+        /// 变化缘由（drain_done/retry_done/gate_switch——审计可读）。
+        reason: String,
+    },
 }
 
 impl AppEvent {
@@ -199,7 +209,8 @@ impl AppEvent {
             AppEvent::NoteCreated { .. }
             | AppEvent::NoteDeleted { .. }
             | AppEvent::SnapshotRequested { .. }
-            | AppEvent::SyncCompleted { .. } => EventChannel::Low,
+            | AppEvent::SyncCompleted { .. }
+            | AppEvent::SyncStateChanged { .. } => EventChannel::Low,
         }
     }
 
@@ -218,6 +229,7 @@ impl AppEvent {
             AppEvent::NoteDeleted { .. } => "NoteDeleted",
             AppEvent::SnapshotRequested { .. } => "SnapshotRequested",
             AppEvent::SyncCompleted { .. } => "SyncCompleted",
+            AppEvent::SyncStateChanged { .. } => "SyncStateChanged",
         }
     }
 }
@@ -308,6 +320,9 @@ pub trait EventQueueStore: Send + Sync {
 ///
 /// 与单通道 [`super::EventBus`] 并存：旧代码继续走 `EventBus`，
 /// 新代码按 V19 语义走 `LayeredEventBus`。后续版本将统一迁移。
+/// B-06/T6: Low 通道发布监听回调（徽标桥——生命周期=进程,注入一次）。
+pub type LowPublishCallback = Box<dyn Fn(&AppEvent) + Send + Sync>;
+
 pub struct LayeredEventBus {
     /// High 通道（broadcast，lagged 即丢弃旧事件）。
     high_tx: broadcast::Sender<SequencedEvent>,
@@ -327,6 +342,8 @@ pub struct LayeredEventBus {
     medium_watermark: Arc<AtomicU64>,
     /// Medium 通道已发布到的最大 seq（发布期快照进 pre_medium_seq）。
     last_medium_seq: Arc<AtomicU64>,
+    /// B-06/T6: Low 发布监听（徽标桥——不占 take_low_receiver 单消费）。
+    low_publish_listener: RwLock<Option<LowPublishCallback>>,
     /// 持久化存储（可选；缺省时 Medium 事件崩溃后丢失并告警）。
     pub(crate) store: Option<Arc<dyn EventQueueStore>>,
 }
@@ -344,6 +361,7 @@ impl LayeredEventBus {
             low_tx,
             low_rx: RwLock::new(Some(low_rx)),
             seq: Arc::new(AtomicU64::new(1)),
+            low_publish_listener: RwLock::new(None),
             medium_backlog: Arc::new(AtomicU64::new(0)),
             medium_watermark: Arc::new(AtomicU64::new(0)),
             last_medium_seq: Arc::new(AtomicU64::new(0)),
@@ -400,6 +418,18 @@ impl LayeredEventBus {
                 }
             }
             EventChannel::Low => {
+                // B-06/T6: 发布监听注入（徽标增量桥——不占 take_low_receiver
+                // 单消费语义;catch_unwind 隔离回调 panic 不阻断总线）。
+                {
+                    let guard = self.low_publish_listener.read().unwrap();
+                    if let Some(cb) = guard.as_ref() {
+                        if let Err(e) = std::panic::catch_unwind(
+                            std::panic::AssertUnwindSafe(|| cb(&event)),
+                        ) {
+                            warn!("low publish listener panicked: {e:?}");
+                        }
+                    }
+                }
                 // V20 §3.2/§4.5: Low 事件同步持久化（channel='low'）—
                 // 投影（搜索索引/版本）崩溃后按自身水位线增量追赶。
                 // 注意：Low 不参与 Medium 重放语义（pending() 只返回 medium）。
@@ -427,6 +457,12 @@ impl LayeredEventBus {
     /// 订阅 High 通道（TodayView 等实时消费者）。
     pub fn subscribe_high(&self) -> broadcast::Receiver<SequencedEvent> {
         self.high_tx.subscribe()
+    }
+
+    /// B-06/T6: 注入 Low 通道发布监听（徽标桥——同步状态变化即时回调;
+    /// 不占 `take_low_receiver` 单消费语义,多注入后写覆盖前值）。
+    pub fn set_low_publish_listener(&self, cb: Option<LowPublishCallback>) {
+        *self.low_publish_listener.write().unwrap() = cb;
     }
 
     /// 接管 Medium 通道接收端（唯一消费者，保证顺序）。

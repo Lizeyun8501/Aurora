@@ -284,6 +284,17 @@ impl OfflineQueue {
     }
 
     /// 当前队列长度。
+    /// B-06/T4: 指定 doc 全部积压项 attempts+1（失败重试计数持久化——
+    /// 进程中断/重启不丢;单条 drain 失败路径调用,队列行原样零丢失）。
+    pub fn bump_attempts(&self, doc_id: &str) -> crate::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sync_queue SET attempts = attempts + 1 WHERE doc_id = ?1",
+            rusqlite::params![doc_id],
+        )?;
+        Ok(())
+    }
+
     pub fn len(&self) -> usize {
         let conn = self.conn.lock();
         conn.query_row("SELECT COUNT(*) FROM sync_queue", [], |r| r.get(0))

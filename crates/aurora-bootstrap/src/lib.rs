@@ -361,6 +361,19 @@ impl BootedApp {
         })?;
         self.sync_gate.set_wifi_only(on);
         info!(wifi_only = on, "sync gate wifi_only updated");
+        // B-06/T6: 门禁切换发布（Low 通道——徽标 3s 内增量刷新）
+        let gate = match self.sync_gate.evaluate() {
+            aurora_sync::sync_gate::GateDecision::Allow => "Allow".to_string(),
+            _ => "DeferUntilUnmetered".to_string(),
+        };
+        let queue_len = self.offline_queue.len() as u32;
+        self.core
+            .event_bus
+            .publish(aurora_core::event_bus::layered::AppEvent::SyncStateChanged {
+                gate,
+                queue_len,
+                reason: "gate_switch".to_string(),
+            });
         Ok(())
     }
 
