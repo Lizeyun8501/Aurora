@@ -246,14 +246,13 @@ pub async fn cmd_queue_drain() -> Result<DrainReportDto, String> {
             aurora_sync::sync_gate::GateDecision::Allow => "Allow".to_string(),
             _ => "DeferUntilUnmetered".to_string(),
         };
-        booted
-            .core
-            .event_bus
-            .publish(aurora_core::event_bus::layered::AppEvent::SyncStateChanged {
+        booted.core.event_bus.publish(
+            aurora_core::event_bus::layered::AppEvent::SyncStateChanged {
                 gate,
                 queue_len: booted.offline_queue.len() as u32,
                 reason: "drain_done".to_string(),
-            });
+            },
+        );
     }
     Ok(DrainReportDto {
         synced_docs: report.synced_docs,
@@ -307,14 +306,13 @@ pub async fn cmd_queue_retry(doc_id: String) -> Result<serde_json::Value, String
             aurora_sync::sync_gate::GateDecision::Allow => "Allow".to_string(),
             _ => "DeferUntilUnmetered".to_string(),
         };
-        booted
-            .core
-            .event_bus
-            .publish(aurora_core::event_bus::layered::AppEvent::SyncStateChanged {
+        booted.core.event_bus.publish(
+            aurora_core::event_bus::layered::AppEvent::SyncStateChanged {
                 gate,
                 queue_len: booted.offline_queue.len() as u32,
                 reason: "retry_done".to_string(),
-            });
+            },
+        );
     }
     Ok(serde_json::json!({
         "synced_docs": report.synced_docs,

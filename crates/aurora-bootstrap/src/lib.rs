@@ -367,13 +367,13 @@ impl BootedApp {
             _ => "DeferUntilUnmetered".to_string(),
         };
         let queue_len = self.offline_queue.len() as u32;
-        self.core
-            .event_bus
-            .publish(aurora_core::event_bus::layered::AppEvent::SyncStateChanged {
+        self.core.event_bus.publish(
+            aurora_core::event_bus::layered::AppEvent::SyncStateChanged {
                 gate,
                 queue_len,
                 reason: "gate_switch".to_string(),
-            });
+            },
+        );
         Ok(())
     }
 

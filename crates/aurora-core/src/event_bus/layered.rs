@@ -421,11 +421,11 @@ impl LayeredEventBus {
                 // B-06/T6: 发布监听注入（徽标增量桥——不占 take_low_receiver
                 // 单消费语义;catch_unwind 隔离回调 panic 不阻断总线）。
                 {
-                    let guard = self.low_publish_listener.read().unwrap();
+                    let guard = self.low_publish_listener.read();
                     if let Some(cb) = guard.as_ref() {
-                        if let Err(e) = std::panic::catch_unwind(
-                            std::panic::AssertUnwindSafe(|| cb(&event)),
-                        ) {
+                        if let Err(e) =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cb(&event)))
+                        {
                             warn!("low publish listener panicked: {e:?}");
                         }
                     }
@@ -462,7 +462,7 @@ impl LayeredEventBus {
     /// B-06/T6: 注入 Low 通道发布监听（徽标桥——同步状态变化即时回调;
     /// 不占 `take_low_receiver` 单消费语义,多注入后写覆盖前值）。
     pub fn set_low_publish_listener(&self, cb: Option<LowPublishCallback>) {
-        *self.low_publish_listener.write().unwrap() = cb;
+        *self.low_publish_listener.write() = cb;
     }
 
     /// 接管 Medium 通道接收端（唯一消费者，保证顺序）。
