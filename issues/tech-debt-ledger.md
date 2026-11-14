@@ -17,8 +17,8 @@
 
 | # | 债 | 来源 | 时机 | 备注 |
 |---|---|---|---|---|
-| T4 | 桌面单条队列 drain/重试（现仅全量） | DK-48 | 用户反馈驱动 | 无实现痕迹 |
-| T6 | 同步事件实时推送（现 15s 轮询） | DK-48 | EventBus 桥成熟后 | 时机条件未到 |
+| T4 | 桌面单条队列 drain/重试（现仅全量） | DK-48 | B-06 已消化（cmd_queue_retry+drain_one_doc_sync 既有;B-06 补 attempts 失败落库 bump_attempts） | 199b1ac |
+| T6 | 同步事件实时推送（现 15s 轮询） | DK-48 | B-06 已消化（SyncStateChanged Low 事件+listener 桥+Badge 三层实时化,15s 兜底保留） | 199b1ac |
 | T8 | **bench 基建**（与 RV-01 合流为一项：index-rebuild 基准，DoD 1k 重建<5s，首跑实证 20.4s=20ms/条；bench.yml 周跑或本地 --ignored） | 多卡挂账+DK03S3 | **待 token** | 合流对账完成：T8=RV-01 同源，不再重复挂账 |
 | C-① | CapabilityDenied token-None 占位语义 | 14c.1 | 与错误语义卡合流 | log/数据面路径已语义准确，仅 token-None 路径 |
 | C-ns | per-plugin namespace（L1 数据隔离，doc-id 强制前缀） | 14c.3 设计稿 | L1 权限模型立项时 | 14c 系列收官候选首位 |
