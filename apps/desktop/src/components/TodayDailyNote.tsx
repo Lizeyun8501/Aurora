@@ -40,8 +40,26 @@ export default function TodayDailyNote({ invoke, onOpenNote }: Props) {
       .catch(() => {});
   }, [invoke]);
 
+  /* A-12 ①: Auto 模式进视图自动 ensure（不跳转——笔记备好即止,打开仍由
+   * 用户点按;幂等=core daily_note_lock+KV daily_key——同日重复调用返回
+   * 同一篇,零重复笔记）。Manual 模式不自动建（用户显式打开才建——尊重
+   * 模式语义）。 */
+  const [readyId, setReadyId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!invoke || mode !== 'auto') return;
+    let cancelled = false;
+    invoke('cmd_daily_note_open', { date: todayIso() })
+      .then((r) => {
+        const res = r as { note_id: string | null };
+        if (!cancelled && res.note_id) setReadyId(res.note_id);
+      })
+      .catch(() => { /* off/降级静默——按钮路径兜底 */ });
+    return () => { cancelled = true; };
+  }, [invoke, mode]);
+
   const openToday = useCallback(async () => {
     if (!invoke) return;
+    if (readyId) { onOpenNote(readyId); return; }
     setOpenErr(null);
     try {
       const r = (await invoke('cmd_daily_note_open', { date: todayIso() })) as {
@@ -107,7 +125,7 @@ export default function TodayDailyNote({ invoke, onOpenNote }: Props) {
             cursor: 'pointer',
           }}
         >
-          📝 打开今日笔记
+          {readyId ? '📝 今日笔记已备好——打开' : mode === 'auto' ? '📝 打开今日笔记' : '📝 定位/创建今日笔记'}
         </button>
         <select
           value={mode}

@@ -60,13 +60,41 @@ export default function QuickCapture({ invoke, onClose }: Props) {
     return () => clearTimeout(timer);
   }, [text, invoke]);
 
-  const save = useCallback(async () => {
+  /* A-12 ②: 落点双通道——默认当日 journal（10-21 设计审阅裁决:快速捕获
+   * 落当日 journal 而非 #capture 页）;「捕获到 Inbox」保留旧路径（不破坏
+   * 既有用户习惯——工单原文）。daily 链=ensure_daily_note（Auto 幂等建）→
+   * cmd_get_note 读 content→时间戳引块追加（landShare 惯例格式）→
+   * cmd_update_note 写回（WritePath 正门,禁绕过）。 */
+  const save = useCallback(async (target: 'daily' | 'inbox' = 'daily') => {
     const t = text.trim();
     if (!t || busy) return;
     setBusy(true);
     setErr(null);
     const firstLine = t.split('\n')[0].trim().slice(0, 60) || '快速捕获';
     try {
+      if (target === 'daily') {
+        const now = new Date();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const dd = String(now.getDate()).padStart(2, '0');
+        const date = `${now.getFullYear()}-${mm}-${dd}`;
+        const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const dr = (await invoke('cmd_daily_note_open', { date })) as {
+          note_id: string | null;
+        };
+        if (!dr.note_id) {
+          setErr('每日笔记已关闭（模式 off）——改用「捕获到 Inbox」或开启每日笔记');
+          return;
+        }
+        const frag = `> ⚡ [快速捕获] ${time}\n> ${t.replace(/\n/g, '\n> ')}`;
+        const prev = ((await invoke('cmd_get_note', { id: dr.note_id })) as {
+          content?: string;
+        } | null)?.content ?? '';
+        const next = `${prev}${prev.endsWith('\n') || prev === '' ? '' : '\n'}\n${frag}\n`;
+        await invoke('cmd_update_note', { note_id: dr.note_id, content: next });
+        setMsg('已落当日笔记（journal）');
+        setTimeout(onClose, 500);
+        return;
+      }
       const r = (await invoke('cmd_import_share', {
         code: btoa(
           unescape(
@@ -83,7 +111,7 @@ export default function QuickCapture({ invoke, onClose }: Props) {
       if (r.note_id) {
         // #capture 标签（追加语义——失败静默不阻断）
         invoke('cmd_set_note_tags', { noteId: r.note_id, tags: ['capture'] }).catch(() => {});
-        setMsg('已捕获（#capture）');
+        setMsg('已捕获（#capture Inbox）');
         setTimeout(onClose, 500);
       } else {
         setErr('捕获失败：无返回 note_id');
@@ -123,7 +151,7 @@ export default function QuickCapture({ invoke, onClose }: Props) {
         <div style={{ fontSize: 13, color: tokens.color.textSecondary, marginBottom: 6 }}>
           快速捕获{' '}
           <span style={{ color: tokens.color.textDisabled }}>
-            （Alt+Shift+N 唤起 · Cmd/Ctrl+Enter 保存 · Esc 关闭 · 落 #capture）
+            （Alt+Shift+N 唤起 · Cmd/Ctrl+Enter 落当日笔记 · Esc 关闭）
           </span>
         </div>
         {/* R4-3：镜像高亮层——textarea 透明化叠于高亮 div 之上（同字体/
@@ -178,7 +206,7 @@ export default function QuickCapture({ invoke, onClose }: Props) {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
-                void save();
+                void save('daily');
               }
               if (e.key === 'Escape') onClose();
             }}
@@ -230,10 +258,26 @@ export default function QuickCapture({ invoke, onClose }: Props) {
         {msg && (
           <div style={{ color: tokens.color.primaryBright, fontSize: 13, marginTop: 4 }}>{msg}</div>
         )}
-        <div style={{ textAlign: 'right', marginTop: 6 }}>
+        <div style={{ textAlign: 'right', marginTop: 6, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button
             disabled={busy || !text.trim()}
-            onClick={() => void save()}
+            onClick={() => void save('inbox')}
+            title="保留旧通道——新笔记+#capture 标签（Inbox 收集习惯）"
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.16)',
+              borderRadius: tokens.radius.sm,
+              color: tokens.color.textSecondary,
+              cursor: busy || !text.trim() ? 'not-allowed' : 'pointer',
+              padding: '4px 14px',
+              fontSize: 13,
+            }}
+          >
+            捕获到 Inbox
+          </button>
+          <button
+            disabled={busy || !text.trim()}
+            onClick={() => void save('daily')}
             style={{
               background: tokens.color.primary,
               border: 'none',
@@ -244,7 +288,7 @@ export default function QuickCapture({ invoke, onClose }: Props) {
               fontSize: 13,
             }}
           >
-            {busy ? '…' : '捕获'}
+            {busy ? '…' : '落今日笔记'}
           </button>
         </div>
       </div>
