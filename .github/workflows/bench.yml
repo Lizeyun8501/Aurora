@@ -20,7 +20,31 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.91
       - name: Run perf baseline (release, ignored)
-        run: cargo test --release -p aurora-core --test perf_baseline -- --ignored --nocapture
+        run: cargo test --release -p aurora-core --test perf_baseline -- --ignored --nocapture 2>&1 | tee perf_run.log
+      - name: Regression gate (>10% degrade — warn only, non-blocking)
+        # B-08: 任一指标劣化 >10% 报警不阻断（先观察一版——卡面明确非阻断门）。
+        # 基线锚点: perf-baseline.md 首跑+复跑（本地口径）;runner 口径有差 →
+        # 差异也只 warning,连续两周超限才建议开卡。
+        if: always()
+        run: |
+          echo "=== regression check vs baseline (warn-only) ==="
+          BASE_REBUILD_MS=2086; BASE_P50=1.04; BASE_P99=4.84
+          grab() { grep -oE "$2" "$1" | head -1 | grep -oE '[0-9]+[.][0-9]+' | head -1; }
+          RUN_REBUILD=$(grab perf_run.log 'rebuild[^0-9]*[0-9]+[.]?[0-9]*[[:space:]]*ms' || true)
+          RUN_P50=$(grab perf_run.log 'P50[^0-9]*[0-9]+[.]?[0-9]*[[:space:]]*ms' || true)
+          RUN_P99=$(grab perf_run.log 'P99[^0-9]*[0-9]+[.]?[0-9]*[[:space:]]*ms' || true)
+          check() {
+            if [ -z "$3" ]; then echo "::warning title=perf-gate/$1::run 未解析到 $1（格式漂移?人工核 artifact）"; return; fi
+            LIMIT=$(python3 -c "print(round($2 * 1.10, 3))")
+            if python3 -c "import sys; sys.exit(0 if float('$3') > float('$LIMIT') else 1)"; then
+              echo "::warning title=perf-gate/$1::劣化>10%: base=$2 run=$3 limit=$LIMIT — 非阻断;连续两周超限建议开卡"
+            else
+              echo "$1: base=$2 run=$3 — within +10%"
+            fi
+          }
+          check rebuild_10k "$BASE_REBUILD_MS" "$RUN_REBUILD"
+          check search_p50 "$BASE_P50" "$RUN_P50"
+          check search_p99 "$BASE_P99" "$RUN_P99"
       - name: Archive output
         if: always()
         uses: actions/upload-artifact@v4
@@ -28,4 +52,5 @@ jobs:
           name: perf-baseline-${{ github.run_id }}
           path: |
             **/perf_baseline*
+            perf_run.log
           retention-days: 90

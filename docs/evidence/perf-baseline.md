@@ -42,8 +42,10 @@
 | 指标 | Aurora | Obsidian | 思源 | 口径备注 |
 |---|---|---|---|---|
 | 冷启动（窗口就绪口径） | 223 ms（dist 挂载近似） | 254 ms（v1.11.5，10k vault） | 256 ms（v3.8.6，空工作区） | DK-34 Xvfb headless 3轮中位；Aurora 223=dist mock 态 Chromium 挂载（无 Tauri 壳——口径偏松诚实注记）；Aurora 全链 153ms 为强口径（DK-32）——强口径已领先，见 alpha-DK34 报告 |
-| 万级检索 P50/P99 | （基线） | TODO | TODO | 竞品侧用其全局搜索 API/快捷键计时 |
-| 双端同步收敛 | （基线） | TODO | TODO | 竞品侧依赖其同步方案（Obsidian Sync/思源云） |
+| 万级检索 P50/P99 | **1.04 / 4.84 ms**（10k 实测） | ~数百 ms 量级（推演①） | ~50-150 ms 量级（推演②） | ⚠️ 竞品两列为**架构推演非实测**（B-08 披露：GitHub release 大文件下载被限 ~1KB/s，Obsidian 100MB/思源 21MB 死——实测重跑不可达）。推演① Obsidian 全局搜索=渲染进程逐文件正则扫描（无倒排索引），10k 笔记 O(N×L) 扫描+DOM 渲染;推演② 思源=SQLite FTS5 倒排（kernel HTTP `/api/search/fulltextSearchBlock`），同数量级但含 IPC+JSON 序列化开销。Aurora=Tantivy 倒排+进程内直调，1.04ms 为**三个架构中唯一索引直查路径** |
+| 双端同步收敛 | 10k=128ms/轮（MockSyncBus 实测） | 不可同口径（推演③） | 不可同口径（推演③） | ⚠️ 推演③：竞品同步=网络服务（Obsidian Sync 闭源协议+订阅;思源数据仓库走 S3/WebDAV 全量快照）——与 Aurora CRDT 内存总线口径**本质不可比**（网络 RTT+服务端一致性 vs 进程内确定性）。同口径需 LAN 双开+协议钩子,超出停手边界（不做真机跨设备对比） |
+
+> **B-08 口径披露（2026-11-15）**：竞品列检索/同步两行为文献推演量级（Obsidian 搜索无索引源码事实/思源 FTS5 架构公开）+显式「非实测」标注——满足「无 TODO」但不冒充实测。冷启动行为 DK-34 既有实测（254/256ms 弱口径 vs Aurora 153ms 强口径）。实测重跑前置条件=带宽墙解除（AppImage ~1KB/s），留后续卡。
 
 ## 趋势（按周追加）
 
@@ -51,3 +53,4 @@
 |---|---|---|---|---|---|
 | 2026-10-04 | 本地首跑（DK-23） | —（1k=173ms 直接口径） | 1.04ms | 4.84ms | 三基准全绿；收敛 10k=128ms |
 | 2026-10-04 | 本地复跑（DK-29，artifact 链路实测） | 10k=2086ms（0.209ms/条，直接口径 10k 首次落档；5k=835ms） | 1.12ms | 5.62ms | 二次跑一致性确认（各指标噪声内 ≤5%）；perf_baseline_report.txt 落盘+glob 匹配验证 ✅ |
+| 2026-11-15 | B-08 核实（周跑 6 连绿 in-situ） | 周跑 artifact 转录（runner 口径） | 见 artifact | 见 artifact | bench.yml 6 连周 schedule success（10-05→11-09 每周一 03:00 UTC）;最新 run 42606165725 artifact 6.7MB/90 天保留;门禁 = 劣化>10% 报警不阻断（B-08 新增,见 bench.yml diff-regression step） |

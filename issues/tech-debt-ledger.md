@@ -19,7 +19,7 @@
 |---|---|---|---|---|
 | T4 | 桌面单条队列 drain/重试（现仅全量） | DK-48 | B-06 已消化（cmd_queue_retry+drain_one_doc_sync 既有;B-06 补 attempts 失败落库 bump_attempts） | 199b1ac |
 | T6 | 同步事件实时推送（现 15s 轮询） | DK-48 | B-06 已消化（SyncStateChanged Low 事件+listener 桥+Badge 三层实时化,15s 兜底保留） | 199b1ac |
-| T8 | **bench 基建**（与 RV-01 合流为一项：index-rebuild 基准，DoD 1k 重建<5s，首跑实证 20.4s=20ms/条；bench.yml 周跑或本地 --ignored） | 多卡挂账+DK03S3 | **待 token** | 合流对账完成：T8=RV-01 同源，不再重复挂账 |
+| T8 | **bench 基建**（与 RV-01 合流为一项：index-rebuild 基准，DoD 1k 重建<5s，首跑实证 20.4s=20ms/条；bench.yml 周跑或本地 --ignored） | 多卡挂账+DK03S3 | **B-08 已消化**：周跑 6 连周 schedule success（10-05→11-09）+artifact 90 天保留实证（run 42606165725）+回归门禁 step 新增（>10% warn-only 非阻断） | B-08 199b1ac 后续:本次 2026-11-15 |
 | C-① | ~~CapabilityDenied token-None 占位语义~~ **关账（B-07 2026-11-15）** | 14c.1 | — | 全路径核验：init/handle-event token-None→denied+审计行（wasm_runtime.rs:949/986）;guest 面 table.get miss→granted=false→CapabilityDenied——无 None 假装通过路径 |
 | C-ns | ~~per-plugin namespace（L1 数据隔离，doc-id 强制前缀）~~ **关账（B-07 2026-11-15）** | 14c.3 设计稿 | — | DK-16 L1 已落（storage_guard 第二环 `{id}:` 前缀+CapabilityDenied+query 键集过滤+share 授权面）;B-07 补 legacy 无前缀只读回退一版+host-invoked 容量 guard 审计行;前缀形 `{id}:` 保持（share split-once 语义依赖——工单 `plugin:{id}:` 形不采用,披露） |
 
