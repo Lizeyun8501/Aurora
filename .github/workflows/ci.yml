@@ -298,12 +298,14 @@ jobs:
           npm ci --no-audit --no-fund 2>&1 | tail -3
           cd apps/desktop && npx vite build 2>&1 | tail -3
           test -f dist/index.html || { echo "dist/index.html missing after build"; exit 3; }
-      # 2026-09-25: loro 系 C++ 编译内存峰值 → 加 4G swap 兜底 + 削并行度。
+      # 2026-09-25: loro 系 C++ 编译内存峰值 → 加 swap 兜底 + 削并行度。
+      # 2026-11-15（B-05 帧观察）: B-06 帧起连红 OOM（ce52696 绿→ec5c26f 红
+      # 三帧分离——workspace 增长越过 4G swap 余量线）→ 8G。
       - name: Add swap
         run: |
           sudo swapoff -a || true
           sudo rm -f /mnt/swapfile
-          sudo fallocate -l 4G /mnt/swapfile
+          sudo fallocate -l 8G /mnt/swapfile
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
