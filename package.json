@@ -7,6 +7,7 @@
     "shared/*"
   ],
   "devDependencies": {
-    "@testing-library/dom": "^10.4.2"
+    "@testing-library/dom": "^10.4.2",
+    "playwright": "^1.62.1"
   }
 }

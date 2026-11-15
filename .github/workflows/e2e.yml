@@ -35,9 +35,7 @@ jobs:
       - name: Build mobile dist
         run: npm run build -w apps/mobile
       - name: Install Playwright chromium
-        run: |
-          npm i -g playwright
-          npx playwright install chromium --with-deps
+        run: npx playwright install chromium --with-deps
       - name: Run E2E top-paths
         run: node scripts/tests/e2eTopPaths.mjs
       - name: TS coverage baseline（编辑器门禁基线——数字入 summary）

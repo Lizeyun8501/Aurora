@@ -15,12 +15,12 @@
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import path from 'path';
-// PW 解析: 本机全局包（CI 走 npm i playwright 后 node_modules 就近解析）
+// PW 解析: 仓内 node_modules 优先（root devDep——CI/本机同路）;本机全局包兜底
 let chromium;
 try {
-  ({ chromium } = createRequire('/home/z/.npm-global/lib/node_modules/playwright/')('playwright'));
-} catch {
   ({ chromium } = createRequire(import.meta.url)('playwright'));
+} catch {
+  ({ chromium } = createRequire('/home/z/.npm-global/lib/node_modules/playwright/')('playwright'));
 }
 
 /* dist 路径仓相对解析（CI 可移植——AURORA_E2E_BASE 可覆写） */
