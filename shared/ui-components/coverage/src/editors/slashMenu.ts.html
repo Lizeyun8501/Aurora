@@ -1,0 +1,298 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/editors/slashMenu.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/editors</a> slashMenu.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">7.4% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>4/54</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/0</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/3</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">7.4% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>4/54</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
+ * 斜杠命令菜单（E23 · 思源笔记 UX 之魂——自研实现,零 AGPL 代码）
+ * 触发: 空行行首或空格后键入「/」→弹出块/插入全集菜单;后续字符过滤;Esc/删「/」关。
+ * 实现: ProseMirror plugin decorations（PM 权威路径,与 React 渲染解耦）+
+ * handleTextInput 触发态机;菜单点击/Enter 项=插入对应块/内容+删语法。
+ */
+import { Plugin, PluginKey } from 'prosemirror-state';
+import type { EditorView } from 'prosemirror-view';
+import { insertBlock } from './insertCommands';
+&nbsp;
+export const slashMenuKey = new PluginKey('auroraSlashMenu');
+&nbsp;
+/** 菜单项（思源式全集——Aurora schema 适配） */
+export interface SlashItem { id: string; label: string; hint: string; glyph: string; apply: (view: EditorView) =&gt; boolean }
+&nbsp;
+export <span class="fstat-no" title="function not covered" >function slashItems(): SlashItem[] {</span>
+<span class="cstat-no" title="statement not covered" >  return [</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'h1', label: '一级标题', hint: 'H1', glyph: 'H₁', apply: (v) =&gt; insertBlock(v, 'h1') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'h2', label: '二级标题', hint: 'H2', glyph: 'H₂', apply: (v) =&gt; insertBlock(v, 'h2') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'h3', label: '三级标题', hint: 'H3', glyph: 'H₃', apply: (v) =&gt; insertBlock(v, 'h3') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'bullet', label: '无序列表', hint: '• 列表', glyph: '•', apply: (v) =&gt; insertBlock(v, 'bullet') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'ordered', label: '有序列表', hint: '1. 列表', glyph: '1.', apply: (v) =&gt; insertBlock(v, 'ordered') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'task', label: '任务列表', hint: '☑ 待办', glyph: '☑', apply: (v) =&gt; insertBlock(v, 'task') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'quote', label: '引用块', hint: '❝ 引述', glyph: '❝', apply: (v) =&gt; insertBlock(v, 'quote') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'code', label: '代码块', hint: '&lt;/&gt; 代码', glyph: '⌨', apply: (v) =&gt; insertBlock(v, 'code') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'table', label: '表格', hint: '▦ 表格', glyph: '▦', apply: (v) =&gt; insertBlock(v, 'table') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'divider', label: '分割线', hint: '— 分隔', glyph: '—', apply: (v) =&gt; insertBlock(v, 'divider') },</span>
+    // E24（TA 22:13）: 容器/媒体块——h4-6/提示/超级/页签/思维导图
+<span class="cstat-no" title="statement not covered" >    { id: 'h4', label: '四级标题', hint: 'H4', glyph: 'H₄', apply: (v) =&gt; insertBlock(v, 'h4') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'h5', label: '五级标题', hint: 'H5', glyph: 'H₅', apply: (v) =&gt; insertBlock(v, 'h5') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'h6', label: '六级标题', hint: 'H6', glyph: 'H₆', apply: (v) =&gt; insertBlock(v, 'h6') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'callout', label: '提示块', hint: '❝ 提示', glyph: '❝', apply: (v) =&gt; insertBlock(v, 'callout') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'super-h', label: '横向超级块', hint: '▤ 横排', glyph: '▤', apply: (v) =&gt; insertBlock(v, 'super-h') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'super-v', label: '纵向超级块', hint: '▥ 纵排', glyph: '▥', apply: (v) =&gt; insertBlock(v, 'super-v') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'tabs', label: '页签块', hint: '⧉ 页签', glyph: '⧉', apply: (v) =&gt; insertBlock(v, 'tabs') },</span>
+<span class="cstat-no" title="statement not covered" >    { id: 'mindmap', label: '思维导图块', hint: '🌲 导图', glyph: '🌲', apply: (v) =&gt; insertBlock(v, 'mindmap') },</span>
+<span class="cstat-no" title="statement not covered" >  ];</span>
+<span class="cstat-no" title="statement not covered" >}</span>
+&nbsp;
+/** 触发判定: 行首或空格后的「/」——思源语义（段中无空格 / 不触发防 URL 路径误伤） */
+<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >function shouldTriggerSlash(textBefore: string, text: string): boolean {</span></span>
+<span class="cstat-no" title="statement not covered" >  return text === '/' &amp;&amp; (textBefore.length === 0 || /\s$/.test(textBefore));</span>
+<span class="cstat-no" title="statement not covered" >}</span>
+&nbsp;
+export <span class="fstat-no" title="function not covered" >function slashMenuPlugin(onOpenChange: (open: boolean, query: string, pos: number) =&gt; void): Plugin {</span>
+<span class="cstat-no" title="statement not covered" >  return new Plugin({</span>
+<span class="cstat-no" title="statement not covered" >    key: slashMenuKey,</span>
+<span class="cstat-no" title="statement not covered" >    props: {</span>
+<span class="cstat-no" title="statement not covered" >      handleTextInput(view, from, _to, text) {</span>
+<span class="cstat-no" title="statement not covered" >        if (view.composing) return false;</span>
+<span class="cstat-no" title="statement not covered" >        const $from = view.state.doc.resolve(from);</span>
+<span class="cstat-no" title="statement not covered" >        if ($from.parent.type.spec.code) return false;</span>
+<span class="cstat-no" title="statement not covered" >        const before = $from.parent.textBetween(Math.max(0, $from.parentOffset - 200), $from.parentOffset, null, '\uFFFC');</span>
+<span class="cstat-no" title="statement not covered" >        if (shouldTriggerSlash(before, text)) {</span>
+<span class="cstat-no" title="statement not covered" >          onOpenChange(true, '', from + 1);</span>
+<span class="cstat-no" title="statement not covered" >        }</span>
+<span class="cstat-no" title="statement not covered" >        return false;</span>
+<span class="cstat-no" title="statement not covered" >      },</span>
+<span class="cstat-no" title="statement not covered" >      handleKeyDown(view, e) {</span>
+<span class="cstat-no" title="statement not covered" >        const state = slashMenuKey.getState(view.state);</span>
+<span class="cstat-no" title="statement not covered" >        if (!state || !state.open) return false;</span>
+<span class="cstat-no" title="statement not covered" >        if (e.key === 'Escape') { onOpenChange(false, '', 0); return false; }</span>
+<span class="cstat-no" title="statement not covered" >        return false;</span>
+<span class="cstat-no" title="statement not covered" >      },</span>
+<span class="cstat-no" title="statement not covered" >    },</span>
+<span class="cstat-no" title="statement not covered" >    state: {</span>
+<span class="cstat-no" title="statement not covered" >      init: () =&gt; ({ open: false }),</span>
+<span class="cstat-no" title="statement not covered" >      apply(tr, prev) { const m = tr.getMeta(slashMenuKey); return { open: m?.open ?? prev.open }; },</span>
+<span class="cstat-no" title="statement not covered" >    },</span>
+<span class="cstat-no" title="statement not covered" >  });</span>
+<span class="cstat-no" title="statement not covered" >}</span>
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-11-15T03:17:21.580Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

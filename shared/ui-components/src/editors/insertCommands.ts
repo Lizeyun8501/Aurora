@@ -212,9 +212,12 @@ export function moveBlock(view: EditorView, dir: -1 | 1): boolean {
   const hi = dir === 1 ? b : a;
   const rangeStart = lo.pos;
   const rangeEnd = hi.pos + hi.node.nodeSize;
-  const tr = state.tr.delete(rangeStart, rangeEnd);
-  // swap = 两块顺序反转（A 前 B 后 → B 前 A 后）
-  tr.insert(rangeStart, hi.node).insert(rangeStart + hi.node.nodeSize, lo.node);
+  /* R19-⑤b 根因修复（482ec2a 原案——B-05 全量测试抓回归后恢复）: 旧实现
+   * delete 全区间后 PM 对「空 doc」自动补一个空 paragraph（doc content
+   * block+ 非空保证）,insert 两块后尾部多空 P。E 系卡改动期曾回退本修复
+   * （B-05 moveBlock 旧测两红实锤）。改一步原子 replaceWith——无空 doc
+   * 中间态,PM 不触发补段。 */
+  const tr = state.tr.replaceWith(rangeStart, rangeEnd, [hi.node, lo.node]);
   // 选区锚到移动块（a 块）新起点
   const newSelfPos = dir === 1 ? rangeStart + hi.node.nodeSize : rangeStart;
   tr.setSelection(TextSelection.near(tr.doc.resolve(newSelfPos)));

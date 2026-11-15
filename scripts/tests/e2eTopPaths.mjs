@@ -13,10 +13,20 @@
  *  vitest 锚（manifest 表格化,防「零 E2E」误判重现）。
  */
 import { createRequire } from 'module';
-const req = createRequire('/home/z/.npm-global/lib/node_modules/playwright/');
-const { chromium } = req('playwright');
+import { fileURLToPath } from 'url';
+import path from 'path';
+// PW 解析: 本机全局包（CI 走 npm i playwright 后 node_modules 就近解析）
+let chromium;
+try {
+  ({ chromium } = createRequire('/home/z/.npm-global/lib/node_modules/playwright/')('playwright'));
+} catch {
+  ({ chromium } = createRequire(import.meta.url)('playwright'));
+}
 
-const BASE = process.env.AURORA_E2E_BASE ?? 'file:///home/z/my-project/Aurora/apps/mobile/dist/index.html';
+/* dist 路径仓相对解析（CI 可移植——AURORA_E2E_BASE 可覆写） */
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const BASE = process.env.AURORA_E2E_BASE
+  ?? 'file://' + path.join(repoRoot, 'apps', 'mobile', 'dist', 'index.html');
 const results = [];
 const ok = (n, cond, d = '') => { results.push({ n, cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${n}${d ? ': ' + d : ''}`); };
 

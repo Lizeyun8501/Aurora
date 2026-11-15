@@ -1,0 +1,54 @@
+# B-05（TA 2026-11-14 09:01 工单）: E2E TOP 路径套件 + TS 覆盖率基线
+#
+# 触发: 相关路径 push（快速反馈）+ 每周一 03:00 UTC 全量 + 手动。
+# 形态: apps/mobile vite 构建 → Playwright chromium file:// 驱动
+# （mock 平台 localStorage——零服务依赖）;TS 覆盖率（vitest coverage-v8）
+# 输出为 job summary（基线追踪——门禁值经评审后另行启用 enforce）。
+#
+# 诚实边界: PW 断言过≠真机可用（E25/E26 教训——原生面另有 cargo/javac 验证）。
+name: E2E
+
+on:
+  push:
+    paths:
+      - 'apps/mobile/**'
+      - 'shared/ui-components/**'
+      - 'scripts/tests/**'
+      - '.github/workflows/e2e.yml'
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    name: E2E top-paths + TS coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install deps (workspaces)
+        run: npm ci
+      - name: Build mobile dist
+        run: npm run build -w apps/mobile
+      - name: Install Playwright chromium
+        run: |
+          npm i -g playwright
+          npx playwright install chromium --with-deps
+      - name: Run E2E top-paths
+        run: node scripts/tests/e2eTopPaths.mjs
+      - name: TS coverage baseline（编辑器门禁基线——数字入 summary）
+        run: |
+          cd shared/ui-components
+          npx vitest run --coverage 2>&1 | tee /tmp/cov.log
+          {
+            echo '## TS 覆盖率基线（B-05）'
+            echo '```'
+            grep -E '^(All files| src/(editors|blocks|schema|theme|stores|views|layouts|hooks))' /tmp/cov.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Roundtrip property 压力（5000 用例——DoD 1000 五倍冗余）
+        run: cd shared/ui-components && ROUNDTRIP_CASES=5000 npx vitest run src/__tests__/b05RoundtripProperty.test.ts

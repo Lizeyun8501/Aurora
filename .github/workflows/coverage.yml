@@ -1,0 +1,54 @@
+# B-05（TA 2026-11-14 09:01 工单）: Rust core 覆盖率基线（llvm-cov）
+#
+# 触发: 每周日 03:00 UTC + 手动（全量插桩编译 ~40min——不进 push 主链,
+# 基线周追踪;门禁 enforce 待数字稳定+评审确认后启用）。
+# 范围: workspace 除 aurora-desktop（GTK 链）与三 guest（wasm 交叉域）
+# ——与 ci.yml Test (stable) 同排除集。
+name: Coverage (Rust)
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+jobs:
+  coverage:
+    name: cargo llvm-cov baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space（ci.yml 同款——runner 盘清）
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            /usr/lib/jvm /usr/share/gradle /opt/microsoft/powershell || true
+          sudo docker image prune --all --force || true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Run coverage（workspace 排除集同 CI Test）
+        run: |
+          cargo llvm-cov --workspace \
+            --exclude aurora-desktop \
+            --exclude plugin-hello-guest \
+            --exclude plugin-wordcount-guest \
+            --exclude plugin-auditlog-guest \
+            --lcov --output-path lcov.info \
+            --summary-only 2>&1 | tee /tmp/cov-rust.log || true
+      - name: Baseline summary
+        run: |
+          {
+            echo '## Rust 覆盖率基线（B-05——周追踪）'
+            echo '```'
+            grep -E 'TOTAL|aurora-core|aurora-sync' /tmp/cov-rust.log | tail -20 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov-report
+          path: lcov.info
+          if-no-files-found: ignore
