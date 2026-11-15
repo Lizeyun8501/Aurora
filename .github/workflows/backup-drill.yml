@@ -1,0 +1,43 @@
+# B-09（TA 2026-11-16 07:21 工单）: DK-17 备份演练常态化——周跑通道
+#
+# V26 DK-17 口径: RPO ≤1h / RTO ≤15min / **每周完整性校验**。
+# 原状: scripts/dk17_drill.sh 存在但零调用（CI/定时均无——B-09 勘察实证）。
+# 本通道: 每周日 04:00 UTC + 备份面路径 push + 手动;结果 artifact 90 天保留。
+# 停手边界: 不改备份格式、不改 RPO/RTO 目标值（纯调度挂接）。
+# 本地基线记录: docs/evidence/dk17_drill_20261116.md（入仓——CI 侧为持续通道）。
+name: Backup drill
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'
+  push:
+    paths:
+      - 'crates/aurora-core/src/backup.rs'
+      - 'crates/aurora-bootstrap/src/**'
+      - 'scripts/dk17_drill.sh'
+      - '.github/workflows/backup-drill.yml'
+  workflow_dispatch:
+
+jobs:
+  drill:
+    name: DK-17 backup drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Run drill（备份三测试+bootstrap 水位）
+        run: |
+          mkdir -p /tmp/evidence
+          bash scripts/dk17_drill.sh 2>&1 | tee /tmp/evidence/dk17_drill_$(date -u +%Y%m%dT%H%M%SZ).log
+      - name: Upload drill result（90 天保留——B-08 同口径）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dk17-drill-log
+          path: /tmp/evidence/
+          retention-days: 90
+          if-no-files-found: ignore

@@ -239,6 +239,15 @@ jobs:
           echo "::error::iroh-oom>> $(sudo dmesg 2>/dev/null | rg -i 'oom|killed process' | tail -4 | tr '\n' '§' || echo none)"
           echo "::error::iroh-raw-tail>> $(tail -c 1500 /tmp/iroh-test-retry.log /tmp/iroh-test.log 2>/dev/null | tr '\n' '§' | tr '\r' ' ')"
 
+  docs-index:
+    name: Docs index (零断链)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: README 文档索引自检
+        run: bash scripts/check-doc-index.sh
+
   msrv:
     name: MSRV (1.91)
     runs-on: ubuntu-latest

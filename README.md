@@ -99,7 +99,9 @@ cargo +1.91 build -p aurora-mobile-ffi --release --target aarch64-linux-android
 | `docs/adr/ADR-004` | 权威源三阶段与投影自愈 |
 | `docs/DK-05M-V-验证报告.md` | WebView 输入时序验证（GO 判定 + 万字 60fps） |
 | `issues/v26_issue清单.md` | V26 迭代任务卡（DK/RV 编号体系） |
-| `AGENTS.md` | 工作区协作规范 |
+| `AGENTS.md` | 工作区协作规范（五条铁律） |
+| `IDENTITY.md` | 仓库身份与版本约定 |
+| `docs/evidence/dk17_drill_20261116.md` | 备份恢复演练最近记录（周跑通道 `.github/workflows/backup-drill.yml`） |
 
 ## 迭代进度
 
