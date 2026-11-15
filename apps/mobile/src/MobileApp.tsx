@@ -285,8 +285,11 @@ export default function App() {
     try { setEvents(platform.listEvents()); } catch { /* 降级保旧态 */ }
   };
 
-  if (!ready) return <SplashScreen />;
-
+  /* B-05 E2E 抓 P0 修复: 早退门原在此（useState 声明流中段）——A-04/A-06/
+   * A-10 三卡将 hooks 加在门后,ready 翻转即 hook 数变化 → React #310
+   * 「Rendered more hooks」→ 生产构建启动即崩（E2E 断档期隐性回归）。
+   * 修: 门移至全部 hooks 之后（tabletSplit useMemo 毕）——SplashScreen
+   * 语义零变（首帧仍闪屏）。 */
   const updateTasks = (ts: Task[]) => { setTasks(ts); saveTasks(ts); };
 
   /* A-06: intent 消费（拉模式——三触发: 挂载/resume(visibilitychange)/Java 推事件）。
@@ -519,6 +522,9 @@ export default function App() {
         right={renderEditor(() => { snippetCache.delete(editing!.id); setEditing(null); })}
       />
     ) : null;
+
+  /* B-05: ready 门（hooks 全毕——见上注释） */
+  if (!ready) return <SplashScreen />;
 
   return (
     <div className="app-shell">

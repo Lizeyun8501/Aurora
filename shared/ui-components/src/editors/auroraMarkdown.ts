@@ -114,10 +114,14 @@ export function mdToNodes(schema: AnySchema, text: string): ProseNode[] {
       i++;
       while (i < lines.length && !FENCE_RE.test(lines[i])) { body.push(lines[i]); i++; }
       i++; // 跳过闭合 fence（无闭合则到尾）
+      /* B-05 property 测试抓真 bug: 空 code_block（无内容）序列化为
+       * ```lang\n\n``` → body=[''] → join='' → schema.text('') 抛
+       * "Empty text nodes"（空块保存后重载即崩）。修: 连接后空判（非行数判）。 */
+      const codeText = body.join('\n');
       nodes.push(
         schema.nodes.code_block.create(
           { language: lang },
-          body.length ? [schema.text(body.join('\n'))] : null,
+          codeText ? [schema.text(codeText)] : null,
         ),
       );
       continue;
