@@ -297,8 +297,13 @@ pub async fn cmd_queue_retry(doc_id: String) -> Result<serde_json::Value, String
     )
     .await?;
     // B-06/T4: 单条失败 → attempts 落库递增（重启不丢计数——DoD 3）
-    if report.failed_docs > 0 {
-        booted.offline_queue.bump_attempts(&doc_id)?;
+    // 帮收口注: failed_docs=Vec<String>（doc id 列表）非计数——is_empty 判;
+    // bump_attempts 返 aurora_sync::Error 在 String 命令域 map_err 落串。
+    if !report.failed_docs.is_empty() {
+        booted
+            .offline_queue
+            .bump_attempts(&doc_id)
+            .map_err(|e| format!("attempts 落库失败: {e}"))?;
     }
     // B-06/T6: retry 完成发布
     {
