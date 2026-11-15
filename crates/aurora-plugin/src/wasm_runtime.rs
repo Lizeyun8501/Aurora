@@ -1180,6 +1180,34 @@ impl WasmRuntime {
         if let Some(cap) = function.required_capability() {
             self.validate_capability(plugin_id, cap)?;
         }
+        // B-07/T9 收口: host-invoked write-doc 容量 guard 审计行——原仅
+        // registry 层 stderr 侧通道（DefaultHostFunctions 无 plugin/审计
+        // 上下文=诚实边界注记）。runtime 层带上下文先行拦截（与 guest 面
+        // audit_log 对齐——结构化审计环持久面）;registry 层 guard 保留
+        // =纵深防御。错误码同形（"write_doc: payload exceeds 1 MiB"）。
+        if function == HostFunction::WriteDoc {
+            if let Some(data) = args.get("data") {
+                let size = serde_json::to_vec(data)
+                    .map(|v| v.len())
+                    .unwrap_or(usize::MAX);
+                if size > 1024 * 1024 {
+                    let doc_id = args.get("doc_id").and_then(|v| v.as_str()).unwrap_or("");
+                    eprintln!(
+                        "[audit-host] plugin={plugin_id} event=write-doc result=denied reason=size-exceeded doc_id={doc_id} size={size} (host-invoked)"
+                    );
+                    self.audit_log(
+                        plugin_id,
+                        "write-doc",
+                        "denied",
+                        "size-exceeded",
+                        &format!("doc_id={doc_id} size={size} scope=host-invoked"),
+                    );
+                    return Err(crate::Error::HostFunction(format!(
+                        "write_doc: payload exceeds 1 MiB limit ({size} bytes)"
+                    )));
+                }
+            }
+        }
         debug!(
             "wasm runtime: plugin {} calls host function {}",
             plugin_id,
@@ -1356,17 +1384,39 @@ impl aurora::plugin::capability::Host for WasmStoreCtx {
         if !self.read_first_called {
             self.read_first_called = true;
             eprintln!("[audit-host] plugin={plugin_id} event=read-doc result=ok reason=first-call");
-            self.audit_log(plugin_id, "read-doc", "ok", "first-call", "");
+            self.audit_log(&plugin_id, "read-doc", "ok", "first-call", "");
         }
         let Some(docs) = self.docs.as_ref() else {
             return Ok(None);
         };
         // Value::String 直取；host-invoked 写的其他 Value 序列化回传（不丢数据）；
         // 不存在→None（option 原生语义，DK-14c.4 返工）
-        Ok(docs.read().get(&doc_id).map(|v| match v {
+        let guard = docs.read();
+        let render = |v: &serde_json::Value| match v {
             serde_json::Value::String(s) => s.clone(),
             other => other.to_string(),
-        }))
+        };
+        if let Some(v) = guard.get(&doc_id) {
+            return Ok(Some(render(v)));
+        }
+        // B-07（C-ns 收口）: legacy 无前缀键只读回退一版——DK-16 L1 前缀
+        // 强制落地前的无前缀存量/host seed 键，读走 `{id}:x` 未命中时回退
+        // 读 `x`（**只读**——写面仍强制前缀，回退不产生新 legacy 键;query
+        // 键集过滤不列 legacy 键——隔离不变）。逐命中审计（迁移观察期可
+        // 观测——归零即下版可移除）。
+        if let Some(suffix) = doc_id.strip_prefix(&format!("{plugin_id}:")) {
+            if let Some(v) = guard.get(suffix) {
+                self.audit_log(
+                    &plugin_id,
+                    "read-doc",
+                    "ok",
+                    "legacy-fallback",
+                    &format!("doc_id={doc_id} legacy={suffix}"),
+                );
+                return Ok(Some(render(v)));
+            }
+        }
+        Ok(None)
     }
 
     fn write_doc(
@@ -2125,6 +2175,82 @@ mod reserved_prefix_gate_tests {
     fn denied_storage(err: &wasmtime::Error) -> bool {
         err.downcast_ref::<crate::Error>()
             .is_some_and(|e| matches!(e, crate::Error::CapabilityDenied(Capability::Storage)))
+    }
+
+    /// B-07: legacy 无前缀键只读回退——seed 无前缀键,前缀读命中回退+
+    /// 审计行;写无前缀键仍拒（不产生新 legacy 键）。
+    #[test]
+    fn test_b07_legacy_fallback_read_only() {
+        use aurora::plugin::capability::Host as _;
+        let mut ctx = make_ctx("noteapp");
+        // host seed 无前缀键（L1 前的存量形态）
+        ctx.docs.as_ref().unwrap().write().insert(
+            "legacy-doc".to_string(),
+            serde_json::Value::String("旧数据".into()),
+        );
+        let token = storage_token(&mut ctx);
+
+        // 前缀读命中回退（Host trait 直调——guest 路径同面）
+        let hit = ctx.read_doc(token, "noteapp:legacy-doc".to_string());
+        match hit {
+            Ok(Some(v)) => assert_eq!(v, "旧数据"),
+            other => panic!("legacy 回退读应命中: {other:?}"),
+        }
+        let ring = ctx.audit.snapshot();
+        assert!(
+            ring.iter().any(|e| e.reason == "legacy-fallback"
+                && e.event == "read-doc"
+                && e.result == "ok"),
+            "legacy 回退应审计: {:?}",
+            ring
+        );
+
+        // 写无前缀键仍拒（namespace-denied——回退只读不越权）
+        let token2 = storage_token(&mut ctx);
+        let w = ctx.write_doc(token2, "legacy-doc".to_string(), "新数据".to_string());
+        let refused = match w {
+            Ok(Err(e)) => e, // guest 面 Err 串
+            Ok(Ok(())) => panic!("写无前缀键应拒——竟成功"),
+            Err(e) => e.to_string(), // trap 面（guard 拒）
+        };
+        assert!(
+            refused.contains("CapabilityDenied")
+                || refused.contains("Storage")
+                || refused.contains("denied"),
+            "写无前缀键应拒: {refused}"
+        );
+    }
+
+    /// B-07/T9: host-invoked write-doc 容量超限——审计行入环（原仅
+    /// stderr 侧通道）+明确错误。
+    #[test]
+    fn test_b07_host_invoked_size_guard_audited() {
+        let runtime = WasmRuntime::with_default_registry();
+        let manifest = CapabilityManifest::from_permissions(&["storage".to_string()])
+            .expect("storage 权限串合法");
+        runtime.register("noteapp", manifest);
+        let big = serde_json::json!("x".repeat(1024 * 1024 + 16));
+        let err = runtime
+            .call_host_function(
+                "noteapp",
+                HostFunction::WriteDoc,
+                &serde_json::json!({ "doc_id": "noteapp:big", "data": big }),
+            )
+            .expect_err("host-invoked 超限写应拒");
+        assert!(
+            err.to_string().contains("exceeds 1 MiB"),
+            "错误码应明确: {err}"
+        );
+        let rows = runtime.audit_recent(50, Some("noteapp"));
+        assert!(
+            rows.iter().any(|e| {
+                e.event == "write-doc"
+                    && e.result == "denied"
+                    && e.reason == "size-exceeded"
+                    && e.detail.contains("scope=host-invoked")
+            }),
+            "host-invoked 超限应有结构化审计行: {rows:?}"
+        );
     }
 
     #[test]
