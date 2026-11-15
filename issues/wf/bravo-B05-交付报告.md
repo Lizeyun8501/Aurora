@@ -75,3 +75,16 @@ P1 新建（库+1）/P2 编辑保存（快照落库+重开回显双证）/P8 mar
 - **124/124 全绿**（vitest 全套——含本卡新增 3）;E2E 10/10 三连跑;moveBlock 3/3
 - 双端 tsc 零错;fmt RC=0;CI（主体+续帧）: desktop-check/Clippy/Rustfmt/MSRV/Wasm×3/Test 分离终证见 push 后
 - 停手边界: 不做视觉回归截图比对（v2）✓/不做跨浏览器矩阵（恒 chromium 单通道）✓
+
+## 附 · B-06 断档事故链案录（帮 Alpha 收口两笔——CI 三帧红分离纪实）
+
+desktop-check 三帧连红（ce52696 绿→ec5c26f 红起）诊断链——「annotation
+碎片是诊断素材不是结论」纪律实证（oom 注释=dmesg 零命中空噪声）:
+
+| 帧 | 表象 | 真凶 | 修 |
+|---|---|---|---|
+| ec5c26f(B-06)→2ad5de4 | exit 3+『OOM』注 | 3315499 wip 原子落把**整份 lib.rs(87KB)覆写进 SyncStatusBadge.tsx**→desktop 前端构建零产物（本机 vite build RC=1 复现） | 恢复 461c0c6 DK-48 组件（0c7128c）;**T6 Badge 实时化 UI 层丢失待 Alpha 重落**（Rust 发布点在） |
+| 0c7128c | exit 101 两编译错 | B-06 桥码: E0308 failed_docs=Vec 误按整数比较+E0277 bump_attempts Error 域错（前帧被前端红掩蔽浮面） | 91fa687 双修（本机 fakepc 树 check RC=0 实证） |
+
+附: swap 4G→8G（1fcb8af）保留——workspace 增长趋势下余量无害;E2E workflow
+CI 全绿（2ad5de4 帧实证）。
