@@ -73,6 +73,8 @@ interface AndroidBridge {
   taskReschedule?(taskId: string, newDue: string): boolean;
   // A-09: 高级搜索（5 运算符+徽章面——与桌面 cmd_search_advanced 同源）
   advancedSearch?(query: string): string;
+  // C-02: NL 日期多词预览（chip 群——与桌面 cmd_preview_due_multi 同源;失败 "[]"）
+  previewDueMulti?(text: string): string;
   // A-05: 块引用解析（status 三态 JSON——与桌面 cmd_resolve_block_ref 同源;anchor 空串=无锚点）
   resolveBlockRef?(noteId: string, anchor: string): string;
   // A-05: 面包屑（{id,title}[] JSON——core 单一递归源,双端共用 VM）
@@ -291,6 +293,19 @@ export function resetMockSync(): void {
 // ---------------------------------------------------------------------------
 
 export const platform = {
+  /** C-02: NL 日期多词预览（core due_parse_multi 同源;无桥/失败=[] 零 chip） */
+  previewDueMulti(text: string): Array<{ due_ts: number; start: number; end: number; matched_text: string; human: string; semantic: string }> {
+    const b = bridge();
+    if (b?.previewDueMulti) {
+      try {
+        return JSON.parse(b.previewDueMulti(text)) as Array<{ due_ts: number; start: number; end: number; matched_text: string; human: string; semantic: string }>;
+      } catch {
+        return [];
+      }
+    }
+    return []; // mock/无桥=零 chip（DoD: 界面干净——不用假数据占位）
+  },
+
   init(dataDir: string): boolean {
     const b = bridge();
     if (b) return b.init(dataDir) === 'ok';

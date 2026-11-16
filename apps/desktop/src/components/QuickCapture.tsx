@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import tokens from '../design/tokens';
 import type { InvokeFn } from './DesktopShell';
+import { DueChipPreview, type DueChip } from '@aurora/ui-components';
 
 export const QUICK_CAPTURE_EVENT = 'quick-capture';
 
@@ -39,6 +40,9 @@ export default function QuickCapture({ invoke, onClose }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<DuePreview | null>(null);
+  // C-02: 多词 chip 群+移除集（移除后不写回 due——DoD 2）
+  const [chips, setChips] = useState<DueChip[]>([]);
+  const [removed, setRemoved] = useState<ReadonlySet<number>>(new Set());
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   // 挂载即聚焦（速记场景零摩擦）
@@ -50,13 +54,31 @@ export default function QuickCapture({ invoke, onClose }: Props) {
   useEffect(() => {
     if (!text.trim()) {
       setPreview(null);
+      setChips([]); // C-02: 空输入清 chip 群（DoD: 界面干净）
       return;
     }
+    // C-02: 150ms 防抖（DoD: 150-300ms 内出 chip）——multi 优先,
+    // 命令面缺失（旧后端）退化 v1 单 chip;invoke 失败静默（mock 环境）
     const timer = setTimeout(() => {
-      invoke('cmd_preview_due', { text })
-        .then((r) => setPreview((r as DuePreview | null) ?? null))
-        .catch(() => setPreview(null)); // mock/降级静默
-    }, 250);
+      invoke('cmd_preview_due_multi', { text })
+        .then((r) => {
+          const cs = (r as DueChip[] | null) ?? [];
+          setChips(cs);
+          setRemoved(new Set());
+          // v1 单 chip 兼容（高亮层 span 语义保留:多词时高亮首段）
+          if (cs.length > 0) {
+            setPreview({ due_ts: cs[0].due_ts, start: cs[0].start, end: cs[0].end, human: cs[0].human });
+          } else {
+            setPreview(null);
+          }
+        })
+        .catch(() => {
+          setChips([]);
+          invoke('cmd_preview_due', { text })
+            .then((r) => setPreview((r as DuePreview | null) ?? null))
+            .catch(() => setPreview(null)); // mock/降级静默
+        });
+    }, 150);
     return () => clearTimeout(timer);
   }, [text, invoke]);
 
@@ -233,8 +255,33 @@ export default function QuickCapture({ invoke, onClose }: Props) {
             {err}
           </div>
         )}
-        {/* R3-1：NL 日期 chip——命中片段 human 标注（识别失败不显示） */}
-        {preview && (
+        {/* C-02: 多时间词 chip 群——语义标注+可移除+可校正（点开原生
+            datetime-local 即日期选择器——校正后仍不动输入文本,只更新
+            该 chip 的 human/due_ts;移除=从写回 due 集合剔除） */}
+        <DueChipPreview
+          chips={chips}
+          removed={removed}
+          onRemove={(i) => {
+            setRemoved(new Set(removed).add(i));
+          }}
+          onCorrect={(i) => {
+            // 校正入口:原生 datetime-local 弹出（轻量——不做自绘 picker）
+            const inp = document.createElement('input');
+            inp.type = 'datetime-local';
+            inp.value = new Date(chips[i].due_ts).toISOString().slice(0, 16);
+            inp.onchange = () => {
+              const v = inp.value ? new Date(inp.value).getTime() : chips[i].due_ts;
+              setChips((cs) => cs.map((c, j) => (j === i ? { ...c, due_ts: v, human: new Date(v).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) } : c)));
+            };
+            inp.style.position = 'fixed';
+            inp.style.opacity = '0';
+            document.body.appendChild(inp);
+            inp.showPicker?.();
+            inp.addEventListener('blur', () => setTimeout(() => inp.remove(), 500));
+          }}
+        />
+        {/* v1 兼容:multi 面缺失（旧后端/multi 零命中+单命令命中）单 chip 保留 */}
+        {chips.length === 0 && preview && (
           <div
             data-testid="due-preview-chip"
             style={{

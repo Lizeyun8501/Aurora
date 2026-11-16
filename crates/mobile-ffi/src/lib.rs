@@ -1486,6 +1486,61 @@ impl UniffiAppCore {
             .unwrap_or_else(|e| format!("失败: {e}"))
     }
 
+    /// C-02: NL 日期多词预览 JSON（chip 群——桌面 cmd_preview_due_multi 同源）。
+    /// core `due_parse_multi` 单一权威;空结果="[]"（DoD:无解析不显空态）。
+    pub fn preview_due_multi_json(self: &Arc<Self>, text: &str) -> String {
+        use aurora_core::l2_engines::action_extractor::{due_parse_multi, DueSemantic};
+        let now = chrono::Utc::now();
+        let items: Vec<serde_json::Value> = due_parse_multi(text, now)
+            .into_iter()
+            .map(|m| {
+                serde_json::json!({
+                    "due_ts": m.due_ts,
+                    "start": m.matched_start,
+                    "end": m.matched_end,
+                    "matched_text": m.matched_text,
+                    "human": humanize_due(m.due_ts),
+                    "semantic": match m.semantic {
+                        DueSemantic::Start => "开始",
+                        DueSemantic::Deadline => "截止",
+                        DueSemantic::Uncategorized => "未分类",
+                    },
+                })
+            })
+            .collect();
+        serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// C-02: due_ts 本地时区 humanize（与桌面 due_preview_commands 同格式:
+    /// ≤2 天相对词/≤6 天周X/绝对日期;+时刻）。
+    fn humanize_due(due_ts: i64) -> String {
+        use chrono::{Datelike, Local, TimeZone};
+        let dt = Local
+            .timestamp_millis_opt(due_ts)
+            .single()
+            .unwrap_or_else(Local::now);
+        let days = (dt.date_naive() - Local::now().date_naive()).num_days();
+        let day = if days <= 0 {
+            "今天".to_string()
+        } else if days == 1 {
+            "明天".to_string()
+        } else if days == 2 {
+            "后天".to_string()
+        } else if days <= 6 {
+            let w = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+                [dt.weekday().num_days_from_monday() as usize];
+            w.to_string()
+        } else {
+            format!("{}月{}日", dt.month(), dt.day())
+        };
+        format!(
+            "{} {:02}:{:02}",
+            day,
+            dt.hour(),
+            dt.minute()
+        )
+    }
+
     /// A-09: 高级搜索 JSON（BM25 执行器——移动无 hybrid 建置,解析+过滤+徽章面
     /// 与桌面同一 core run_advanced_search;match_source 恒 bm25,语义路=桌面专属）。
     pub fn advanced_search_json(self: &Arc<Self>, query: &str) -> String {
@@ -2473,6 +2528,20 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeBookmarkReorder(
     let title = jstring_to_rust(&mut env, &title);
     let r = core.bookmark_reorder(&ids, title.as_deref());
     dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
+}
+
+// C-02: NL 日期多词预览 JNI 导出（桌面 cmd_preview_due_multi 同源——双端对称）
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativePreviewDueMulti(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    text: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let t = jstring_to_rust(&mut env, &text).unwrap_or_default();
+    let json = core.preview_due_multi_json(&t);
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(json))
 }
 
 // A-09: 高级搜索 JNI 导出（桌面 cmd_search_advanced 同源——双端对称）

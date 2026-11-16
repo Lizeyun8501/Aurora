@@ -1,3 +1,5 @@
+export { default as DueChipPreview } from './DueChipPreview';
+export type { DueChip, DueChipPreviewProps } from './DueChipPreview';
 export { TextBlock } from './TextBlock';
 export { HeadingBlock } from './HeadingBlock';
 export { CodeBlock } from './CodeBlock';

@@ -59,6 +59,43 @@ fn preview_of(text: &str) -> Option<DuePreview> {
 }
 
 /// NL 日期片段预览（输入侧实时调用——纯函数无副作用）。
+/// C-02：多时间词预览（QuickCapture chip 群——「明天开始，下周五截止」）。
+/// core `due_parse_multi` 单一权威;human 本地时区格式化同 cmd_preview_due。
+#[derive(serde::Serialize)]
+pub struct DuePreviewMulti {
+    pub due_ts: i64,
+    pub start: usize,
+    pub end: usize,
+    /// 命中片段原文（前端 chip 显示+移除判定）
+    pub matched_text: String,
+    pub human: String,
+    /// 语义（core 词面判定:开始/截止/未分类——不猜测）
+    pub semantic: &'static str,
+}
+
+#[tauri::command]
+pub async fn cmd_preview_due_multi(
+    text: String,
+) -> Result<Vec<DuePreviewMulti>, String> {
+    use aurora_core::l2_engines::action_extractor::{due_parse_multi, DueSemantic};
+    let now = chrono::Utc::now();
+    Ok(due_parse_multi(&text, now)
+        .into_iter()
+        .map(|m| DuePreviewMulti {
+            human: humanize(m.due_ts),
+            due_ts: m.due_ts,
+            start: m.matched_start,
+            end: m.matched_end,
+            matched_text: m.matched_text,
+            semantic: match m.semantic {
+                DueSemantic::Start => "开始",
+                DueSemantic::Deadline => "截止",
+                DueSemantic::Uncategorized => "未分类",
+            },
+        })
+        .collect())
+}
+
 #[tauri::command]
 pub async fn cmd_preview_due(text: String) -> Result<Option<DuePreview>, String> {
     // 输入侧实时——放 blocking 线程避免高频 invoke 抖动主线程（解析微秒级）

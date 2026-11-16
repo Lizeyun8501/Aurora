@@ -78,6 +78,97 @@ pub struct DueParse {
     pub matched_end: usize,
 }
 
+/// C-02：多时间词解析条目（实时 chip 预览——「明天开始，下周五截止」多 chip）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct DueParseMulti {
+    pub due_ts: i64,
+    /// 命中片段 char offset [start, end)（子句内——前端高亮用）
+    pub matched_start: usize,
+    pub matched_end: usize,
+    /// 命中片段原文（子句切片直存——前端 chip 显示与移除判定用）
+    pub matched_text: String,
+    /// 语义标注（开始/截止/未分类——不猜测:仅词面命中「开始/起/从」与
+    /// 「截止/之前/前/到/deadline」;无法确定=Uncategorized）
+    pub semantic: DueSemantic,
+}
+
+/// C-02：时间词语义类别（词面判定,非猜测）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DueSemantic {
+    Start,
+    Deadline,
+    Uncategorized,
+}
+
+impl DueSemantic {
+    pub fn label(&self) -> &'static str {
+        match self {
+            DueSemantic::Start => "开始",
+            DueSemantic::Deadline => "截止",
+            DueSemantic::Uncategorized => "未分类",
+        }
+    }
+}
+
+/// C-02：多时间词解析——子句切分（中英标点）后逐段 `due_parse_at`
+/// （复用单一权威,零复刻）;每段独立 span/语义。语义=词面判定非猜测:
+/// 子句含「开始/从」→Start;含「截止/之前/前/到/deadline/止」→Deadline;
+/// 同现或都无→Uncategorized。空结果=零 chip（DoD:无解析不显空态）。
+pub fn due_parse_multi(text: &str, now: chrono::DateTime<Utc>) -> Vec<DueParseMulti> {
+    let seps = ['，', ',', '；', ';', '。', '.'];
+    let chars_v: Vec<char> = text.chars().collect();
+    let mut out: Vec<DueParseMulti> = Vec::new();
+
+    let classify = |seg: &str| -> DueSemantic {
+        let has_start = seg.contains("开始") || seg.contains("从");
+        let has_deadline = seg.contains("截止")
+            || seg.contains("之前")
+            || seg.contains("deadline")
+            || seg.contains("止");
+        let ends_qian = seg.trim_end().ends_with('前') || seg.trim_end().ends_with("到");
+        match (has_start, has_deadline || ends_qian) {
+            (true, false) => DueSemantic::Start,
+            (false, true) => DueSemantic::Deadline,
+            _ => DueSemantic::Uncategorized,
+        }
+    };
+
+    // char 游标切分（span 出口=char offset——R-α1 坐标系一致）
+    let mut seg_start_ci = 0usize;
+    for (ci, ch) in chars_v.iter().enumerate() {
+        if !seps.contains(ch) {
+            continue;
+        }
+        let seg: String = chars_v[seg_start_ci..ci].iter().collect();
+        if let Some(dp) = due_parse_at(&seg, now) {
+            let matched_text: String =
+                seg.chars().skip(dp.matched_start).take(dp.matched_end - dp.matched_start).collect();
+            out.push(DueParseMulti {
+                due_ts: dp.due_ts,
+                matched_start: seg_start_ci + dp.matched_start,
+                matched_end: seg_start_ci + dp.matched_end,
+                matched_text,
+                semantic: classify(&seg),
+            });
+        }
+        seg_start_ci = ci + 1;
+    }
+    // 尾段（无分隔符收尾——「明天 9 点」单子句走此路径,退化 v1 单结果）
+    let seg: String = chars_v[seg_start_ci..].iter().collect();
+    if let Some(dp) = due_parse_at(&seg, now) {
+        let matched_text: String =
+            seg.chars().skip(dp.matched_start).take(dp.matched_end - dp.matched_start).collect();
+        out.push(DueParseMulti {
+            due_ts: dp.due_ts,
+            matched_start: seg_start_ci + dp.matched_start,
+            matched_end: seg_start_ci + dp.matched_end,
+            matched_text,
+            semantic: classify(&seg),
+        });
+    }
+    out
+}
+
 /// 相对期限词 → 截止时间 + 命中片段（DK-3.4 v2 + R3-1 span 化）。
 ///
 /// 语义与 v2 全同（span 化仅**附加**区间信息，due_ts 计算零回归）：
@@ -556,6 +647,57 @@ mod tests {
     // ── R-α2：now 注入对拍（固定时刻断言精确值） ──
 
     #[test]
+    /// C-02: 多时间词——双子句双 chip+语义标注（开始/截止）。
+    #[test]
+    fn due_parse_multi_two_clauses() {
+        use chrono::TimeZone;
+        let now = Utc.with_ymd_and_hms(2026, 10, 21, 10, 0, 0).unwrap();
+        let r = due_parse_multi("明天开始，下周五截止", now);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].semantic, DueSemantic::Start);
+        assert_eq!(r[1].semantic, DueSemantic::Deadline);
+        assert!(r[0].matched_text.contains("明天"));
+        assert!(r[1].matched_text.contains("下周五"));
+    }
+
+    /// C-02: 单子句退化 v1（零回归——1 chip+Uncategorized）。
+    #[test]
+    fn due_parse_multi_single_degrades() {
+        use chrono::TimeZone;
+        let now = Utc.with_ymd_and_hms(2026, 10, 21, 10, 0, 0).unwrap();
+        let r = due_parse_multi("记得明天 9 点交周报", now);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].semantic, DueSemantic::Uncategorized);
+        assert!(r[0].matched_text.contains("明天"));
+        // due_ts 与 v1 单次解析一致
+        let v1 = due_parse_at("记得明天 9 点交周报", now);
+        assert_eq!(r[0].due_ts, v1.unwrap().due_ts);
+    }
+
+    /// C-02: 无日期文本零结果（DoD: 无解析不显空态）。
+    #[test]
+    fn due_parse_multi_no_match_empty() {
+        use chrono::TimeZone;
+        let now = Utc.with_ymd_and_hms(2026, 10, 21, 10, 0, 0).unwrap();
+        let r = due_parse_multi("无日期散文", now);
+        assert!(r.is_empty());
+    }
+
+    /// C-02: char 坐标系——中文前缀下 span 落原文正确区间。
+    #[test]
+    fn due_parse_multi_char_offsets() {
+        use chrono::TimeZone;
+        let now = Utc.with_ymd_and_hms(2026, 10, 21, 10, 0, 0).unwrap();
+        let text = "记得 明天 9 点 开始，下周五 15:00 截止";
+        let r = due_parse_multi(text, now);
+        assert_eq!(r.len(), 2);
+        let chars: Vec<char> = text.chars().collect();
+        let s0: String = chars[r[0].matched_start..r[0].matched_end].iter().collect();
+        let s1: String = chars[r[1].matched_start..r[1].matched_end].iter().collect();
+        assert!(s0.contains("明天") && s0.contains("9"));
+        assert!(s1.contains("下周五") && s1.contains("15:00"));
+    }
+
     fn due_parse_at_fixed_now() {
         use chrono::TimeZone;
         let now = Utc.with_ymd_and_hms(2026, 10, 21, 10, 0, 0).unwrap(); // 周三

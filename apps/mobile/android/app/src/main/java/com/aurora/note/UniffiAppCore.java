@@ -400,6 +400,11 @@ public class UniffiAppCore {
         return nativeAdvancedSearch(handle, query);
     }
 
+    /** C-02: NL 日期多词预览 JSON（chip 群;桌面 cmd_preview_due_multi 同源;失败 "[]"）。 */
+    public String previewDueMulti(String text) {
+        return nativePreviewDueMulti(handle, text);
+    }
+
     /** A-05: 块引用解析 JSON（status 三态 ok/not_found/locked;桌面同源）。 */
     public String blockRef(String noteId, String anchor) {
         return nativeBlockRef(handle, noteId, anchor);
@@ -452,6 +457,7 @@ public class UniffiAppCore {
     // A-08: task 域 + CalendarVm JNI 声明（Rust 侧 Java_com_aurora_note_UniffiAppCore_native*）
     private static native String nativeTaskSync(long handle, String tasksJson);
     private static native String nativeAdvancedSearch(long handle, String query);
+    private static native String nativePreviewDueMulti(long handle, String text);
     private static native String nativeBlockRef(long handle, String noteId, String anchor);
     private static native String nativeBreadcrumb(long handle, String noteId);
     private static native String nativeBookmarkAdd(long handle, String bookmarkJson);

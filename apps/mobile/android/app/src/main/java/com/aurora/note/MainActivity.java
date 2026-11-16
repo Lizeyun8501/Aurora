@@ -469,6 +469,13 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String previewDueMulti(String text) {
+            try {
+                return core != null ? core.previewDueMulti(text) : "[]";
+            } catch (Throwable t) {
+                return "[]";
+            }
+        }
         public String advancedSearch(String query) {
             try {
                 return core != null ? core.advancedSearch(query) : "";
