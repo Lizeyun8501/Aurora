@@ -44,7 +44,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(1600);
 
   /* ── P1 新建笔记 ─────────────────────────────── */
-  await page.click('.tab-bar .tab-item:has-text("知识库")');
+  await page.click('.tab-bar .tab-item:has-text("笔记")');
   await sleep(700);
   await page.click('.nt-arrow').catch(() => {});
   await sleep(400);
@@ -108,7 +108,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // 搜索入口: 首页搜索钮或 url hash——探测可用输入框
   const searched = await page.evaluate(() => !!document.querySelector('input[placeholder*="搜索"], input[type="search"], .search-bar input'));
   if (!searched) {
-    await page.click('.tab-bar .tab-item:has-text("知识库")').catch(() => {});
+    await page.click('.tab-bar .tab-item:has-text("笔记")').catch(() => {});
     await sleep(500);
     await page.click('button[aria-label="搜索"], .icon-btn[aria-label*="搜索"]').catch(() => {});
     await sleep(700);
@@ -164,7 +164,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 
   /* ── P6 回收站还原（软删→回收站→恢复→原 id 回库） ── */
-  await page.click('.tab-bar .tab-item:has-text("知识库")');
+  await page.click('.tab-bar .tab-item:has-text("笔记")');
   await sleep(700);
   /* 树形默认无 .note-card（列表卡片视图才有滑删）——切列表模式（repro-trash-s2b 同款链） */
   await page.evaluate(() => {
@@ -205,7 +205,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('P6 回收站还原（原 id 回库）', restoredIn, `id=${delId}`);
 
   /* ── P7 导出视图（编辑器导出面板可达） ── */
-  await page.click('.tab-bar .tab-item:has-text("知识库")');
+  await page.click('.tab-bar .tab-item:has-text("笔记")');
   await sleep(600);
   /* 列表模式（树形首行可能是笔记本行——不开编辑器） */
   await page.evaluate(() => {

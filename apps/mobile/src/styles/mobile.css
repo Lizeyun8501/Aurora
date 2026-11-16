@@ -110,6 +110,22 @@ button, .note-card, .drawer-item, .tab-item { transition: background .14s, color
 .tab-item.active { color: var(--brand); font-weight: 500; }
 .tab-item svg { display: block; }
 
+/* ============================================================
+   收集箱 — C-01/ADR-007（GTD 收集→处理）
+   ============================================================ */
+.inbox-view { padding: 12px 14px 8px; }
+.inbox-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.inbox-count { font-size: 12px; color: var(--text-secondary); }
+.inbox-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.inbox-item { background: var(--bg-elev, #fff); border: 1px solid var(--border, rgba(0,0,0,.06)); border-radius: 10px; padding: 10px 12px; }
+.inbox-item-text { font-size: 14px; line-height: 1.5; word-break: break-all; }
+.inbox-item-actions { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+.inbox-item-actions .btn { padding: 4px 10px; font-size: 12px; min-height: 32px; }
+
+/* C-01/ADR-007: FAB 键盘避让——软键盘弹起（visualViewport 收缩）隐藏,
+   不遮挡输入区;aria-hidden 同步（PW 断言锚）。 */
+.fab.fab-kb-hidden { display: none; }
+
 /* 悬浮捕获按钮 — 永不隐藏 V19 §3.1（2026-10-28 圆形化——用户指令） */
 .fab {
   position: fixed; right: 16px; bottom: 72px; z-index: 55;

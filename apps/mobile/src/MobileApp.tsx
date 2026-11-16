@@ -53,10 +53,12 @@ const editorPlatform = platform as unknown as import('@aurora/ui-components').Ed
 // ===========================================================================
 
 type ViewId = 'today' | 'notes' | 'search' | 'agent' | 'settings' | 'calendar'
-  | 'favorites' | 'recent' | 'tasks' | 'diary' | 'trash';
+  | 'favorites' | 'recent' | 'tasks' | 'diary' | 'trash'
+  | 'inbox'; // C-01/ADR-007: 收集箱——GTD 收集环节主入口
 const VIEW_TITLES: Record<ViewId, string> = {
   today: '今日', notes: '知识库', search: '搜索', agent: 'Agent', settings: '设置', calendar: '日历',
   favorites: '我的收藏', recent: '最近浏览', tasks: '任务中心', diary: '日记本', trash: '回收站',
+  inbox: '收集箱',
 };
 /** 次级视图 → Tab 高亮映射（抽屉导航进入次级页时保持主 Tab 语境）。
  *  2026-10-28 搜索入口合并：底部 TabBar 撤搜索项，入口唯一=AppBar 右上角——
@@ -64,6 +66,7 @@ const VIEW_TITLES: Record<ViewId, string> = {
 const TAB_OF_VIEW: Record<ViewId, string> = {
   today: 'today', notes: 'notes', agent: 'agent', settings: 'settings',
   calendar: 'calendar', favorites: 'notes', recent: 'notes', diary: 'notes', trash: 'notes', tasks: 'tasks', search: '',
+  inbox: 'inbox', // ADR-007: Inbox 主 Tab
 };
 
 // ===== E21（TA 21:57）: VIVO 风格图标集 — 彩色圆角块+白字形;overlay 持久可换 =====
@@ -239,6 +242,35 @@ export default function App() {
   const [shareInbox, setShareInbox] = useState<SharedIntent[]>([]);
   const [shareImageB64, setShareImageB64] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // ── C-01/ADR-007: 收集箱（GTD 收集环节）─────────────────────────
+  /** localStorage 前端方案（Rust 元数据表落地后迁 platform API——E21 惯例）。 */
+  const [inbox, setInbox] = useState<Array<{ id: string; text: string; ts: number }>>(() => {
+    try { return JSON.parse(localStorage.getItem('aurora.inbox') ?? '[]'); } catch { return []; }
+  });
+  useEffect(() => { localStorage.setItem('aurora.inbox', JSON.stringify(inbox)); }, [inbox]);
+  /** 捕获面板「存入收集箱」——速记先收集（不跳编辑器,保留捕获流的快）。 */
+  const stashInbox = useCallback((text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    setInbox((xs) => [...xs, { id: `inb_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, text: t, ts: Date.now() }]);
+  }, []);
+  // ⌘K/Ctrl+K → 搜索（ADR-007: 搜索 AppBar+硬件键盘等价快捷——PW 可断言）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setView('search'); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  // FAB 键盘避让（ADR-007: visualViewport 收缩=软键盘弹起 → FAB 隐藏）
+  const [kbOpen, setKbOpen] = useState(false);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => setKbOpen(vv.height < window.innerHeight * 0.8);
+    vv.addEventListener('resize', onResize);
+    return () => vv.removeEventListener('resize', onResize);
+  }, []);
   // DK-50：同步两面板浮层开关（badge 三入口 + menu-pop 两入口共用）
   const [queueOpen, setQueueOpen] = useState(false);
   const [conflictOpen, setConflictOpen] = useState(false);
@@ -551,7 +583,7 @@ export default function App() {
             fallback={fallback}
             onMenu={() => setDrawerOpen(true)}
             onSearch={() => goto('search')}
-            onAgent={() => goto('agent')}
+            onSettings={view === 'notes' ? () => goto('settings') : undefined}
             syncBadge={
               <SyncStatusBadge
                 onOpenQueue={() => setQueueOpen(true)}
@@ -606,6 +638,31 @@ export default function App() {
                 onOpenTask={(t) => setEditTask(t)} />
             )}
             {view === 'diary' && <DiaryView onOpen={openNote} showToast={showToast} />}
+            {view === 'inbox' && (
+              <InboxView
+                items={inbox}
+                onToNote={(item) => {
+                  const id = platform.createNote(item.text.slice(0, 24));
+                  if (!id) { showToast('创建失败'); return; }
+                  platform.saveNoteContent(id, item.text);
+                  setInbox((xs) => xs.filter((x) => x.id !== item.id));
+                  setEditing({ id, title: item.text.slice(0, 24) });
+                }}
+                onToTask={(item) => {
+                  // E17 同语义: 收集箱转任务=今日任务（GTD 处理动作）
+                  const n = new Date();
+                  const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+                  updateTasks([...tasks, {
+                    id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    text: item.text.slice(0, 60), status: 'next', createdAt: Date.now(), due: today, priority: 'normal',
+                  }]);
+                  setInbox((xs) => xs.filter((x) => x.id !== item.id));
+                  showToast('已添加到今日任务');
+                }}
+                onDelete={(id) => setInbox((xs) => xs.filter((x) => x.id !== id))}
+                onClear={() => setInbox([])}
+              />
+            )}
             {view === 'trash' && (
               <TrashView trash={trash} onTrash={setTrash} showToast={showToast} />
             )}
@@ -614,7 +671,12 @@ export default function App() {
           {/* 悬浮捕获 — 永不隐藏（**日历页除外**——CALENDAR-VIVO 11-01: 日历 FAB 属日历域,
               由 CalendarView 渲染（日程+任务双入口——不吃笔记捕获流）;其余页保持笔记捕获。 */}
           {view !== 'calendar' && (
-            <button className="fab" onClick={() => setCaptureOpen(true)} aria-label="捕获">
+            <button
+              className={`fab${kbOpen ? ' fab-kb-hidden' : ''}`}
+              onClick={() => setCaptureOpen(true)}
+              aria-label="捕获"
+              aria-hidden={kbOpen}
+            >
               {I.plus}
             </button>
           )}
@@ -690,6 +752,13 @@ export default function App() {
 
       {captureOpen && (
         <CaptureSheet
+          onStash={(text) => {
+            stashInbox(text);
+            setCaptureOpen(false);
+            setCaptureDue(undefined);
+            setView('inbox');
+            showToast('已存入收集箱');
+          }}
           onClose={() => { setCaptureOpen(false); setCaptureDue(undefined); }}
           onNewNote={(title, body) => {
             const id = platform.createNote(title);
@@ -747,10 +816,11 @@ export default function App() {
 // AppBar — 汉堡 + 标题 + 搜索
 // ===========================================================================
 
-function AppBar({ title, fallback, onMenu, onSearch, onAgent, syncBadge }: {
+function AppBar({ title, fallback, onMenu, onSearch, onSettings, syncBadge }: {
   title: string; fallback: boolean; onMenu: () => void; onSearch: () => void;
-  /** E16（TA 19:13）: Agent 入口上移 app-bar（搜索旁）——底部 nav 位让给「待办」 */
-  onAgent: () => void;
+  /** C-01/ADR-007: Agent 撤出 AppBar→抽屉「更多」;设置=笔记页齿轮二级入口
+   *  （E16 的 AppBar Agent 位退役——导航单一事实源 ADR-007）。 */
+  onSettings?: () => void;
   /** DK-50：同步状态徽标（app-bar 常驻，不破现有布局） */
   syncBadge?: React.ReactNode;
 }) {
@@ -760,7 +830,7 @@ function AppBar({ title, fallback, onMenu, onSearch, onAgent, syncBadge }: {
       <h1 className="app-bar-title">{title}</h1>
       {fallback && <span className="app-bar-warn">内存模式</span>}
       {syncBadge}
-      <button className="icon-btn" onClick={onAgent} aria-label="Agent">{I.agent}</button>
+      {onSettings && <button className="icon-btn" onClick={onSettings} aria-label="设置">{I.gear}</button>}
       <button className="icon-btn" onClick={onSearch} aria-label="搜索">{I.search}</button>
     </header>
   );
@@ -776,24 +846,33 @@ function SplashScreen() {
 }
 
 function TabBar({ current, onChange }: { current: ViewId; onChange: (v: ViewId) => void }) {
+  // C-01/ADR-007: 五 Tab——今日/笔记/收集箱/任务/日历（搜索=AppBar+⌘K;
+  // Agent=抽屉更多;设置=笔记页齿轮二级——导航单一事实源见 ADR-007）
   const items: Array<{ id: ViewId; icon: React.ReactNode; label: string }> = [
     { id: 'today', icon: I.today, label: '今日' },
-    { id: 'notes', icon: I.notes, label: '知识库' },
-    { id: 'tasks', icon: I.taskSquare, label: '待办' },
+    { id: 'notes', icon: I.notes, label: '笔记' },
+    { id: 'inbox', icon: I.inbox, label: '收集箱' },
+    { id: 'tasks', icon: I.taskSquare, label: '任务' },
     { id: 'calendar', icon: I.calendar, label: '日历' },
   ];
   return (
-    <nav className="tab-bar">
-      {items.map((t) => (
-        <button
-          key={t.id}
-          className={`tab-item ${TAB_OF_VIEW[current] === t.id ? 'active' : ''}`}
-          onClick={() => onChange(t.id)}
-        >
-          {t.icon}
-          <span>{t.label}</span>
-        </button>
-      ))}
+    <nav className="tab-bar" role="tablist" aria-label="主导航">
+      {items.map((t) => {
+        const selected = TAB_OF_VIEW[current] === t.id;
+        return (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={selected}
+            aria-label={t.label}
+            className={`tab-item ${selected ? 'active' : ''}`}
+            onClick={() => onChange(t.id)}
+          >
+            {t.icon}
+            <span>{t.label}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }
@@ -960,6 +1039,7 @@ function Drawer2({ current, onNavigate, onClose, tasks, favs, trash, bookmarks, 
           {item('diary', I.book, '日记本')}
 
           <div className="d-group-title">更多</div>
+          {item('agent', I.agent, 'Agent')}
           {item('trash', I.trash, '回收站', trash.length)}
           {item('settings', I.gear, '设置')}
 
@@ -981,6 +1061,48 @@ function Drawer2({ current, onNavigate, onClose, tasks, favs, trash, bookmarks, 
 
 // ===========================================================================
 
+
+// ===========================================================================
+// 收集箱 — C-01/ADR-007: GTD 收集→处理两段（收集=捕获面板主按钮;处理=逐条
+// 转笔记/转任务（今日）/删除+清空兜底——localStorage 前端方案）
+// ===========================================================================
+
+function InboxView({ items, onToNote, onToTask, onDelete, onClear }: {
+  items: Array<{ id: string; text: string; ts: number }>;
+  onToNote: (item: { id: string; text: string; ts: number }) => void;
+  onToTask: (item: { id: string; text: string; ts: number }) => void;
+  onDelete: (id: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="inbox-view">
+      <div className="inbox-head">
+        <span className="inbox-count">{items.length} 条待处理</span>
+        {items.length > 0 && (
+          <button className="btn btn-secondary" onClick={onClear} aria-label="清空收集箱">清空</button>
+        )}
+      </div>
+      {items.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-text">收集箱是空的<br />点右下角 ＋ 快速捕获,先收集后处理</div>
+        </div>
+      ) : (
+        <ul className="inbox-list" role="list">
+          {items.map((it) => (
+            <li key={it.id} className="inbox-item">
+              <div className="inbox-item-text">{it.text}</div>
+              <div className="inbox-item-actions">
+                <button className="btn btn-secondary" onClick={() => onToNote(it)} aria-label={`转笔记: ${it.text.slice(0, 12)}`}>转笔记</button>
+                <button className="btn btn-secondary" onClick={() => onToTask(it)} aria-label={`转任务: ${it.text.slice(0, 12)}`}>转任务</button>
+                <button className="icon-btn" onClick={() => onDelete(it.id)} aria-label={`删除: ${it.text.slice(0, 12)}`}>{I.x}</button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 /** 通用笔记卡片（收藏/日记列表复用）。 */
 

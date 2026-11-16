@@ -51,12 +51,14 @@ export function ShareReceiveSheet(props: {
   );
 }
 
-export function CaptureSheet({ onClose, onNewNote, onNewTask, onNewEvent }: {
+export function CaptureSheet({ onClose, onNewNote, onNewTask, onNewEvent, onStash }: {
   onClose: () => void;
   onNewNote: (title: string, body: string) => void;
   onNewTask: (text: string, status: TaskStatus, priority: TaskPriority) => void;
   /** DK-CALENDAR-02 任务 3：FAB 捕获流「日程」类型（今日 09:00 预填）。 */
   onNewEvent: (title: string) => void;
+  /** C-01/ADR-007: 存入收集箱——GTD 收集段主按钮（先收集后处理,不跳编辑器）。 */
+  onStash: (text: string) => void;
 }) {
   const [mode, setMode] = useState<'text' | 'ocr' | 'voice'>('text');
   const [text, setText] = useState('');
@@ -127,6 +129,12 @@ export function CaptureSheet({ onClose, onNewNote, onNewTask, onNewEvent }: {
                     onNewNote(t.slice(0, 24), t);
                   }}
                 >生成笔记</button>
+                <button
+                  className="btn btn-secondary"
+                  disabled={!text.trim()}
+                  style={{ opacity: text.trim() ? 1 : 0.5 }}
+                  onClick={() => { onStash(text.trim()); }}
+                >存入收集箱</button>
                 <button
                   className="btn btn-secondary"
                   disabled={!text.trim()}
