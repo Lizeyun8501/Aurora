@@ -958,6 +958,8 @@ function WeeklyReview({ invoke }: { invoke: InvokeFn | null }): React.ReactEleme
 /** R3-2：TodayTaskRow 行数据面（due_date 加——分区判定键）。 */
 interface TodayTaskRow {
   task_id: string;
+  /** C-03: 双锚定来源笔记（知识—行动同屏过滤键;空串=无锚定）。 */
+  note_id?: string;
   title: string;
   status: string;
   priority?: string;
@@ -965,32 +967,81 @@ interface TodayTaskRow {
   blocked: boolean;
 }
 
-/** R3-2：分区标题行（计数徽章）。 */
-function SectionHead({ label, count, tone }: { label: string; count: number; tone: string }): React.ReactElement {
+/**
+ * C-03：分区标题行（h2+aria-labelledby 锚 id;红徽标态=逾期——红底
+ * 计数徽标,非逾期=中性徽标;subtitle=折叠区摘要（后续区 N 天窗口）。
+ */
+function SectionHead({
+  label,
+  count,
+  tone,
+  id,
+  red,
+  subtitle,
+  right,
+}: {
+  label: string;
+  count: number;
+  tone: string;
+  id: string;
+  red?: boolean;
+  subtitle?: string;
+  right?: React.ReactNode;
+}): React.ReactElement {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: tokens.spacing.sm, marginBottom: 2 }}>
-      <span style={{ fontSize: tokens.typography.caption.size, fontWeight: 600, color: tone }}>{label}</span>
+    <div
+      id={`${id}-head`}
+      role="heading"
+      aria-level={2}
+      style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: tokens.spacing.sm, marginBottom: 2 }}
+    >
+      <h2
+        style={{ fontSize: tokens.typography.caption.size, fontWeight: 600, color: tone, margin: 0 }}
+      >
+        {label}
+      </h2>
       <span
         style={{
           fontSize: tokens.typography.caption.size,
           padding: '0 7px',
           borderRadius: 999,
-          background: 'rgba(255,255,255,0.08)',
-          color: tone,
+          background: red ? 'rgba(229,72,77,0.18)' : 'rgba(255,255,255,0.08)',
+          color: red ? tokens.color.danger : tone,
+          fontWeight: red ? 700 : 400,
+          border: red ? '1px solid rgba(229,72,77,0.45)' : 'none',
         }}
       >
         {count}
       </span>
+      {subtitle && (
+        <span style={{ fontSize: tokens.typography.caption.size, color: tokens.color.textSecondary }}>
+          {subtitle}
+        </span>
+      )}
+      <span style={{ flex: 1 }} />
+      {right}
     </div>
   );
 }
 
-/** R3-2：今日三分区（Todoist 式——逾期/今天/后续）。 */
-function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElement {
+/**
+ * R3-2 + C-03：今日三分区（Todoist 式——逾期/今天/后续）。
+ * C-03 增量:
+ * - 逾期=红计数徽标置顶;行内「顺延到今天」一键（cmd_reschedule_task
+ *   WritePath→TaskRescheduled 事件→投影同步,DoD 2:顺延后从逾期消失/现今天）
+ * - 后续=默认折叠（折叠钮 aria-expanded;显示天数窗口摘要）
+ * - 空分区不渲染标题（既有）+全空=单张引导卡（新建任务/从笔记提取——
+ *   无重复空文案,DoD 3）
+ * - 知识—行动同屏:行内来源笔记徽标（note_id 双锚定——点击跳编辑器,
+ *   按任务行过滤非全量堆叠;不新增第四栏——番茄钟/AI 洞察位保持）
+ */
+function TodayTaskRows({ invoke, onOpenNote }: { invoke: InvokeFn | null; onOpenNote?: (noteId: string) => void }): React.ReactElement {
   const [rows, setRows] = useState<TodayTaskRow[]>([]);
   const [upcoming, setUpcoming] = useState<TodayTaskRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [upOpen, setUpOpen] = useState(false); // C-03: 后续默认折叠
+  const [deferring, setDeferring] = useState<string | null>(null); // 顺延中行
 
   const refresh = useCallback(async () => {
     if (!invoke) return;
@@ -1012,6 +1063,26 @@ function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElem
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /** C-03: 顺延到今天（WritePath 正门——cmd_reschedule_task 发
+   * TaskRescheduled 事件,投影重投后 refresh 即分区归位,DoD 2）。 */
+  const deferToToday = useCallback(
+    async (taskId: string) => {
+      if (!invoke || deferring) return;
+      setDeferring(taskId);
+      const n = new Date();
+      const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+      try {
+        await invoke('cmd_reschedule_task', { taskId, newDue: today });
+        await refresh(); // 投影同步——任务即从逾期区消失、入今天区
+      } catch {
+        /* reschedule 失败静默（事件总线/投影异常——列表旧态保守显示） */
+      } finally {
+        setDeferring(null);
+      }
+    },
+    [invoke, deferring, refresh],
+  );
 
   // 分区判定（本地时区今日 0 点为界；due 缺失归今天）
   const dayStart = (() => {
@@ -1055,6 +1126,52 @@ function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElem
           </span>
         )}
         <span style={{ fontSize: tokens.typography.body.size, flex: 1 }}>{r.title}</span>
+        {r.note_id && onOpenNote && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenNote(r.note_id!);
+            }}
+            title={`来源笔记（知识—行动同屏）: ${r.note_id}`}
+            aria-label={`打开来源笔记 ${r.note_id}`}
+            style={{
+              border: '1px solid rgba(138,184,255,0.35)',
+              background: 'rgba(88,166,255,0.10)',
+              color: '#8ab8ff',
+              borderRadius: tokens.radius.sm,
+              fontSize: tokens.typography.caption.size,
+              padding: '1px 7px',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            📄 笔记
+          </button>
+        )}
+        {opts?.overdue && invoke && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              void deferToToday(r.task_id);
+            }}
+            disabled={deferring === r.task_id}
+            title="顺延到今天（经 WritePath TaskRescheduled）"
+            aria-label={`顺延任务 ${r.title} 到今天`}
+            data-testid={`defer-today-${r.task_id}`}
+            style={{
+              border: '1px solid rgba(229,72,77,0.45)',
+              background: 'rgba(229,72,77,0.12)',
+              color: tokens.color.danger,
+              borderRadius: tokens.radius.sm,
+              fontSize: tokens.typography.caption.size,
+              padding: '1px 7px',
+              cursor: deferring === r.task_id ? 'wait' : 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {deferring === r.task_id ? '…' : '↷ 今天'}
+          </button>
+        )}
         <span style={{ color: tokens.color.textSecondary, fontSize: tokens.typography.caption.size }}>
           {expanded === r.task_id ? '收起 ▲' : '依赖 ▼'}
         </span>
@@ -1079,23 +1196,108 @@ function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElem
         <p style={{ color: tokens.color.textSecondary }}>
           browser-mock 模式——任务命令仅 tauri 模式可用
         </p>
-      ) : rows.length === 0 && upcoming.length === 0 ? (
-        <p style={{ color: tokens.color.textSecondary }}>
-          {loaded ? '今日无任务，后续 7 天也无安排' : '任务加载中…'}
-        </p>
+      ) : loaded && rows.length === 0 && upcoming.length === 0 ? (
+        /* C-03 DoD 3: 全空态=单张引导卡（无重复空文案——加载中态独立短行） */
+        <div
+          data-testid="today-empty-guide"
+          style={{
+            marginTop: tokens.spacing.md,
+            padding: tokens.spacing.lg,
+            border: '1px dashed rgba(138,184,255,0.35)',
+            borderRadius: tokens.radius.md,
+            textAlign: 'center',
+            color: tokens.color.textSecondary,
+          }}
+        >
+          <p style={{ margin: '0 0 10px', fontSize: tokens.typography.body.size }}>
+            🌱 今日与后续 7 天均无任务
+          </p>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('aurora:new-task'))}
+              style={{
+                border: '1px solid rgba(138,184,255,0.45)',
+                background: 'rgba(88,166,255,0.14)',
+                color: '#8ab8ff',
+                borderRadius: tokens.radius.sm,
+                padding: '5px 14px',
+                cursor: 'pointer',
+                fontSize: tokens.typography.body.size,
+              }}
+            >
+              ＋ 新建任务
+            </button>
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('aurora:goto-notes'))}
+              style={{
+                border: '1px solid rgba(255,255,255,0.15)',
+                background: 'transparent',
+                color: tokens.color.textSecondary,
+                borderRadius: tokens.radius.sm,
+                padding: '5px 14px',
+                cursor: 'pointer',
+                fontSize: tokens.typography.body.size,
+              }}
+            >
+              📄 从笔记提取任务
+            </button>
+          </div>
+        </div>
+      ) : !loaded ? (
+        <p style={{ color: tokens.color.textSecondary }}>任务加载中…</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacing.xs }}>
           {overdue.length > 0 && (
-            <SectionHead label="逾期" count={overdue.length} tone={tokens.color.danger} />
+            <div aria-labelledby="sec-overdue-head">
+              <SectionHead
+                label="逾期"
+                count={overdue.length}
+                tone={tokens.color.danger}
+                id="sec-overdue"
+                red
+              />
+            </div>
           )}
           {overdue.map((r) => renderRow(r, { overdue: true }))}
           {todayRows.length > 0 && (
-            <SectionHead label="今天" count={todayRows.length} tone={tokens.color.primaryBright} />
+            <div aria-labelledby="sec-today-head">
+              <SectionHead label="今天" count={todayRows.length} tone={tokens.color.primaryBright} id="sec-today" />
+            </div>
           )}
           {todayRows.map((r) => renderRow(r))}
           {upcoming.length > 0 && (
-            <SectionHead label="后续 7 天" count={upcoming.length} tone={tokens.color.textSecondary} />
+            <div aria-labelledby="sec-upcoming-head">
+              <SectionHead
+                label="后续"
+                count={upcoming.length}
+                tone={tokens.color.textSecondary}
+                id="sec-upcoming"
+                subtitle="7 天窗口"
+                right={
+                  <button
+                    aria-expanded={upOpen}
+                    aria-controls="sec-upcoming-body"
+                    onClick={() => setUpOpen(!upOpen)}
+                    title={upOpen ? '折叠后续任务' : '展开后续任务'}
+                    data-testid="upcoming-fold"
+                    style={{
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      background: 'transparent',
+                      color: tokens.color.textSecondary,
+                      borderRadius: tokens.radius.sm,
+                      padding: '1px 9px',
+                      cursor: 'pointer',
+                      fontSize: tokens.typography.caption.size,
+                    }}
+                  >
+                    {upOpen ? '▲ 折叠' : `▼ 展开（${upcoming.length}）`}
+                  </button>
+                }
+              />
+            </div>
           )}
+          {upOpen && (
+          <div id="sec-upcoming-body">
           {upcoming.map((r) => (
             <div key={r.task_id}>
               <div
@@ -1127,6 +1329,8 @@ function TodayTaskRows({ invoke }: { invoke: InvokeFn | null }): React.ReactElem
               </div>
             </div>
           ))}
+          </div>
+          )}
         </div>
       )}
     </div>
@@ -4879,7 +5083,13 @@ export default function DesktopShell() {
             ) : (
               <p style={{ color: tokens.color.textSecondary }}>统计加载中…</p>
             )}
-            <TodayTaskRows invoke={invoke} />
+            <TodayTaskRows
+              invoke={invoke}
+              onOpenNote={(noteId) => {
+                setSelectedId(noteId);
+                setView('notes');
+              }}
+            />
             <FocusPomodoro invoke={invoke} />
             <WeeklyReview invoke={invoke} />
             <ReviewEntryCard invoke={invoke} onOpen={() => setReviewOpen(true)} />

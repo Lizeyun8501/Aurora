@@ -886,6 +886,8 @@ async fn cmd_today_task_rows() -> Result<Vec<serde_json::Value>, String> {
         .map(|r| {
             serde_json::json!({
                 "task_id": r.task_id,
+                // C-03: 双锚定 note_id 透传（知识—行动同屏过滤键;空串=无锚定）
+                "note_id": r.note_id,
                 "title": r.title,
                 "status": r.status,
                 "priority": r.priority,
@@ -926,6 +928,8 @@ async fn cmd_upcoming_tasks(days: Option<i64>) -> Result<Vec<serde_json::Value>,
         .map(|r| {
             serde_json::json!({
                 "task_id": r.task_id,
+                // C-03: 双锚定 note_id 透传（后续区同权）
+                "note_id": r.note_id,
                 "title": r.title,
                 "status": r.status,
                 "priority": r.priority,
