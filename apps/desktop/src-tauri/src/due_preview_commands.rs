@@ -74,9 +74,7 @@ pub struct DuePreviewMulti {
 }
 
 #[tauri::command]
-pub async fn cmd_preview_due_multi(
-    text: String,
-) -> Result<Vec<DuePreviewMulti>, String> {
+pub async fn cmd_preview_due_multi(text: String) -> Result<Vec<DuePreviewMulti>, String> {
     use aurora_core::l2_engines::action_extractor::{due_parse_multi, DueSemantic};
     let now = chrono::Utc::now();
     Ok(due_parse_multi(&text, now)

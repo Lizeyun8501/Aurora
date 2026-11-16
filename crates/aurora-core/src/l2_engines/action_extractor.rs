@@ -141,8 +141,11 @@ pub fn due_parse_multi(text: &str, now: chrono::DateTime<Utc>) -> Vec<DueParseMu
         }
         let seg: String = chars_v[seg_start_ci..ci].iter().collect();
         if let Some(dp) = due_parse_at(&seg, now) {
-            let matched_text: String =
-                seg.chars().skip(dp.matched_start).take(dp.matched_end - dp.matched_start).collect();
+            let matched_text: String = seg
+                .chars()
+                .skip(dp.matched_start)
+                .take(dp.matched_end - dp.matched_start)
+                .collect();
             out.push(DueParseMulti {
                 due_ts: dp.due_ts,
                 matched_start: seg_start_ci + dp.matched_start,
@@ -156,8 +159,11 @@ pub fn due_parse_multi(text: &str, now: chrono::DateTime<Utc>) -> Vec<DueParseMu
     // 尾段（无分隔符收尾——「明天 9 点」单子句走此路径,退化 v1 单结果）
     let seg: String = chars_v[seg_start_ci..].iter().collect();
     if let Some(dp) = due_parse_at(&seg, now) {
-        let matched_text: String =
-            seg.chars().skip(dp.matched_start).take(dp.matched_end - dp.matched_start).collect();
+        let matched_text: String = seg
+            .chars()
+            .skip(dp.matched_start)
+            .take(dp.matched_end - dp.matched_start)
+            .collect();
         out.push(DueParseMulti {
             due_ts: dp.due_ts,
             matched_start: seg_start_ci + dp.matched_start,

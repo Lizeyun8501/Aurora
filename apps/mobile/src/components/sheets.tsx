@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { platform } from '../adapters/androidPlatform';
 import { I, EmptyState, type Task, type TaskPriority, type TaskStatus, TASK_PRIO, TASK_GROUPS } from './primitives';
 import type { SharedIntent, ShareTarget } from './intent';
+import { DueChipPreview, type DueChip } from '@aurora/ui-components';
 
 /** A-06: 分享接收浮层（内容预览+目标切换——text 型 img 预览经 data URL）。 */
 export function ShareReceiveSheet(props: {
@@ -63,6 +64,16 @@ export function CaptureSheet({ onClose, onNewNote, onNewTask, onNewEvent, onStas
   const [mode, setMode] = useState<'text' | 'ocr' | 'voice'>('text');
   const [text, setText] = useState('');
   const [prio, setPrio] = useState<TaskPriority>('normal'); // E17: 捕获即定优先级
+  // C-02: NL 日期 chip 群——150ms 防抖 platform.previewDueMulti（core 同源）
+  const [dueChips, setDueChips] = useState<DueChip[]>([]);
+  const [dueRemoved, setDueRemoved] = useState<ReadonlySet<number>>(new Set());
+  useEffect(() => {
+    if (!text.trim()) { setDueChips([]); return; } // 空输入清（DoD: 干净空态）
+    const timer = setTimeout(() => {
+      setDueChips(platform.previewDueMulti(text));
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [text]);
 
   // AI 预处理（本地启发式演示 — 推荐 PARA 分类 + 提取行动任务）
   const aiHint = (() => {
@@ -112,6 +123,27 @@ export function CaptureSheet({ onClose, onNewNote, onNewTask, onNewEvent, onStas
                 onChange={(e) => setText(e.target.value)}
                 placeholder="想到什么写什么，AI 自动整理…"
                 autoFocus
+              />
+              {/* C-02: 多时间词 chip 群（同桌面 QuickCapture——shared 组件） */}
+              <DueChipPreview
+                chips={dueChips}
+                removed={dueRemoved}
+                onRemove={(i) => setDueRemoved(new Set(dueRemoved).add(i))}
+                onCorrect={(i) => {
+                  // 移动校正:原生 datetime-local（系统 picker 弹层）
+                  const inp = document.createElement('input');
+                  inp.type = 'datetime-local';
+                  inp.value = new Date(dueChips[i].due_ts).toISOString().slice(0, 16);
+                  inp.onchange = () => {
+                    const v = inp.value ? new Date(inp.value).getTime() : dueChips[i].due_ts;
+                    setDueChips((cs) => cs.map((c, j) => (j === i ? { ...c, due_ts: v, human: new Date(v).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) } : c)));
+                  };
+                  inp.style.position = 'fixed';
+                  inp.style.opacity = '0';
+                  document.body.appendChild(inp);
+                  inp.showPicker?.();
+                  inp.addEventListener('blur', () => setTimeout(() => inp.remove(), 500));
+                }}
               />
               {aiHint && (
                 <div className="capture-ai-tip">

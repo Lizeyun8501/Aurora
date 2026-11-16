@@ -1499,7 +1499,7 @@ impl UniffiAppCore {
                     "start": m.matched_start,
                     "end": m.matched_end,
                     "matched_text": m.matched_text,
-                    "human": humanize_due(m.due_ts),
+                    "human": Self::humanize_due(m.due_ts),
                     "semantic": match m.semantic {
                         DueSemantic::Start => "开始",
                         DueSemantic::Deadline => "截止",
@@ -1514,7 +1514,7 @@ impl UniffiAppCore {
     /// C-02: due_ts 本地时区 humanize（与桌面 due_preview_commands 同格式:
     /// ≤2 天相对词/≤6 天周X/绝对日期;+时刻）。
     fn humanize_due(due_ts: i64) -> String {
-        use chrono::{Datelike, Local, TimeZone};
+        use chrono::{Datelike, Local, TimeZone, Timelike};
         let dt = Local
             .timestamp_millis_opt(due_ts)
             .single()
@@ -1533,12 +1533,7 @@ impl UniffiAppCore {
         } else {
             format!("{}月{}日", dt.month(), dt.day())
         };
-        format!(
-            "{} {:02}:{:02}",
-            day,
-            dt.hour(),
-            dt.minute()
-        )
+        format!("{} {:02}:{:02}", day, dt.hour(), dt.minute())
     }
 
     /// A-09: 高级搜索 JSON（BM25 执行器——移动无 hybrid 建置,解析+过滤+徽章面
