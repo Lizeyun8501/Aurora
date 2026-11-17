@@ -652,7 +652,6 @@ mod tests {
 
     // ── R-α2：now 注入对拍（固定时刻断言精确值） ──
 
-    #[test]
     /// C-02: 多时间词——双子句双 chip+语义标注（开始/截止）。
     #[test]
     fn due_parse_multi_two_clauses() {
@@ -704,6 +703,8 @@ mod tests {
         assert!(s1.contains("下周五") && s1.contains("15:00"));
     }
 
+    /// R-α2: now 注入对拍（固定时刻断言精确值）——C-02 帧 attribute 脱落修复。
+    #[test]
     fn due_parse_at_fixed_now() {
         use chrono::TimeZone;
         let now = Utc.with_ymd_and_hms(2026, 10, 21, 10, 0, 0).unwrap(); // 周三

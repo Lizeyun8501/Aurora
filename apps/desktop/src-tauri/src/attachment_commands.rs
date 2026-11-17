@@ -183,11 +183,10 @@ pub async fn cmd_open_attachment(
     // tauri-plugin-opener——v2 登记 ledger;v1 功能面正常,allow 保最小 diff）。
     use tauri_plugin_shell::ShellExt as _;
     #[allow(deprecated)]
-    let opened = app
-        .shell()
+    // tauri shell().open() 返 ()——clippy::let_unit_value（绑定无值,直调）
+    app.shell()
         .open(&path_str, None)
         .map_err(|e| format!("shell open: {e}"))?;
-    let _ = opened;
     Ok(path_str)
 }
 

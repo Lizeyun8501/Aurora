@@ -2162,7 +2162,7 @@ async fn cmd_open_note_window(
         &label,
         tauri::WebviewUrl::App(format!("index.html#note={}", note_id).into()),
     )
-    .title(&format!(
+    .title(format!(
         "{} — Aurora Note",
         if title.is_empty() { "笔记" } else { &title }
     ))
