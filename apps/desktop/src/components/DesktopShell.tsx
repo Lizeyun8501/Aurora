@@ -3860,6 +3860,23 @@ export default function DesktopShell() {
       return raw ? (JSON.parse(raw) as string[]).slice(0, 8) : [];
     } catch { return []; }
   });
+  /* C-06: 最近使用命令/笔记执行记录（N=8 localStorage——palette 置顶加权）。
+   * 「随备份」注记: 本地面=localStorage 快照（core KV 备份链不含 shell 层
+   * UI 态——上移 core KV 留后续卡;与 recentIds/recentQueries 同惯例）。 */
+  const [recentCommands, setRecentCommands] = useState<Array<{ id: string; ts: number }>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('aurora.recentCommands') ?? '[]') as Array<{ id: string; ts: number }>;
+    } catch { return []; }
+  });
+  /** C-06: 执行记录回写（FIFO 去重 N=8——ts=执行时刻）。 */
+  const recordPaletteExec = useCallback((itemId: string) => {
+    setRecentCommands((prev) => {
+      const next = [{ id: itemId, ts: Date.now() }, ...prev.filter((x) => x.id !== itemId)].slice(0, 8);
+      try { localStorage.setItem('aurora.recentCommands', JSON.stringify(next)); } catch { /* 配额满静默 */ }
+      return next;
+    });
+  }, []);
+
   const openNoteId = useCallback((id: string) => {
     setSelectedId(id);
     setRecentIds((prev) => {
@@ -4369,7 +4386,7 @@ export default function DesktopShell() {
         run: () => data.createNote('未命名'),
       },
       {
-        kind: 'command' as const,
+        kind: 'setting' as const,
         id: 'theme-settings',
         title: '主题设置（A-11 白名单定制）',
         run: () => setThemePanelOpen(true),
@@ -4399,7 +4416,7 @@ export default function DesktopShell() {
         run: () => setQuickCapOpen(true),
       },
       {
-        kind: 'command' as const,
+        kind: 'setting' as const,
         id: 'shortcut-settings',
         title: '快捷键设置（DK-2.10）',
         run: () => setShortcutSettingsOpen(true),
@@ -5223,6 +5240,13 @@ export default function DesktopShell() {
         onQuery={runSearch}
         openNote={openNoteId}
         items={[...builtins, ...recentItems, ...results]}
+        recentCommands={recentCommands}
+        onExecuted={(item) => recordPaletteExec(item.id)}
+        onGlobalSearch={(q) => {
+          /* C-06: 无结果全局搜索入口——跳搜索视图预填（palette 语义重试面） */
+          window.dispatchEvent(new CustomEvent('aurora:search-jump', { detail: { query: q } }));
+          setPaletteOpen(false);
+        }}
       />
       {/* A-11: 主题设置面板（白名单 12 项+预设+对比度硬约束+导入导出） */}
       {themePanelOpen && (

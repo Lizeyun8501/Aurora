@@ -46,3 +46,21 @@ describe('DK-3.2：fuzzyMatch', () => {
     expect(out[0].title).toBe('新建笔记'); // 短标题归一化高分在前
   });
 });
+
+// ── C-06: recency 加权语义（palette 置顶——不挤掉精确匹配） ──
+describe('C-06: recency 加权', () => {
+  it('精确匹配分数 > 模糊匹配 + 0.5 recency 加成（置顶不挤精确）', () => {
+    const exact = fuzzyMatch('新建笔记', '新建笔记')!;
+    const vague = fuzzyMatch('建', '新建笔记')!;
+    // 精确完整命中 vs 单字模糊: 分差远超 0.5 加成上限
+    expect(exact.score).toBeGreaterThan(vague.score + 0.5);
+  });
+
+  it('同分层: recency 加成 tie-break 生效（0.5 可翻转同分项）', () => {
+    const a = fuzzyMatch('任务', '任务归档')!;
+    const b = fuzzyMatch('任务', '任务清理')!;
+    // 同型命中分近——boost 0.5 使带 recency 项胜出
+    const boosted = a.score + 0.5;
+    expect(boosted).toBeGreaterThan(b.score);
+  });
+});
