@@ -4,7 +4,8 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { platform } from '../adapters/androidPlatform';
-import { I, NoteCard, EmptyState, relativeTime, type Task, type TrashItem, loadList, saveList, K_TRASH } from '../components/primitives';
+import {I, NoteCard, relativeTime, type Task, type TrashItem, loadList, saveList, K_TRASH} from '../components/primitives';
+import { EmptyState } from '@aurora/ui-components';
 
 export function TrashView({ trash, onTrash, showToast }: {
   trash: TrashItem[];
@@ -54,7 +55,7 @@ export function TrashView({ trash, onTrash, showToast }: {
   return (
     <div className="view">
       {merged.length === 0 ? (
-        <EmptyState text="回收站是空的。删除的笔记会在这里保留，可随时恢复。" />
+        <EmptyState illustration="trash" title="回收站是空的。删除的笔记会在这里保留，可随时恢复。" />
       ) : (
         <>
           <button className="btn btn-text btn-block" style={{ marginBottom: 8 }} onClick={clearAll}>

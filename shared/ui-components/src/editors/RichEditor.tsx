@@ -37,6 +37,7 @@ import { auroraSchema } from '../schema/auroraSchema';
 import { MobileEditorDock } from './MobileEditorDock';
 import { MarkdownSourceEditor, useMarkdownSourceMode } from './MarkdownSourceEditor';
 import { NoteBreadcrumb } from '../views/NoteBreadcrumb';
+import { dialog } from '../layouts/dialogs';
 
 export type EditorStatus = 'loading' | 'rich' | 'fallback';
 
@@ -275,18 +276,6 @@ export function insertTemplate(view: EditorView | null, key: TemplateKey): boole
 // 工具栏按钮定义
 type TBCmd = PMCommand;
 
-const MARK_BTNS: Array<{ key: string; label: string; title: string; cmd: TBCmd }> = [
-  { key: 'strong', label: 'B', title: '加粗', cmd: toggleMark(auroraSchema.marks.strong) },
-  { key: 'em', label: 'I', title: '斜体', cmd: toggleMark(auroraSchema.marks.em) },
-  { key: 'underline', label: 'U', title: '下划线', cmd: toggleMark(auroraSchema.marks.underline) },
-  {
-    key: 'strikethrough',
-    label: 'S',
-    title: '删除线',
-    cmd: toggleMark(auroraSchema.marks.strikethrough),
-  },
-  { key: 'code', label: '</>', title: '行内代码', cmd: toggleMark(auroraSchema.marks.code) },
-];
 
 function blockCmd(type: string, attrs?: Record<string, unknown>): TBCmd {
   const nodeType = auroraSchema.nodes[type];
@@ -654,14 +643,15 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
     const f = e.target.files?.[0];
     e.target.value = '';
     if (!f) return;
-    if (f.size > 2 * 1024 * 1024) { window.alert('附件过大（>2MB）——dataURL 内嵌上限'); return; }
+    if (f.size > 2 * 1024 * 1024) { void dialog.notify({ title: '附件过大', message: '附件过大（>2MB）——dataURL 内嵌上限' }); return; }
     const r = new FileReader();
     r.onload = () => insertEmbedAt(kind === 'image' ? 'image' : 'file', String(r.result ?? ''), f.name);
     r.readAsDataURL(f);
   };
+  // C-05: window.prompt 退役——dialog.prompt（Modal 焦点陷阱/Esc/aria-modal）
   const insertMediaUrl = (t: 'video' | 'audio') => {
-    const url = window.prompt(t === 'video' ? '视频地址' : '音频地址', 'https://');
-    if (url) insertEmbedAt(t, url, '');
+    void dialog.input({ title: t === 'video' ? '插入视频' : '插入音频', label: '媒体地址', initial: 'https://' })
+      .then((url) => { if (url) insertEmbedAt(t, url, ''); });
   };
   // E19（TA 20:51 深扫 S10）: Escape 键盘通道关面板——桌面键盘用户预期;粘性面板
   // 的第三关闭路径（点击编辑区/栏钮/Escape）。
@@ -1052,10 +1042,10 @@ export function EditorToolbar({ view, tick }: { view: EditorView | null; tick: n
               {/* E7 补齐（思源对标·TA 08:46）: 链接/图片/表格——「＋」插入组缺项 */}
               <button className="tb-style-btn" title="插入链接"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { if (view) { const href = window.prompt('链接地址', 'https://'); if (href) { const { empty } = view.state.selection; if (!empty) { const linkMark = auroraSchema.marks.link; view.dispatch(view.state.tr.addStoredMark(linkMark.create({ href }))); } } } }}>🔗</button>
+                onClick={() => { if (view) { void dialog.input({ title: '插入链接', label: '链接地址', initial: 'https://' }).then((href) => { if (href) { const { empty } = view.state.selection; if (!empty) { const linkMark = auroraSchema.marks.link; view.dispatch(view.state.tr.addStoredMark(linkMark.create({ href }))); } } }); } }}>🔗</button>
               <button className="tb-style-btn" title="插入图片（URL）"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { if (view) { const url = window.prompt('图片地址', 'https://'); if (url) { const embed = auroraSchema.nodes.embed.create({ embed_type: 'image', url, title: '' }); const pos = view.state.selection.$from.before(1); view.dispatch(view.state.tr.insert(pos, embed)); } } }}>🖼</button>
+                onClick={() => { if (view) { void dialog.input({ title: '插入图片', label: '图片地址', initial: 'https://' }).then((url) => { if (url) { const embed = auroraSchema.nodes.embed.create({ embed_type: 'image', url, title: '' }); const pos = view.state.selection.$from.before(1); view.dispatch(view.state.tr.insert(pos, embed)); } }); } }}>🖼</button>
               <button className="tb-style-btn" title="插入表格"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { if (view) insertBlock(view, 'table'); }}>▦</button>

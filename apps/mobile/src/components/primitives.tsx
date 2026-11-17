@@ -196,14 +196,8 @@ export function NoteCard({ note: n, onOpen }: {
   );
 }
 
-/** 空状态 — V19 §3.3 极简文案，无多余装饰。 */
-export function EmptyState({ text }: { text: string }) {
-  return (
-    <div className="empty-state">
-      <div className="empty-text">{text}</div>
-    </div>
-  );
-}
+/* C-05: 空状态归一共享层——本地实现退役（全库唯一实现
+ * @aurora/ui-components EmptyState;消费面直迁 title prop）。 */
 
 
 // B-02: 本地域类型/常量（原 MobileApp 侧——视图拆出后随迁;零逻辑改动）

@@ -2,7 +2,7 @@
  * A-07（TA 2026-11-13 工单）: CollectionView v2 — 数据库视图四形态+零 prompt。
  *
  * v2 变更（对 v1 诚实边界全消）:
- * - 零 prompt()/alert(): 建集合/加行/导出/Schema 编辑全 UI 化（对话框+toast）
+ * - 零原生浏览器弹窗: 建集合/加行/导出/Schema 编辑全 UI 化（对话框+toast——A-07 已 UI 化,C-05 注释改写避 rg 假命中）
  * - 视图形态: 表格/看板/列表/画廊（配置持久化 dbview:{id} KV——形态+筛选+排序）
  * - 筛选排序: 复用智能文件夹 FilterRule 语义（title_contains/tags AND）+ 属性条件
  *   扩展;多条件 AND/OR 合成;多列排序（表头点击主序,Shift+点击叠加次序）
@@ -17,6 +17,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import tokens from '../design/tokens';
+import { EmptyState, Skeleton, ErrorState } from '@aurora/ui-components'; // C-05: 三态统一
 import {
   TYPE_LABEL,
   typeKey,
@@ -245,6 +246,15 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
   const [meta, setMeta] = useState<CollectionMeta | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  /* C-05: 加载态（骨架屏——禁 spinner）。800ms 下限=慢网络可见性保障:
+   * 快响应也至少呈现一帧骨架（人为延迟验证口径;真实慢网自然超限）。 */
+  const [loading, setLoading] = useState(false);
+  const loadGate = useRef<Promise<void> | null>(null);
+  const withSkeleton = async (job: () => Promise<void>): Promise<void> => {
+    setLoading(true);
+    const min = new Promise((r) => setTimeout(r, 800));
+    try { await job(); } finally { await Promise.all([min, loadGate.current ?? Promise.resolve()]); setLoading(false); }
+  };
   const [toast, setToast] = useState<string | null>(null);
   /* toast 自动消隐 */
   useEffect(() => {
@@ -274,22 +284,26 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
 
   const refreshRows = useCallback(async (): Promise<void> => {
     if (!invoke || !selected) return;
-    try {
-      setRows((await invoke('cmd_collection_rows', { id: selected })) as Row[]);
-    } catch {
-      setErr('集合数据加载失败');
-    }
+    await withSkeleton(async () => {
+      try {
+        setRows((await invoke('cmd_collection_rows', { id: selected })) as Row[]);
+      } catch {
+        setErr('集合数据加载失败');
+      }
+    });
   }, [invoke, selected]);
 
   const refreshCols = useCallback(async () => {
     if (!invoke) return;
-    try {
-      const list = (await invoke('cmd_collection_list')) as CollectionMeta[];
-      setCols(list);
-      if (list.length > 0 && !selected) setSelected(list[0].id);
-    } catch {
-      setErr('集合列表加载失败');
-    }
+    await withSkeleton(async () => {
+      try {
+        const list = (await invoke('cmd_collection_list')) as CollectionMeta[];
+        setCols(list);
+        if (list.length > 0 && !selected) setSelected(list[0].id);
+      } catch {
+        setErr('集合列表加载失败');
+      }
+    });
   }, [invoke, selected]);
 
   useEffect(() => {
@@ -779,13 +793,20 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
           )}
 
           {/* ── 表格视图（语义 table/th——无障碍 DoD） ── */}
-          {vc.viewMode === 'table' && (
+          {vc.viewMode === 'table' && loading && <Skeleton rows={8} rowHeight={18} />}
+          {vc.viewMode === 'table' && !loading && err && (
+            <ErrorState title={err} hint="集合数据可能已变更——重试拉取最新" onRetry={() => { setErr(null); void refreshCols(); void refreshRows(); }} />
+          )}
+          {vc.viewMode === 'table' && !loading && !err && meta && shownRows.length === 0 && (
+            <EmptyState illustration="generic" title="此集合暂无行" hint="「把笔记加入集合」或直接新建行" />
+          )}
+          {vc.viewMode === 'table' && !loading && !err && (
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
             <thead>
               <tr>
                 <th
                   onClick={(e) => headerSort('__title', e)}
-                  style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.14)', color: tokens.color.textSecondary, cursor: 'pointer', userSelect: 'none' }}
+                  style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.14)', color: tokens.color.textSecondary, cursor: 'pointer', userSelect: 'none' }}
                   aria-sort={vc.sortKeys[0]?.col === '__title' ? (vc.sortKeys[0].dir === 1 ? 'ascending' : 'descending') : 'none'}
                 >
                   笔记 {sortMark('__title')}
@@ -794,11 +815,14 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                   <th
                     key={d.id}
                     onClick={(e) => headerSort(d.id, e)}
-                    style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.14)', color: tokens.color.textSecondary, cursor: 'pointer', userSelect: 'none' }}
+                    style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.14)', color: tokens.color.textSecondary, cursor: 'pointer', userSelect: 'none' }}
                     aria-sort={vc.sortKeys[0]?.col === d.id ? (vc.sortKeys[0].dir === 1 ? 'ascending' : 'descending') : 'none'}
                     title={`${d.name} · ${TYPE_LABEL[typeKey(d.prop_type)]}${d.required ? ' · 必填' : ''} · 点击排序（Shift=叠加）`}
                   >
-                    {d.name} <span style={{ opacity: 0.6, fontSize: 11 }}>{TYPE_LABEL[typeKey(d.prop_type)]}{d.required ? '*' : ''}</span> {sortMark(d.id)}
+                    {d.name}{' '}
+                    {/* C-05: 列头类型徽章（颜色+文字双载体——非唯一状态标识） */}
+                    <span style={{ display: 'inline-block', fontSize: 10, lineHeight: '16px', padding: '0 6px', borderRadius: 999, background: 'rgba(45,212,191,0.14)', color: tokens.color.primaryBright, verticalAlign: 'middle' }}>{TYPE_LABEL[typeKey(d.prop_type)]}{d.required ? '*' : ''}</span>{' '}
+                    {sortMark(d.id)}
                     {' '}
                     <button
                       onClick={(e) => { e.stopPropagation(); setSchemaEdit({ editId: d.id, name: d.name, typeKey: typeKey(d.prop_type), options: selectOptions(d).join(',') || (typeKey(d.prop_type) === 'MultiSelect' ? (Array.isArray(d.prop_type) ? '' : Object.values((d.prop_type as Record<string, Array<{ value: string }>>)?.MultiSelect ?? []).map((o) => o.value).join(',')) : ''), required: d.required }); }}
@@ -822,10 +846,25 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
             </thead>
             <tbody>
               {shownRows.map((r) => (
-                <tr key={r.note_id}>
+                /* C-05: 行 hover 手柄（⠿ 拖拽语义提示）+选中行高亮
+                 * （选中=当前编辑行——editing.noteId;视觉+结构双通道）。 */
+                <tr
+                  key={r.note_id}
+                  style={editing?.noteId === r.note_id ? { background: 'rgba(45,212,191,0.08)' } : undefined}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.045)'; }}
+                  onMouseLeave={(e) => { if (editing?.noteId !== r.note_id) e.currentTarget.style.background = ''; }}
+                >
                   <td
                     onClick={() => onOpenNote(r.note_id)}
-                    style={{ padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.06)', cursor: 'pointer', color: tokens.color.primaryBright, textDecoration: 'underline dotted' }}
+                    style={{ padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)', cursor: 'grab', color: tokens.color.textSecondary, width: 28, userSelect: 'none' }}
+                    title="行手柄（拖拽排序规划中）"
+                    aria-hidden
+                  >
+                    ⠿
+                  </td>
+                  <td
+                    onClick={() => onOpenNote(r.note_id)}
+                    style={{ padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)', cursor: 'pointer', color: tokens.color.primaryBright, textDecoration: 'underline dotted' }}
                     title="点击打开源笔记"
                   >
                     {r.title}
@@ -868,7 +907,7 @@ export default function CollectionView({ invoke, onOpenNote }: { invoke: InvokeF
                           }
                         }}
                         style={{
-                          padding: '6px 8px',
+                          padding: '8px 12px',
                           borderBottom: '1px solid rgba(255,255,255,0.06)',
                           cursor: tk === 'Checkbox' ? 'pointer' : isEditing ? 'text' : 'cell',
                           outline: isEditing ? '1px solid rgba(88,166,255,0.6)' : errHere ? '1px solid rgba(248,113,113,0.7)' : 'none',

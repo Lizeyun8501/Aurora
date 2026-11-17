@@ -3,7 +3,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { platform, type NoteSummary } from '../adapters/androidPlatform';
-import { I, EmptyState, relativeTime, type Task, type ToastAction, getTitleOverlay, setTitleOverlay, snippetCache } from '../components/primitives';
+import {I, relativeTime, type Task, type ToastAction, getTitleOverlay, setTitleOverlay, snippetCache} from '../components/primitives';
 import { SyncPanel } from './SyncBits';
 import { RichEditor, editorPlatform, A05BridgeEffect, a05FetchBreadcrumb } from '../components/a05';
 import { SnapshotList } from '../components/SnapshotList';

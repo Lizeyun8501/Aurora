@@ -14,6 +14,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import tokens from '../design/tokens';
+import { dialog } from '@aurora/ui-components';
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 type HistoryEntry = { ts: number; size: number };
@@ -108,7 +109,8 @@ export default function VersionHistoryPanel(props: {
 
   const rollback = (): void => {
     if (!invoke || selTs === null || busy) return;
-    if (!window.confirm('将当前内容替换为该历史版本？（当前内容会先入历史，可再回滚回来）')) return;
+    void dialog.ask({ title: '回滚版本', message: '将当前内容替换为该历史版本？（当前内容会先入历史，可再回滚回来）', confirmLabel: '回滚' }).then((ok) => {
+    if (!ok) return;
     setBusy(true);
     setMsg(null);
     invoke('cmd_update_note', { noteId, content: preview })
@@ -123,6 +125,7 @@ export default function VersionHistoryPanel(props: {
       })
       .catch(() => setMsg('回滚失败（详见通知/日志）'))
       .finally(() => setBusy(false));
+    });
   };
 
   const rowBtn = (t: HistoryEntry): React.ReactElement => (

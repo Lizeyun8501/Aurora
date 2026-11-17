@@ -4,8 +4,9 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { platform } from '../adapters/androidPlatform';
-import { I, NoteCard, EmptyState, relativeTime, type Task } from '../components/primitives';
+import {I, NoteCard, relativeTime, type Task} from '../components/primitives';
 import type { SearchResult } from '../adapters/androidPlatform';
+import { EmptyState } from '@aurora/ui-components';
 
 export function SearchView({ onOpen, initialQuery }: { onOpen: (id: string, title: string) => void; initialQuery?: string }) {
   const [query, setQuery] = useState(initialQuery ?? '');
@@ -57,7 +58,7 @@ export function SearchView({ onOpen, initialQuery }: { onOpen: (id: string, titl
       {results !== null && (
         <>
           <div className="result-section-title">笔记 · {results.length}</div>
-          {results.length === 0 && <div className="empty-state"><div className="empty-text">没有找到相关内容</div></div>}
+          {results.length === 0 && <EmptyState illustration="search" title="没有找到相关内容" />}
           <div className="note-list">
             {results.map((r) => (
               <div key={r.noteId} className="note-card" onClick={() => onOpen(r.noteId, r.title)}>
@@ -71,7 +72,7 @@ export function SearchView({ onOpen, initialQuery }: { onOpen: (id: string, titl
           </div>
 
           <div className="result-section-title">任务 · 0</div>
-          <div className="empty-state" style={{ padding: '12px 24px' }}><div className="empty-text">任务索引建设中</div></div>
+          <EmptyState illustration="generic" title="任务索引建设中" />
 
           {/* V19 页面5: AI 生成 SQL 安全审计（可折叠） */}
           <button className="btn btn-text btn-block" onClick={() => setAuditOpen(!auditOpen)}>

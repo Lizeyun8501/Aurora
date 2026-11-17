@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import tokens from '../design/tokens';
 import type { InvokeFn } from './DesktopShell';
+import { dialog } from '@aurora/ui-components';
 
 interface PairStatus {
   p2p_enabled: boolean;
@@ -75,18 +76,20 @@ export default function PairDialog({ invoke, onClose }: Props) {
   }, [invoke, importCode, refresh]);
 
   const unpair = useCallback(() => {
-    if (!window.confirm('解除配对？对端地址将被删除（可重新导入）。')) return;
-    setBusy(true);
-    invoke('cmd_pair_unpair')
-      .then(() => {
-        setMsg('已解除配对');
-        setBusy(false);
-        refresh();
-      })
-      .catch((e) => {
-        setErr(String(e));
-        setBusy(false);
-      });
+    void dialog.ask({ title: '解除配对', message: '解除配对？对端地址将被删除（可重新导入）。', danger: true, confirmLabel: '解除配对' }).then((ok) => {
+      if (!ok) return;
+      setBusy(true);
+      invoke('cmd_pair_unpair')
+        .then(() => {
+          setMsg('已解除配对');
+          setBusy(false);
+          refresh();
+        })
+        .catch((e) => {
+          setErr(String(e));
+          setBusy(false);
+        });
+    });
   }, [invoke, refresh]);
 
   const copyCode = useCallback(() => {

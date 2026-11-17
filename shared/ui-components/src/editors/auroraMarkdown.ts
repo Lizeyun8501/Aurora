@@ -275,8 +275,7 @@ function nodeToMd(node: ProseNode, orderedIdx: { n: number }): string[] {
       return [`<div class="super-${node.attrs.dir}">`, ...inner, '</div>'];
     }
     case 'tabs_block': {
-      let labels: string[] = [];
-      try { labels = JSON.parse(String(node.attrs.labels)) as string[]; } catch { labels = []; }
+      /* C-05 帮收口: labels 曾解析未消费（data-labels 直用原串）——死变量删 */
       const inner = node.content.content.flatMap((c: ProseNode) => nodeToMd(c, orderedIdx));
       return [`<div class="tabs-block" data-labels="${node.attrs.labels}">`, ...inner, '</div>'];
     }

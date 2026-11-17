@@ -9,7 +9,7 @@ import {
   validateTheme, applyTheme, clearTheme, exportThemeJSON, importThemeJSON,
   type ThemeTokenKey, type ThemeOverrides,
 } from '@aurora/ui-components'; // A-11: 主题 VM（白名单+对比度——双端同源）
-import { I, NoteCard, EmptyState, relativeTime, type Task } from '../components/primitives';
+import { I, NoteCard, relativeTime, type Task } from '../components/primitives';
 import { SyncPanel, WifiOnlyRow } from './SyncBits';
 
 export function SettingsView({ theme, onTheme, showToast }: {

@@ -3,7 +3,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { platform, type CalEvent } from '../adapters/androidPlatform';
-import { I, EmptyState, relativeTime, listNotesTitled, type Task, type TaskStatus, TASK_PRIO, TASK_GROUPS, Switch } from '../components/primitives';
+import {I, relativeTime, listNotesTitled, type Task, type TaskStatus, TASK_PRIO, TASK_GROUPS, Switch} from '../components/primitives';
 import { expandAll } from './repeatUtil';
 import { VivoIcon, FocusBadge } from '../components/vivo';
 

@@ -4,7 +4,8 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { platform } from '../adapters/androidPlatform';
-import { I, NoteCard, EmptyState, relativeTime, listNotesTitled, type Task } from '../components/primitives';
+import {I, NoteCard, relativeTime, listNotesTitled, type Task} from '../components/primitives';
+import { EmptyState } from '@aurora/ui-components';
 
 export function DiaryView({ onOpen, showToast }: {
   onOpen: (id: string, title: string) => void;
@@ -69,7 +70,7 @@ export function DiaryView({ onOpen, showToast }: {
 
       <div className="result-section-title" style={{ marginTop: 12 }}>全部日记 · {diaries.length}</div>
       {diaries.length === 0 ? (
-        <EmptyState text="写第一篇日记，记录今天的心情与思考。" />
+        <EmptyState illustration="notes" title="写第一篇日记，记录今天的心情与思考。" />
       ) : (
         <div className="note-list">
           {diaries.map((n) => (

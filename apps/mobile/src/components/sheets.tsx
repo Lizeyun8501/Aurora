@@ -3,9 +3,9 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { platform } from '../adapters/androidPlatform';
-import { I, EmptyState, type Task, type TaskPriority, type TaskStatus, TASK_PRIO, TASK_GROUPS } from './primitives';
+import {I, type Task, type TaskPriority, type TaskStatus, TASK_PRIO, TASK_GROUPS} from './primitives';
 import type { SharedIntent, ShareTarget } from './intent';
-import { DueChipPreview, type DueChip } from '@aurora/ui-components';
+import { DueChipPreview, EmptyState, type DueChip } from '@aurora/ui-components';
 
 /** A-06: 分享接收浮层（内容预览+目标切换——text 型 img 预览经 data URL）。 */
 export function ShareReceiveSheet(props: {
@@ -183,14 +183,10 @@ export function CaptureSheet({ onClose, onNewNote, onNewTask, onNewEvent, onStas
             </>
           )}
           {mode === 'ocr' && (
-            <div className="empty-state">
-              <div className="empty-text">图片 OCR 捕获即将上线<br />当前版本可先用文字录入</div>
-            </div>
+            <EmptyState illustration="generic" title="图片 OCR 捕获即将上线" hint="当前版本可先用文字录入" />
           )}
           {mode === 'voice' && (
-            <div className="empty-state">
-              <div className="empty-text">语音速记即将上线<br />当前版本可先用文字录入</div>
-            </div>
+            <EmptyState illustration="generic" title="语音速记即将上线" hint="当前版本可先用文字录入" />
           )}
         </div>
       </div>

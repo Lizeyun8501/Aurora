@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import tokens from '../design/tokens';
+import { dialog } from '@aurora/ui-components';
 
 interface TrashItem {
   note_id: string;
@@ -70,8 +71,8 @@ export default function TrashView({ invoke }: { invoke: InvokeFn | null }): Reac
     Promise.allSettled(ids.map((id) => invoke('cmd_restore_note', { noteId: id }))).then((results) => {
       const ok = results.filter((r) => r.status === 'fulfilled').length;
       const fail = results.length - ok;
-      if (fail === 0) window.alert(`已恢复 ${ok} 条。`);
-      else window.alert(`恢复完成：成功 ${ok} 条，失败 ${fail} 条。`);
+      if (fail === 0) void dialog.notify({ title: '恢复完成', message: `已恢复 ${ok} 条。` });
+      else void dialog.notify({ title: '恢复完成', message: `恢复完成：成功 ${ok} 条，失败 ${fail} 条。` });
       setSelected(new Set());
       refresh();
       setBusyId(null);
@@ -90,12 +91,19 @@ export default function TrashView({ invoke }: { invoke: InvokeFn | null }): Reac
   const purge = useCallback(
     (it: TrashItem) => {
       if (!invoke || busyId) return;
-      if (!window.confirm(`彻底删除「${it.title}」？此操作不可恢复。`)) return;
-      setBusyId(it.note_id);
-      invoke('cmd_purge_note', { noteId: it.note_id })
-        .then(() => refresh())
-        .catch((e) => setError(String(e)))
-        .finally(() => setBusyId(null));
+      void dialog.ask({
+        title: '彻底删除',
+        message: `彻底删除「${it.title}」？此操作不可恢复。`,
+        danger: true,
+        confirmLabel: '彻底删除',
+      }).then((ok) => {
+        if (!ok) return;
+        setBusyId(it.note_id);
+        invoke('cmd_purge_note', { noteId: it.note_id })
+          .then(() => refresh())
+          .catch((e) => setError(String(e)))
+          .finally(() => setBusyId(null));
+      });
     },
     [invoke, busyId, refresh],
   );
@@ -114,7 +122,7 @@ export default function TrashView({ invoke }: { invoke: InvokeFn | null }): Reac
               setBusyId('__purge__');
               try {
                 const out = (await invoke('cmd_purge_expired_trash', { days: 30 })) as string[];
-                alert(`已清理 ${out.length} 条超期回收站项（30 天前）`);
+                void dialog.notify({ title: '清理完成', message: `已清理 ${out.length} 条超期回收站项（30 天前）` });
                 await refresh();
               } catch (e) {
                 setError(String(e));

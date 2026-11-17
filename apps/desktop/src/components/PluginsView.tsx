@@ -9,6 +9,7 @@
  */
 import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { EmptyState } from '@aurora/ui-components';
 
 /** invoke 形状（与 TrashView/SyncStatusBadge 本地惯例一致）。 */
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -226,9 +227,7 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
         {status}
       </p>
       {plugins.length === 0 ? (
-        <p style={{ fontSize: 13, color: '#9ca3af' }}>
-          暂无已安装插件。可从下方市场分区安装（listing → 下载 → 签名验证 → 六环安装）。
-        </p>
+        <EmptyState illustration="generic" title="暂无已安装插件" hint="可从下方市场分区安装（listing → 下载 → 签名验证 → 六环安装）。" />
       ) : (
         <section aria-label="已安装插件列表">
           {plugins.map((p) => (
@@ -260,9 +259,7 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
 
       <h2 style={{ margin: '24px 0 8px', fontSize: 16 }}>市场可用件</h2>
       {listings.length === 0 ? (
-        <p style={{ fontSize: 13, color: '#9ca3af' }}>
-          市场暂无 listing（发布/注册走命令层或后续市场后端卡）。
-        </p>
+        <EmptyState illustration="generic" title="市场暂无 listing" hint="发布/注册走命令层或后续市场后端卡。" />
       ) : (
         <section aria-label="市场可用件列表">
           {listings.map((l) => (
@@ -325,9 +322,7 @@ export default function PluginsView({ invoke }: PluginsViewProps): React.ReactEl
             <p style={{ margin: '0 0 8px', fontSize: 12, color: '#b91c1c' }}>拉取失败：{outputErr}（已降级，不影响插件运行）</p>
           )}
           {outputLines.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 13, color: '#9ca3af' }}>
-              插件暂无输出（print 内容经 64KiB FIFO 缓冲，拉取即消费）
-            </p>
+            <EmptyState illustration="generic" title="插件暂无输出" hint="print 内容经 64KiB FIFO 缓冲，拉取即消费" />
           ) : (
             <div
               style={{

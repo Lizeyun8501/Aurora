@@ -6,10 +6,11 @@ import { type TreeNodeMeta, loadTree, saveTree, initialTreePersisted } from '../
 import { VivoIcon } from '../components/vivo';
 import { BOOK_ICONS, DOC_ICONS, loadOrder, saveOrder, applyManualOrder, listNotesTitled, ALL_ICONS, relativeTime } from '../components/primitives';
 import { platform, type NoteSummary } from '../adapters/androidPlatform';
+import { EmptyState } from '@aurora/ui-components';
 import {
-  I, NoteCard, EmptyState, type Task, getTitleOverlay, setTitleOverlay,
+I, NoteCard, type Task, getTitleOverlay, setTitleOverlay,
   getLevelOverlay, setLevelOverlay, noteSnippet, snippetCache, Switch,
-  setIconDef, getIconDef,
+  setIconDef, getIconDef
 } from '../components/primitives';
 
 /** 文档树组件 — 展开折叠 + ＋新建子文档 + 孤儿笔记收入 + E21 图标更换。 */
@@ -439,14 +440,11 @@ export function NotesView({ onOpen, showToast, onNewNote, onSoftDelete, favs, on
       </div>
 
       {shown.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-text">
-            {query ? '没有匹配的笔记' : '新建笔记 / 从收件箱导入素材'}
-            {!query && (
-              <><br /><button className="btn btn-text" onClick={onNewNote}>+ 新建笔记</button></>
-            )}
-          </div>
-        </div>
+        <EmptyState
+          illustration="notes"
+          title={query ? '没有匹配的笔记' : '新建笔记 / 从收件箱导入素材'}
+          {...(!query ? { actionLabel: '+ 新建笔记', onAction: onNewNote } : {})}
+        />
       ) : (
         <div className="note-list">
           {shown.map((n, idx) => (

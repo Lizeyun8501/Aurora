@@ -4,7 +4,8 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { platform } from '../adapters/androidPlatform';
-import { I, NoteCard, EmptyState, relativeTime, type Task, type TaskPriority, type TaskStatus, TASK_PRIO, TASK_GROUPS } from '../components/primitives';
+import {I, NoteCard, relativeTime, type Task, type TaskPriority, type TaskStatus, TASK_PRIO, TASK_GROUPS} from '../components/primitives';
+import { EmptyState } from '@aurora/ui-components';
 
 export function TasksView({ tasks, onTasks, showToast, onOpenTask }: {
   tasks: Task[];
@@ -110,7 +111,7 @@ export function TasksView({ tasks, onTasks, showToast, onOpenTask }: {
       </div>
 
       {shown.length === 0 ? (
-        <EmptyState text="暂无任务。点右下角 + 捕获，加入今日任务。" />
+        <EmptyState illustration="inbox" title="暂无任务。点右下角 + 捕获，加入今日任务。" />
       ) : (
         /* E17: 日期分组渲染（逾期/今日/明日/本周/之后/稍后——组头计数+逾期红头） */
         GROUP_ORDER.filter((k) => grouped.has(k)).map((k) => {

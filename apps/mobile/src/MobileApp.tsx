@@ -3,7 +3,7 @@ import { platform, type NoteSummary, type SearchResult, type CalEvent } from './
 // B-02 断环: 原语层单向（I/Task 族/NoteCard/EmptyState/listNotesTitled+工具）
 import {
   I, type Task, type TaskStatus, type TaskPriority, type RecentItem, type TrashItem,
-  TASK_GROUPS, TASK_PRIO, NoteCard, EmptyState, listNotesTitled,
+  TASK_GROUPS, TASK_PRIO, NoteCard, listNotesTitled,
   getTitleOverlay, setTitleOverlay, noteSnippet, relativeTime,
   snippetCache, loadList, saveList, K_FAVS, K_RECENT, K_TRASH,
   getLevelOverlay, setLevelOverlay, type IconDef, type ToastAction,
@@ -32,7 +32,7 @@ import { TrashView } from './views/TrashView';
 import { TasksView } from './views/TasksView';
 import { DiaryView } from './views/DiaryView';
 import CalendarView from './views/CalendarView';
-import { SplitPane } from '@aurora/ui-components'; // A-10: 平板双栏（shared 单份——桌面同源比例/拖拽语义）
+import { SplitPane, EmptyState, DialogHost } from '@aurora/ui-components'; // A-10: 平板双栏（shared 单份——桌面同源比例/拖拽语义）
 import { expandAll } from './views/repeatUtil';
 
 // 编辑器懒加载 — schema/wasm 初始化失败不拖垮整个应用（白屏防御）
@@ -808,6 +808,8 @@ export default function App() {
           )}
         </div>
       )}
+          {/* C-05: 命令式对话框唯一挂载点（ask/input/notify 全经此呈现） */}
+      <DialogHost />
     </div>
   );
 }
@@ -1083,9 +1085,7 @@ function InboxView({ items, onToNote, onToTask, onDelete, onClear }: {
         )}
       </div>
       {items.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-text">收集箱是空的<br />点右下角 ＋ 快速捕获,先收集后处理</div>
-        </div>
+        <EmptyState illustration="inbox" title="收集箱是空的" hint="点右下角 ＋ 快速捕获,先收集后处理" />
       ) : (
         <ul className="inbox-list" role="list">
           {items.map((it) => (

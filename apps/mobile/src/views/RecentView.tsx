@@ -4,14 +4,15 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { platform } from '../adapters/androidPlatform';
-import { I, NoteCard, EmptyState, relativeTime, type Task, type RecentItem, listNotesTitled } from '../components/primitives';
+import {I, NoteCard, relativeTime, type Task, type RecentItem, listNotesTitled} from '../components/primitives';
 import type { SearchResult, CalEvent } from '../adapters/androidPlatform';
+import { EmptyState } from '@aurora/ui-components';
 
 export function RecentView({ recents, onOpen }: { recents: RecentItem[]; onOpen: (id: string, title: string) => void }) {
   return (
     <div className="view">
       {recents.length === 0 ? (
-        <EmptyState text="最近浏览记录将出现在这里。" />
+        <EmptyState illustration="search" title="最近浏览记录将出现在这里。" />
       ) : (
         <div className="note-list">
           {recents.map((r) => (

@@ -11,10 +11,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Solar, HolidayUtil, Lunar } from 'lunar-typescript';
 // B-02 断环: 原语单向 import（../components/primitives——不再反向依赖 MobileApp）
 import {
-  type Task, TASK_GROUPS, I, listNotesTitled, NoteCard, EmptyState,
+  type Task, TASK_GROUPS, I, listNotesTitled, NoteCard,
 } from '../components/primitives';
 import type { CalEvent, ReminderSetting } from '../adapters/androidPlatform';
 import { expandAll, lunarSub, type EvInstance } from './repeatUtil'; // A-08: lunarSub 上移 shared（去内嵌防双份）
+import { EmptyState } from '@aurora/ui-components';
 
 
 export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEvent, onOpenNote, onNewTask, initialSelected }: {
@@ -531,7 +532,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
                 ))}
               </div>
               {groups.length === 0 && (
-                <div className="empty-state"><div className="empty-text">无日程（{filtered === 'all' ? '全时间线' : '当前筛选'}）</div></div>
+                <EmptyState illustration="calendar" title={`无日程（${filtered === 'all' ? '全时间线' : '当前筛选'}）`} />
               )}
               {groups.map((g) => (
                 <div key={g.label} className="ev-list-group">
@@ -775,7 +776,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
 
       {/* 深检 BUG1: 原 (B||C)===false 对 number 恒 false（严格等 0===false 不成立）——空日提示死码,复活。 */}
       {isSelInMonth && selData.dayTasks.length === 0 && selData.dayNotes.length === 0 && selData.dayDiary.length === 0 && selEvents.length === 0 && (
-        <EmptyState text="这一天没有任务或笔记记录。点右下角 + 捕获。" />
+        <EmptyState illustration="calendar" title="这一天没有任务或笔记记录。点右下角 + 捕获。" />
       )}
 
       {/* 深检 BUG4: 月页聚合区从未渲染事件（selEvents 只进日轴）——选中含日程日下方看不到任何日程。

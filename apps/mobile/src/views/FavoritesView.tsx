@@ -4,14 +4,15 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { platform } from '../adapters/androidPlatform';
-import { I, NoteCard, EmptyState, relativeTime, listNotesTitled, type Task } from '../components/primitives';
+import {I, NoteCard, relativeTime, listNotesTitled, type Task} from '../components/primitives';
+import { EmptyState } from '@aurora/ui-components';
 
 export function FavoritesView({ favs, onOpen }: { favs: string[]; onOpen: (id: string, title: string) => void }) {
   const notes = listNotesTitled().filter((n) => favs.includes(n.id));
   return (
     <div className="view">
       {notes.length === 0 ? (
-        <EmptyState text="还没有收藏的笔记。在笔记编辑页菜单中点击「收藏」即可添加。" />
+        <EmptyState illustration="generic" title="还没有收藏的笔记。在笔记编辑页菜单中点击「收藏」即可添加。" />
       ) : (
         <div className="note-list">
           {notes.map((n) => (

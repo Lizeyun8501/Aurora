@@ -4,7 +4,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { platform } from '../adapters/androidPlatform';
-import { I, NoteCard, EmptyState, relativeTime, type Task } from '../components/primitives';
+import {I, NoteCard, relativeTime, type Task} from '../components/primitives';
 
 export function AgentView({ theme }: { theme: string }) {
   void theme;

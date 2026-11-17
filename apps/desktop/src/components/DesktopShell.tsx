@@ -20,7 +20,9 @@ import {
   THEME_WHITELIST, THEME_DEFAULTS, THEME_PRESETS,
   validateTheme, applyTheme, clearTheme, exportThemeJSON, importThemeJSON,
   type ThemeTokenKey,
-} from '@aurora/ui-components'; // A-11: 主题 VM（白名单+对比度——双端同源）
+  DialogHost,
+} from '@aurora/ui-components';
+import { dialog } from '@aurora/ui-components'; // A-11: 主题 VM（白名单+对比度——双端同源）+C-05 DialogHost
 import type { AuroraEditorHandle } from '@aurora/ui-components';
 import { focusTopLevelBlock, getCurrentFocus } from '@aurora/ui-components';
 import { AttachmentPreview } from '@aurora/ui-components';
@@ -1565,10 +1567,11 @@ function BookmarkSection(props: {
   };
   const rename = (id: string) => {
     const cur = list.find((v) => v.bookmark.id === id)?.bookmark.title ?? '';
-    const t = window.prompt('重命名书签', cur);
-    if (!t || !t.trim() || t === cur) return;
+    void dialog.input({ title: '重命名书签', label: '书签标题', initial: cur }).then((t) => {
+    if (t === null || !t.trim() || t === cur) return;
     const ids = list.map((v) => v.bookmark.id); // 顺序不变+title patch
     invoke?.('cmd_bookmark_reorder', { orderedIds: ids, titlePatch: t.trim() }).then(refresh).catch(() => {});
+    });
   };
   const remove = (id: string) => {
     invoke?.('cmd_bookmark_remove', { id }).then(refresh).catch(() => {});
@@ -1838,8 +1841,8 @@ function TreeSection(props: {
                 ☆
               </button>
               <button
-                onClick={() => {
-                  const t = window.prompt('重命名文件夹', node.title);
+                onClick={async () => {
+                  const t = await dialog.input({ title: '重命名文件夹', label: '文件夹名称', initial: node.title });
                   if (t && t.trim()) {
                     void bridge
                       .renameFolder(node.note_id, t.trim())
@@ -1962,8 +1965,8 @@ function TreeSection(props: {
           目录树 · {flat.length}
         </span>
         <button
-          onClick={() => {
-            const t = window.prompt('新建文件夹（根目录）', '新文件夹');
+          onClick={async () => {
+            const t = await dialog.input({ title: '新建文件夹', label: '文件夹名称（根目录）', initial: '新文件夹' });
             if (t && t.trim()) {
               void bridge
                 .createFolder(null, t.trim())
@@ -2208,20 +2211,20 @@ function AttachmentPreviewOverlay(props: {
       void invoke('cmd_open_attachment', { attachmentId: id })
         .then(() => undefined)
         .catch((e: unknown) => {
-          window.alert(`系统打开失败（${fileName}）: ${e instanceof Error ? e.message : String(e)}`);
+          void dialog.notify({ title: '提示', message: `系统打开失败（${fileName}）: ${e instanceof Error ? e.message : String(e)}` });
         });
     },
     [id, invoke],
   );
   const handleExportOffice = useCallback(
-    (ext: 'docx' | 'xlsx') => {
+    async (ext: 'docx' | 'xlsx') => {
       if (!invoke) return;
-      const dir = window.prompt(`导出目录（${ext.toUpperCase()} 附件原件另存）`, '~/Downloads/aurora-export');
+      const dir = await dialog.input({ title: '导出附件', label: `导出目录（${ext.toUpperCase()} 附件原件另存）`, initial: '~/Downloads/aurora-export' });
       if (!dir) return;
       void invoke('cmd_export_attachment', { attachmentId: id, destDir: dir })
-        .then((p2) => window.alert(`已导出: ${p2}`))
+        .then((p2) => { void dialog.notify({ title: '已导出', message: `已导出: ${p2}` }); })
         .catch((e: unknown) => {
-          window.alert(`导出失败: ${e instanceof Error ? e.message : String(e)}`);
+          void dialog.notify({ title: '提示', message: `导出失败: ${e instanceof Error ? e.message : String(e)}` });
         });
     },
     [id, invoke],
@@ -2616,7 +2619,7 @@ function TagsRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.R
   );
   const edit = (): void => {
     if (!invoke) return;
-    const raw = window.prompt('标签（逗号分隔，清空=移除全部）', tags.join(', '));
+    void dialog.input({ title: '编辑标签', label: '标签（逗号分隔，清空=移除全部）', initial: tags.join(', ') }).then((raw) => {
     if (raw === null) return; // 取消不动
     const next = raw
       .split(/[,，]/)
@@ -2624,6 +2627,7 @@ function TagsRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.R
       .filter(Boolean);
     invoke('cmd_set_note_tags', { noteId: note.note_id, tags: next }).catch(() => {
       /* 失败静默——标签非关键路径，编辑主链不阻断 */
+    });
     });
   };
   return (
@@ -2664,11 +2668,12 @@ function ShareRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.
   const [wm, setWm] = useState(false);
   const share = (): void => {
     if (!invoke) return;
-    const ok = window.confirm(
-      wm
+    void dialog.ask({
+      title: '生成分享码',
+      message: wm
         ? '将生成带溯源水印的明文分享码并复制——嵌入随机会话 ID（非身份，本机留档可自查）。继续？'
         : '将生成本笔记的明文分享码（b64 非加密）并复制到剪贴板——接收端获得完整副本。继续？',
-    );
+    }).then((ok) => {
     if (!ok) return;
     invoke('cmd_create_share', { noteId: note.note_id, watermark: wm })
       .then((code) => {
@@ -2682,12 +2687,14 @@ function ShareRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.
         );
       })
       .catch((e) => setMsg(`发布失败：${String(e)}`));
+    });
   };
   const sendDirect = (): void => {
     if (!invoke) return;
-    const ok = window.confirm(
-      '将本笔记直传给配对设备（iroh 需对端在线）——对端收到的是独立只读副本（改动不回传）。继续？',
-    );
+    void dialog.ask({
+      title: '直传配对设备',
+      message: '将本笔记直传给配对设备（iroh 需对端在线）——对端收到的是独立只读副本（改动不回传）。继续？',
+    }).then((ok) => {
     if (!ok) return;
     invoke('cmd_share_send', { noteId: note.note_id })
       .then((r) => {
@@ -2695,6 +2702,7 @@ function ShareRow(props: { note: NoteContent; invoke: InvokeFn | null }): React.
         setMsg(`直传完成（${sent} 字节）——对端已收妥，其收件箱可见`);
       })
       .catch((e) => setMsg(`直传失败：${String(e)}`));
+    });
   };
   const btn = {
     border: '1px solid rgba(255,255,255,0.12)',
@@ -3033,7 +3041,7 @@ function ExportMarkdownGate(props: {
     }
     let destDir = '';
     if (fmt !== 'pdf') {
-      const dir = window.prompt('导出目录', '~/Downloads/aurora-export');
+      const dir = await dialog.input({ title: '导出笔记', label: '导出目录', initial: '~/Downloads/aurora-export' });
       if (!dir) return;
       destDir = dir;
     }
@@ -3953,7 +3961,7 @@ export default function DesktopShell() {
           const dirty = w.__auroraDirty || w.__auroraSrcDirty;
           if (!dirty) return;
           e.preventDefault();
-          if (window.confirm('有未提交的编辑（可能含源码模式改动）——关闭将丢弃这些内容。确认关闭?')) {
+          if (await dialog.ask({ title: '未提交的编辑', message: '有未提交的编辑（可能含源码模式改动）——关闭将丢弃这些内容。确认关闭?', danger: true, confirmLabel: '丢弃并关闭' })) {
             w.__auroraDirty = false;
             w.__auroraSrcDirty = false;
             await win.close();
@@ -4185,9 +4193,9 @@ export default function DesktopShell() {
           `离线队列积压：${st.queue_len} 条`,
           `待处理冲突：副本 ${st.pending_artifacts} · 语义 ${st.pending_semantic}`,
         ];
-        window.alert(lines.join('\n'));
+        void dialog.notify({ title: '同步状态', message: lines.join('\n') });
       })
-      .catch((e) => window.alert(`查询失败：${String(e)}`));
+      .catch((e) => { void dialog.notify({ title: '操作失败', message: `查询失败：${String(e)}` }); });
   }, [invoke]);
   // DK-48 深化：原 alert 盲选升级为可视化面板（函数名/条目引用不变）
   const showQueue = useCallback(() => {
@@ -4202,10 +4210,10 @@ export default function DesktopShell() {
           `补发完成：成功 ${rep.synced_docs} 文档 · ack ${rep.acked_items} 项`,
           rep.failed_docs.length > 0 ? `失败（留队重试）：${rep.failed_docs.join(', ')}` : '无失败项',
         ];
-        window.alert(lines.join('\n'));
+        void dialog.notify({ title: '补发完成', message: lines.join('\n') });
         refreshSyncStatus();
       })
-      .catch((e) => window.alert(`补发失败：${String(e)}`));
+      .catch((e) => { void dialog.notify({ title: '操作失败', message: `补发失败：${String(e)}` }); });
   }, [invoke, refreshSyncStatus]);
   // DK-48 深化：原 alert 盲选升级为逐条决策面板（函数名/条目引用不变）
   const showConflicts = useCallback(() => {
@@ -4218,17 +4226,17 @@ export default function DesktopShell() {
         const items = r as Array<{ kind: string; id: string; doc_id: string; summary: string }>;
         const first = items[0];
         if (!first) {
-          window.alert('无待处理冲突');
+          void dialog.notify({ title: '提示', message: '无待处理冲突' });
           return;
         }
         if (first.kind === 'artifact') {
           // 真冲突副本：人工调和完成后标记闭环（采纳当前本地方——副本已留存远端路径）
           invoke('cmd_conflict_resolve', { artifact_id: first.id })
             .then(() => {
-              window.alert(`冲突已解决（保留本地，远端副本留存）：${first.doc_id}`);
+              void dialog.notify({ title: '提示', message: `冲突已解决（保留本地，远端副本留存）：${first.doc_id}` });
               refreshSyncStatus();
             })
-            .catch((e) => window.alert(`解决失败：${String(e)}`));
+            .catch((e) => { void dialog.notify({ title: '操作失败', message: `解决失败：${String(e)}` }); });
           return;
         }
         // 语义冲突：手动选择策略（LWW 起步——逐条交互升级见后续卡）
@@ -4237,18 +4245,18 @@ export default function DesktopShell() {
           resolution: 'LastWriteWins',
         })
           .then(() => {
-            window.alert(`语义冲突已解决（按最新写入优先）：${first.doc_id}`);
+            void dialog.notify({ title: '提示', message: `语义冲突已解决（按最新写入优先）：${first.doc_id}` });
             refreshSyncStatus();
           })
-          .catch((e) => window.alert(`解决失败：${String(e)}`));
+          .catch((e) => { void dialog.notify({ title: '操作失败', message: `解决失败：${String(e)}` }); });
       })
-      .catch((e) => window.alert(`查询失败：${String(e)}`));
+      .catch((e) => { void dialog.notify({ title: '操作失败', message: `查询失败：${String(e)}` }); });
   }, [invoke, refreshSyncStatus]);
 
   // DK-45：插件沙箱策略（市场差异化限额宿主入口——tauri 模式可用）
-  const showPluginPolicies = useCallback(() => {
+  const showPluginPolicies = useCallback(async () => {
     if (!invoke) return;
-    const publishers = (window.prompt('输入插件作者名单（逗号分隔，空=仅查看已配置）', '') ?? '')
+    const publishers = (await dialog.input({ title: '插件沙箱策略', label: '插件作者名单（逗号分隔，空=仅查看已配置）', initial: '' })) ?? ''
       .split(',')
       .map((x) => x.trim())
       .filter(Boolean);
@@ -4261,32 +4269,32 @@ export default function DesktopShell() {
           configured: boolean;
         }>;
         if (list.length === 0) {
-          window.alert('插件沙箱策略：无条目（publisher 名单为空）');
+          void dialog.notify({ title: '提示', message: '插件沙箱策略：无条目（publisher 名单为空）' });
           return;
         }
         const lines = list.map(
           (it) =>
             `${it.publisher}${it.configured ? '' : '（未配置·缺省）'}：${it.epoch_deadline_ticks} ticks（${Math.round(it.max_memory_bytes / 1024 / 1024)} MiB）`,
         );
-        window.alert(lines.join('\n'));
+        void dialog.notify({ title: '插件沙箱策略', message: lines.join('\n') });
       })
-      .catch((e) => window.alert(`查询失败：${String(e)}`));
+      .catch((e) => { void dialog.notify({ title: '操作失败', message: `查询失败：${String(e)}` }); });
   }, [invoke]);
-  const setPluginPolicy = useCallback(() => {
+  const setPluginPolicy = useCallback(async () => {
     if (!invoke) return;
-    const publisher = window.prompt('插件作者（publisher）', '');
+    const publisher = await dialog.input({ title: '插件沙箱策略', label: '插件作者（publisher）', initial: '' });
     if (!publisher) return;
-    const ticks = Number(window.prompt('epoch deadline ticks（1 tick=10ms；0=回退运行时缺省）', '200'));
+    const ticks = Number((await dialog.input({ title: '插件沙箱策略', label: 'epoch deadline ticks（1 tick=10ms；0=回退运行时缺省）', initial: '200' })) ?? '0');
     if (Number.isNaN(ticks) || ticks < 0) return;
-    const mib = Number(window.prompt('内存上限（MiB；0=回退运行时缺省）', '64'));
+    const mib = Number((await dialog.input({ title: '插件沙箱策略', label: '内存上限（MiB；0=回退运行时缺省）', initial: '64' })) ?? '0');
     if (Number.isNaN(mib) || mib < 0) return;
     invoke('cmd_set_plugin_policy', {
       publisher,
       epoch_deadline_ticks: Math.floor(ticks),
       max_memory_bytes: Math.floor(mib) * 1024 * 1024,
     })
-      .then(() => window.alert(`策略已保存：${publisher}（编辑即写，立即生效于后续安装/调用）`))
-      .catch((e) => window.alert(`保存失败：${String(e)}`));
+      .then(() => { void dialog.notify({ title: '策略已保存', message: `策略已保存：${publisher}（编辑即写，立即生效于后续安装/调用）` }); })
+      .catch((e) => { void dialog.notify({ title: '操作失败', message: `保存失败：${String(e)}` }); });
   }, [invoke]);
 
   // DK-10 切片 3：AI 云策略开关（tauri 模式可用；mock 模式隐藏）
@@ -4313,9 +4321,9 @@ export default function DesktopShell() {
     invoke('cmd_backup_now')
       .then((r) => {
         const rep = r as { path?: string; sha256_hex?: string } | null;
-        window.alert(rep ? `备份完成：${rep.path}` : '备份跳过（详情见日志）');
+        void dialog.notify({ title: '备份', message: rep ? `备份完成：${rep.path}` : '备份跳过（详情见日志）' });
       })
-      .catch((e) => window.alert(`备份失败：${String(e)}`))
+      .catch((e) => { void dialog.notify({ title: '操作失败', message: `备份失败：${String(e)}` }); })
       .finally(() => setBackupBusy(false));
   }, [invoke, backupBusy]);
   const showBackupStatus = useCallback(() => {
@@ -4328,9 +4336,9 @@ export default function DesktopShell() {
           `SHA-256：${st.last_sha ? st.last_sha.slice(0, 16) + '…' : '—'}`,
           `错误：${st.last_error ?? '无'}`,
         ];
-        window.alert(lines.join('\n'));
+        void dialog.notify({ title: '队列状态', message: lines.join('\n') });
       })
-      .catch((e) => window.alert(`查询失败：${String(e)}`));
+      .catch((e) => { void dialog.notify({ title: '操作失败', message: `查询失败：${String(e)}` }); });
   }, [invoke]);
 
   // DK-3.2 切片二：palette「最近打开」组——recentIds→标题映射（笔记被删
@@ -4406,7 +4414,7 @@ export default function DesktopShell() {
             .then((text) => {
               const t = text.trim();
               if (!t) {
-                window.alert('剪贴板为空——无内容可捕获');
+                void dialog.notify({ title: '提示', message: '剪贴板为空——无内容可捕获' });
                 return;
               }
               const firstLine = t.split('\n')[0].trim().slice(0, 60) || '剪贴板捕获';
@@ -4424,17 +4432,17 @@ export default function DesktopShell() {
                     setView('notes');
                   }
                 })
-                .catch((e) => window.alert(`捕获失败：${String(e)}`));
+                .catch((e) => { void dialog.notify({ title: '操作失败', message: `捕获失败：${String(e)}` }); });
             })
-            .catch(() => window.alert('剪贴板不可读（权限或非安全上下文）'));
+            .catch(() => { void dialog.notify({ title: '粘贴失败', message: '剪贴板不可读（权限或非安全上下文）' }); });
         },
       },
       {
         kind: 'command' as const,
         id: 'import-share',
         title: '从分享码导入（DK-2.8）',
-        run: () => {
-          const code = window.prompt('粘贴分享码（发布方「分享」生成的字符串）');
+        run: async () => {
+          const code = await dialog.input({ title: '从分享码导入', label: '粘贴分享码（发布方「分享」生成的字符串）', multiline: true });
           if (!code || !code.trim()) return;
           invoke?.('cmd_import_share', { code: code.trim() })
             .then((r) => {
@@ -4444,7 +4452,7 @@ export default function DesktopShell() {
                 setView('notes');
               }
             })
-            .catch((e) => window.alert(`导入失败：${String(e)}`));
+            .catch((e) => { void dialog.notify({ title: '操作失败', message: `导入失败：${String(e)}` }); });
         },
       },
       {
@@ -4454,7 +4462,7 @@ export default function DesktopShell() {
         run: () => {
           invoke
             ?.('cmd_inbox_list', {})
-            .then((items) => {
+            .then(async (items) => {
               const list = (items ?? []) as Array<{
                 id: string;
                 title: string;
@@ -4463,7 +4471,7 @@ export default function DesktopShell() {
                 traced?: boolean;
               }>;
               if (list.length === 0) {
-                window.alert('收件箱为空——配对设备直传的笔记会出现在这里');
+                void dialog.notify({ title: '提示', message: '收件箱为空——配对设备直传的笔记会出现在这里' });
                 return;
               }
               // 水印透明性：带溯源标记的条目列表即标注（公平原则——接收端知悉）
@@ -4473,14 +4481,11 @@ export default function DesktopShell() {
                     .slice(0, 19)
                     .replace('T', ' ')}）${it.traced ? '〔溯源水印〕' : ''}`,
               );
-              const pick = window.prompt(
-                `收件箱（输入序号导入，取消关闭）：\n${lines.join('\n')}`,
-                '1',
-              );
+              const pick = await dialog.input({ title: '收件箱', label: `输入序号导入（取消关闭）：\n${lines.join('\n')}`, initial: '1' });
               if (!pick) return;
               const item = list[Number(pick.trim()) - 1];
               if (!item) {
-                window.alert('序号无效');
+                void dialog.notify({ title: '提示', message: '序号无效' });
                 return;
               }
               invoke
@@ -4494,15 +4499,15 @@ export default function DesktopShell() {
                     if (traced) {
                       // 不阻断——导入完成提示补充水印知悉（内容未嵌标记）
                       window.setTimeout(
-                        () => window.alert('该副本带溯源水印（随机会话 ID，非身份）——导入已完成'),
+                        () => { void dialog.notify({ title: '溯源水印', message: '该副本带溯源水印（随机会话 ID，非身份）——导入已完成' }); },
                         100,
                       );
                     }
                   }
                 })
-                .catch((e) => window.alert(`导入失败：${String(e)}`));
+                .catch((e) => { void dialog.notify({ title: '操作失败', message: `导入失败：${String(e)}` }); });
             })
-            .catch((e) => window.alert(`收件箱查询失败：${String(e)}`));
+            .catch((e) => { void dialog.notify({ title: '操作失败', message: `收件箱查询失败：${String(e)}` }); });
         },
       },
       {
@@ -4514,13 +4519,10 @@ export default function DesktopShell() {
             ?.('cmd_capture_bridge_status', {})
             .then((st) => {
               const s = st as { token?: string; running?: boolean; port?: number | null };
-              // prompt 选中态文本=token 可直接 Ctrl+C 复制（剪贴板权限面省略）
-              window.prompt(
-                `Web Clipper 桥（${s.running ? `运行中 · 端口 ${s.port ?? '?'}` : '未运行——重启应用自动拉起'}）\nToken（复制到浏览器扩展）：`,
-                s.token ?? '',
-              );
+              // C-05: prompt 退役——info 对话框展示 token（input 聚焦全选可 Ctrl+C）
+              void dialog.input({ title: 'Web Clipper 桥', label: `${s.running ? `运行中 · 端口 ${s.port ?? '?'}` : '未运行——重启应用自动拉起'}\nToken（复制到浏览器扩展）：`, initial: s.token ?? '' });
             })
-            .catch((e) => window.alert(`查询失败：${String(e)}`));
+            .catch((e) => { void dialog.notify({ title: '操作失败', message: `查询失败：${String(e)}` }); });
         },
       },
       {
@@ -4530,7 +4532,7 @@ export default function DesktopShell() {
         run: () => {
           invoke
             ?.('cmd_queue_list', {})
-            .then((items) => {
+            .then(async (items) => {
               const list = (items ?? []) as Array<{
                 id: string;
                 docId: string;
@@ -4539,7 +4541,7 @@ export default function DesktopShell() {
                 createdAt: string;
               }>;
               if (list.length === 0) {
-                window.alert('离线队列为空——无需补发');
+                void dialog.notify({ title: '提示', message: '离线队列为空——无需补发' });
                 return;
               }
               const lines = list.map(
@@ -4548,25 +4550,22 @@ export default function DesktopShell() {
                     .slice(0, 19)
                     .replace('T', ' ')}）`,
               );
-              const pick = window.prompt(
-                `离线队列（输入序号重试该条所属笔记的补发，取消关闭）：\n${lines.join('\n')}`,
-                '1',
-              );
+              const pick = await dialog.input({ title: '离线队列', label: `输入序号重试该条所属笔记的补发（取消关闭）：\n${lines.join('\n')}`, initial: '1' });
               if (!pick) return;
               const item = list[Number(pick.trim()) - 1];
               if (!item) {
-                window.alert('序号无效');
+                void dialog.notify({ title: '提示', message: '序号无效' });
                 return;
               }
               invoke
                 ?.('cmd_queue_retry', { docId: item.docId })
                 .then((r) => {
                   const acked = (r as { acked_items?: number }).acked_items ?? 0;
-                  window.alert(`补发成功——清理 ${acked} 条积压项`);
+                  void dialog.notify({ title: '提示', message: `补发成功——清理 ${acked} 条积压项` });
                 })
-                .catch((e) => window.alert(`重试失败：${String(e)}`));
+                .catch((e) => { void dialog.notify({ title: '操作失败', message: `重试失败：${String(e)}` }); });
             })
-            .catch((e) => window.alert(`队列查询失败：${String(e)}`));
+            .catch((e) => { void dialog.notify({ title: '操作失败', message: `队列查询失败：${String(e)}` }); });
         },
       },
       ...(wifiOnly !== null
@@ -4740,17 +4739,17 @@ export default function DesktopShell() {
           const nid = selectedId;
           if (!nid) return;
           const t = notes.find((n) => n.note_id === nid)?.title ?? '';
-          invoke?.('cmd_open_note_window', { noteId: nid, title: t }).catch((e) =>
-            window.alert(`独立窗口打开失败：${String(e)}`),
-          );
+          invoke?.('cmd_open_note_window', { noteId: nid, title: t }).catch((e) => {
+            void dialog.notify({ title: '独立窗口', message: `独立窗口打开失败：${String(e)}` });
+          });
         },
       },
       ...templates.map((t) => ({
         kind: 'command' as const,
         id: `tpl-${t.noteId}`,
         title: `从模板创建：${t.title}`,
-        run: () => {
-          const name = window.prompt(`新笔记标题（模板：${t.title}）`);
+        run: async () => {
+          const name = await dialog.input({ title: '从模板创建', label: `新笔记标题（模板：${t.title}）`, initial: t.title });
           if (!name || !name.trim() || !invoke) return;
           invoke('cmd_create_from_template', { templateId: t.noteId, title: name.trim() })
             .then((id) => {
@@ -4861,9 +4860,9 @@ export default function DesktopShell() {
           view={view}
           onView={setView}
           onOpenWindow={(noteId, title) => {
-            invoke?.('cmd_open_note_window', { noteId, title }).catch((err: unknown) =>
-              window.alert(`独立窗口打开失败：${String(err)}`),
-            );
+            invoke?.('cmd_open_note_window', { noteId, title }).catch((err: unknown) => {
+              void dialog.notify({ title: '独立窗口', message: `独立窗口打开失败：${String(err)}` });
+            });
           }}
           invoke={invoke}
           onBookmarkToast={(msg) => setBookToast(msg)}
@@ -4931,7 +4930,7 @@ export default function DesktopShell() {
                       setExportAllMsg('browser-mock 模式不可用（仅 tauri 模式可导出）');
                       return;
                     }
-                    const dir = window.prompt('导出目录', '~/Downloads/aurora-export');
+                    const dir = await dialog.input({ title: '导出全部笔记', label: '导出目录', initial: '~/Downloads/aurora-export' });
                     if (!dir) return;
                     setExportAllBusy(true);
                     setExportAllMsg(null);
@@ -5309,10 +5308,8 @@ export default function DesktopShell() {
               <button
                 onClick={() => {
                   const json = exportThemeJSON(customTheme as Partial<Record<ThemeTokenKey, string>>);
-                  void navigator.clipboard?.writeText(json).then(
-                    () => window.alert === undefined ? undefined : undefined,
-                  ).catch(() => undefined);
-                  window.prompt?.('主题 JSON（已尝试复制到剪贴板）:', json);
+                  void navigator.clipboard?.writeText(json).catch(() => undefined);
+                  void dialog.input({ title: '主题 JSON', label: '已尝试复制到剪贴板（input 可手动复制）：', initial: json, multiline: true });
                 }}
                 style={{ fontSize: 12, padding: '6px 16px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.14)', background: 'transparent', color: tokens.color.textSecondary }}
               >
@@ -5320,7 +5317,7 @@ export default function DesktopShell() {
               </button>
               <button
                 onClick={() => {
-                  const raw = window.prompt?.('粘贴主题 JSON:');
+                  void dialog.input({ title: '导入主题', label: '粘贴主题 JSON:', multiline: true }).then((raw) => {
                   if (!raw) return;
                   const r = importThemeJSON(raw);
                   if (r.overrides) {
@@ -5330,6 +5327,7 @@ export default function DesktopShell() {
                   } else {
                     setThemeErrs(r.errors);
                   }
+                  });
                 }}
                 style={{ fontSize: 12, padding: '6px 16px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.14)', background: 'transparent', color: tokens.color.textSecondary }}
               >
@@ -5357,6 +5355,8 @@ export default function DesktopShell() {
           onChanged={refreshSyncStatus}
         />
       )}
+      {/* C-05: 命令式对话框唯一挂载点（confirm/prompt/info 全经此呈现） */}
+      <DialogHost />
     </div>
   );
 }

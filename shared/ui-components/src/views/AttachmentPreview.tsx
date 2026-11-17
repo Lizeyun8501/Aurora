@@ -7,6 +7,7 @@ import {
   type ReactElement,
 } from 'react';
 import clsx from 'clsx';
+import { dialog } from '../layouts/dialogs';
 
 /**
  * A-02 附件内置预览器（TA 2026-11-10 工单）——按 MIME 分派四类：
@@ -162,7 +163,7 @@ export function AttachmentPreview(props: AttachmentPreviewProps): ReactElement {
     if (navigator.clipboard?.writeText) {
       void navigator.clipboard.writeText(path);
     } else {
-      window.prompt('复制附件引用（clipboard 不可用）:', path);
+      void dialog.notify({ title: '复制附件引用', message: `clipboard 不可用——手动复制:\n${path}` });
     }
   }, [attachmentId, onCopyPath]);
 
