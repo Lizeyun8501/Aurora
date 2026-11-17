@@ -15,6 +15,9 @@ on:
       - 'shared/ui-components/**'
       - 'scripts/tests/**'
       - '.github/workflows/e2e.yml'
+      - 'scripts/tests/c07Consistency.mjs'
+      - 'apps/mobile/index.html'
+      - 'apps/mobile/src/styles/mobile.css'
   schedule:
     - cron: '0 3 * * 1'
   workflow_dispatch:
@@ -38,6 +41,8 @@ jobs:
         run: npx playwright install chromium --with-deps
       - name: Run E2E top-paths
         run: node scripts/tests/e2eTopPaths.mjs
+      - name: C-07 consistency E2E (theme/safe-area/font/a11y)
+        run: node scripts/tests/c07Consistency.mjs
       - name: TS coverage baseline（编辑器门禁基线——数字入 summary）
         run: |
           cd shared/ui-components

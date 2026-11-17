@@ -14,6 +14,14 @@
   /* 编辑器/标注语义（ADR-006 扩展——callout/prev 预览语义色） */
   --hl-bg: #fef08a; --red-text: #dc2626; --tip-border: #10b981;
   --important-border: #6366f1; --toast-ink: #111827;
+  /* C-07: shared MobileEditorDock 主题注入（亮默认——接 V19 index.html
+   * data-theme 变量组;暗态由 [data-theme='dark'] 覆写,避免 Dock 白条闪帧） */
+  --m-dock-bg: #ffffff; --m-dock-fg: #1F2937; --m-sheet-bg: #ffffff;
+}
+
+/* C-07: MobileEditorDock 暗色跟随（V19 变量同组翻转——switch 无白条一帧） */
+[data-theme='dark'] {
+  --m-dock-bg: #111827; --m-dock-fg: #e8eaed; --m-sheet-bg: #1F2937;
 }
 
 /* ============================================================
@@ -128,7 +136,10 @@ button, .note-card, .drawer-item, .tab-item { transition: background .14s, color
 
 /* 悬浮捕获按钮 — 永不隐藏 V19 §3.1（2026-10-28 圆形化——用户指令） */
 .fab {
-  position: fixed; right: 16px; bottom: 72px; z-index: 55;
+  /* C-07: 手势条/刘海机型——bottom 含 env(safe-area-inset-bottom) 补偿
+   * （72=TabBar 56+16 间隙基准,安全区叠加不遮挡不悬空） */
+  position: fixed; right: 16px;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 55;
   width: 52px; height: 52px; border-radius: 50%;
   background: var(--brand); color: #fff;
   border: none; cursor: pointer;
@@ -139,7 +150,9 @@ button, .note-card, .drawer-item, .tab-item { transition: background .14s, color
 /* 11-02 23:33: 「今」透明圆——VLM 读图规格: 半透明底+红今字,垂直叠于 FAB 上方（136=FAB顶+12）;年模式 solo 落 FAB 原位。 */
 /* 11-03 08:31 报障②③: 真·描边透明圆（bg 0.24+1.5px 边,弃 blur 与 0.72 实底）;间距 12→20（144=FAB 顶 124+20,离加号更远。 */
 .fab-today {
-  position: fixed; right: 16px; bottom: 144px; z-index: 55;
+  /* C-07: 与 .fab 同步 safe-area 补偿（垂直叠 FAB 上方,144=72+52+20） */
+  position: fixed; right: 16px;
+  bottom: calc(144px + env(safe-area-inset-bottom, 0px)); z-index: 55;
   width: 52px; height: 52px; border-radius: 50%;
   background: rgba(255, 255, 255, 0.24);
   border: 1.5px solid rgba(31, 41, 55, 0.32);
@@ -149,7 +162,7 @@ button, .note-card, .drawer-item, .tab-item { transition: background .14s, color
   animation: fab-today-in 0.18s ease;
 }
 .fab-today:active { background: rgba(255, 255, 255, 0.42); }
-.fab-today-solo { bottom: 72px; }
+.fab-today-solo { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
 [data-theme='dark'] .fab-today { background: rgba(15, 23, 42, 0.30); border-color: rgba(255, 255, 255, 0.38); color: var(--cal-accent); }
 @keyframes fab-today-in { from { opacity: 0; transform: scale(0.7); } }
 

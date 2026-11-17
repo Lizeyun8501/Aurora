@@ -58,6 +58,22 @@
         padding: 0;
         overscroll-behavior-y: contain;
       }
+      /* C-07: 启动零闪帧——index.html 首帧脚本同步应用保存主题（React
+       * 加载前 data-theme 就位,WebView 首绘即正确底色——避免亮态 CSS
+       * 先绘一帧再切暗的闪白;localStorage 块必须内联于 <head>）。 */
+      <script>
+        (function () {
+          try {
+            var t = localStorage.getItem('aurora.theme') || 'light';
+            if (t === 'system') {
+              t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.documentElement.setAttribute('data-theme', t);
+            document.documentElement.style.background = t === 'dark' ? '#111827' : '#ffffff';
+          } catch (e) { /* 隐私模式/损坏——默认亮 */ }
+        })();
+      </script>
+      <style>
       body {
         font-family: Inter, -apple-system, 'PingFang SC', 'Source Han Sans SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
         background: var(--bg-primary);
@@ -65,6 +81,7 @@
         font-size: 16px;
         -webkit-tap-highlight-color: transparent;
       }
+      </style>
       /* 安全区域 — V15 §4.4 底部导航避开手势条 */
       .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
     </style>

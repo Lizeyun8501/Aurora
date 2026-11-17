@@ -301,7 +301,13 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem('aurora.theme', theme); } catch { /* 防御 */ }
     // E10b: system→按 matchMedia 解析（CSS data-theme 面恒二态,兼容既有暗色覆写零改）
-    document.documentElement.dataset.theme = theme === 'system' ? (sysDark ? 'dark' : 'light') : theme;
+    const eff = theme === 'system' ? (sysDark ? 'dark' : 'light') : theme;
+    document.documentElement.dataset.theme = eff;
+    /* C-07: WebView/壳状态栏背景同步（theme-color meta 随主题——切换无
+     * 闪帧的第二面:html 元素底色即时跟随,data-theme 变量组同帧翻转） */
+    document.documentElement.style.background = eff === 'dark' ? '#111827' : '#ffffff';
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', eff === 'dark' ? '#111827' : '#ffffff');
   }, [theme, sysDark]);
 
   useEffect(() => {
