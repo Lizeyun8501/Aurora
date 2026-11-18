@@ -57,6 +57,18 @@ export default function CoverHeader({ noteId, onCustomCover }: {
   const [iconPick, setIconPick] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => { setCover(loadCover(noteId)); setIcon(getIconDef('doc', noteId)); }, [noteId]);
+  /* 总闸无障碍: Esc 关闭面板 + 外点关闭（键盘可达——两 picker 均非陷阱） */
+  useEffect(() => {
+    if (!menu && !iconPick) return;
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') { setMenu(false); setIconPick(false); } };
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as HTMLElement;
+      if (!t.closest('[data-testid="cover-header"]')) { setMenu(false); setIconPick(false); }
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown);
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); };
+  }, [menu, iconPick]);
 
   const pickIcon = (def: IconDef): void => { setIconDef(noteId, def.id); setIcon(def); setIconPick(false); };
   const pickGrad = (i: number): void => { const c: Cover = { type: 'grad', i }; setCover(c); saveCover(noteId, c); setMenu(false); };
