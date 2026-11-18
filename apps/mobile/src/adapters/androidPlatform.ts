@@ -69,6 +69,8 @@ export interface ReminderSetting {
 interface AndroidBridge {
   // A-08: task 域 + CalendarVm（Java 壳 MainActivity.taskSync 等——双端对称）
   taskSync?(tasksJson: string): string;
+  /** C-08 切读: VM 全量（真桥=core build_calendar_vm;桥缺则 platform 层
+   *  mock 拼装同契约——localStorage 双源 snake 形,E2E 全链走切读后形态）。 */
   calendarVm?(): string;
   taskReschedule?(taskId: string, newDue: string): boolean;
   // A-09: 高级搜索（5 运算符+徽章面——与桌面 cmd_search_advanced 同源）
@@ -685,6 +687,33 @@ export const platform = {
   // DK-CALENDAR-02: Event 四方法（真桥 JSON 串 / mock localStorage 降级——
   // Playwright 全链路走 mock 路径: 新建→角标→日轴块→编辑→删除）
   // -------------------------------------------------------------------------
+
+  /** C-08: mock VM 拼装（真桥缺位时——localStorage 权威源按
+   *  build_calendar_vm 契约组装 snake 形;与 vmTaskToTs 解包互逆,
+   *  E2E mock 全链即切读后形态真值）。 */
+  calendarVm(): string {
+    const b = bridge();
+    if (b?.calendarVm) return b.calendarVm();
+    try {
+      const ts = JSON.parse(localStorage.getItem('aurora.tasks') ?? '[]') as Array<Record<string, unknown>>;
+      const tasks = ts.map((t) => ({
+        id: t.id, text: t.text, status: t.status,
+        due: t.due ?? null, note_id: t.noteId ?? null,
+        created_at: t.createdAt,
+        priority: t.priority ?? null,
+        ext: {
+          estimate_minutes: t.estimateMinutes ?? null,
+          actual_minutes: t.actualMinutes ?? null,
+          parent_task_id: t.parentTaskId ?? null,
+          progress: t.progress ?? null,
+        },
+      }));
+      const events = JSON.parse(localStorage.getItem('aurora.events') ?? '[]');
+      return JSON.stringify({ events, tasks });
+    } catch {
+      return '{"events":[],"tasks":[]}';
+    }
+  },
 
   listEvents(): CalEvent[] {
     const b = bridge();

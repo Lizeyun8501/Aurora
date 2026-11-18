@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { platform, type NoteSummary, type SearchResult, type CalEvent } from './adapters/androidPlatform';
+// C-08 切读: VM→Task 互逆转换（shared 单份——与 saveTasks 打包面互逆）
+import { vmTaskToTs, type CalendarVm } from '@aurora/shared-types';
 // B-02 断环: 原语层单向（I/Task 族/NoteCard/EmptyState/listNotesTitled+工具）
 import {
   I, type Task, type TaskStatus, type TaskPriority, type RecentItem, type TrashItem,
@@ -317,19 +319,45 @@ export default function App() {
     setFallback(!ok || platform.isFallback());
     // DK-CALENDAR-02：事件初始化加载（mock/真桥双路径）
     try { setEvents(platform.listEvents()); } catch { setEvents([]); }
+    // C-08 切读: VM 首拉（真桥=core;mock=同契约拼装——E2E 全链切读形态）
+    refreshCalendarVm();
   }, []);
 
   /** DK-CALENDAR-02：事件 upsert/删除后刷新列表。 */
   const refreshEvents = () => {
     try { setEvents(platform.listEvents()); } catch { /* 降级保旧态 */ }
+    refreshCalendarVm(); // C-08: 事件变更后 VM 同刷（切读面一致性）
   };
+
+  /* C-08 切读（A-08 遗留收口）: CalendarView 数据面改读 core VM（真桥
+   * build_calendar_vm/mock 同契约拼装双路径）。铁律 6 三段式第三段:
+   * 双写已落（taskSync/events 桥）→本卡切读;localStorage 写权威不动
+   * （回退零破坏——VM 解析失败回退旧源,假回退禁）。 */
+  const [vmEvents, setVmEvents] = useState<CalEvent[]>([]);
+  const [vmTasks, setVmTasks] = useState<Task[]>([]);
+  const [vmReady, setVmReady] = useState(false);
+  const refreshCalendarVm = useCallback(() => {
+    try {
+      const raw = platform.calendarVm();
+      const vm = JSON.parse(raw) as CalendarVm;
+      if (!vm || typeof vm !== 'object' || !Array.isArray(vm.events) || !Array.isArray(vm.tasks)) {
+        throw new Error('vm 契约不符');
+      }
+      setVmEvents(vm.events);
+      setVmTasks(vm.tasks.map(vmTaskToTs).filter((t): t is Task => !!t && typeof t.id === 'string'));
+      setVmReady(true);
+    } catch (e) {
+      console.warn('[C-08] calendarVm 解析失败,回退 localStorage 旧源', e);
+      setVmReady(false);
+    }
+  }, []);
 
   /* B-05 E2E 抓 P0 修复: 早退门原在此（useState 声明流中段）——A-04/A-06/
    * A-10 三卡将 hooks 加在门后,ready 翻转即 hook 数变化 → React #310
    * 「Rendered more hooks」→ 生产构建启动即崩（E2E 断档期隐性回归）。
    * 修: 门移至全部 hooks 之后（tabletSplit useMemo 毕）——SplashScreen
    * 语义零变（首帧仍闪屏）。 */
-  const updateTasks = (ts: Task[]) => { setTasks(ts); saveTasks(ts); };
+  const updateTasks = (ts: Task[]) => { setTasks(ts); saveTasks(ts); refreshCalendarVm(); };
 
   /* A-06: intent 消费（拉模式——三触发: 挂载/resume(visibilitychange)/Java 推事件）。
    * action 型即时路由（capture/today/task-done）;text/image 型入 shareInbox 浮层。
@@ -624,8 +652,8 @@ export default function App() {
             {view === 'search' && <SearchView onOpen={openNote} initialQuery={bmSearchJump} />}
             {view === 'calendar' && (
               <CalendarView
-                tasks={tasks}
-                events={events}
+                tasks={vmReady ? vmTasks : tasks}
+                events={vmReady ? vmEvents : events}
                 onUpsertEvent={(ev) => { platform.upsertEvent(ev); refreshEvents(); platform.refreshReminders(); }}
                 onDeleteEvent={(id) => { platform.deleteEvent(id); refreshEvents(); platform.refreshReminders(); }}
                 onOpenNote={openNote}

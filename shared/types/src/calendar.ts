@@ -86,6 +86,34 @@ export interface CalendarVm {
   tasks: CalendarTaskVm[];
 }
 
+/** C-08: CalendarTaskVm（snake）→ 移动端 Task（camel）转换——与
+ *  MobileApp.saveTasks 双写面（camel→snake+ext 打包）严格互逆;
+ *  双端共用（桌面将来切读同源）。ext 解包容错（字段缺省=undefined）。 */
+export function vmTaskToTs(vm: CalendarTaskVm): {
+  id: string; text: string; status: string; createdAt: number;
+  due?: string; noteId?: string; priority?: string;
+  estimateMinutes?: number; actualMinutes?: number;
+  parentTaskId?: string; progress?: number;
+} {
+  const ext = (vm.ext ?? {}) as {
+    estimate_minutes?: number; actual_minutes?: number;
+    parent_task_id?: string; progress?: number;
+  };
+  return {
+    id: vm.id,
+    text: vm.text,
+    status: vm.status,
+    createdAt: vm.created_at,
+    due: vm.due,
+    noteId: vm.note_id,
+    priority: vm.priority,
+    estimateMinutes: ext.estimate_minutes,
+    actualMinutes: ext.actual_minutes,
+    parentTaskId: ext.parent_task_id,
+    progress: ext.progress,
+  };
+}
+
 // ===================================================================
 // 重复日程展开（DK-CALENDAR-03——原 mobile repeatUtil.ts 逐字迁移）
 // ===================================================================
