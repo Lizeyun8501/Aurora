@@ -1,3 +1,12 @@
+## 验收总闸（2026-11-18 TA 10:57 定——所有卡共用关账门槛）
+
+1. **CI 五门全绿** + `cargo +1.91 clippy --workspace --exclude aurora-desktop -- -D warnings` 零告警
+2. **零静默占位**: 新增代码无 Null/空集合/{"ok":true}/伪文本/静态兜底冒充结果;未实现必须 NotImplemented（C-04 dataBase64:'' 假数据撤即本条实例）
+3. **WritePath 不旁路**: 新增命令一律 apply_note_change 链路,集成测试可检出旁路
+4. **双端对齐**: 新能力双端有消费者,或标「桌面/移动专属」+理由
+5. **无障碍内建**: UI 卡 DoD 五项——语义标签/键盘可达/对比度/触摸目标/读屏遍历
+6. **交付报告五项**: commit hash/挂接清单自查/停手边界/CI 结果/双端影响面——缺一不关账
+
 # AGENTS.md — Aurora 工作区协作规范
 
 > 本文件服务所有接入本仓的执行 Agent（多 agent 并行工作流）;README「文档索引」锚点。
