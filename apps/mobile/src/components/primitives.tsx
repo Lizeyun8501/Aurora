@@ -12,6 +12,7 @@
 import type React from 'react';
 import type { NoteSummary } from '../adapters/androidPlatform';
 import { platform } from '../adapters/androidPlatform';
+import { VivoIcon, getIconDef } from '@aurora/ui-components';
 
 export const I = {
   /* C-01/ADR-007: 收集箱图标（托盘形——收集/暂存语义,与 today 首页形区隔） */
@@ -187,7 +188,8 @@ export function NoteCard({ note: n, onOpen }: {
   return (
     <div className="note-card" onClick={() => onOpen(n.id, n.title)}>
       <div className="note-card-body">
-        <div className="note-title">{n.title}</div>
+        {/* C-04: 列表卡图标（树同字段——搜索/最近/收藏三列表一致） */}
+        <div className="note-title"><VivoIcon def={getIconDef('doc', n.id)} size={18} /> {n.title}</div>
         <div className="note-snippet">{noteSnippet(n.id)}</div>
         <div className="note-meta">{relativeTime(n.updatedAt)}</div>
       </div>
@@ -234,38 +236,10 @@ export function Switch({ checked, onChange }: { checked: boolean; onChange: (v: 
 
 
 // B-02 切片三: IconDef/图标表/ToastAction/focusSummary 域随迁（纯搬移）
-export interface IconDef { id: string; label: string; color: string; glyph: string }
-export const BOOK_ICONS: IconDef[] = [
-  { id: 'book-red', label: '红本', color: '#ef4444', glyph: '📖' },
-  { id: 'book-blue', label: '蓝本', color: '#3b82f6', glyph: '📖' },
-  { id: 'book-green', label: '绿本', color: '#10b981', glyph: '📖' },
-  { id: 'book-amber', label: '橙本', color: '#f59e0b', glyph: '📖' },
-  { id: 'book-purple', label: '紫本', color: '#8b5cf6', glyph: '📖' },
-  { id: 'book-slate', label: '灰本', color: '#64748b', glyph: '📁' },
-  { id: 'book-rose', label: '粉本', color: '#f43f5e', glyph: '📚' },
-  { id: 'box-brown', label: '档案盒', color: '#a16207', glyph: '🗂' },
-];
-export const DOC_ICONS: IconDef[] = [
-  { id: 'doc-plain', label: '文档', color: '#94a3b8', glyph: '📄' },
-  { id: 'doc-note', label: '笔记', color: '#0ea5e9', glyph: '📝' },
-  { id: 'doc-star', label: '星标', color: '#f59e0b', glyph: '⭐' },
-  { id: 'doc-idea', label: '灵感', color: '#a855f7', glyph: '💡' },
-  { id: 'doc-task', label: '待办', color: '#10b981', glyph: '☑' },
-  { id: 'doc-diary', label: '日记', color: '#f43f5e', glyph: '📔' },
-  { id: 'doc-code', label: '代码', color: '#334155', glyph: '⌨' },
-  { id: 'doc-chart', label: '图表', color: '#6366f1', glyph: '📊' },
-];
-export const ALL_ICONS = [...BOOK_ICONS, ...DOC_ICONS];
-export function getIconDef(kind: 'book' | 'doc', id: string): IconDef {
-  try {
-    const saved = localStorage.getItem(`aurora.icon.${id}`);
-    if (saved) { const hit = ALL_ICONS.find((x) => x.id === saved); if (hit) return hit; }
-  } catch { /* 防御 */ }
-  return kind === 'book' ? BOOK_ICONS[0] : DOC_ICONS[0];
-}
-export function setIconDef(id: string, iconId: string) {
-  try { localStorage.setItem(`aurora.icon.${id}`, iconId); } catch { /* 防御 */ }
-}
+/* C-04: 图标表/get/set 上收共享层（NoteIcon 单一实现——树/书签/搜索/桌面封面
+ * 四消费面同源;本处 re-export 保既有 import 面零改动）。 */
+export { BOOK_ICONS, DOC_ICONS, ALL_ICONS, getIconDef, setIconDef, VivoIcon } from '@aurora/ui-components';
+export type { IconDef } from '@aurora/ui-components';
 export interface ToastAction { text: string; actionLabel: string; onAction: () => void }
 
 export function loadOrder(): string[] {

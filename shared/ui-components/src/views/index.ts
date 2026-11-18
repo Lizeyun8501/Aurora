@@ -20,3 +20,5 @@ export {
 export type { PropDefVm, RowVm, FilterCond, ViewConfig } from './collectionVm';
 export { EmptyState, Skeleton, ErrorState } from './EmptyState';
 export type { EmptyStateProps, EmptyIllustration } from './EmptyState';
+export { VivoIcon, getIconDef, setIconDef, BOOK_ICONS, DOC_ICONS, ALL_ICONS } from './NoteIcon';
+export type { IconDef } from './NoteIcon';

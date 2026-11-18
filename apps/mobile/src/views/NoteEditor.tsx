@@ -7,6 +7,7 @@ import {I, relativeTime, type Task, type ToastAction, getTitleOverlay, setTitleO
 import { SyncPanel } from './SyncBits';
 import { RichEditor, editorPlatform, A05BridgeEffect, a05FetchBreadcrumb } from '../components/a05';
 import { SnapshotList } from '../components/SnapshotList';
+import { pathOfNote } from '../components/tree';
 
 export function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onOpenQueue, onOpenConflicts, showToast, onOpenNote }: {
   noteId: string;
@@ -120,6 +121,21 @@ export function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDelet
       </div>
 
       {/* 大标题区 — 参考图: 独立行 + 可编辑 + 分割线 */}
+      {/* C-04: 折叠面包屑——「笔记本名 › …」（移动端省宽形态;深层只显
+          根笔记本+省略号,点笔记本名回知识库树语境）。次要素文字色=视觉克制。 */}
+      {(() => {
+        const path = pathOfNote(noteId);
+        return path.length > 0 ? (
+          <nav aria-label="位置" className="editor-crumbs" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-tertiary, #9aa4b2)', padding: '6px 16px 0' }}>
+            <span style={{ cursor: 'pointer' }} onClick={() => onClose()} role="link" tabIndex={0}
+              onKeyDown={(e) => e.key === 'Enter' && onClose()}
+              title={path.map((c) => c.title).join(' › ')}>
+              {path[0].title}
+            </span>
+            {path.length > 1 && <span aria-hidden="true">› …</span>}
+          </nav>
+        ) : null;
+      })()}
       <div className="editor-head">
         <input
           className="editor-title-input"

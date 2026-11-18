@@ -2447,7 +2447,16 @@ function EditorPane(props: {
         </button>
       )}
       {!focusMode && <Breadcrumb invoke={invoke} noteId={note.note_id} onSelectFolder={onSelectFolder} />}
-      {!focusMode && <CoverHeader noteId={note.note_id} />}
+      {!focusMode && (
+        <CoverHeader
+          noteId={note.note_id}
+          /* C-04: 自定义封面附件通道——cmd_attach_cover 命令未落地（bravo-
+             request-attach-cover 已提）;落地前 onCustomCover=undefined=
+             CoverHeader 禁用态+title 披露（禁静默占位——不造假数据调用）。
+             命令批复后此处一行接入 invoke。 */
+          onCustomCover={undefined}
+        />
+      )}
       <h1
         style={{
           margin: `0 0 ${tokens.spacing.sm}px`,

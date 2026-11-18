@@ -8,6 +8,7 @@ import {
   snippetCache, loadList, saveList, K_FAVS, K_RECENT, K_TRASH,
   getLevelOverlay, setLevelOverlay, type IconDef, type ToastAction,
   getIconDef, setIconDef, BOOK_ICONS, DOC_ICONS, loadOrder, saveOrder, applyManualOrder,
+  VivoIcon,
 } from './components/primitives';
 import { focusSummary } from './components/focusSummary';
 import { type TreeNodeMeta, loadTree, saveTree } from './components/tree';
@@ -1027,7 +1028,11 @@ function Drawer2({ current, onNavigate, onClose, tasks, favs, trash, bookmarks, 
                   }
                 }}
               >
-                <span>{v.bookmark.kind === 'search' ? '🔍' : v.bookmark.kind === 'folder' ? '📚' : '📄'}</span>
+                {/* C-04: 书签行图标=同一 aurora.icon 字段（folder→book 档/note→doc 档;
+                    search 型无节点 id——检索档静态 def）;树/书签/搜索三处一致 DoD② */}
+                {v.bookmark.kind === 'search'
+                  ? <VivoIcon def={{ id: 'search', label: '搜索', color: '#6366f1', glyph: '🔍' }} />
+                  : <VivoIcon def={getIconDef(v.bookmark.kind === 'folder' ? 'book' : 'doc', v.bookmark.target_id ?? '')} />}
                 <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {v.stale ? `${v.bookmark.title}（已失效）` : v.bookmark.title}
                 </span>
