@@ -19,6 +19,12 @@ export default defineConfig({
         '../../shared/ui-components/src/index.ts',
         import.meta.url,
       ).pathname,
+      // C-09: tokens 单源直引（apps/desktop/src/design——ADR-006 真源;
+      // 移动不复制值——bootstrap 注入与桌面 boot.tsx 同值同源）
+      '@aurora/design-tokens': new URL(
+        '../../apps/desktop/src/design/tokens.ts',
+        import.meta.url,
+      ).pathname,
     },
   },
   build: {

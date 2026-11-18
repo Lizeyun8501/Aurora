@@ -1,5 +1,9 @@
 /* ADR-006（B-03）: 令牌变量基线——tokens.ts 真源投影（暗色默认+青主色）。
-   禁新增裸 hex（ADR §5 纪律）;语义专属色（日历/黄历/语义域）走扩展变量。 */
+   C-09 实化: main.tsx 启动 setProperty 12 键注入（tokens 单源直引）——
+   本块=CSS 回退层（注入前帧/JS 失效兜底）;一致性由 c09TokenBaseline
+   .test.ts 三面对拍锁定（漂移即红）。语义专属色（日历/黄历/语义域）
+   走扩展变量;V19 命名系（--brand/--bg-primary——200+ 消费面）为
+   移动 UI 主题层,与 ADR-006 基线分层并存（收敛=V20 主题卡裁决）。 */
 :root {
   /* tokens.ts color 12 键投影（ADR §3.1） */
   --bg-base: #10151C; --bg-surface: #162235; --bg-elevated: #1D2633;

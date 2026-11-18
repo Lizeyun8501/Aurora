@@ -16,7 +16,8 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@aurora/shared-types": ["../../shared/types/src/index.ts"]
+      "@aurora/shared-types": ["../../shared/types/src/index.ts"],
+      "@aurora/design-tokens": ["../desktop/src/design/tokens.ts"]
     }
   },
   "include": ["src"]
