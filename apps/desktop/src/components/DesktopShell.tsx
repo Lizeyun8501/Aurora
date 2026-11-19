@@ -2085,7 +2085,10 @@ function AttachmentItem(props: { invoke: InvokeFn | null; id: string; label: str
         cancelled = true;
       };
     }
-    invoke('cmd_read_attachment', { attachment_id: id })
+    // C-11 修: Tauri v2 命令参数绑定=JS camelCase（attachmentId↔rust
+    // attachment_id）;原 snake_case 传参在 tauri 模式恒 invalid args——
+    // 「附件不可读」列表根因（mock 模式恒错态掩蔽——PW 不可达面）
+    invoke('cmd_read_attachment', { attachmentId: id })
       .then((r) => {
         if (!cancelled) setData(r as ReadAttachment);
       })
