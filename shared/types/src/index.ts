@@ -19,3 +19,4 @@ export * from './plugin';
 export * from './events';
 export * from './adapter';
 export * from './calendar'; // A-08: 日历 shared 面（repeatUtil 上移+lunar+CalendarVm）
+export * from './palette'; // C-12: 命令面板最近使用镜像（双端单源 KV 契约）

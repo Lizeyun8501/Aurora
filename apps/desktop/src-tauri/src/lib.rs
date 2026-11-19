@@ -41,6 +41,7 @@ mod due_preview_commands;
 mod export_commands;
 mod history_commands;
 mod import_commands;
+mod palette_commands; // C-12: 命令面板最近使用 IPC（core palette_recents 薄封装）
 mod plugin_commands;
 mod share_commands;
 mod shortcut_commands;
@@ -305,6 +306,8 @@ pub fn run() {
             todo_commands::cmd_all_tasks,
             todo_commands::cmd_toggle_task,
             calendar_commands::cmd_calendar_vm,
+            palette_commands::cmd_recent_commands_get,
+            palette_commands::cmd_recent_commands_track,
             calendar_commands::cmd_list_events,
             calendar_commands::cmd_upsert_event,
             calendar_commands::cmd_delete_event,

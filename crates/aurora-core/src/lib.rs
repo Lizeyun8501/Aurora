@@ -31,6 +31,7 @@ pub mod l3_domain;
 pub mod links; // DK-双向链接S1: wiki链接提取+边索引(出链/反链倒排)
 pub mod mcp_registry; // V23-I5: MCP 数据中枢工具契约（稳定层）
 pub mod mirror; // V23-I2: Mirror 单向导出
+pub mod palette_recents; // C-12: 命令面板最近使用域（双端单源 KV——LRU 50+同 id 计数合并）
 pub mod pinyin; // DK-3.3: 拼音首字母折叠（中文标题模糊召回）
 pub mod repeat_engine;
 pub mod task_store; // A-08: 独立任务域（日历消费面——移动 GTD Task core 镜像+改期事件）

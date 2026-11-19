@@ -3880,14 +3880,36 @@ export default function DesktopShell() {
       return JSON.parse(localStorage.getItem('aurora.recentCommands') ?? '[]') as Array<{ id: string; ts: number }>;
     } catch { return []; }
   });
-  /** C-06: 执行记录回写（FIFO 去重 N=8——ts=执行时刻）。 */
+  /* C-12 双端单源（铁律 6 三段式·双写段）: track 双写（localStorage 保底
+   * +core KV 权威积累）;读侧 KV 优先——挂载时拉一次 get,有值覆盖本地
+   * state（KV 权威数据源）,失败/空回退 localStorage 现源（工单字面
+   * 「localStorage 旧源保留读回退」）。切读卡=去本地兜底后 KV 唯一。
+   * 上报失败静默（.catch 吞）——不阻断命令执行（工单验收约束）。 */
+  useEffect(() => {
+    if (!invoke) return;
+    let alive = true;
+    invoke('cmd_recent_commands_get')
+      .then((raw) => {
+        if (!alive) return;
+        const list = JSON.parse(String(raw)) as Array<{ id: string; ts: number }>;
+        if (Array.isArray(list) && list.length > 0) setRecentCommands(list);
+      })
+      .catch(() => undefined); /* KV 读失败→localStorage 回退（现 state 即本地源） */
+    return () => { alive = false; };
+  }, [invoke]);
+  /** C-06 FIFO 去重 N=8 + C-12 KV 双写（track 上报——LRU 50/计数合并在 core）。 */
   const recordPaletteExec = useCallback((itemId: string) => {
+    const ts = Date.now();
     setRecentCommands((prev) => {
-      const next = [{ id: itemId, ts: Date.now() }, ...prev.filter((x) => x.id !== itemId)].slice(0, 8);
+      const next = [{ id: itemId, ts }, ...prev.filter((x) => x.id !== itemId)].slice(0, 8);
       try { localStorage.setItem('aurora.recentCommands', JSON.stringify(next)); } catch { /* 配额满静默 */ }
       return next;
     });
-  }, []);
+    if (invoke) {
+      void invoke('cmd_recent_commands_track', { id: itemId, ts })
+        .catch(() => undefined); /* 上报失败静默——不阻断命令执行（工单验收） */
+    }
+  }, [invoke]);
 
   const openNoteId = useCallback((id: string) => {
     setSelectedId(id);
