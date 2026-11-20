@@ -21,6 +21,7 @@ tokio = { workspace = true }
 jni = { version = "0.21", default-features = false }
 # A-01: DOCX/XLSX 包体导出（纯函数面——docx_export/xlsx_export）
 aurora-import = { path = "../aurora-import" }
+base64 = "0.22" # C-13: 附件 base64 通道（与桌面 attachment_commands 同引擎）
 
 # CRDT 文档模型 — V19 §36.3 移动端使用原生 Loro 绑定
 loro = { workspace = true }

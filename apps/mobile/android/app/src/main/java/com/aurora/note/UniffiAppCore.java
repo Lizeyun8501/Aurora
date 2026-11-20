@@ -430,6 +430,15 @@ public class UniffiAppCore {
         return nativeTaskReschedule(handle, taskId, newDue);
     }
 
+    /**
+     * C-13: 附件读取 base64 通道（移动 WebView 无法 fetch file://——FFI 地基）。
+     * 返回 JSON DTO（与桌面 cmd_read_attachment 同构）;失败/未装配/超限空串。
+     * rangeStart/len &lt;=0 = 全量（Option 缺省约定——文本分片走显式正值）。
+     */
+    public String readAttachmentBase64(String attachmentId, long rangeStart, long rangeLen) {
+        return nativeReadAttachmentBase64(handle, attachmentId, rangeStart, rangeLen);
+    }
+
 
     /** 范围查询 [fromMs, toMs)——事件与区间有交叠即命中。错误降级空列表。 */
     public java.util.List<EventItem> queryEvents(long fromMs, long toMs) {
@@ -471,6 +480,7 @@ public class UniffiAppCore {
     private static native String nativeBookmarkRemove(long handle, String id);
     private static native String nativeBookmarkReorder(long handle, String idsJson, String titlePatch);
     private static native String nativeCalendarVm(long handle);
+    private static native String nativeReadAttachmentBase64(long handle, String attachmentId, long rangeStart, long rangeLen); // C-13
     private static native boolean nativeTaskReschedule(long handle, String taskId, String newDue);
     private static native String nativeCreateNote(long handle, String title);
     private static native int nativeListNotesCount(long handle);

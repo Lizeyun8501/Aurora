@@ -505,6 +505,21 @@ public class MainActivity extends Activity {
             }
         }
 
+        /**
+         * C-13: 附件 base64 通道（WebView 无法 fetch file://——桥传 JSON DTO）。
+         * rangeStart/len &lt;=0 = 全量;失败/未装配返空串（logcat warn 非静默）。
+         */
+        @JavascriptInterface
+        public String readAttachmentBase64(String attachmentId, long rangeStart, long rangeLen) {
+            try {
+                return core != null
+                        ? core.readAttachmentBase64(attachmentId, rangeStart, rangeLen)
+                        : "";
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
         /** A-08: 任务改期（TaskRescheduled 事件——投影/双端同步）。 */
         @JavascriptInterface
         public boolean taskReschedule(String taskId, String newDue) {

@@ -203,6 +203,9 @@ pub struct UniffiAppCore {
     pub conflict_artifacts: Option<std::sync::Arc<aurora_sync::conflict::ConflictArtifactStore>>,
     /// DK-49：语义冲突解决器（full 模式提取；fallback 无）。
     pub conflict_resolver: Option<std::sync::Arc<aurora_sync::conflict::ConflictResolver>>,
+    /// C-13: 附件存储（DK-09 遗留注入——full 模式从 BootedApp 同源提取;
+    /// fallback 无附件能力 None——read_attachment_base64 空串契约）。
+    pub attachments: Option<std::sync::Arc<dyn aurora_core::attachment_store::AttachmentStore>>,
     /// DK-49：已挂接的 P2P 引擎（drain 补发通道 — MainActivity 生命周期
     /// 显式注入 attach/detach；不建全局态，照移动端装配模式）。
     #[cfg(feature = "p2p-sync")]
@@ -267,6 +270,8 @@ impl UniffiAppCore {
                     offline_queue: Some(booted.offline_queue),
                     conflict_artifacts: Some(booted.conflict_artifacts),
                     conflict_resolver: Some(booted.conflict_resolver),
+                    // C-13: 附件 store 注入（DK-09 清偿——与桌面 ATTACH_STATE 同源）
+                    attachments: Some(booted.attachments.clone()),
                     #[cfg(feature = "p2p-sync")]
                     sync_engine: Mutex::new(None),
                 }))
@@ -295,6 +300,8 @@ impl UniffiAppCore {
                     offline_queue: None,
                     conflict_artifacts: None,
                     conflict_resolver: None,
+                    // C-13: 降级模式无附件能力
+                    attachments: None,
                     #[cfg(feature = "p2p-sync")]
                     sync_engine: Mutex::new(None),
                 }))
@@ -1675,6 +1682,91 @@ impl UniffiAppCore {
         }
     }
 
+    /// C-13: 附件读取 base64 通道（移动 WebView 无法 fetch file://——
+    /// FFI 传输地基）。契约与桌面 cmd_read_attachment 同构:
+    /// 返回 JSON DTO（attachment_id/note_id/file_name/mime/size/
+    /// data_base64/range——serde snake_case 与 TS PreviewAttachmentDto
+    /// 镜像一致）;失败/未装配/超限返空串（对齐 taskSync 失败约定,
+    /// logcat 可见非静默）。range 切片宽容 clamp（EOF 判定在前端）。
+    pub fn read_attachment_base64(
+        self: &Arc<Self>,
+        attachment_id: &str,
+        range_start: Option<u64>,
+        range_len: Option<u64>,
+    ) -> String {
+        use aurora_core::attachment_store::validate_attachment_id;
+        use base64::Engine as _;
+
+        let Some(core) = &self.core else {
+            tracing::warn!("read_attachment_base64: core 未初始化（fallback 模式）");
+            return String::new();
+        };
+        let Some(attachments) = &self.attachments else {
+            tracing::warn!("read_attachment_base64: 附件能力未装配（DK-09 降级/fallback）");
+            return String::new();
+        };
+        if !validate_attachment_id(attachment_id) {
+            tracing::warn!(id = %attachment_id, "read_attachment_base64: 非法附件 id");
+            return String::new();
+        }
+        const MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
+        let ctx = aurora_core::write_path::WriteContext {
+            core: core.clone(),
+            blocks: self.blocks.clone(),
+            seal: None, // 移动明文口径（与 create_note 链同——at-rest 加密后卡）
+            content_cipher: self.content_cipher.clone(),
+            attachments: Some(attachments.clone()),
+        };
+        match self.runtime.block_on(aurora_core::write_path::read_attachment(
+            &ctx, attachment_id,
+        )) {
+            Ok((meta, plaintext)) => {
+                if plaintext.len() > MAX_ATTACHMENT_BYTES {
+                    tracing::warn!(
+                        size = plaintext.len(),
+                        "read_attachment_base64: 超 IPC 上限 20MiB（走 range 分片）"
+                    );
+                    return String::new();
+                }
+                let total = plaintext.len() as u64;
+                let (slice, range_meta) = match (range_start, range_len) {
+                    (Some(start), Some(len)) => {
+                        let start = start.min(total);
+                        let end = (start + len).min(total);
+                        let slice = &plaintext[start as usize..end as usize];
+                        (slice, Some((start, slice.len() as u64)))
+                    }
+                    _ => (plaintext.as_slice(), None),
+                };
+                #[derive(serde::Serialize)]
+                struct Dto {
+                    attachment_id: String,
+                    note_id: String,
+                    file_name: String,
+                    mime: String,
+                    size: u64,
+                    data_base64: String,
+                    range: Option<(u64, u64)>,
+                }
+                let dto = Dto {
+                    attachment_id: meta.attachment_id,
+                    note_id: meta.note_id,
+                    file_name: meta.file_name,
+                    mime: meta.mime,
+                    size: meta.size,
+                    data_base64: base64::engine::general_purpose::STANDARD.encode(slice),
+                    range: range_meta,
+                };
+                serde_json::to_string(&dto).unwrap_or_default()
+            }
+            Err(e) => {
+                // fail-closed 透传（unseal/完整性校验失败——锁定态零内容）
+                tracing::warn!(error = %e, id = %attachment_id, "read_attachment_base64 failed");
+                String::new()
+            }
+        }
+    }
+
     /// A-08: 任务改期（发 TaskRescheduled——投影/双端同步）。成功 true。
     pub fn task_reschedule(self: &Arc<Self>, task_id: &str, new_due: Option<String>) -> bool {
         let Some(core) = &self.core else {
@@ -2575,6 +2667,27 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeCalendarVm(
     let core = unsafe { core_from_handle(handle) };
     let json = core.calendar_vm_json();
     dk49_json_to_jstring(&mut env, &serde_json::Value::String(json))
+}
+
+// C-13: 附件 base64 通道 JNI 导出（桌面 cmd_read_attachment 同源——双端对称）。
+// range_start/len: 0 = None（Option 语义——jlong 不可空,0 约定缺省全量）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeReadAttachmentBase64(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    attachment_id: JString,
+    range_start: jlong,
+    range_len: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let id = jstring_to_rust(&mut env, &attachment_id).unwrap_or_default();
+    let r = core.read_attachment_base64(
+        &id,
+        if range_start > 0 { Some(range_start as u64) } else { None },
+        if range_len > 0 { Some(range_len as u64) } else { None },
+    );
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
 }
 
 // A-05: 块引用解析 JNI 导出（桌面 cmd_resolve_block_ref 同源——双端对称）

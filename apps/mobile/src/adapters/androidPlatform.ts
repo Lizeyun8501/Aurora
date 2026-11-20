@@ -73,6 +73,8 @@ interface AndroidBridge {
    *  mock 拼装同契约——localStorage 双源 snake 形,E2E 全链走切读后形态）。 */
   calendarVm?(): string;
   taskReschedule?(taskId: string, newDue: string): boolean;
+  /** C-13: 附件 base64 通道（失败/未装配返空串——JSON DTO 契约同桌面）。 */
+  readAttachmentBase64?(attachmentId: string, rangeStart: number, rangeLen: number): string;
   // A-09: 高级搜索（5 运算符+徽章面——与桌面 cmd_search_advanced 同源）
   advancedSearch?(query: string): string;
   // C-02: NL 日期多词预览（chip 群——与桌面 cmd_preview_due_multi 同源;失败 "[]"）
@@ -295,6 +297,52 @@ export function resetMockSync(): void {
 // ---------------------------------------------------------------------------
 
 export const platform = {
+  /**
+   * C-13: 读附件（真桥→readAttachmentBase64 JSON;mock→localStorage
+   * `aurora.attachments` 按 id 取——E2E mock 全链: 三类 MIME 预览可验）。
+   * 失败空串→null（调用方按契约空态/错误条——禁静默假数据）。
+   */
+  readAttachment(
+    attachmentId: string,
+    range?: { start: number; len: number },
+  ): { attachment_id: string; note_id: string; file_name: string; mime: string; size: number; data_base64: string; range: [number, number] | null } | null {
+    const b = bridge();
+    const rs = range ? Math.max(1, Math.floor(range.start)) : 0;
+    const rl = range ? Math.max(1, Math.floor(range.len)) : 0;
+    if (b?.readAttachmentBase64) {
+      const raw = b.readAttachmentBase64(attachmentId, rs, rl);
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }
+    // mock 路径: localStorage aurora.attachments = [{...dto}...]（base64 预置）
+    try {
+      const all = JSON.parse(localStorage.getItem('aurora.attachments') ?? '[]') as Array<{
+        attachment_id: string; note_id: string; file_name: string; mime: string;
+        size: number; data_base64: string;
+      }>;
+      const a = all.find((x) => x.attachment_id === attachmentId);
+      if (!a) return null;
+      let data = a.data_base64;
+      let rng: [number, number] | null = null;
+      if (range) {
+        // base64 切片: 按字节解码后切片再编码（文本类预览按需取片）
+        const bin = atob(a.data_base64);
+        const start = Math.min(range.start, bin.length);
+        const end = Math.min(start + range.len, bin.length);
+        const slice = bin.slice(start, end);
+        data = btoa(slice);
+        rng = [start, slice.length];
+      }
+      return { ...a, data_base64: data, range: rng };
+    } catch {
+      return null;
+    }
+  },
+
   /** C-02: NL 日期多词预览（core due_parse_multi 同源;无桥/失败=[] 零 chip） */
   previewDueMulti(text: string): Array<{ due_ts: number; start: number; end: number; matched_text: string; human: string; semantic: string }> {
     const b = bridge();
