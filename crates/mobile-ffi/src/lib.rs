@@ -3368,6 +3368,126 @@ impl UniffiAppCore {
 mod tests {
     // ===== B-01: Agent 真实推理链 E2E =====
 
+    /// C-13 helper: 造笔记+挂附件（write_path 全链——bootstrap full 模式
+    /// attachments 与桌面 ATTACH_STATE 同源 KvAttachmentStore）。
+    fn c13_attach(core: &UniffiAppCore, note_id: &str, data: &[u8]) -> String {
+        let c = core.core.as_ref().unwrap();
+        let ctx = aurora_core::write_path::WriteContext {
+            core: c.clone(),
+            blocks: core.blocks.clone(),
+            seal: None,
+            content_cipher: core.content_cipher.clone(),
+            attachments: core.attachments.clone(),
+        };
+        core.runtime
+            .block_on(aurora_core::write_path::attach_to_note(
+                &ctx, note_id, "t.png", "image/png", data,
+            ))
+            .unwrap()
+            .attachment_id
+    }
+
+    /// C-13 DoD: happy path——attach→read base64 JSON DTO 全字段断言
+    /// （snake_case 契约+明文回读 sha256 一致+range=None 全量）。
+    #[test]
+    fn c13_read_attachment_base64_happy() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        // 真笔记（attach_to_note 存在性校验）
+        let nid = core.clone().create_note("c13".into()).expect("create_note 应成功");
+        let data: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
+        let aid = c13_attach(&core, &nid, &data);
+
+        let raw = core.read_attachment_base64(&aid, None, None);
+        assert!(!raw.is_empty(), "happy path 必须返 JSON——空串=失败");
+        let dto: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(dto["attachment_id"].as_str().unwrap(), aid);
+        assert_eq!(dto["note_id"].as_str().unwrap(), nid);
+        assert_eq!(dto["file_name"].as_str().unwrap(), "t.png");
+        assert_eq!(dto["mime"].as_str().unwrap(), "image/png");
+        assert_eq!(dto["size"].as_u64().unwrap(), data.len() as u64);
+        assert!(dto["range"].is_null(), "全量读 range=None");
+        // base64 解码→明文逐字节一致（完整性校验通过的铁证）
+        use base64::Engine as _;
+        let back = base64::engine::general_purpose::STANDARD
+            .decode(dto["data_base64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(back, data, "base64 回读必须逐字节一致");
+    }
+
+    /// C-13 DoD: range 分片——[256, 512) 切片+range 元信息断言。
+    #[test]
+    fn c13_read_attachment_base64_range_slice() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        let nid = core.clone().create_note("c13r".into()).expect("create_note 应成功");
+        let data: Vec<u8> = (0..2048u32).map(|i| (i % 253) as u8).collect();
+        let aid = c13_attach(&core, &nid, &data);
+
+        let raw = core.read_attachment_base64(&aid, Some(256), Some(512));
+        let dto: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let rng = dto["range"].as_array().unwrap();
+        assert_eq!(rng[0].as_u64().unwrap(), 256, "range.start");
+        assert_eq!(rng[1].as_u64().unwrap(), 512, "range.len（实际切片长）");
+        use base64::Engine as _;
+        let back = base64::engine::general_purpose::STANDARD
+            .decode(dto["data_base64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(back.as_slice(), &data[256..768], "切片逐字节一致");
+    }
+
+    /// C-13 DoD: range clamp——越界 start/len 宽容收口到明文尾（EOF 判定
+    /// 在前端,非截断静默——A-02 桌面同语义）。
+    #[test]
+    fn c13_read_attachment_base64_range_clamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        let nid = core.clone().create_note("c13c".into()).expect("create_note 应成功");
+        let data = vec![7u8; 100];
+        let aid = c13_attach(&core, &nid, &data);
+
+        // start 超尾→空片（range 元信息如实报告）
+        let raw = core.read_attachment_base64(&aid, Some(500), Some(50));
+        let dto: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let rng = dto["range"].as_array().unwrap();
+        assert_eq!(rng[0].as_u64().unwrap(), 100, "start clamp 到 100");
+        assert_eq!(rng[1].as_u64().unwrap(), 0, "尾后零片");
+        // len 超尾→截到明文尾
+        let raw2 = core.read_attachment_base64(&aid, Some(90), Some(500));
+        let dto2: serde_json::Value = serde_json::from_str(&raw2).unwrap();
+        let rng2 = dto2["range"].as_array().unwrap();
+        assert_eq!(rng2[1].as_u64().unwrap(), 10, "len clamp——尾段 10 字节");
+    }
+
+    /// C-13 DoD: 空串失败契约三面——不存在 id/非法 id/缺省 range 单参。
+    /// （fail-closed 非静默:logcat warn——返回侧零内容。）
+    #[test]
+    fn c13_read_attachment_base64_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+
+        // 不存在的附件 id（白名单格式合法但库里没有）
+        assert_eq!(
+            core.read_attachment_base64("at-nonexistent-id-000", None, None),
+            String::new(),
+            "缺附件必须空串（fail-closed 零内容）"
+        );
+        // 非法 id（注入面——validate_attachment_id 拒）
+        assert_eq!(
+            core.read_attachment_base64("at-1; DROP TABLE", None, None),
+            String::new()
+        );
+        assert_eq!(
+            core.read_attachment_base64("", None, None),
+            String::new(),
+            "空 id 拒"
+        );
+        // 仅 range_start 缺 range_len（双参约定:None 全量——不 panic）
+        let raw = core.read_attachment_base64("at-nonexistent-id-000", Some(10), None);
+        assert_eq!(raw, String::new());
+    }
+
+
     /// B-01 DoD: session create→status(活)→kill→status(killed) 状态变化断言。
     #[test]
     fn b01_agent_session_lifecycle() {
