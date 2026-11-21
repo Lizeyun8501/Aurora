@@ -540,6 +540,7 @@ dependencies = [
  "aurora-import",
  "aurora-security",
  "aurora-sync",
+ "base64 0.22.1",
  "chrono",
  "iroh",
  "jni 0.21.1",

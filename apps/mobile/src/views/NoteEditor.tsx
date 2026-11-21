@@ -7,6 +7,7 @@ import {I, relativeTime, type Task, type ToastAction, getTitleOverlay, setTitleO
 import { SyncPanel } from './SyncBits';
 import { RichEditor, editorPlatform, A05BridgeEffect, a05FetchBreadcrumb } from '../components/a05';
 import { SnapshotList } from '../components/SnapshotList';
+import { AttachmentPreview, type PreviewAttachmentDto } from '@aurora/ui-components';
 import { pathOfNote } from '../components/tree';
 
 export function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDeleted, onOpenQueue, onOpenConflicts, showToast, onOpenNote }: {
@@ -28,6 +29,8 @@ export function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDelet
   const [focusMode, setFocusMode] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [snapOpen, setSnapOpen] = useState(false);
+  // C-13: 附件预览（attachment:// 引用卡点击开——AttachmentPreview 共享组件挂移动）
+  const [previewRef, setPreviewRef] = useState<{ id: string; label: string; isImage: boolean } | null>(null);
   const [snapSaved, setSnapSaved] = useState(false);
   const [status, setStatus] = useState<'dirty' | 'saved' | null>(null);
   // 大标题可编辑（参考图布局）— overlay 存储，所有列表同步
@@ -256,6 +259,32 @@ export function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDelet
         />
       </React.Suspense>
 
+      {/* C-13: 附件条（正文 attachment:// 引用——与桌面 AttachmentStrip 同模式
+          移动简化: 无 shell 导出/系统打开,预览主链走 platform.readAttachment 桥） */}
+      <MobileAttachmentStrip
+        content={(() => { try { return platform.getNoteContent(noteId); } catch { return ''; } })()}
+        onOpen={(r) => setPreviewRef(r)}
+      />
+      {previewRef && (
+        <>
+          <div className="sheet-mask" onClick={() => setPreviewRef(null)} />
+          <div className="sheet" style={{ maxWidth: '100%', padding: 0 }}>
+            <div className="sheet-grab" />
+            <div className="sheet-head">
+              <span className="sheet-title">附件预览</span>
+              <button className="icon-btn" onClick={() => setPreviewRef(null)} aria-label="关闭">{I.x}</button>
+            </div>
+            <div className="sheet-body">
+              <MobileAttachmentPreviewPanel
+                attachmentId={previewRef.id}
+                fallbackName={previewRef.label}
+                onClose={() => setPreviewRef(null)}
+              />
+            </div>
+          </div>
+        </>
+      )}
+
       {/* E18 导出查看 Sheet: 内容直开（html→iframe 渲染/md·txt→pre 文本） */}
       {exportPreview && lastExport && (
         <>
@@ -277,5 +306,125 @@ export function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDelet
         </>
       )}
     </div>
+  );
+}
+
+// ===== C-13: 移动附件面（attachment:// 引用卡+预览面板——桌面 AttachmentStrip 对称） =====
+
+interface MobileAttachmentRef {
+  id: string;
+  label: string;
+  isImage: boolean;
+}
+
+/** 附件引用解析（桌面 ATTACHMENT_LINK_RE 同模式——白名单 id 防注入）。 */
+const C13_ATTACHMENT_LINK_RE = /(!?)\[([^\]\n]*)\]\(attachment:\/\/([^)\s]+)\)/g;
+export function extractAttachmentRefs(content: string): MobileAttachmentRef[] {
+  const seen = new Map<string, MobileAttachmentRef>();
+  for (const m of content.matchAll(C13_ATTACHMENT_LINK_RE)) {
+    const [, bang, label, id] = m;
+    if (seen.has(id)) continue;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) continue;
+    seen.set(id, { id, label: label || id, isImage: bang === '!' });
+  }
+  return [...seen.values()];
+}
+
+function formatBytesC13(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** 附件条：无引用不渲染;图片卡缩略+文件卡通用（点击开预览 sheet）。 */
+function MobileAttachmentStrip(props: { content: string; onOpen: (r: MobileAttachmentRef) => void }) {
+  const refs = React.useMemo(() => extractAttachmentRefs(props.content), [props.content]);
+  if (refs.length === 0) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 14px 14px' }}>
+      {refs.map((r) => (
+        <button
+          key={r.id}
+          type="button"
+          onClick={() => props.onOpen(r)}
+          aria-label={`预览附件 ${r.label}`}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '8px 12px', borderRadius: 10,
+            border: '1px solid rgba(128,128,128,0.3)',
+            background: 'rgba(128,128,128,0.08)',
+            color: 'inherit', cursor: 'pointer', textAlign: 'left', fontSize: 13,
+          }}
+        >
+          <span aria-hidden>{r.isImage ? '🖼️' : '📎'}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {r.isImage ? r.label : `📎 ${r.label}`}
+          </span>
+          <span style={{ marginLeft: 'auto', opacity: 0.6, fontSize: 11 }}>预览</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 预览面板：AttachmentPreview 共享组件挂移动桥（fail-closed Err 语义）。
+ * 组件 kind 分派（image/pdf/text）依赖 props.mime——移动无 list 元信息面,
+ * 先探测 DTO 拿真值（file_name/mime/size）再挂载;探测失败显式错误条
+ * （空标签/空 MIME 硬挂会被 classify 误判 office——禁静默降级）。
+ */
+function MobileAttachmentPreviewPanel(props: {
+  attachmentId: string;
+  fallbackName: string;
+  onClose: () => void;
+}) {
+  const [meta, setMeta] = React.useState<{ fileName: string; mime: string; size: number } | null>(null);
+  const [probeError, setProbeError] = React.useState<string | null>(null);
+  const readAttachment = React.useCallback(
+    async (attachmentId: string, range?: { start: number; len: number }): Promise<PreviewAttachmentDto> => {
+      const dto = platform.readAttachment(attachmentId, range);
+      if (!dto) throw new Error('附件读取失败（未装配或已移动）');
+      return dto;
+    },
+    [],
+  );
+  // 探测：全量 DTO 单次取（text 类组件内再分片——range 通道由组件驱动）
+  React.useEffect(() => {
+    let cancelled = false;
+    readAttachment(props.attachmentId)
+      .then((dto) => {
+        if (!cancelled) {
+          if (!dto.mime) {
+            setProbeError('附件元信息缺失（mime 空——数据异常）');
+          } else {
+            setMeta({ fileName: dto.file_name || props.fallbackName, mime: dto.mime, size: dto.size });
+          }
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setProbeError(e instanceof Error ? e.message : String(e));
+      });
+    return () => { cancelled = true; };
+  }, [props.attachmentId, props.fallbackName, readAttachment]);
+
+  if (probeError) {
+    return (
+      <div role="alert" style={{ padding: 16, color: '#e5484d', fontSize: 13 }}>
+        附件预览失败: {probeError}
+      </div>
+    );
+  }
+  if (!meta) {
+    return <div style={{ padding: 16, opacity: 0.6, fontSize: 13 }}>附件加载中…</div>;
+  }
+  return (
+    <AttachmentPreview
+      attachmentId={props.attachmentId}
+      fileName={meta.fileName}
+      mime={meta.mime}
+      size={meta.size}
+      readAttachment={readAttachment}
+      onClose={props.onClose}
+    />
   );
 }
