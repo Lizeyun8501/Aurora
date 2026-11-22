@@ -1717,9 +1717,12 @@ impl UniffiAppCore {
             content_cipher: self.content_cipher.clone(),
             attachments: Some(attachments.clone()),
         };
-        match self.runtime.block_on(aurora_core::write_path::read_attachment(
-            &ctx, attachment_id,
-        )) {
+        match self
+            .runtime
+            .block_on(aurora_core::write_path::read_attachment(
+                &ctx,
+                attachment_id,
+            )) {
             Ok((meta, plaintext)) => {
                 if plaintext.len() > MAX_ATTACHMENT_BYTES {
                     tracing::warn!(
@@ -2684,8 +2687,16 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeReadAttachmentBa
     let id = jstring_to_rust(&mut env, &attachment_id).unwrap_or_default();
     let r = core.read_attachment_base64(
         &id,
-        if range_start > 0 { Some(range_start as u64) } else { None },
-        if range_len > 0 { Some(range_len as u64) } else { None },
+        if range_start > 0 {
+            Some(range_start as u64)
+        } else {
+            None
+        },
+        if range_len > 0 {
+            Some(range_len as u64)
+        } else {
+            None
+        },
     );
     dk49_json_to_jstring(&mut env, &serde_json::Value::String(r))
 }
@@ -3381,7 +3392,11 @@ mod tests {
         };
         core.runtime
             .block_on(aurora_core::write_path::attach_to_note(
-                &ctx, note_id, "t.png", "image/png", data,
+                &ctx,
+                note_id,
+                "t.png",
+                "image/png",
+                data,
             ))
             .unwrap()
             .attachment_id
@@ -3394,7 +3409,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
         // 真笔记（attach_to_note 存在性校验）
-        let nid = core.clone().create_note("c13".into()).expect("create_note 应成功");
+        let nid = core
+            .clone()
+            .create_note("c13".into())
+            .expect("create_note 应成功");
         let data: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
         let aid = c13_attach(&core, &nid, &data);
 
@@ -3420,7 +3438,10 @@ mod tests {
     fn c13_read_attachment_base64_range_slice() {
         let dir = tempfile::tempdir().unwrap();
         let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
-        let nid = core.clone().create_note("c13r".into()).expect("create_note 应成功");
+        let nid = core
+            .clone()
+            .create_note("c13r".into())
+            .expect("create_note 应成功");
         let data: Vec<u8> = (0..2048u32).map(|i| (i % 253) as u8).collect();
         let aid = c13_attach(&core, &nid, &data);
 
@@ -3442,7 +3463,10 @@ mod tests {
     fn c13_read_attachment_base64_range_clamp() {
         let dir = tempfile::tempdir().unwrap();
         let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
-        let nid = core.clone().create_note("c13c".into()).expect("create_note 应成功");
+        let nid = core
+            .clone()
+            .create_note("c13c".into())
+            .expect("create_note 应成功");
         let data = vec![7u8; 100];
         let aid = c13_attach(&core, &nid, &data);
 
@@ -3486,7 +3510,6 @@ mod tests {
         let raw = core.read_attachment_base64("at-nonexistent-id-000", Some(10), None);
         assert_eq!(raw, String::new());
     }
-
 
     /// B-01 DoD: session create→status(活)→kill→status(killed) 状态变化断言。
     #[test]
