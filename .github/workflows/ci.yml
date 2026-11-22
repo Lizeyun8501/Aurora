@@ -279,6 +279,26 @@ jobs:
       - name: Check event dict parity
         run: node scripts/check-event-dict.mjs
 
+  # O-09 2026-11-22: TS typecheck + vitest 全量入 CI 硬闸（此前非阻断项——
+  # 「部分绿被当全绿」根因）。--if-present: 跳过无 typecheck script 的
+  # workspace（apps/extension 空壳无 TS 源）。
+  ts-gate:
+    name: TS typecheck & vitest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install deps
+        run: npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund
+      - name: Typecheck (workspace, --if-present)
+        run: npm run typecheck -ws --if-present
+      - name: Vitest (shared/ui-components 全量)
+        run: npx vitest run --root shared/ui-components
+
   docs-index:
     name: Docs index (零断链)
     runs-on: ubuntu-latest
