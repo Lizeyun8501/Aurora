@@ -159,7 +159,7 @@ interface Canon {
   c?: Canon[];
 }
 
-function canonInline(nodes: ProseNode[]): Array<[string, string]> {
+function canonInline(nodes: readonly ProseNode[]): Array<[string, string]> {
   const out: Array<[string, string]> = [];
   for (const n of nodes) {
     if (n.type.name === 'math_inline') out.push(['公式', String(n.attrs.latex)]);
@@ -229,7 +229,7 @@ function flattenListItems(node: ProseNode): ProseNode {
   return inline && first.content!.content.some((c) => c.type.name === 'math_inline') ? N.list_item.create(null, [N.paragraph.create(null, inline)]) : li;
 }
 
-function canonDocTop(blocks: ProseNode[], normalizeLists: boolean): Canon[] {
+function canonDocTop(blocks: readonly ProseNode[], normalizeLists: boolean): Canon[] {
   return blocks.map((b) =>
     normalizeLists && (b.type.name === 'bullet_list' || b.type.name === 'ordered_list')
       ? canon(b.type.create(b.attrs, b.content!.content.map(flattenListItems)))

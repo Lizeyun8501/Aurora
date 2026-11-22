@@ -1,7 +1,7 @@
 // C-04: 图标单一实现+字段一致性行为级测试（桌面面包屑折叠形态由
 // a05BlockRefBreadcrumb 既有套覆盖——此处补 NoteIcon 面与 CoverHeader 关键语义）。
 import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render } from '@testing-library/react';
 import { VivoIcon, getIconDef, setIconDef, ALL_ICONS, BOOK_ICONS, DOC_ICONS } from '../views/NoteIcon';
 
 describe('C-04 NoteIcon 单一实现', () => {
