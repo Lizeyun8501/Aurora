@@ -174,14 +174,14 @@ V26 定义了"有哪些端口"，但**没定义端口长什么样**。20 个端�
 
 ### 任务
 
-- [ ] 事件字典 **41 类**：沿用远端 `CoreEvent` 的 PascalCase 与 Rust↔TS 镜像实践（`event.rs` ↔ `events.ts`），**扩展而非另起炉灶**
+- [ ] 事件字典（冻结时 41 类,现以 `DICT.len()` 为准——当前 42）：沿用远端 `CoreEvent` 的 PascalCase 与 Rust↔TS 镜像实践（`event.rs` ↔ `events.ts`），**扩展而非另起炉灶**
 - [ ] 端口 Trait 签名：核心方法**不提供默认实现**，编译期强制适配器给出真实实现
 - [ ] CoreAPI TypeScript 契约：以 mobile-ffi 现有 14 个 JNI 函数为第一版基线
 - [ ] 错误码 **62 个**（A12+B12+C10+D10+E8+F6+G4），每个给「用户文案 / 是否重试 / 降级动作」三元组
 
 ### DoD
 
-- [ ] 41 类事件全部落库，Rust 与 TS 严格镜像（现有 12 变体命名不变）
+- [ ] 事件字典全部落库（冻结时 41 类,现 42 以 `DICT.len()` 为准），Rust 与 TS 严格镜像（现有 12 变体命名不变）
 - [ ] `SyncTarget` 等核心端口的关键方法无默认体，`cargo check` 强制适配器实现
 - [ ] 62 个错误码进入统一 `Error` 枚举，`user_message()` / `is_retryable()` / `requires_fallback()` 三问可测
 - [ ] 契约变更需走 ADR，禁止口头约定
@@ -372,7 +372,7 @@ V25 排期有三处结构性问题：
 
 ### 任务
 
-- [ ] 事件字典 41 类落库，Rust↔TS 严格镜像
+- [ ] 事件字典落库（冻结时 41 类,现 42）,Rust↔TS 严格镜像
 - [ ] 20 个端口 Trait 签名落库，核心方法无默认实现
 - [ ] CoreAPI TypeScript 契约落库
 - [ ] 62 个错误码进入统一 `Error` 枚举

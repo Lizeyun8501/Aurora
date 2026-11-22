@@ -59,7 +59,9 @@ export interface Envelope {
 }
 
 /**
- * 事件字典契约元数据（mirrors `CoreEvent::DICT`）— 41 类，V26 表 4-1 冻结。
+ * 事件字典契约元数据（mirrors `CoreEvent::DICT`）——数量以
+ * `crates/aurora-core/src/event_bus/event.rs` 的 `DICT.len()` 为准（不写死数字）。
+ * 一致性由 `scripts/check-event-dict.mjs` 强制对拍（CI 阻断）。
  * 新增事件必须同步此表、`event.rs` 并走 ADR。
  */
 export const EVENT_DICT: readonly {

@@ -18,7 +18,7 @@
 ## 二、设计原则五条（交付面）
 
 1. **本地优先，端内闭环** —— offline_queue + sync_gate（wifi_only 开关持久化）；write_path 零网络依赖
-2. **单一写入路径** —— note: 前缀直写仅存在于 write_path；事件字典 41 类冻结（event.rs ↔ 前端镜像）
+2. **单一写入路径** —— note: 前缀直写仅存在于 write_path；事件字典冻结（时 41 类,现以 `DICT.len()` 为准）+ 对拍脚本 `scripts/check-event-dict.mjs`（event.rs ↔ 前端镜像）
 3. **落库即加密** —— seal 字节封装 + vault unseal 注入；decode_record 消费者统一 unseal
 4. **AI 永不静默写入** —— aiLiquify 提案 → aiCommit 用户勾选；OpResult 失败不掩盖；Kill-Switch 用户可达
 5. **投影可重建** —— catch_up 投影重放；blocked 联动 / trash 过滤均为派生计算

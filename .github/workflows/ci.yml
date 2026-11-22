@@ -208,11 +208,42 @@ jobs:
           echo "::error::free>> $(free -h | sed -n 2p | tr -s ' ')"
           echo "::error::oom>> $(sudo dmesg 2>/dev/null | rg -i 'oom|killed process' | tail -4 | tr '\n' '§' || echo none)"
           echo "::error::raw-tail>> $(tail -c 1500 /tmp/test-retry.log /tmp/test.log 2>/dev/null | tr '\n' '§' | tr '\r' ' ')"
+      # O-01 2026-11-22: iroh-transport 三段（test/重跑/日志+annotation）拆至
+      # 独立 job iroh-test——job 内 step 依赖前序 success,主 Test 失败时
+      # iroh 面被 skip（P2P 核心路径缺验证证据,0796f9a 实录）。独立 job
+      # 不再受主 Test 结论牵连。
+
+  iroh-test:
+    name: Test (iroh-transport feature)
+    runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            /usr/lib/jvm /usr/share/swift /opt/hostedtoolcache/Python || true
+          sudo docker image prune -af || true
+          sudo apt-get clean || true
+          df -h /
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # dk08 十节点拓扑内存敏感（2026-10-07 实录 runner 资源类抖动）——保留 swap
+      - name: Add swap
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 4G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
       # DK-08 S5 盲区补齐（bravo-DK08-同步.md 验收记录）：多节点多 NAT 仿真
       # 与 iroh-transport 生产传输代码被 feature 门控，默认集不覆盖。
-      # 2026-10-07 加固：本地 224 测全绿+同代码面 fd1464d CI 绿+之后连红 3 笔
-      # （8min 快速失败）→ 判定 runner 资源类抖动（dk08 十节点拓扑内存敏感）。
-      # 兜底=失败重跑一次；自愈=失败日志上传（此前该 step 无日志可查）。
+      # 兜底=失败重跑一次；自愈=失败日志上传+annotation。
       - name: Test (iroh-transport feature)
         run: |
           cargo test -p aurora-sync --features iroh-transport,test-utils --verbose 2>&1 | tee /tmp/iroh-test.log; rc=${PIPESTATUS[0]}
@@ -231,13 +262,22 @@ jobs:
             /tmp/iroh-test-retry.log
           retention-days: 3
           if-no-files-found: ignore
-      # 2026-10-07: iroh 失败名单进 annotation（Test job 同款匿名诊断通道）
       - name: Report iroh failure tail
         if: failure()
         run: |
           echo "::error::iroh-failed-list>> $(rg -o '^\s*test .* \.\.\. FAILED' /tmp/iroh-test-retry.log /tmp/iroh-test.log 2>/dev/null | sort -u | head -20 | tr '\n' '§' || echo none-captured)"
           echo "::error::iroh-oom>> $(sudo dmesg 2>/dev/null | rg -i 'oom|killed process' | tail -4 | tr '\n' '§' || echo none)"
           echo "::error::iroh-raw-tail>> $(tail -c 1500 /tmp/iroh-test-retry.log /tmp/iroh-test.log 2>/dev/null | tr '\n' '§' | tr '\r' ' ')"
+
+  # O-03 2026-11-22: 事件字典三方对拍——Rust CoreEvent::DICT ↔ TS EVENT_DICT
+  # 逐名称+语义一致（数量以 DICT.len() 为准不写死）。秒级 job,CI 阻断。
+  event-dict:
+    name: Event dict parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check event dict parity
+        run: node scripts/check-event-dict.mjs
 
   docs-index:
     name: Docs index (零断链)

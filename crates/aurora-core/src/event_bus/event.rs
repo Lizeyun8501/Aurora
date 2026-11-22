@@ -1,8 +1,9 @@
-//! 核心事件定义 — V26 DK-00 契约冻结（41 类事件字典）
+//! 核心事件定义 — V26 DK-00 契约冻结（数量以 DICT.len() 为准,当前 42）
 //!
 //! 沿用远端 PascalCase 命名与 Rust↔TS 严格镜像实践
 //! （本文件 ↔ `shared/types/src/events.ts`）。★ 标记的 12 类为原有变体，
-//! V26 扩展至 41 类而非另起炉灶（V26-0 §4.1 表 4-1）。
+//! 冻结时 41 类,A-08 增 TaskRescheduled 后 42——以 DICT.len() 为准（V26-0 §4.1 表 4-1）。
+//! 三方对拍: node scripts/check-event-dict.mjs（CI 阻断）。
 //!
 //! 通道与持久化规则（V26 硬约束）：
 //! - `High`：UI 实时通道，不持久化（出队即焚）；积压不延迟
@@ -180,7 +181,7 @@ impl CoreEvent {
     }
 }
 
-/// 核心事件类型，覆盖所有模块间通信场景（41 类，V26 表 4-1 冻结）
+/// 核心事件类型，覆盖所有模块间通信场景（数量以 DICT.len() 为准,与 events.ts 对拍）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CoreEvent {
     /// 文档内容变更

@@ -8,7 +8,7 @@
 
 V25 声称"契约冻结后三条流水线并行开工"，但 20 个端口只有名字、41 类事件字典与 62 个错误码在 V25 合并中全部丢失。契约是 11 个能力组件并行开发的前提——契约不定，它们只能等。
 
-V26 DK-00 完成契约冻结：事件字典 41 类、端口 Trait 签名（★方法无默认实现）、CoreAPI TS 契约、62 错误码统一枚举、国际化契约期决策。
+V26 DK-00 完成契约冻结：事件字典 41 类（后经 A-08 增补至 42,以 event.rs `DICT.len()` 为准）、端口 Trait 签名（★方法无默认实现）、CoreAPI TS 契约、62 错误码统一枚举、国际化契约期决策。
 
 ## 决定
 
@@ -16,7 +16,7 @@ V26 DK-00 完成契约冻结：事件字典 41 类、端口 Trait 签名（★�
 
 | 契约 | Rust 真源 | TS 镜像 |
 |---|---|---|
-| 事件字典 41 类 | `crates/aurora-core/src/event_bus/event.rs`（`CoreEvent` + `CoreEvent::DICT`） | `shared/types/src/events.ts` |
+| 事件字典（以 `DICT.len()` 为准,当前 42） | `crates/aurora-core/src/event_bus/event.rs`（`CoreEvent` + `CoreEvent::DICT`） | `shared/types/src/events.ts` |
 | 错误码 62 个 | `crates/aurora-core/src/error_codes.rs`（`ErrorCode` + `TABLE`） | `shared/types/src/errors.ts`（待建） |
 | CoreAPI | `crates/mobile-ffi/src/lib.rs`（JNI 基线） | `shared/core-api/src/index.ts` |
 | 端口签名 | `crates/aurora-core/src/traits/*.rs` | —（Rust 单端） |
