@@ -1,6 +1,10 @@
-# Aurora 技术债台账（独立档 · 2026-10-14 对账版）
+# Aurora 技术债台账（独立档 · 2026-10-14 对账版 → 2026-11-24 O-05 增补）
 
 **对账**: Alpha 2026-10-14 17:53 ｜ **主档前身**: DK-14 前置勘察拆卡序列 §4 ｜ **方法**: 逐项代码现状核查（非注记转抄）｜ **结论**: T1-T8 中 **5 项已随各卡消化**，本档为唯一权威台账（此前散落注记，不再逐注记更新）
+
+**状态语义（O-05 / 2026-11-24 起）**：每条债显式标 OPEN 或 CLOSED——
+CLOSED 条目必须附 commit 锚点；OPEN 条目必须附来源锚点（代码行/卡号/ADR）。
+新增债直接入档；修复后原地改 CLOSED 不删除（历史可溯）。
 
 ## ✅ 已消化（6 项——对账关账）
 
@@ -50,3 +54,28 @@
 - [基线既有红] moveBlock.test.ts 两失败（[UL,BQ] swap 多出 PARAGRAPH）——8f1380a clean stash 对照实证;vitest 环境今日修复（root @testing-library/dom 声明未安装——npm install 补齐）后历史不可见债现形;非 A-03 diff 面（moveBlock 纯 PM 事务,无 md 解析）
 - [环境修复] vitest 全库可跑（92/94 绿）——dom 包装版 16.3.2 peer 需 dom@10,今日装齐
 - [v1 边界] 源码态协同编辑不做（停手边界）;CM6 ~350KB gzip 本地打包（codemirror meta+lang-markdown,零 CDN）
+
+## V26 批次一登记（2026-11-24 · O-05 收编）
+
+### OPEN（11 项）
+
+| # | 债 | 来源锚点 | 对应卡/时机 |
+|---|---|---|---|
+| V26-01 | KV seal 债 ×7：event/cal/task/dbview/bookmark/theme/liq 用户内容明文落库 | `kv_namespace_registry.rs` debt 字段（commit 9fefe6c，债快照测试锁定） | seal 改造专卡（O-02 停手边界明确另卡） |
+| V26-02 | 桌面 WriteContext.content_cipher=None ×3（lib.rs:132/1727、ai_commands.rs:123）——桌面笔记面明文（移动同口径,双端加密语义未接 vault） | `apps/desktop/src-tauri/src/lib.rs` TODO(DK-07) | DK-07 安全卡重启时 |
+| V26-03 | 桌面系统能力五占位：托盘/全局快捷键/菜单/剪贴板×2/通知（lib.rs:2445-2471 接口就绪+日志占位） | `apps/desktop/src-tauri/src/lib.rs` | 桌面体验批次 |
+| V26-04 | wasm IPC session 鉴权挂点（wasm_runtime.rs:1082 ctx 未用） | `aurora-plugin/src/wasm_runtime.rs` TODO(L2+) | L2 权限模型卡 |
+| V26-05 | ai.cloud_api_key 过渡态扁平存（生产应 secret store） | `system_settings.rs:720/817`（sealed 形态已迁移,过渡文案待清） | 安全批次 |
+| V26-06 | C-13 尾：NoteEditor 附件面挂接（stash 未提交）+E2E mock 三类 | USER.md 在途记录（React #300 卡点,基线隔离证实非 C-13 引入） | C-13 收口卡 |
+| V26-07 | tauri-plugin-shell deprecated→opener 迁移 | A-02 登记（2026-11-10） | A-02 后续 |
+| V26-08 | PDF 内置渲染 pdfjs-dist 动态 chunk（~900KB gzip）双端 WebView 兼容性未验 | A-02 v2 建议 | 附件体验批次 |
+| V26-09 | 桌面周视图列卡式（非 24h 像素轴,移动端等价增强） | A-08 登记 | F-06（24h 轴周视图） |
+| V26-10 | 移动日历切读 VM：FFI 通道全通但 CalendarView 仍读 adapter 旧源 | A-08 登记（铁律 6 三段式:双写已落,切读=下卡） | F-07 |
+| V26-11 | TS6133 unused ×2（RichEditor MARK_BTNS/auroraMarkdown labels） | A-01/A-08 登记 | **已闭环**——O-09 df26127 typecheck 5 红清零含此 2 处（待 O-12 验收引用）→ **CLOSED df26127/49eff1f** |
+
+### CLOSED（批次一新增）
+
+| # | 债 | 关账锚点 |
+|---|---|---|
+| V26-11 | TS6133 ×2 | df26127（O-09 typecheck 5 红清零）+49eff1f（ts-gate CI 硬闸防回归） |
+| — | moveBlock.test.ts 2 失败疑债 | A-03 勘察证伪（O-09 实测 144/144 全绿,文档声称的失败不存在） |
