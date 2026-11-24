@@ -27,6 +27,7 @@ pub use write_path::{
 };
 pub mod calendar_vm; // A-08: 双端日历统一 VM（events+tasks 数据面;UI 态各端自持）
 pub mod event_store; // DK-CALENDAR-02: 日程事件 KV 存储（Event 一等公民;repeat 03 占位）
+pub mod kv_namespace_registry; // O-02/ADR-003: KV 命名空间 A/B 分类注册表（含用户内容 B 类须 seal;CI 静态检查单一来源）
 pub mod l3_domain;
 pub mod links; // DK-双向链接S1: wiki链接提取+边索引(出链/反链倒排)
 pub mod mcp_registry; // V23-I5: MCP 数据中枢工具契约（稳定层）

@@ -35,3 +35,27 @@ load → apply → 原子保存（WAL: 快照先落, 元数据后落为权威指
 
 - 同构对拍：桌面 seal vs 移动明文同序列操作，key 集/元数据/blocks/删除状态全一致
 - `cargo test -p aurora-bootstrap --test isomorphic_write_path`
+
+## 增补：KV 命名空间注册表（O-02 / 2026-11-24）
+
+WritePath 管住了笔记域（A 类）写入，但 B 类（配置/缓存/派生态）直写 KV
+长期无门禁：前缀随处新增、无「含用户内容须 seal」约束。本次增补
+`kv_namespace_registry.rs` 为**写入面分类的单一来源**：
+
+- **A 类**（note/notesnap/trash/attachment）——必须经 WritePath；豁免
+  白名单（write_path 自身/projection.rs/bootstrap）之外直写即 CI 阻断
+- **B 类**（settings/palette/fsrs/liq/plugins 等 19 前缀）——允许直写
+  但必须登记；**含用户内容且未 seal** 者以 `debt` 字段显式挂 OPEN 债
+  （当前 7 处：event/cal/task/dbview/bookmark/theme/liq——seal 改造另卡）
+- **门禁双闸**：Rust 单测（5 条：前缀唯一/A 类强制 seal+sync/B 类
+  seal-or-debt/三形态 lookup/债面快照锁）+ Node 静态扫描
+  （`scripts/check-kv-namespaces.mjs`：全仓 `kv*.set(` 字面量前缀
+  对账，未登记/A 类直写即 exit 1；内联 `#[cfg(test)]` 与 tests/ 目录
+  为夹具白名单）
+- 新增前缀流程：REGISTRY 登记一行（prefix/class/user_content/sync/
+  sealed/debt 六元组）→ CI 自动收编
+
+前缀语义歧义处理先例（登记时归类，勿改实现）：
+`notevec`/`palette`/`settings`/`shortcut` 判非用户创作内容
+（可重建缓存/产品词表/配置面），`bookmark` 判用户内容挂债——
+争议项以 purpose 字段留痕，PR 审查可翻案。

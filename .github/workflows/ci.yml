@@ -25,6 +25,18 @@ env:
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
+  kv-namespace-gate:
+    # O-02/ADR-003: KV 直写命名空间门禁——REGISTRY 对账
+    # （未登记前缀 / A 类前缀直写即阻断;债存量仅提示）
+    name: KV namespace gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-kv-namespaces.mjs
+
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
