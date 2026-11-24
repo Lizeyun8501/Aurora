@@ -129,7 +129,7 @@ export function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDelet
       {(() => {
         const path = pathOfNote(noteId);
         return path.length > 0 ? (
-          <nav aria-label="位置" className="editor-crumbs" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-tertiary, #9aa4b2)', padding: '6px 16px 0' }}>
+          <nav aria-label="位置" className="editor-crumbs" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-tertiary)', padding: '6px 16px 0' }}>
             <span style={{ cursor: 'pointer' }} onClick={() => onClose()} role="link" tabIndex={0}
               onKeyDown={(e) => e.key === 'Enter' && onClose()}
               title={path.map((c) => c.title).join(' › ')}>
@@ -297,7 +297,7 @@ export function NoteEditor({ noteId, title, isFav, onToggleFav, onClose, onDelet
             </div>
             <div className="sheet-body export-preview-body">
               {/text\/html/.test(lastExport.mime) ? (
-                <iframe title="导出预览" srcDoc={lastExport.content} style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8, background: '#fff' }} />
+                <iframe title="导出预览" srcDoc={lastExport.content} style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8, background: 'var(--preview-paper)' }} />
               ) : (
                 <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.7, fontFamily: 'inherit' }}>{lastExport.content}</pre>
               )}
@@ -351,8 +351,8 @@ function MobileAttachmentStrip(props: { content: string; onOpen: (r: MobileAttac
           style={{
             display: 'flex', alignItems: 'center', gap: 8,
             padding: '8px 12px', borderRadius: 10,
-            border: '1px solid rgba(128,128,128,0.3)',
-            background: 'rgba(128,128,128,0.08)',
+            border: '1px solid var(--export-border)',
+            background: 'var(--export-bg)',
             color: 'inherit', cursor: 'pointer', textAlign: 'left', fontSize: 13,
           }}
         >
@@ -409,7 +409,7 @@ function MobileAttachmentPreviewPanel(props: {
 
   if (probeError) {
     return (
-      <div role="alert" style={{ padding: 16, color: '#e5484d', fontSize: 13 }}>
+      <div role="alert" style={{ padding: 16, color: 'var(--danger)', fontSize: 13 }}>
         附件预览失败: {probeError}
       </div>
     );

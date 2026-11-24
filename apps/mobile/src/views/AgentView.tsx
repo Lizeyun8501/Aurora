@@ -174,7 +174,7 @@ export function AgentView({ theme }: { theme: string }) {
 
       {/* B-01: 设置引导卡（无模型时——可点击跳设置;不伪装成回复） */}
       {needSetup && (
-        <div className="card" role="alert" style={{ borderColor: 'var(--warn, #E8B33D)' }}>
+        <div className="card" role="alert" style={{ borderColor: 'var(--warning)' }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>AI 模型不可用</div>
           <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
             本次对话未产生任何回复。需本地 Ollama（同网络）或在设置中配置云端模型后重试。

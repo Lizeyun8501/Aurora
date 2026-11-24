@@ -25,6 +25,18 @@ env:
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
+  u02-color-gate:
+    # U-02/ADR-006: 硬编码颜色门禁——移动端使用面零违规(硬线);
+    # 桌面面 524 存量分卡清偿(阈值 600 防恶化),清零后升全量阻断
+    name: Hardcoded color gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-hardcoded-colors.mjs
+
   kv-namespace-gate:
     # O-02/ADR-003: KV 直写命名空间门禁——REGISTRY 对账
     # （未登记前缀 / A 类前缀直写即阻断;债存量仅提示）

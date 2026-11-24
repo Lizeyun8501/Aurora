@@ -212,7 +212,7 @@ export default function CalendarView({ tasks, events, onUpsertEvent, onDeleteEve
   })();
 
   /** 事件色板 0-5（V25 语义色——红/蓝/绿/琥珀/紫/灰）。 */
-  const EV_COLORS = ['#dc2626', '#2563eb', '#059669', '#d97706', '#7c3aed', '#6b7280'];
+  const EV_COLORS = ['var(--ev-c0)', 'var(--ev-c1)', 'var(--ev-c2)', 'var(--ev-c3)', 'var(--ev-c4)', 'var(--ev-c5)'];
 
   /** DK-CALENDAR-01 任务 2：日视图时间轴聚合。
    * 任务（due 无时刻）→ 全天区；日记/笔记按 updated_at 本地小时落轴
@@ -938,7 +938,7 @@ function EventEditorSheet({ ev, onClose, onSave, onDelete, onOpenNote }: {
     setReminders((rs) => rs.map((r) => r.offset_min === min ? { ...r, alarm_level: r.alarm_level > 0 ? 0 : 1 } : r));
   };
   const isNew = !ev.id;
-  const EV_COLORS = ['#dc2626', '#2563eb', '#059669', '#d97706', '#7c3aed', '#6b7280'];
+  const EV_COLORS = ['var(--ev-c0)', 'var(--ev-c1)', 'var(--ev-c2)', 'var(--ev-c3)', 'var(--ev-c4)', 'var(--ev-c5)'];
   const WD = ['一', '二', '三', '四', '五', '六', '日'];
 
   const save = () => {

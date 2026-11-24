@@ -55,7 +55,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error
   render() {
     if (this.state.error) {
       return (
-        <div style={{ padding: 24, color: '#c0392b', fontSize: 14 }}>
+        <div style={{ padding: 24, color: 'var(--danger)', fontSize: 14 }}>
           界面渲染出错：{this.state.error.message}
           <br />
           <button

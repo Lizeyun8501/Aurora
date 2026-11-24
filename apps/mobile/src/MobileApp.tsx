@@ -308,9 +308,9 @@ export default function App() {
     document.documentElement.dataset.theme = eff;
     /* C-07: WebView/壳状态栏背景同步（theme-color meta 随主题——切换无
      * 闪帧的第二面:html 元素底色即时跟随,data-theme 变量组同帧翻转） */
-    document.documentElement.style.background = eff === 'dark' ? '#111827' : '#ffffff';
+    document.documentElement.style.background = eff === 'dark' ? '#111827' : '#ffffff'; // u02-allow: meta 同步族平台约束（meta theme-color 不支持 CSS 变量,值=ADR-006 dark 底）
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', eff === 'dark' ? '#111827' : '#ffffff');
+    if (meta) meta.setAttribute('content', eff === 'dark' ? '#111827' : '#ffffff'); // u02-allow: meta theme-color 不支持 CSS 变量（值=ADR-006 dark 底/纸白）
   }, [theme, sysDark]);
 
   useEffect(() => {
@@ -1059,7 +1059,7 @@ function Drawer2({ current, onNavigate, onClose, tasks, favs, trash, bookmarks, 
                 {/* C-04: 书签行图标=同一 aurora.icon 字段（folder→book 档/note→doc 档;
                     search 型无节点 id——检索档静态 def）;树/书签/搜索三处一致 DoD② */}
                 {v.bookmark.kind === 'search'
-                  ? <VivoIcon def={{ id: 'search', label: '搜索', color: '#6366f1', glyph: '🔍' }} />
+                  ? <VivoIcon def={{ id: 'search', label: '搜索', color: 'var(--search-icon)', glyph: '🔍' }} />
                   : <VivoIcon def={getIconDef(v.bookmark.kind === 'folder' ? 'book' : 'doc', v.bookmark.target_id ?? '')} />}
                 <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {v.stale ? `${v.bookmark.title}（已失效）` : v.bookmark.title}

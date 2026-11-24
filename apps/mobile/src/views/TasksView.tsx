@@ -103,7 +103,7 @@ export function TasksView({ tasks, onTasks, showToast, onOpenTask }: {
         {/* E17: 优先级过滤段 */}
         {TASK_PRIO.map((p) => (
           <button key={p.id} className={`chip ${prioFilter === p.id ? 'active' : ''}`}
-            style={prioFilter === p.id ? { background: p.dot, color: '#fff', borderColor: p.dot } : undefined}
+            style={prioFilter === p.id ? { background: p.dot, color: 'var(--text-on-brand)', borderColor: p.dot } : undefined}
             onClick={() => setPrioFilter(prioFilter === p.id ? 'all' : p.id)}>
             {p.label} {base.filter((t) => (t.priority ?? 'normal') === p.id).length}
           </button>

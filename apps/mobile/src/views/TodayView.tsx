@@ -92,7 +92,7 @@ export function TodayView({ tasks, events, onTasks, onOpenNote, showToast, onOpe
               {insts.map((inst) => (
                 <button key={`${inst.ev.id}@${inst.offsetDays}`} className="ev-list-item" role="button"
                   onClick={() => onOpenDate(todayKey)}>
-                  <i className="ev-list-dot" style={{ background: ['#dc2626', '#2563eb', '#059669', '#d97706', '#7c3aed', '#6b7280'][inst.ev.color % 6] }} />
+                  <i className="ev-list-dot" style={{ background: ['var(--ev-c0)', 'var(--ev-c1)', 'var(--ev-c2)', 'var(--ev-c3)', 'var(--ev-c4)', 'var(--ev-c5)'][inst.ev.color % 6] }} />
                   <span className="ev-list-time">{inst.ev.all_day ? '全天' : `${String(inst.start.getHours()).padStart(2, '0')}:${String(inst.start.getMinutes()).padStart(2, '0')}`}</span>
                   <span className="ev-list-title">{inst.ev.title}</span>
                 </button>

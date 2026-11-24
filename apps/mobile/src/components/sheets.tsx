@@ -32,7 +32,7 @@ export function ShareReceiveSheet(props: {
           {img && (
             <div style={{ marginBottom: 10 }}>
               {imageB64
-                ? <img src={imageB64} alt="分享图片预览" style={{ maxWidth: '100%', borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)' }} />
+                ? <img src={imageB64} alt="分享图片预览" style={{ maxWidth: '100%', borderRadius: 8, border: '1px solid var(--border)' }} />
                 : <div style={{ fontSize: 12, opacity: 0.7 }}>🖼️ 图片已保存（{img.content}）</div>}
             </div>
           )}

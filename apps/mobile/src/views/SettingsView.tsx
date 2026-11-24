@@ -80,7 +80,7 @@ export function SettingsView({ theme, onTheme, showToast }: {
                 >
                   <span style={{
                     width: 16, height: 16, borderRadius: 4, display: 'inline-block',
-                    border: '1px solid rgba(255,255,255,0.2)',
+                    border: '1px solid var(--border-soft)',
                     background: `linear-gradient(135deg, ${(p.overrides.bgBase ?? THEME_DEFAULTS.bgBase)} 50%, ${(p.overrides.primary ?? THEME_DEFAULTS.primary)} 50%)`,
                   }} />
                   {p.name}
@@ -105,7 +105,7 @@ export function SettingsView({ theme, onTheme, showToast }: {
               ))}
             </div>
             {themeErrs.length > 0 && (
-              <div role="alert" style={{ color: 'var(--danger, #E85D5D)', fontSize: 12, whiteSpace: 'pre-wrap' }}>
+              <div role="alert" style={{ color: 'var(--danger)', fontSize: 12, whiteSpace: 'pre-wrap' }}>
                 {themeErrs.join('\n')}
               </div>
             )}

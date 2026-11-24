@@ -32,7 +32,7 @@ export function FocusBadge({ tasks }: { tasks: Task[] }) {
     <span
       className="focus-badge"
       title="预计 vs 实际（周回顾）"
-      style={{ color: warn ? 'var(--warning, #b45309)' : 'var(--text-tertiary)' }}
+      style={{ color: warn ? 'var(--warning)' : 'var(--text-tertiary)' }}
     >
       预计 {estimate}′ · 实际 {actual}′{devText}
     </span>
