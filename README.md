@@ -2,11 +2,12 @@
 
 本地优先的个人知识管理工具：Markdown 编辑 × CRDT 协同 × GTD 任务 × 端到端加密，单机与 P2P 同步皆为一等公民。
 
-> **V26 迭代进行中** — M0（止血与收敛）已完成，M1（核心基石）推进至 80%。
+> **V26 迭代进行中** — 批次一（流程收口与门禁硬化，O-01~O-12）推进中：O-01/02/03/09 已闭环（CI 零红/事件字典对拍/KV 命名空间注册表/TS 硬闸）。
+> 基线数字随 `git log` 演进，以 CI 与 `docs/adr/` 为权威口径，本文件数字为 2026-11-24 快照。
 
 ## 架构总览
 
-Rust Workspace（10 crate / 66K 行）+ 4 端应用（desktop/mobile/web/extension）：
+Rust Workspace（18 crate / 111K 行，含 3 个 wasm32-wasip2 guest）+ 4 端应用（desktop/mobile/web/extension）+ TS 34K 行：
 
 ```
 ┌─ apps ─────────────────────────────────────────────┐
@@ -79,13 +80,17 @@ cargo +1.91 build -p aurora-mobile-ffi --release --target aarch64-linux-android
 
 ## CI 门禁
 
-`.github/workflows/ci.yml` 五 job 全绿为合并门槛：
+`.github/workflows/ci.yml` 九 job 全绿为合并门槛（含 O-01/02/03/09 新增四闸）：
 
 | Job | 内容 |
 |---|---|
 | Rustfmt | `cargo fmt --all -- --check` |
 | Clippy | `-D warnings`（stable 工具链最新 lint） |
-| Test | `--workspace --exclude aurora-desktop`（1100+ 测试） |
+| Test | `--workspace --exclude aurora-desktop`（1663 测试函数） |
+| iroh-transport | P2P 核心面独立 job（O-01 拆分——不随主 Test 失败被 skip） |
+| event-dict | 事件字典逐名称对拍（O-03） |
+| kv-namespace-gate | KV 直写命名空间门禁（O-02） |
+| ts-gate | typecheck+vitest 全量阻断（O-09） |
 | MSRV | Rust 1.91 编译验证 |
 | desktop-check | Tauri 桌面端编译（含系统库安装） |
 
@@ -108,9 +113,10 @@ cargo +1.91 build -p aurora-mobile-ffi --release --target aarch64-linux-android
 | 阶段 | 迭代 | 状态 |
 |---|---|---|
 | M0 止血收敛 | I0 CI 五绿 / I1 契约冻结 / I2 写入路径统一 | ✅ |
-| M1 核心基石 | I3 存储迁移（V5/原子事务/权威源）/ I4 编辑器（Go 门+第一二轮） | 🔄 80% |
-| M2 任务安全 | DK-06 GTD / DK-07 安全 | ⏳ |
-| M3+ | 协同/发布/性能 | ⏳ |
+| M1 核心基石 | I3 存储迁移（V5/原子事务/权威源）/ I4 编辑器（Go 门+第一二轮） | 🔄 80%（V25 末口径） |
+| M2 任务安全 | DK-06 GTD / DK-07 安全 | ✅（C 池 C-01~C-10 全交付，2026-11-19） |
+| V26 批次一 | 流程收口与门禁硬化 O-01~O-12 | 🔄 O-01/02/03/09 闭环 |
+| V26 批次二/三 | O/C/F 余卡·F 系功能面 | ⏳ |
 
 ## 安全
 
