@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use crate::traits::crdt_engine::{ChangeSummary, CrdtEngine, Event, MergeResult, Timestamp};
+use crate::traits::crdt_engine::{ChangeSummary, CrdtEngine, MergeResult};
 
 /// Loro CRDT 文档类型再导出。
 ///
@@ -75,19 +75,6 @@ impl CrdtEngine for LoroCrdtEngine {
             .export(loro::ExportMode::Snapshot)
             .map_err(|e| crate::Error::Internal(format!("loro export failed: {:?}", e)))?;
         Ok(bytes)
-    }
-
-    fn get_history(&self, doc_id: &str, _since: Option<Timestamp>) -> Vec<Event> {
-        match self.docs.lock() {
-            Ok(docs) => {
-                if !docs.contains_key(doc_id) {
-                    tracing::warn!("get_history called for unknown doc: {}", doc_id);
-                }
-            }
-            Err(_) => tracing::warn!("CRDT doc mutex poisoned"),
-        }
-        // Loro 的事件历史需要通过订阅回调收集，此处返回空列表作为占位。
-        vec![]
     }
 
     async fn merge_branch(

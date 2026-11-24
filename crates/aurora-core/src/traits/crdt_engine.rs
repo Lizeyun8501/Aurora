@@ -1,7 +1,8 @@
 //! Trait: CrdtEngine — 文档级与块级 CRDT 操作的统一接口
 //!
 //! V19 §28 原始指定 `async_trait`，本批次 PR 推进异步化迁移。
-//! 纯计算方法 `get_history` 保持同步签名。
+//! （V26 O-06: `get_history` 占位删除——Loro 事件历史需订阅回调收集,
+//! 原实现恒返回空 Vec 且全仓零调用方;真实历史需求由 event_bus 层承担。）
 
 #[cfg(feature = "loro-crdt")]
 use crate::l1_infrastructure::crdt::LoroDoc;
@@ -22,21 +23,10 @@ pub struct BlockChange {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Event {
-    pub event_id: String,
-    pub block_id: String,
-    pub op_type: String,
-    pub payload: serde_json::Value,
-    pub timestamp: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeResult {
     pub conflicts: Vec<String>,
     pub merged_blocks: Vec<String>,
 }
-
-pub type Timestamp = u64;
 
 #[async_trait]
 pub trait CrdtEngine: Send + Sync {
@@ -46,8 +36,6 @@ pub trait CrdtEngine: Send + Sync {
     async fn create_document(&self, doc_id: &str) -> Result<(), crate::Error>;
     async fn apply_ops(&self, doc_id: &str, ops: &[u8]) -> Result<ChangeSummary, crate::Error>;
     async fn get_snapshot(&self, doc_id: &str) -> Result<Vec<u8>, crate::Error>;
-    /// 纯计算方法，保持同步签名。
-    fn get_history(&self, doc_id: &str, since: Option<Timestamp>) -> Vec<Event>;
     async fn merge_branch(
         &self,
         doc_id: &str,
