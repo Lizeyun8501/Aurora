@@ -341,7 +341,11 @@ function MobileAttachmentStrip(props: { content: string; onOpen: (r: MobileAttac
   const refs = React.useMemo(() => extractAttachmentRefs(props.content), [props.content]);
   if (refs.length === 0) return null;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 14px 14px' }}>
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 8,
+      // 底部避让 fixed 编辑工具栏（48px 视觉高+8 余量——F-02: 列表尾 chip 被遮挡不可点）
+      padding: '0 14px calc(56px + env(safe-area-inset-bottom))',
+    }}>
       {refs.map((r) => (
         <button
           key={r.id}
