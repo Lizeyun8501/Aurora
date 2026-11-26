@@ -1785,6 +1785,66 @@ impl UniffiAppCore {
             .is_ok()
     }
 
+    /// F-03: 写依赖边（自依赖/成环拒绝——Err 消息可读环路径）。
+    pub fn task_set_dependency(
+        self: &Arc<Self>,
+        task_id: &str,
+        depends_on: &str,
+    ) -> Result<(), String> {
+        let Some(core) = &self.core else {
+            return Err("core 未初始化".into());
+        };
+        let tp = core.projections().iter().find_map(|p| {
+            p.as_any().and_then(|a| {
+                a.downcast_ref::<aurora_core::l2_engines::task_projection::TaskProjection>()
+            })
+        });
+        let Some(tp) = tp else {
+            return Err("task projection not registered".into());
+        };
+        self.runtime
+            .block_on(tp.set_dependency(task_id, depends_on))
+    }
+
+    /// F-03: 移除依赖边（幂等）。
+    pub fn task_remove_dependency(
+        self: &Arc<Self>,
+        task_id: &str,
+        depends_on: &str,
+    ) -> Result<(), String> {
+        let Some(core) = &self.core else {
+            return Err("core 未初始化".into());
+        };
+        let tp = core.projections().iter().find_map(|p| {
+            p.as_any().and_then(|a| {
+                a.downcast_ref::<aurora_core::l2_engines::task_projection::TaskProjection>()
+            })
+        });
+        let Some(tp) = tp else {
+            return Err("task projection not registered".into());
+        };
+        self.runtime
+            .block_on(tp.remove_dependency(task_id, depends_on))
+    }
+
+    /// F-03: 前置依赖列表 JSON（无边返回 "[]"）。
+    pub fn task_get_dependencies(self: &Arc<Self>, task_id: &str) -> String {
+        let Some(core) = &self.core else {
+            return "[]".into();
+        };
+        let Some(tp) = core.projections().iter().find_map(|p| {
+            p.as_any().and_then(|a| {
+                a.downcast_ref::<aurora_core::l2_engines::task_projection::TaskProjection>()
+            })
+        }) else {
+            return "[]".into();
+        };
+        serde_json::to_string(
+            &self.runtime.block_on(tp.get_dependencies(task_id)),
+        )
+        .unwrap_or_else(|_| "[]".into())
+    }
+
     /// 范围查询 JSON [from_ms, to_ms)（事件与 [from,to) 有交叠即命中——
     /// start < to && (end|start) > from;跨月全天事件正确落两侧月视图）。
     pub fn query_events_range_json(self: &Arc<Self>, from_ms: i64, to_ms: i64) -> String {
@@ -2749,6 +2809,58 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeTaskReschedule(
         Some(due_raw)
     };
     core.task_reschedule(&id, due) as jboolean
+}
+
+/// F-03: 写依赖边（错误消息走 Err 字符串——Java 侧显式返回非静默）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeTaskSetDependency(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    task_id: JString,
+    depends_on: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let id = jstring_to_rust(&mut env, &task_id).unwrap_or_default();
+    let dep = jstring_to_rust(&mut env, &depends_on).unwrap_or_default();
+    let out = match core.task_set_dependency(&id, &dep) {
+        Ok(()) => "ok".to_string(),
+        Err(e) => e,
+    };
+    rust_str_to_jstring(&mut env, &out)
+}
+
+/// F-03: 移除依赖边。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeTaskRemoveDependency(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    task_id: JString,
+    depends_on: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let id = jstring_to_rust(&mut env, &task_id).unwrap_or_default();
+    let dep = jstring_to_rust(&mut env, &depends_on).unwrap_or_default();
+    let out = match core.task_remove_dependency(&id, &dep) {
+        Ok(()) => "ok".to_string(),
+        Err(e) => e,
+    };
+    rust_str_to_jstring(&mut env, &out)
+}
+
+/// F-03: 前置依赖列表 JSON（无边 "[]"）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeTaskGetDependencies(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    task_id: JString,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let id = jstring_to_rust(&mut env, &task_id).unwrap_or_default();
+    let out = core.task_get_dependencies(&id);
+    rust_str_to_jstring(&mut env, &out)
 }
 
 #[no_mangle]
@@ -4123,6 +4235,46 @@ mod tests {
         let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
         let err = core.queue_drain_impl().unwrap_err();
         assert!(err.to_string().contains("P2P 未启用"));
+    }
+
+    /// F-03: 任务依赖 FFI 三方法（写边→读边→环拒→移除→幂等）。
+    #[test]
+    fn f03_task_dependency_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        // 造两个任务（sync_tasks 全量镜像链——task_store 唯一公开写通道）
+        let mk = |core: &Arc<UniffiAppCore>, text: &str| -> String {
+            let id = format!("task-f03-{text}");
+            let t = aurora_core::task_store::CalendarTask {
+                id: id.clone(),
+                text: text.into(),
+                status: "next".into(),
+                due: None,
+                note_id: None,
+                created_at: 1_738_000_000_000_i64,
+                priority: None,
+                ext: None,
+            };
+            let out = core.task_sync_json(&format!("[{}]", serde_json::to_string(&t).unwrap()));
+            assert!(out.starts_with("1/"), "造任务失败: {text} → {out}");
+            id
+        };
+        let a = mk(&core, "前置A");
+        let b = mk(&core, "被阻塞B");
+        // ① 写边
+        assert_eq!(core.task_set_dependency(&b, &a), Ok(()));
+        // ② 读边
+        let deps = core.task_get_dependencies(&b);
+        assert_eq!(deps, format!("[\"{a}\"]"));
+        // ③ 成环拒（b→a 已在;a→b 闭环）
+        let err = core.task_set_dependency(&a, &b).unwrap_err();
+        assert!(err.contains("成环"), "环拒消息应含路径: {err}");
+        // ④ 自依赖拒
+        assert!(core.task_set_dependency(&a, &a).unwrap_err().contains("自依赖"));
+        // ⑤ 移除→幂等
+        assert_eq!(core.task_remove_dependency(&b, &a), Ok(()));
+        assert_eq!(core.task_get_dependencies(&b), "[]");
+        assert_eq!(core.task_remove_dependency(&b, &a), Ok(()));
     }
 
     /// DK-02 尾回收站 S2：全流程往返（DoD 1）——软删→list→restore→

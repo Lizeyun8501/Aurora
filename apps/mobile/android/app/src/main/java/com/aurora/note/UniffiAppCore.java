@@ -430,6 +430,21 @@ public class UniffiAppCore {
         return nativeTaskReschedule(handle, taskId, newDue);
     }
 
+    /** F-03: 写依赖边（返回 "ok" 或可读错误——自依赖/成环路径）。 */
+    public String taskSetDependency(String taskId, String dependsOn) {
+        return nativeTaskSetDependency(handle, taskId, dependsOn);
+    }
+
+    /** F-03: 移除依赖边（幂等;返回 "ok" 或错误消息）。 */
+    public String taskRemoveDependency(String taskId, String dependsOn) {
+        return nativeTaskRemoveDependency(handle, taskId, dependsOn);
+    }
+
+    /** F-03: 前置依赖列表 JSON（无边 "[]"）。 */
+    public String taskGetDependencies(String taskId) {
+        return nativeTaskGetDependencies(handle, taskId);
+    }
+
     /**
      * C-13: 附件读取 base64 通道（移动 WebView 无法 fetch file://——FFI 地基）。
      * 返回 JSON DTO（与桌面 cmd_read_attachment 同构）;失败/未装配/超限空串。
@@ -482,6 +497,10 @@ public class UniffiAppCore {
     private static native String nativeCalendarVm(long handle);
     private static native String nativeReadAttachmentBase64(long handle, String attachmentId, long rangeStart, long rangeLen); // C-13
     private static native boolean nativeTaskReschedule(long handle, String taskId, String newDue);
+    // F-03: 任务依赖三方法（错误消息走返回串——"ok"=成功）
+    private static native String nativeTaskSetDependency(long handle, String taskId, String dependsOn);
+    private static native String nativeTaskRemoveDependency(long handle, String taskId, String dependsOn);
+    private static native String nativeTaskGetDependencies(long handle, String taskId);
     private static native String nativeCreateNote(long handle, String title);
     private static native int nativeListNotesCount(long handle);
     private static native String[] nativeGetNote(long handle, int index);

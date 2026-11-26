@@ -530,6 +530,38 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** F-03: 写依赖边（返回 "ok" 或可读错误——环路径;未装配/异常返回错误消息非静默）。 */
+        @JavascriptInterface
+        public String taskSetDependency(String taskId, String dependsOn) {
+            try {
+                if (core == null) return "core 未初始化";
+                return core.taskSetDependency(taskId, dependsOn);
+            } catch (Exception e) {
+                return "依赖设置异常: " + e.getMessage();
+            }
+        }
+
+        /** F-03: 移除依赖边（幂等）。 */
+        @JavascriptInterface
+        public String taskRemoveDependency(String taskId, String dependsOn) {
+            try {
+                if (core == null) return "core 未初始化";
+                return core.taskRemoveDependency(taskId, dependsOn);
+            } catch (Exception e) {
+                return "依赖移除异常: " + e.getMessage();
+            }
+        }
+
+        /** F-03: 前置依赖列表 JSON（未装配/异常 "[]"）。 */
+        @JavascriptInterface
+        public String taskGetDependencies(String taskId) {
+            try {
+                return core != null ? core.taskGetDependencies(taskId) : "[]";
+            } catch (Exception e) {
+                return "[]";
+            }
+        }
+
         /** 范围查询 [fromMs, toMs)（交叠命中）。JSON 数组同 listEvents。 */
         @JavascriptInterface
         public String queryEvents(long fromMs, long toMs) {

@@ -73,6 +73,10 @@ interface AndroidBridge {
    *  mock 拼装同契约——localStorage 双源 snake 形,E2E 全链走切读后形态）。 */
   calendarVm?(): string;
   taskReschedule?(taskId: string, newDue: string): boolean;
+  /** F-03: 依赖三方法（真桥字符串返回 "ok"/错误消息;get 返回 JSON 数组）。 */
+  taskSetDependency?(taskId: string, dependsOn: string): string;
+  taskRemoveDependency?(taskId: string, dependsOn: string): string;
+  taskGetDependencies?(taskId: string): string;
   /** C-13: 附件 base64 通道（失败/未装配返空串——JSON DTO 契约同桌面）。 */
   readAttachmentBase64?(attachmentId: string, rangeStart: number, rangeLen: number): string;
   // A-09: 高级搜索（5 运算符+徽章面——与桌面 cmd_search_advanced 同源）
@@ -213,6 +217,17 @@ declare global {
 
 function bridge(): AndroidBridge | undefined {
   return typeof window !== 'undefined' ? window.AndroidBridge : undefined;
+}
+
+/** F-03 mock: dep 图可达性（from 沿边能否到 target——环检测用）。 */
+function reaches(deps: Record<string, string[]>, from: string, target: string, seen: Set<string>): boolean {
+  if (from === target) return true;
+  if (seen.has(from)) return false;
+  seen.add(from);
+  for (const next of deps[from] ?? []) {
+    if (reaches(deps, next, target, seen)) return true;
+  }
+  return false;
 }
 
 /** 是否运行在 Android WebView 内。 */
@@ -760,6 +775,58 @@ export const platform = {
       return JSON.stringify({ events, tasks });
     } catch {
       return '{"events":[],"tasks":[]}';
+    }
+  },
+
+  // ===== F-03: 任务依赖（真桥优先;mock 走 localStorage deps 形——E2E 可全链）=====
+  taskSetDependency(taskId: string, dependsOn: string): string {
+    const b = bridge();
+    if (b?.taskSetDependency) return b.taskSetDependency(taskId, dependsOn);
+    try {
+      const tasks = JSON.parse(localStorage.getItem('aurora.tasks') ?? '[]') as Array<{ id: string }>;
+      if (!tasks.some((t) => t.id === taskId)) return `任务不存在：${taskId}`;
+      if (!tasks.some((t) => t.id === dependsOn)) return `任务不存在：${dependsOn}`;
+      if (taskId === dependsOn) return `自依赖拒绝：${taskId} 不能依赖自身`;
+      const deps = JSON.parse(localStorage.getItem('aurora.taskDeps') ?? '{}') as Record<string, string[]>;
+      const list = deps[taskId] ?? [];
+      // mock 环检测（一条边成环即拒——同内核语义的可测子集）
+      if (list.includes(dependsOn)) return 'ok';
+      const back = deps[dependsOn] ?? [];
+      if (back.includes(taskId) || reaches(deps, dependsOn, taskId, new Set())) {
+        return `依赖成环拒绝：${taskId} → ${dependsOn} → ${taskId}`;
+      }
+      deps[taskId] = [...list, dependsOn];
+      localStorage.setItem('aurora.taskDeps', JSON.stringify(deps));
+      return 'ok';
+    } catch (e) {
+      return `依赖设置异常: ${e}`;
+    }
+  },
+
+  taskRemoveDependency(taskId: string, dependsOn: string): string {
+    const b = bridge();
+    if (b?.taskRemoveDependency) return b.taskRemoveDependency(taskId, dependsOn);
+    try {
+      const deps = JSON.parse(localStorage.getItem('aurora.taskDeps') ?? '{}') as Record<string, string[]>;
+      const list = deps[taskId] ?? [];
+      if (list.length === 0) return 'ok';
+      deps[taskId] = list.filter((d) => d !== dependsOn);
+      if (deps[taskId].length === 0) delete deps[taskId];
+      localStorage.setItem('aurora.taskDeps', JSON.stringify(deps));
+      return 'ok';
+    } catch (e) {
+      return `依赖移除异常: ${e}`;
+    }
+  },
+
+  taskGetDependencies(taskId: string): string {
+    const b = bridge();
+    if (b?.taskGetDependencies) return b.taskGetDependencies(taskId);
+    try {
+      const deps = JSON.parse(localStorage.getItem('aurora.taskDeps') ?? '{}') as Record<string, string[]>;
+      return JSON.stringify(deps[taskId] ?? []);
+    } catch {
+      return '[]';
     }
   },
 

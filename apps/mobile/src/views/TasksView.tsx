@@ -18,6 +18,60 @@ export function TasksView({ tasks, onTasks, showToast, onOpenTask }: {
   const [prioFilter, setPrioFilter] = useState<'all' | TaskPriority>('all');
   /* 11-08 23:10 用户令: 长按 550ms 删除——touchmove(滑删手势)即取消;触发后置 fired 抑制松手 click 跳转。 */
   const lp = useRef<{ timer: ReturnType<typeof setTimeout> | null; fired: boolean }>({ timer: null, fired: false });
+  /* F-03: 依赖管理 sheet（任务详情前置任务区块——可搜添加/移除+环提示）。 */
+  const [depSheet, setDepSheet] = useState<{ taskId: string } | null>(null);
+  const [depPick, setDepPick] = useState('');
+  const [depErr, setDepErr] = useState<string | null>(null);
+  // deps 形: taskId → 前置 id 列表（真桥 JSON / mock localStorage 同源）
+  const [depsMap, setDepsMap] = useState<Record<string, string[]>>({});
+
+  // F-03: 挂载时全量拉一次各任务前置（open 任务列表——量级有限）
+  useEffect(() => {
+    const next: Record<string, string[]> = {};
+    for (const t of tasks) {
+      if (t.status === 'done') continue;
+      try {
+        const ids = JSON.parse(platform.taskGetDependencies(t.id)) as string[];
+        if (Array.isArray(ids) && ids.length > 0) next[t.id] = ids;
+      } catch { /* 桥缺省——mock 链自会回 [] */ }
+    }
+    setDepsMap(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks.length]);
+
+  // F-03: blocked 派生（any 前置非终态——与内核派生态同语义;只在本组件展示层计算）
+  const blockedIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const [tid, pres] of Object.entries(depsMap)) {
+      const anyOpen = pres.some((pid) => {
+        const pt = tasks.find((t) => t.id === pid);
+        return pt != null && pt.status !== 'done';
+      });
+      if (anyOpen) s.add(tid);
+    }
+    return s;
+  }, [depsMap, tasks]);
+
+  const addDep = (taskId: string, dependsOn: string) => {
+    setDepErr(null);
+    const out = platform.taskSetDependency(taskId, dependsOn);
+    if (out !== 'ok') { setDepErr(out); return; }
+    setDepsMap((m) => ({ ...m, [taskId]: [...new Set([...(m[taskId] ?? []), dependsOn])] }));
+    setDepPick('');
+  };
+
+  const removeDep = (taskId: string, dependsOn: string) => {
+    setDepErr(null);
+    const out = platform.taskRemoveDependency(taskId, dependsOn);
+    if (out !== 'ok') { setDepErr(out); return; }
+    setDepsMap((m) => {
+      const list = (m[taskId] ?? []).filter((d) => d !== dependsOn);
+      const next = { ...m };
+      if (list.length === 0) delete next[taskId]; else next[taskId] = list;
+      return next;
+    });
+  };
+
   const open = tasks.filter((t) => t.status !== 'done');
   const done = tasks.filter((t) => t.status === 'done');
   const base = filter === 'all' ? tasks : filter === 'open' ? open : done;
@@ -149,10 +203,22 @@ export function TasksView({ tasks, onTasks, showToast, onOpenTask }: {
                         <div className="task-text">{t.text}</div>
                         <div className="task-meta">
                           <span className="task-status-tag">{TASK_GROUPS.find((g) => g.id === t.status)?.label}</span>
+                          {/* F-03: blocked 徽章（图标+文字双载体——不靠颜色单一编码） */}
+                          {blockedIds.has(t.id) && (
+                            <span className="task-dep-badge" role="img" aria-label="被前置任务阻塞">⛔ 等待前置</span>
+                          )}
                           {t.due && <span className={`task-due ${t.due < todayStr && t.status !== 'done' ? 'overdue' : ''}`}>{t.due}</span>}
                           {subs.length > 0 && <span className="task-sub-prog">{subDone}/{subs.length}</span>}
                           <span className="task-meta-time">{relativeTime(new Date(t.createdAt).toISOString())}</span>
                         </div>
+                        {/* F-03: 前置任务行（点击管理） */}
+                        {(depsMap[t.id]?.length ?? 0) > 0 && (
+                          <button type="button" className="task-dep-row"
+                            onClick={(e) => { e.stopPropagation(); setDepSheet({ taskId: t.id }); setDepErr(null); setDepPick(''); }}
+                            aria-label={`管理前置任务（${depsMap[t.id]!.length} 项）`}>
+                            前置 {depsMap[t.id]!.length} 项 ⏳
+                          </button>
+                        )}
                       </div>
                       <button className="icon-btn" onClick={(e) => { e.stopPropagation(); remove(t.id); }} aria-label="删除任务">{I.x}</button>
                     </div>
@@ -173,6 +239,64 @@ export function TasksView({ tasks, onTasks, showToast, onOpenTask }: {
           清除全部已完成
         </button>
       )}
+
+      {/* F-03: 依赖管理 sheet（前置任务区块——可搜添加/移除;环依赖可读提示） */}
+      {depSheet && (() => {
+        const t = tasks.find((x) => x.id === depSheet.taskId);
+        if (!t) return null;
+        const pres = (depsMap[t.id] ?? []).map((pid) => tasks.find((p) => p.id === pid)).filter(Boolean) as Task[];
+        const candidates = open.filter((c) =>
+          c.id !== t.id && !pres.some((p) => p.id === c.id) &&
+          (depPick === '' || c.text.toLowerCase().includes(depPick.toLowerCase())));
+        return (
+          <>
+            <div className="sheet-mask" onClick={() => setDepSheet(null)} />
+            <div className="sheet" role="dialog" aria-label={`前置任务管理——${t.text}`}>
+              <div className="sheet-handle" />
+              <div className="sheet-title">前置任务<div className="sheet-sub">{t.text}</div></div>
+              <div style={{ padding: '0 16px' }}>
+                <input
+                  className="search-input" style={{ width: '100%', marginBottom: 8 }}
+                  placeholder="搜索任务设为前置…"
+                  value={depPick}
+                  onChange={(e) => setDepPick(e.target.value)}
+                />
+                {depErr && (
+                  <div role="alert" style={{ padding: '8px 12px', marginBottom: 8, borderRadius: 8, background: 'var(--danger-soft-bg)', color: 'var(--danger)', fontSize: 13 }}>
+                    {depErr}
+                  </div>
+                )}
+                {pres.length === 0 && (
+                  <div style={{ padding: '12px 0', opacity: 0.6, fontSize: 13 }}>无前置任务——从下方添加</div>
+                )}
+                {pres.map((p) => (
+                  <div key={p.id} className="inbox-item" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span className={`task-check ${p.status === 'done' ? 'checked' : ''}`} style={{ width: 18, height: 18, flex: '0 0 auto' }}>{p.status === 'done' ? I.check : ''}</span>
+                    <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.text}</span>
+                    <span style={{ fontSize: 11, opacity: 0.6 }}>{p.status === 'done' ? '已完成' : '未完成'}</span>
+                    <button className="icon-btn" onClick={() => removeDep(t.id, p.id)} aria-label={`移除前置 ${p.text}`}>{I.x}</button>
+                  </div>
+                ))}
+                {candidates.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, opacity: 0.55, margin: '4px 0' }}>可添加</div>
+                    {candidates.slice(0, 8).map((c) => (
+                      <button key={c.id} type="button" className="inbox-item" style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', cursor: 'pointer' }}
+                        onClick={() => addDep(t.id, c.id)}>
+                        <span style={{ fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>{c.text}</span>
+                        <span className="task-dep-badge" style={{ fontSize: 11 }}>+ 前置</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="sheet-actions">
+                <button className="btn btn-text" onClick={() => setDepSheet(null)}>关闭</button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
