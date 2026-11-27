@@ -55,22 +55,11 @@ const editorPlatform = platform as unknown as import('@aurora/ui-components').Ed
 // 全局状态
 // ===========================================================================
 
-type ViewId = 'today' | 'notes' | 'search' | 'agent' | 'settings' | 'calendar'
-  | 'favorites' | 'recent' | 'tasks' | 'diary' | 'trash'
-  | 'inbox'; // C-01/ADR-007: 收集箱——GTD 收集环节主入口
-const VIEW_TITLES: Record<ViewId, string> = {
-  today: '今日', notes: '知识库', search: '搜索', agent: 'Agent', settings: '设置', calendar: '日历',
-  favorites: '我的收藏', recent: '最近浏览', tasks: '任务中心', diary: '日记本', trash: '回收站',
-  inbox: '收集箱',
-};
-/** 次级视图 → Tab 高亮映射（抽屉导航进入次级页时保持主 Tab 语境）。
- *  2026-10-28 搜索入口合并：底部 TabBar 撤搜索项，入口唯一=AppBar 右上角——
- *  search 视图无主 Tab 高亮（搜索是全局动作，不属于任何主 Tab 语境）。 */
-const TAB_OF_VIEW: Record<ViewId, string> = {
-  today: 'today', notes: 'notes', agent: 'agent', settings: 'settings',
-  calendar: 'calendar', favorites: 'notes', recent: 'notes', diary: 'notes', trash: 'notes', tasks: 'tasks', search: '',
-  inbox: 'inbox', // ADR-007: Inbox 主 Tab
-};
+/* U-05: 导航注册表单源（navigation.ts）——ViewId 域/标题/Tab 语境/层级四合一。
+ * 原 ViewId+VIEW_TITLES+TAB_OF_VIEW 三散段退役;ADR-007 语义原样保持。 */
+import { VIEW_INDEX, viewTitle as navTitle, tabOfView, viewShortLabel, TABS } from './navigation';
+type ViewId = keyof typeof VIEW_INDEX;
+
 
 // ===== E21（TA 21:57）: VIVO 风格图标集 — 彩色圆角块+白字形;overlay 持久可换 =====
 
@@ -614,7 +603,7 @@ export default function App() {
       ) : (
         <>
           <AppBar
-            title={VIEW_TITLES[view]}
+            title={navTitle(view)}
             fallback={fallback}
             onMenu={() => setDrawerOpen(true)}
             onSearch={() => goto('search')}
@@ -885,17 +874,14 @@ function SplashScreen() {
 function TabBar({ current, onChange }: { current: ViewId; onChange: (v: ViewId) => void }) {
   // C-01/ADR-007: 五 Tab——今日/笔记/收集箱/任务/日历（搜索=AppBar+⌘K;
   // Agent=抽屉更多;设置=笔记页齿轮二级——导航单一事实源见 ADR-007）
-  const items: Array<{ id: ViewId; icon: React.ReactNode; label: string }> = [
-    { id: 'today', icon: I.today, label: '今日' },
-    { id: 'notes', icon: I.notes, label: '笔记' },
-    { id: 'inbox', icon: I.inbox, label: '收集箱' },
-    { id: 'tasks', icon: I.taskSquare, label: '任务' },
-    { id: 'calendar', icon: I.calendar, label: '日历' },
-  ];
+  // U-05: 主 Tab 自注册表（TABS——IA L0 顺序/标签单源;图标经 iconKey 装配）
+  const items: Array<{ id: ViewId; icon: React.ReactNode; label: string }> = TABS.map((t) => ({
+    id: t.id, icon: (I as Record<string, React.ReactNode>)[t.iconKey], label: viewShortLabel(t.id),
+  }));
   return (
     <nav className="tab-bar" role="tablist" aria-label="主导航">
       {items.map((t) => {
-        const selected = TAB_OF_VIEW[current] === t.id;
+        const selected = tabOfView(current) === t.id;
         return (
           <button
             key={t.id}
