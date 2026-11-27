@@ -6,6 +6,7 @@ import { platform, type CalEvent } from '../adapters/androidPlatform';
 import {I, relativeTime, listNotesTitled, type Task, type TaskStatus, TASK_PRIO, TASK_GROUPS, Switch} from '../components/primitives';
 import { expandAll } from './repeatUtil';
 import { VivoIcon, FocusBadge } from '../components/vivo';
+import { useSwipeRow } from '@aurora/ui-components';
 
 export function TodayView({ tasks, events, onTasks, onOpenNote, showToast, onOpenDate }: {
   tasks: Task[];
@@ -50,8 +51,8 @@ export function TodayView({ tasks, events, onTasks, onOpenNote, showToast, onOpe
       t.id === id ? { ...t, status: t.status === 'done' ? 'next' : 'done' } : t));
   };
 
-  // 左滑删除
-  const swipe = useRef<{ x: number; id: string | null }>({ x: 0, id: null });
+  // U-06: 行滑动手势抽 shared 单源（useSwipeRow——阈值 64/纵向滚动防线统一）
+  // F-04: 右滑=完成/取消完成,左滑=移入计划（明日）;由 SwipeTaskRow 行组件承载（文件尾）。
 
   return (
     <div className="view">
@@ -123,40 +124,14 @@ export function TodayView({ tasks, events, onTasks, onOpenNote, showToast, onOpe
             </button>
             <div className="task-section-body">
               {items.map((t) => (
-                <div
+                <SwipeTaskRow
                   key={t.id}
-                  className={`task-item ${t.status === 'done' ? 'done' : ''}`}
-                  onTouchStart={(e) => { swipe.current = { x: e.touches[0].clientX, id: t.id }; }}
-                  onTouchMove={(e) => {
-                    const dx = e.touches[0].clientX - swipe.current.x;
-                    if (swipe.current.id === t.id && dx < -60) swipe.current.id = `del:${t.id}`;
-                  }}
-                  onTouchEnd={() => {
-                    if (swipe.current.id === `del:${t.id}`) {
-                      onTasks(tasks.filter((x) => x.id !== t.id));
-                      showToast('任务已删除');
-                    }
-                    swipe.current = { x: 0, id: null };
-                  }}
-                >
-                  <button
-                    className={`task-check ${t.status === 'done' ? 'checked' : ''}`}
-                    onClick={() => toggle(t.id)}
-                    aria-label="完成任务"
-                  >{I.check}</button>
-                  <div className="task-body">
-                    <div className="task-text">{t.text}</div>
-                    <div className="task-meta">
-                      {t.due && <span className="task-due">{t.due}</span>}
-                      {t.noteId && (
-                        <button className="task-note-link" onClick={() => {
-                          const n = listNotesTitled().find((x) => x.id === t.noteId);
-                          if (n) onOpenNote(n.id, n.title);
-                        }}>{I.note} 关联笔记</button>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                  task={t}
+                  allTasks={tasks}
+                  onTasks={onTasks}
+                  onOpenNote={onOpenNote}
+                  showToast={showToast}
+                />
               ))}
             </div>
           </div>
@@ -217,6 +192,57 @@ export function TodayView({ tasks, events, onTasks, onOpenNote, showToast, onOpe
               重置
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * F-04+U-06: 今日任务行（useSwipeRow shared 单源——右滑完成/左滑移入计划）。
+ * 行组件承载手势（每行一个 hook 实例,Rules of Hooks 合规;闭包随渲染更新无旧值陷阱）。
+ */
+function SwipeTaskRow({ task: t, allTasks, onTasks, onOpenNote, showToast }: {
+  task: Task;
+  allTasks: Task[];
+  onTasks: (ts: Task[]) => void;
+  onOpenNote: (id: string, title: string) => void;
+  showToast: (m: string) => void;
+}) {
+  const toggle = () => {
+    onTasks(allTasks.map((x) =>
+      x.id === t.id ? { ...x, status: x.status === 'done' ? 'next' : 'done' } : x));
+  };
+  const swipe = useSwipeRow({
+    // F-04: 右滑=完成（已做=恢复未完成）
+    onRight: () => {
+      toggle();
+      showToast(t.status === 'done' ? '已恢复未完成' : '已完成 ✓');
+    },
+    // F-04: 左滑=移入计划（今日不做→明日起改期;与 VIVO 快速整理对标）
+    onLeft: () => {
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      onTasks(allTasks.map((x) => x.id === t.id ? { ...x, due: tomorrow, status: 'plan' } : x));
+      showToast('已移入计划（明日）');
+    },
+  });
+  return (
+    <div className={`task-item ${t.status === 'done' ? 'done' : ''}`} {...swipe}>
+      <button
+        className={`task-check ${t.status === 'done' ? 'checked' : ''}`}
+        onClick={toggle}
+        aria-label={t.status === 'done' ? '恢复未完成' : '完成任务'}
+      >{I.check}</button>
+      <div className="task-body">
+        <div className="task-text">{t.text}</div>
+        <div className="task-meta">
+          {t.due && <span className="task-due">{t.due}</span>}
+          {t.noteId && (
+            <button className="task-note-link" onClick={() => {
+              const n = listNotesTitled().find((x) => x.id === t.noteId);
+              if (n) onOpenNote(n.id, n.title);
+            }}>{I.note} 关联笔记</button>
+          )}
         </div>
       </div>
     </div>

@@ -4,3 +4,5 @@ export { useSyncStatus, subscribeSync, syncNow, resetSyncSource } from './useSyn
 export type { SyncState, SyncListener, UseSyncStatusResult } from './useSync';
 export { useAI } from './useAI';
 export type { UseAIResult } from './useAI';
+export { useSwipeRow } from './useSwipeRow';
+export type { UseSwipeRowOptions, SwipeHandlers } from './useSwipeRow';

@@ -5,7 +5,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { platform } from '../adapters/androidPlatform';
 import {I, NoteCard, relativeTime, type Task, type TaskPriority, type TaskStatus, TASK_PRIO, TASK_GROUPS} from '../components/primitives';
-import { EmptyState } from '@aurora/ui-components';
+import { EmptyState, useSwipeRow } from '@aurora/ui-components';
 
 export function TasksView({ tasks, onTasks, showToast, onOpenTask }: {
   tasks: Task[];
@@ -177,53 +177,23 @@ export function TasksView({ tasks, onTasks, showToast, onOpenTask }: {
                 <span>{b.label}</span><span className="task-group-count">{list.length}</span>
               </div>
               <div className="card" style={{ padding: 4 }}>
-                {list.map((t) => {
-                  const subs = tasks.filter((st) => st.parentTaskId === t.id);
-                  const subDone = subs.filter((st) => st.status === 'done').length;
-                  return (
-                    <div key={t.id} className="task-item"
-                      /* 11-08 23:10 用户令: 单击=跳转编辑(日历对应日 day 页签),长按 550ms=删除。
-                         touchmove 立即取消长按(让位滑动/滚动手势);长按触发后 fired 抑制松手 click 双动作。 */
-                      onClick={() => { if (lp.current.fired) { lp.current.fired = false; return; } onOpenTask?.(t); }}
-                      onTouchStart={() => { lp.current.fired = false; lp.current.timer = setTimeout(() => { lp.current.fired = true; lp.current.timer = null; remove(t.id); }, 550); }}
-                      onTouchMove={() => { if (lp.current.timer) { clearTimeout(lp.current.timer); lp.current.timer = null; } }}
-                      onTouchEnd={() => { if (lp.current.timer) { clearTimeout(lp.current.timer); lp.current.timer = null; } }}
-                    >
-                      <button
-                        className={`task-check ${t.status === 'done' ? 'checked' : ''}`}
-                        onClick={(e) => { e.stopPropagation(); toggle(t.id); }}
-                        aria-label="完成"
-                      >{I.check}</button>
-                      {/* E17: 优先级色点（点击循环 low→normal→high） */}
-                      <button className="task-prio-dot-btn" aria-label="优先级" title="切换优先级"
-                        onClick={(e) => { e.stopPropagation(); cyclePrio(t.id); }}>
-                        <span className="task-prio-dot" style={{ background: TASK_PRIO.find((p) => p.id === (t.priority ?? 'normal'))?.dot }} />
-                      </button>
-                      <div className="task-body">
-                        <div className="task-text">{t.text}</div>
-                        <div className="task-meta">
-                          <span className="task-status-tag">{TASK_GROUPS.find((g) => g.id === t.status)?.label}</span>
-                          {/* F-03: blocked 徽章（图标+文字双载体——不靠颜色单一编码） */}
-                          {blockedIds.has(t.id) && (
-                            <span className="task-dep-badge" role="img" aria-label="被前置任务阻塞">⛔ 等待前置</span>
-                          )}
-                          {t.due && <span className={`task-due ${t.due < todayStr && t.status !== 'done' ? 'overdue' : ''}`}>{t.due}</span>}
-                          {subs.length > 0 && <span className="task-sub-prog">{subDone}/{subs.length}</span>}
-                          <span className="task-meta-time">{relativeTime(new Date(t.createdAt).toISOString())}</span>
-                        </div>
-                        {/* F-03: 前置任务行（点击管理） */}
-                        {(depsMap[t.id]?.length ?? 0) > 0 && (
-                          <button type="button" className="task-dep-row"
-                            onClick={(e) => { e.stopPropagation(); setDepSheet({ taskId: t.id }); setDepErr(null); setDepPick(''); }}
-                            aria-label={`管理前置任务（${depsMap[t.id]!.length} 项）`}>
-                            前置 {depsMap[t.id]!.length} 项 ⏳
-                          </button>
-                        )}
-                      </div>
-                      <button className="icon-btn" onClick={(e) => { e.stopPropagation(); remove(t.id); }} aria-label="删除任务">{I.x}</button>
-                    </div>
-                  );
-                })}
+                {list.map((t) => (
+                  <TaskRowF04
+                    key={t.id}
+                    t={t}
+                    tasks={tasks}
+                    onTasks={onTasks}
+                    showToast={showToast}
+                    onOpenTask={onOpenTask}
+                    lp={lp}
+                    toggle={toggle}
+                    cyclePrio={cyclePrio}
+                    blockedIds={blockedIds}
+                    depsMap={depsMap}
+                    onManageDeps={(id) => { setDepSheet({ taskId: id }); setDepErr(null); setDepPick(''); }}
+                    todayStr={todayStr}
+                  />
+                ))}
               </div>
             </div>
           );
@@ -297,6 +267,83 @@ export function TasksView({ tasks, onTasks, showToast, onOpenTask }: {
           </>
         );
       })()}
+    </div>
+  );
+}
+
+/**
+ * F-04+U-06: 任务行（useSwipeRow shared 单源——右滑完成/左滑明日;长按删+单击编辑保留）。
+ * 行组件承载手势（Rules of Hooks 合规;闭包随渲染更新无旧值陷阱）。
+ */
+function TaskRowF04({ t, tasks, onTasks, showToast, onOpenTask, lp, toggle, cyclePrio, blockedIds, depsMap, onManageDeps, todayStr }: {
+  t: Task;
+  tasks: Task[];
+  onTasks: (ts: Task[]) => void;
+  showToast: (m: string) => void;
+  onOpenTask?: (t: Task) => void;
+  lp: React.MutableRefObject<{ timer: ReturnType<typeof setTimeout> | null; fired: boolean }>;
+  toggle: (id: string) => void;
+  cyclePrio: (id: string) => void;
+  blockedIds: Set<string>;
+  depsMap: Record<string, string[]>;
+  onManageDeps: (id: string) => void;
+  todayStr: string;
+}) {
+  const remove = () => {
+    onTasks(tasks.filter((x) => x.id !== t.id));
+    showToast('任务已删除');
+  };
+  const swipe = useSwipeRow({
+    // F-04: 右滑=完成/恢复（误触可反向滑恢复——与 toggle 同链）
+    onRight: () => {
+      toggle(t.id);
+      showToast(t.status === 'done' ? '已恢复未完成' : '已完成 ✓');
+    },
+    // F-04: 左滑=移入计划（明日）——快速整理链
+    onLeft: () => {
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      onTasks(tasks.map((x) => x.id === t.id ? { ...x, due: tomorrow, status: 'plan' } : x));
+      showToast('已移入计划（明日）');
+    },
+  });
+  const subs = tasks.filter((st) => st.parentTaskId === t.id);
+  const subDone = subs.filter((st) => st.status === 'done').length;
+  return (
+    <div className="task-item"
+      onClick={() => { if (lp.current.fired) { lp.current.fired = false; return; } onOpenTask?.(t); }}
+      onTouchStart={(e) => { lp.current.fired = false; lp.current.timer = setTimeout(() => { lp.current.fired = true; lp.current.timer = null; remove(); }, 550); swipe.onTouchStart(e); }}
+      onTouchMove={(e) => { if (lp.current.timer) { clearTimeout(lp.current.timer); lp.current.timer = null; } swipe.onTouchMove(e); }}
+      onTouchEnd={(e) => { if (lp.current.timer) { clearTimeout(lp.current.timer); lp.current.timer = null; } swipe.onTouchEnd(e); }}
+    >
+      <button
+        className={`task-check ${t.status === 'done' ? 'checked' : ''}`}
+        onClick={(e) => { e.stopPropagation(); toggle(t.id); }}
+        aria-label={t.status === 'done' ? '恢复未完成' : '完成'}
+      >{I.check}</button>
+      <button className="task-prio-dot-btn" aria-label="优先级" title="切换优先级"
+        onClick={(e) => { e.stopPropagation(); cyclePrio(t.id); }}>
+        <span className="task-prio-dot" style={{ background: TASK_PRIO.find((p) => p.id === (t.priority ?? 'normal'))?.dot }} />
+      </button>
+      <div className="task-body">
+        <div className="task-text">{t.text}</div>
+        <div className="task-meta">
+          <span className="task-status-tag">{TASK_GROUPS.find((g) => g.id === t.status)?.label}</span>
+          {blockedIds.has(t.id) && (
+            <span className="task-dep-badge" role="img" aria-label="被前置任务阻塞">⛔ 等待前置</span>
+          )}
+          {t.due && <span className={`task-due ${t.due < todayStr && t.status !== 'done' ? 'overdue' : ''}`}>{t.due}</span>}
+          {subs.length > 0 && <span className="task-sub-prog">{subDone}/{subs.length}</span>}
+          <span className="task-meta-time">{relativeTime(new Date(t.createdAt).toISOString())}</span>
+        </div>
+        {(depsMap[t.id]?.length ?? 0) > 0 && (
+          <button type="button" className="task-dep-row"
+            onClick={(e) => { e.stopPropagation(); onManageDeps(t.id); }}
+            aria-label={`管理前置任务（${depsMap[t.id]!.length} 项）`}>
+            前置 {depsMap[t.id]!.length} 项 ⏳
+          </button>
+        )}
+      </div>
+      <button className="icon-btn" onClick={(e) => { e.stopPropagation(); remove(); }} aria-label="删除任务">{I.x}</button>
     </div>
   );
 }
