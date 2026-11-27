@@ -58,7 +58,7 @@ export function TrashView({ trash, onTrash, showToast }: {
         <EmptyState illustration="trash" title="回收站是空的。删除的笔记会在这里保留，可随时恢复。" />
       ) : (
         <>
-          <button className="btn btn-text btn-block" style={{ marginBottom: 8 }} onClick={clearAll}>
+          <button className="btn btn-text btn-block" style={{ marginBottom: 8 }} onClick={clearAll} aria-label="清空回收站——不可恢复">
             清空回收站（{merged.length}）
           </button>
           <div className="note-list">
@@ -70,10 +70,10 @@ export function TrashView({ trash, onTrash, showToast }: {
                   <div className="note-meta">删除于 {relativeTime(new Date(t.deletedAt || Date.now()).toISOString())}</div>
                 </div>
                 <div className="trash-actions">
-                  <button className="btn btn-secondary btn-sm" onClick={() => restore(t)}>
+                  <button className="btn btn-secondary btn-sm" onClick={() => restore(t)} aria-label={`恢复笔记 ${t.title}`}>
                     {I.restore} 恢复
                   </button>
-                  <button className="btn btn-text btn-sm danger-text" onClick={() => purge(t)}>删除</button>
+                  <button className="btn btn-text btn-sm danger-text" onClick={() => purge(t)} aria-label={`彻底删除笔记 ${t.title}——不可恢复`}>删除</button>
                 </div>
               </div>
             ))}

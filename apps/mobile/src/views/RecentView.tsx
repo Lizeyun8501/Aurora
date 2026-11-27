@@ -16,12 +16,15 @@ export function RecentView({ recents, onOpen }: { recents: RecentItem[]; onOpen:
       ) : (
         <div className="note-list">
           {recents.map((r) => (
-            <div key={r.id} className="note-card" onClick={() => onOpen(r.id, r.title)}>
+            <div key={r.id} className="note-card" role="button" tabIndex={0}
+              aria-label={`打开笔记 ${r.title}`}
+              onClick={() => onOpen(r.id, r.title)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(r.id, r.title); } }}>
               <div className="note-card-body">
                 <div className="note-title">{r.title}</div>
                 <div className="note-meta">{relativeTime(new Date(r.at).toISOString())}浏览</div>
               </div>
-              <span className="note-card-chevron">›</span>
+              <span className="note-card-chevron" aria-hidden="true">›</span>
             </div>
           ))}
         </div>

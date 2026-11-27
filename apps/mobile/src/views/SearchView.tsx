@@ -38,16 +38,17 @@ export function SearchView({ onOpen, initialQuery }: { onOpen: (id: string, titl
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && doSearch(query)}
             placeholder="用一句话描述要找的内容…"
+            aria-label="搜索输入——用一句话描述要找的内容"
             autoFocus
           />
-          <button className="btn-text btn" style={{ minHeight: 36 }} onClick={() => doSearch(query)}>搜索</button>
+          <button className="btn-text btn" style={{ minHeight: 36 }} onClick={() => doSearch(query)} aria-label="执行搜索">搜索</button>
         </div>
         <div className="search-hint">支持口语化查询，如「本周未完成的任务」「关联某项目的所有笔记」</div>
 
         {history.length > 0 && (
           <div className="search-history">
             {history.map((h) => (
-              <button key={h} className="tag" style={{ cursor: 'pointer' }} onClick={() => { setQuery(h); doSearch(h); }}>
+              <button key={h} className="tag" style={{ cursor: 'pointer' }} onClick={() => { setQuery(h); doSearch(h); }} aria-label={`搜索历史 ${h}`}>
                 {h}
               </button>
             ))}

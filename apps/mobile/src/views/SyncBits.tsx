@@ -52,7 +52,7 @@ export function SyncPanel({ noteId }: { noteId: string }) {
   return (
     <div className="sync-panel">
       <div className="sync-row">
-        <button className="btn btn-secondary" onClick={startEngine}>启动引擎</button>
+        <button className="btn btn-secondary" onClick={startEngine} aria-label="启动同步引擎">启动引擎</button>
         {localAddr && <span className="sync-addr" title={localAddr}>{localAddr.slice(0, 48)}…</span>}
       </div>
       <div className="sync-row">
@@ -62,8 +62,9 @@ export function SyncPanel({ noteId }: { noteId: string }) {
           value={peerAddr}
           onChange={(e) => setPeerAddr(e.target.value)}
           placeholder='粘贴对端地址 JSON {"ip":…}'
+          aria-label="对端同步地址输入"
         />
-        <button className="btn btn-primary" onClick={doSync}>同步</button>
+        <button className="btn btn-primary" onClick={doSync} aria-label="开始同步">同步</button>
       </div>
       {status && <div className="sync-status">{status}</div>}
     </div>

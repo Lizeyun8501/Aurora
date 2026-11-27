@@ -186,14 +186,17 @@ export function NoteCard({ note: n, onOpen }: {
   onOpen: (id: string, title: string) => void;
 }) {
   return (
-    <div className="note-card" onClick={() => onOpen(n.id, n.title)}>
+    <div className="note-card" role="button" tabIndex={0}
+      aria-label={`打开笔记 ${n.title}`}
+      onClick={() => onOpen(n.id, n.title)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(n.id, n.title); } }}>
       <div className="note-card-body">
         {/* C-04: 列表卡图标（树同字段——搜索/最近/收藏三列表一致） */}
         <div className="note-title"><VivoIcon def={getIconDef('doc', n.id)} size={18} /> {n.title}</div>
         <div className="note-snippet">{noteSnippet(n.id)}</div>
         <div className="note-meta">{relativeTime(n.updatedAt)}</div>
       </div>
-      <span className="note-card-chevron">›</span>
+      <span className="note-card-chevron" aria-hidden="true">›</span>
     </div>
   );
 }

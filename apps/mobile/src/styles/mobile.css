@@ -1254,7 +1254,25 @@ span.quote-mark::after { content: '”'; margin-left: 1px; }
 button.pressing { background: var(--brand-soft) !important; }
 button.pressing.ctx-item, button.pressing.ctx-cancel { background: var(--bg-secondary) !important; }
 button.pressing.danger { background: var(--danger-soft-bg) !important; }
-button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清 */
+button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清（触屏残影诉求——coarse 段保持） */
+/* U-04 ①: 键盘可达性——:focus-visible 只在键盘导航命中（pointer 点击不显示,残影诉求保持）;
+ * 触屏(coarse)设备清零保 E28c,外接键盘走 fine/无匹配段仍可见焦点环。 */
+@media (pointer: fine) {
+  button:focus-visible, a:focus-visible, [role='button']:focus-visible,
+  input:focus-visible, textarea:focus-visible, select:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+}
+/* U-04 ②: 减弱动效偏好——全转场/脉冲/呼吸动画关断（WCAG 2.3.3） */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 /* ===== E27 树拖动可视 ===== */
 .nt-row.dragging { opacity: .45; }
