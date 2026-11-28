@@ -77,6 +77,10 @@ interface AndroidBridge {
   taskSetDependency?(taskId: string, dependsOn: string): string;
   taskRemoveDependency?(taskId: string, dependsOn: string): string;
   taskGetDependencies?(taskId: string): string;
+  /** F-11: 插件市场（真桥=Marketplace 注册表;mock=localStorage
+   *  aurora.plugins 条目同契约 snake 形——E2E 可造数）。列表/详情两面。 */
+  marketplaceList?(): string;
+  marketplaceGet?(id: string): string;
   /** C-13: 附件 base64 通道（失败/未装配返空串——JSON DTO 契约同桌面）。 */
   readAttachmentBase64?(attachmentId: string, rangeStart: number, rangeLen: number): string;
   // A-09: 高级搜索（5 运算符+徽章面——与桌面 cmd_search_advanced 同源）
@@ -775,6 +779,25 @@ export const platform = {
       return JSON.stringify({ events, tasks });
     } catch {
       return '{"events":[],"tasks":[]}';
+    }
+  },
+
+  // ===== F-11: 插件市场（真桥优先;mock=localStorage aurora.plugins 同契约）=====
+  marketplaceList(): string {
+    const b = bridge();
+    if (b?.marketplaceList) return b.marketplaceList();
+    return localStorage.getItem('aurora.plugins') ?? '[]';
+  },
+
+  marketplaceGet(id: string): string {
+    const b = bridge();
+    if (b?.marketplaceGet) return b.marketplaceGet(id);
+    try {
+      const arr = JSON.parse(localStorage.getItem('aurora.plugins') ?? '[]') as Array<Record<string, unknown>>;
+      const hit = arr.find((x) => x.id === id);
+      return hit ? JSON.stringify(hit) : '';
+    } catch {
+      return '';
     }
   },
 

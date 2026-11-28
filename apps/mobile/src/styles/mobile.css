@@ -2123,3 +2123,27 @@ button:focus, button:focus-visible { outline: none; } /* E28c: focus 残影清�
 .aurora-split-pane-left, .aurora-split-pane-right { height: 100%; min-width: 0; overflow-y: auto; }
 .aurora-split-pane-divider { flex: 0 0 6px; cursor: col-resize; background: var(--divider-bg); touch-action: none; }
 .aurora-split-pane-divider:active { background: var(--divider-active-bg); }
+
+/* ===== F-11: 插件市场（列表/详情——语义令牌,零硬编码 hex） ===== */
+.mk-list { display: flex; flex-direction: column; gap: 8px; }
+.mk-item { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left;
+  padding: 12px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg-primary); }
+.mk-item:active { background: var(--bg-secondary); }
+.mk-icon { display: inline-flex; width: 36px; height: 36px; border-radius: 10px;
+  background: var(--brand-soft); color: var(--brand); align-items: center; justify-content: center; flex-shrink: 0; }
+.mk-item-body { flex: 1; min-width: 0; }
+.mk-name { font-weight: 600; color: var(--text-primary); }
+.mk-desc { font-size: 13px; color: var(--text-secondary); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.mk-meta { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; }
+.mk-verified { color: var(--brand); }
+.mk-detail-head { display: flex; gap: 12px; align-items: center; }
+.mk-src { font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: var(--bg-secondary); color: var(--text-secondary); }
+.mk-src.official { background: var(--brand-soft); color: var(--brand); }
+.mk-version { font-size: 13px; color: var(--text-tertiary); margin-top: 8px; }
+.mk-note { margin-top: 12px; padding: 10px; border-radius: 8px;
+  background: var(--bg-secondary); color: var(--text-tertiary); font-size: 12px; }
+.page-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.page-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }

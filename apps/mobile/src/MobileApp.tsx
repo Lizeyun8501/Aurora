@@ -35,6 +35,8 @@ import { TrashView } from './views/TrashView';
 import { TasksView } from './views/TasksView';
 import { DiaryView } from './views/DiaryView';
 import CalendarView from './views/CalendarView';
+const MarketplaceView = React.lazy(() => import('./views/MarketplaceView'));
+const MSuspense = ({ children }: { children: React.ReactNode }) => <React.Suspense fallback={<div style={{ padding: 24 }}>加载中…</div>}>{children}</React.Suspense>;
 import { SplitPane, EmptyState, DialogHost } from '@aurora/ui-components'; // A-10: 平板双栏（shared 单份——桌面同源比例/拖拽语义）
 import { expandAll } from './views/repeatUtil';
 
@@ -651,6 +653,7 @@ export default function App() {
               />
             )}
             {view === 'agent' && <AgentView theme={theme} />}
+            {view === 'marketplace' && <MSuspense><MarketplaceView /></MSuspense>}
             {view === 'settings' && (
               <SettingsView theme={theme} onTheme={setTheme} showToast={showToast} />
             )}
@@ -1067,6 +1070,7 @@ function Drawer2({ current, onNavigate, onClose, tasks, favs, trash, bookmarks, 
 
           <div className="d-group-title">更多</div>
           {item('agent', I.agent, 'Agent')}
+          {item('marketplace', I.agent, '插件市场')}
           {item('trash', I.trash, '回收站', trash.length)}
           {item('settings', I.gear, '设置')}
 

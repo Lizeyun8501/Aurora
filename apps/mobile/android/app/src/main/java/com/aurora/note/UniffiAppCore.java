@@ -425,6 +425,16 @@ public class UniffiAppCore {
         return nativeCalendarVm(handle);
     }
 
+    /** F-11: 插件市场列表 JSON（PluginListing 数组;空注册表 "[]"）。 */
+    public String marketplaceList() {
+        return nativeMarketplaceList(handle);
+    }
+
+    /** F-11: 单条目 JSON;缺 id 返空串。 */
+    public String marketplaceGet(String id) {
+        return nativeMarketplaceGet(handle, id);
+    }
+
     /** A-08: 任务改期（TaskRescheduled 事件;newDue 空串=清除截止）。 */
     public boolean taskReschedule(String taskId, String newDue) {
         return nativeTaskReschedule(handle, taskId, newDue);
@@ -495,6 +505,10 @@ public class UniffiAppCore {
     private static native String nativeBookmarkRemove(long handle, String id);
     private static native String nativeBookmarkReorder(long handle, String idsJson, String titlePatch);
     private static native String nativeCalendarVm(long handle);
+
+    private static native String nativeMarketplaceList(long handle);
+
+    private static native String nativeMarketplaceGet(long handle, String id);
     private static native String nativeReadAttachmentBase64(long handle, String attachmentId, long rangeStart, long rangeLen); // C-13
     private static native boolean nativeTaskReschedule(long handle, String taskId, String newDue);
     // F-03: 任务依赖三方法（错误消息走返回串——"ok"=成功）

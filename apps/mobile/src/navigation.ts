@@ -14,7 +14,8 @@
 /** 视图 id 域（全应用可导航终点——注册表即域,新增视图在此登记）。 */
 export type ViewId =
   | 'today' | 'notes' | 'search' | 'agent' | 'settings' | 'calendar'
-  | 'favorites' | 'recent' | 'tasks' | 'diary' | 'trash' | 'inbox';
+  | 'favorites' | 'recent' | 'tasks' | 'diary' | 'trash' | 'inbox'
+  | 'marketplace';
 
 /** 单视图注册项。 */
 export interface ViewEntry {
@@ -45,6 +46,7 @@ export const NAV_REGISTRY: ViewEntry[] = [
   { id: 'diary',     title: '日记本',   tab: 'notes',   level: 'drawer', iconKey: 'book' },
   { id: 'trash',     title: '回收站',   tab: 'notes',   level: 'drawer', iconKey: 'trash' },
   { id: 'agent',     title: 'Agent',    tab: 'agent',   level: 'drawer', iconKey: 'sparkles' },
+  { id: 'marketplace', title: '插件市场', tab: 'notes',   level: 'drawer', iconKey: 'agent' },
   // 页内二级（IA L2——无直入口,语境挂主 Tab）
   { id: 'search',   title: '搜索',   tab: '',          level: 'nested', iconKey: 'search' },
   { id: 'settings', title: '设置',   tab: 'settings',  level: 'nested', iconKey: 'gear' },

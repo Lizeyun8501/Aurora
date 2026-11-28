@@ -505,6 +505,25 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** F-11: 插件市场列表/详情 JSON 桥（fail-closed 空串惯例）。 */
+        @JavascriptInterface
+        public String marketplaceList() {
+            try {
+                return core != null ? core.marketplaceList() : "[]";
+            } catch (Exception e) {
+                return "[]";
+            }
+        }
+
+        @JavascriptInterface
+        public String marketplaceGet(String id) {
+            try {
+                return core != null ? core.marketplaceGet(id) : "";
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
         /**
          * C-13: 附件 base64 通道（WebView 无法 fetch file://——桥传 JSON DTO）。
          * rangeStart/len &lt;=0 = 全量;失败/未装配返空串（logcat warn 非静默）。

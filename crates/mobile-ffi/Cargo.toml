@@ -34,6 +34,8 @@ aurora-bootstrap = { path = "../aurora-bootstrap" }
 aurora-core = { path = "../aurora-core", features = ["loro-crdt"] }
 # DK-CALENDAR-02: Event 实体（upsert_event_json 反序列化入参）
 aurora-entity = { path = "../entity" }
+# F-11: 插件市场列表桥（PluginListing/PluginSource 序列化——只读面）
+aurora-plugin = { path = "../aurora-plugin" }
 aurora-security = { path = "../aurora-security" }
 aurora-ai = { path = "../aurora-ai" }
 # P2P 同步 — iroh 1.0 真实传输层（V19 §31 DEV-005，需要 Rust 1.91+）

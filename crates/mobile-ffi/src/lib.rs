@@ -206,6 +206,9 @@ pub struct UniffiAppCore {
     /// C-13: 附件存储（DK-09 遗留注入——full 模式从 BootedApp 同源提取;
     /// fallback 无附件能力 None——read_attachment_base64 空串契约）。
     pub attachments: Option<std::sync::Arc<dyn aurora_core::attachment_store::AttachmentStore>>,
+    /// F-11: 插件市场（aurora-plugin Marketplace——只读列表/详情桥;
+    /// 构造期空注册表,宿主经 register_local/publish 注入条目）。
+    pub marketplace: std::sync::Arc<aurora_plugin::marketplace::Marketplace>,
     /// DK-49：已挂接的 P2P 引擎（drain 补发通道 — MainActivity 生命周期
     /// 显式注入 attach/detach；不建全局态，照移动端装配模式）。
     #[cfg(feature = "p2p-sync")]
@@ -272,6 +275,9 @@ impl UniffiAppCore {
                     conflict_resolver: Some(booted.conflict_resolver),
                     // C-13: 附件 store 注入（DK-09 清偿——与桌面 ATTACH_STATE 同源）
                     attachments: Some(booted.attachments.clone()),
+                    // F-11: 市场实例（Ed25519 provider 由 security 侧注入——
+                    // 构造期即建,空 listings;宿主 publish 后列表面生效）
+                    marketplace: Self::build_marketplace(),
                     #[cfg(feature = "p2p-sync")]
                     sync_engine: Mutex::new(None),
                 }))
@@ -302,11 +308,21 @@ impl UniffiAppCore {
                     conflict_resolver: None,
                     // C-13: 降级模式无附件能力
                     attachments: None,
+                    // F-11: 降级模式市场仍可用（纯内存注册表不依赖 core）
+                    marketplace: Self::build_marketplace(),
                     #[cfg(feature = "p2p-sync")]
                     sync_engine: Mutex::new(None),
                 }))
             }
         }
+    }
+
+    /// F-11: 市场装配（Ed25519 CryptoProvider 注入——SecurityCryptoProvider
+    /// 实现 aurora_core CryptoProvider trait;构造期空注册表）。
+    fn build_marketplace() -> std::sync::Arc<aurora_plugin::marketplace::Marketplace> {
+        let crypto: std::sync::Arc<aurora_security::SecurityCryptoProvider> =
+            std::sync::Arc::new(aurora_security::SecurityCryptoProvider::new());
+        std::sync::Arc::new(aurora_plugin::marketplace::Marketplace::new(crypto))
     }
 
     /// 创建（或从 KVStore 恢复）笔记的 NoteDoc 并放入缓存。
@@ -1682,6 +1698,26 @@ impl UniffiAppCore {
         }
     }
 
+    /// F-11: 插件市场列表 JSON（只读面——PluginListing 数组 serde snake_case;
+    /// 市场域在 aurora-plugin Marketplace,宿主装配处注入。本 FFI 面为静态注册表
+    /// 模式: 宿主 publish 进来的 listings 经此吐出。空装配返 []（非静默——
+    /// logcat tracing warn 一次）。TS 消费: marketplaceList()。
+    pub fn marketplace_list_json(self: &Arc<Self>) -> String {
+        let listings = self.marketplace.list();
+        serde_json::to_string(&listings).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "marketplace_list serde failed");
+            String::from("[]")
+        })
+    }
+
+    /// F-11: 单条目 JSON（详情页）;缺 id 返空串（fail-closed 惯例）。
+    pub fn marketplace_get_json(self: &Arc<Self>, id: &str) -> String {
+        match self.marketplace.get(id) {
+            Some(l) => serde_json::to_string(&l).unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+
     /// C-13: 附件读取 base64 通道（移动 WebView 无法 fetch file://——
     /// FFI 传输地基）。契约与桌面 cmd_read_attachment 同构:
     /// 返回 JSON DTO（attachment_id/note_id/file_name/mime/size/
@@ -2729,6 +2765,35 @@ pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeCalendarVm(
 ) -> jstring {
     let core = unsafe { core_from_handle(handle) };
     let json = core.calendar_vm_json();
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(json))
+}
+
+// F-11: 插件市场列表/详情 JNI 导出（只读桥——list/get 两面）。
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeMarketplaceList(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let core = unsafe { core_from_handle(handle) };
+    let json = core.marketplace_list_json();
+    dk49_json_to_jstring(&mut env, &serde_json::Value::String(json))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_aurora_note_UniffiAppCore_nativeMarketplaceGet(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    id: jstring,
+) -> jstring {
+    let id_str: String = unsafe {
+        env.get_string(&JString::from_raw(id))
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    let core = unsafe { core_from_handle(handle) };
+    let json = core.marketplace_get_json(&id_str);
     dk49_json_to_jstring(&mut env, &serde_json::Value::String(json))
 }
 
@@ -4235,6 +4300,40 @@ mod tests {
         let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
         let err = core.queue_drain_impl().unwrap_err();
         assert!(err.to_string().contains("P2P 未启用"));
+    }
+
+
+    /// F-11: 市场列表/详情桥——空注册表 []+publish 后可列可查+serde snake_case 契约。
+    #[test]
+    fn f11_marketplace_list_get_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = UniffiAppCore::new(dir.path().to_str().unwrap().to_string()).unwrap();
+        // ① 空注册表 → []
+        assert_eq!(core.marketplace_list_json(), "[]");
+        // ② publish 一条 Local 条目 → 列表面 1 条
+        let listing = aurora_plugin::marketplace::PluginListing {
+            id: "demo-plugin".into(),
+            name: "Demo Plugin".into(),
+            version: "1.0.0".into(),
+            author: "aurora".into(),
+            description: "F-11 测试条目".into(),
+            source: aurora_plugin::marketplace::PluginSource::Local,
+            download_url: String::new(),
+            checksum: String::new(),
+            verified: false,
+            updated_at: chrono::Utc::now(),
+            sandbox: Default::default(),
+        };
+        core.marketplace.register_local(listing);
+        let list = core.marketplace_list_json();
+        let v: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert_eq!(v.as_array().unwrap().len(), 1);
+        assert_eq!(v[0]["id"], "demo-plugin");
+        assert_eq!(v[0]["source"], "Local");
+        // ③ 详情（get 命中/缺失）
+        let one = core.marketplace_get_json("demo-plugin");
+        assert!(one.contains("demo-plugin"));
+        assert_eq!(core.marketplace_get_json("no-such"), "");
     }
 
     /// F-03: 任务依赖 FFI 三方法（写边→读边→环拒→移除→幂等）。
