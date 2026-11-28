@@ -619,8 +619,8 @@ export default function App() {
           <main className="content">
             {view === 'today' && (
               <TodayView
-                tasks={tasks}
-                events={events}
+                tasks={vmReady ? vmTasks : tasks}
+                events={vmReady ? vmEvents : events}
                 onTasks={updateTasks}
                 onOpenNote={openNote}
                 showToast={showToast}
